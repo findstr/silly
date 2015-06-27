@@ -1,0 +1,37 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+CC	Makefile	/^CC = gcc$/;"	m
+CCFLAG	Makefile	/^CCFLAG = -g -Wall$/;"	m
+EPOLL_SIZE	ppoll.c	14;"	d	file:
+LD	Makefile	/^LD = gcc$/;"	m
+LDFLAG	Makefile	/^LDFLAG = $/;"	m
+OBJS	Makefile	/^OBJS = $(patsubst %.c,%.o,$(SRC))$/;"	m
+P	ppoll.c	/^struct ppoll *P;$/;"	v	typeref:struct:ppoll
+PACKET_SIZE	ppoll.c	15;"	d	file:
+SRC	Makefile	/^SRC = main.c ppoll.c$/;"	m
+TARGET	Makefile	/^TARGET = gate$/;"	m
+_PPOLL_H	ppoll.h	2;"	d
+_add_socket	ppoll.c	/^_add_socket(int fd)$/;"	f	file:
+_del_socket	ppoll.c	/^_del_socket(struct conn *c)$/;"	f	file:
+_nonblock_it	ppoll.c	/^_nonblock_it(int fd)$/;"	f	file:
+conn	ppoll.c	/^struct conn {$/;"	s	file:
+curr_conn	ppoll.c	/^        struct conn             *curr_conn;$/;"	m	struct:ppoll	typeref:struct:ppoll::conn	file:
+epoll_fd	ppoll.c	/^        int                     epoll_fd;$/;"	m	struct:ppoll	file:
+event_buff	ppoll.c	/^        struct epoll_event      *event_buff;$/;"	m	struct:ppoll	typeref:struct:ppoll::epoll_event	file:
+event_cnt	ppoll.c	/^        int                     event_cnt;$/;"	m	struct:ppoll	file:
+event_index	ppoll.c	/^        int                     event_index;$/;"	m	struct:ppoll	file:
+fd	ppoll.c	/^        int     fd;$/;"	m	struct:conn	file:
+listen_fd	ppoll.c	/^        int                     listen_fd;$/;"	m	struct:ppoll	file:
+main	main.c	/^int main()$/;"	f
+packet_buff	ppoll.c	/^        char    *packet_buff;$/;"	m	struct:conn	file:
+packet_len	ppoll.c	/^        int     packet_len;$/;"	m	struct:conn	file:
+ppoll	ppoll.c	/^struct ppoll {$/;"	s	file:
+ppoll_exit	ppoll.c	/^void ppoll_exit()$/;"	f
+ppoll_init	ppoll.c	/^int ppoll_init()$/;"	f
+ppoll_listen	ppoll.c	/^int ppoll_listen(int port)$/;"	f
+ppoll_pull	ppoll.c	/^const char *ppoll_pull(int *socket_fd)$/;"	f
+ppoll_push	ppoll.c	/^void ppoll_push()$/;"	f
