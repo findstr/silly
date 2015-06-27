@@ -230,7 +230,8 @@ void ppoll_push()
 
         psize = *(unsigned short *)c->packet_buff;
 
-        more = c->packet_len - psize;
+        more = c->packet_len - psize - 2;
+        printf("push-->data len:%d\n", more);
         if (more > 0)
                 memmove(c->packet_buff, c->packet_buff + psize, more);
 

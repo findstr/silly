@@ -1,32 +1,32 @@
 #include <assert.h>
 #include <stdio.h>
+#include <sys/socket.h>
+#include <errno.h>
 #include <unistd.h>
 #include "ppoll.h"
+#include "server.h"
+
+static struct server *svr_tbl[1];
 
 int main()
 {
-        int i;
         int fd;
         const char *buff;
+        
         ppoll_init();
         printf("listen:%d\n", ppoll_listen(8989));
+        
+        svr_tbl[0] = server_create();
+
         for (;;) {
                 buff = ppoll_pull(&fd);
                 if (buff == NULL && fd != -1) {
-                        printf("new connect:%d\n", fd);
+                        printf("gate:new connect:%d\n", fd);
                 } else if (buff) {
-                        unsigned short len = *(unsigned short*)buff;
-                        buff += 2;
-                        assert(fd >= 0);
-
-                        printf("--------data-----------\n");
-                        for (i = 0; i < len; i++) {
-                                printf("%c ", buff[i]);
-                                if (i % 8 == 0 && i)
-                                        printf("\r\n");
-                        }
+                        server_send(svr_tbl[0], fd, buff);
+                        ppoll_push();
                 }
-                printf("hello:%d\n", fd);
+                printf("gate:pull:%d\n", fd);
                 sleep(1);
         }
 

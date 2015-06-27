@@ -3,7 +3,7 @@ LD = gcc
 CCFLAG = -g -Wall
 LDFLAG = 
 TARGET = gate
-SRC = main.c ppoll.c
+SRC = main.c ppoll.c server.c
 BUILD_PATH = ..
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
