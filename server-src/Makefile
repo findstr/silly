@@ -1,14 +1,20 @@
 CC = gcc
 LD = gcc
 CCFLAG = -g -Wall
-LDFLAG = 
+LDFLAG = -lm -ldl -llua -Wl,-E
 BUILD_PATH = ..
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 TARGET = server
-SRC = main.c
+SRC = main.c socket.c
+
+all:$(BUILD_PATH)/$(TARGET) $(BUILD_PATH)/$(TARGET).so
+
 $(BUILD_PATH)/$(TARGET):$(OBJS)
 	$(LD) -o $@ $^ $(LDFLAG)
+
+$(BUILD_PATH)/$(TARGET).so:lua-server.c
+	gcc -o $@ $< --share -fPIC
 
 -include $(SRC:.c=.d)
 

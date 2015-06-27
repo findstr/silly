@@ -201,7 +201,7 @@ const char *ppoll_pull(int *socket_fd)
                         psize = ntohs(*(unsigned short *)c->packet_buff);
                         c->packet_len += err;
                         printf("---have data-----:%d:%d\n", psize, c->packet_len);
-                        if (c->packet_len >= psize) {
+                        if (c->packet_len >= psize + sizeof(psize)) {
                                 *(unsigned short *)c->packet_buff = psize;
                                 *socket_fd = c->fd;
                                 P->curr_conn = c;
@@ -233,7 +233,7 @@ void ppoll_push()
         more = c->packet_len - psize - 2;
         printf("push-->data len:%d\n", more);
         if (more > 0)
-                memmove(c->packet_buff, c->packet_buff + psize, more);
+                memmove(c->packet_buff, c->packet_buff + psize + 2, more);
 
         c->packet_len = more;
 }

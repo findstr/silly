@@ -4,50 +4,60 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+
+#include "socket.h"
+
 static int fd;
 
-int main(int argc, char *argv[])
+static int
+_check_arg(int argc, char *argv[])
 {
-        char *buff = malloc(64 * 1024 * sizeof(char));
         printf("argc:%d, %s\n", argc, argv[0]);
         if (argc != 2) {
                 printf("USAGE <server> <fd>\n");
-                return 0;
+                return -1;
         }
 
         printf("server:hello server, socketfd:%s\n", argv[1]);
 
-        //receive the data
+        return 0;
+}
+
+int main(int argc, char *argv[])
+{
+        int fd;
+        const char *buff;
+        int size;
+        lua_State *L = luaL_newstate();
+        luaL_openlibs(L);
+
+        if (_check_arg(argc, argv) < 0)
+                return -1;
+
         fd = strtoul(argv[1], NULL, 0);
+        socket_init(fd);
+        
+        if (luaL_loadfile(L, "main.lua") || lua_pcall(L, 0, 0, 0)) {
+                fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
 
-        int size = 0;
+                return -1;
+        }
+/*
         for (;;) {
-                int psize = 0;
-                int more = 0;
-                size += recv(fd, buff, 64 * 1024, 0);
-                if (size >2)
-                        psize = *((unsigned short *)buff);
-
-                if (size >= psize) {
-                        int i;
-                        int fd = *(int *)buff;
-                        unsigned short len = *((unsigned short*)buff + 2);
-                        buff += 6;
-                        assert(fd >= 0);
-
-                        printf("server:data,fd:%d, len:%d\n", fd, len);
-                        for (i = 0; i < len; i++) {
+                int i;
+                buff = socket_pull(&fd, &size);
+                if (buff) {
+                        printf("server:fd>%d, size>%d\n", fd, size);
+                        for (i = 0; i < size; i++)
                                 printf("%c", buff[i]);
-                        }
-
                         printf("\r\n");
 
-                        more = size - psize - 2;
-                        if (more > 0)
-                                memmove(buff, buff + psize, more); 
+                        socket_push();
                 }
-                
         }
-
+*/
         return 0;
 }
