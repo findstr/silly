@@ -1,7 +1,7 @@
 CC = gcc
 LD = gcc
-CCFLAG = -g -Wall
-LDFLAG = -lm -ldl -llua -Wl,-E
+CCFLAG = -g -I ../lua53 -Wall
+LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua
 BUILD_PATH = ..
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
