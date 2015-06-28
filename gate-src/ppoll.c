@@ -207,8 +207,7 @@ const char *ppoll_pull(int *socket_fd)
                                 return c->packet_buff;
                         }
                 } else if ((err == -1 && errno != EAGAIN) || err == 0) {
-                        if (errno != EAGAIN)
-                                _del_socket(c);
+                        _del_socket(c);
                         fprintf(stderr, "fd:%d close or occurs error\n", c->fd);
                 }
         }
