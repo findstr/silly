@@ -11,6 +11,7 @@
 **/
 #include <errno.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <sys/socket.h>
 
 int socket_write(int s, char *buff, int len)
@@ -67,7 +68,7 @@ int socket_read_line(int s, char *buff, int len)
 
         while (left) {
                 err = read(s, buff, 1);
-                if (err < 0 && errno != EINTR || err == 0) {
+                if ((err < 0 && errno != EINTR) || err == 0) {
 //                        printf("read error:%d, errno=%d\n", err, errno);
                         return 0;
                 }

@@ -12,9 +12,9 @@ $(BUILD_PATH)/$(TARGET):$(OBJS)
 
 -include $(SRC:.c=.d)
 
-%.d:%c
-	@set -e; rm -r $@;\
-	$(CC) -MM $< > $@.$$$$;\
+%.d:%.c
+	@set -e; rm -f $@;\
+	$(CC) $(CCFLAG) -MM $< > $@.$$$$;\
 	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$
 

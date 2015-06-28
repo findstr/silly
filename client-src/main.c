@@ -12,10 +12,12 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <strings.h>
+#include <string.h>
 #include <errno.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "sock.h"
 
@@ -46,7 +48,7 @@ int main()
                 fgets(buff, 1024, stdin);
                 *(unsigned short*)sbuff = htons(strlen(buff));
                 memcpy(sbuff + 2, buff, strlen(buff));
-                printf("send:%d\n", strlen(buff) + 2);
+                printf("send:%d\n", (int)strlen(buff) + 2);
                 socket_write(sockfd, sbuff, strlen(buff) + 2); 
                 memset(sbuff, 0, sizeof(sbuff));
                 unsigned short len;
@@ -54,7 +56,7 @@ int main()
                 len = ntohs(len);
                 printf("client:get data:%d...\n", len);
                 socket_read(sockfd, sbuff, len);
-                printf("client:...\n", len);
+                printf("client:...\n");
                 for (i = 0; i < len; i++) {
                         printf("%c", sbuff[i]);
                 }

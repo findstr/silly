@@ -1,6 +1,6 @@
 CC = gcc
 LD = gcc
-CCFLAG = -g -I ../lua53 -Wall
+CCFLAG = -g -I ../lua53/ -Wall
 LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua
 BUILD_PATH = ..
 OBJS = $(patsubst %.c,%.o,$(SRC))
@@ -14,12 +14,12 @@ $(BUILD_PATH)/$(TARGET):$(OBJS)
 	$(LD) -o $@ $^ $(LDFLAG)
 
 $(BUILD_PATH)/$(TARGET).so:lua-server.c
-	gcc -o $@ $< --share -fPIC
+	gcc $(CCFLAG) -o $@ $< --share -fPIC
 
 -include $(SRC:.c=.d)
 
-%.d:%c
-	@set -e; rm -r $@;\
+%.d:%.c
+	@set -e; rm -f $@;\
 	$(CC) -MM $< > $@.$$$$;\
 	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$
