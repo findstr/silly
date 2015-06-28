@@ -19,6 +19,17 @@ int main()
         svr_tbl[0] = server_create();
 
         for (;;) {
+                int i;
+                buff = server_read(svr_tbl[0], &fd);
+                if (buff) {
+                        unsigned short psize = *((unsigned short*)buff);
+                        printf("---gate, fd:%d,send:%d\n", fd, psize);
+                        for (i = 0; i < psize; i++)
+                                printf("%c", buff[i + 2]);
+                        printf("\r\n");
+                                
+                        ppoll_send(fd, buff);
+                }
                 buff = ppoll_pull(&fd);
                 if (buff == NULL && fd != -1) {
                         printf("gate:new connect:%d\n", fd);
@@ -26,7 +37,9 @@ int main()
                         server_send(svr_tbl[0], fd, buff);
                         ppoll_push();
                 }
-                printf("gate:pull:%d\n", fd);
+                
+                printf("gate:hello, fd:%d\n", fd);
+
                 sleep(1);
         }
 

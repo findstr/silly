@@ -40,12 +40,14 @@ int main(int argc, char *argv[])
         fd = strtoul(argv[1], NULL, 0);
         socket_init(fd);
         
+#if 1
+
         if (luaL_loadfile(L, "main.lua") || lua_pcall(L, 0, 0, 0)) {
                 fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
 
                 return -1;
         }
-/*
+#else   
         for (;;) {
                 int i;
                 buff = socket_pull(&fd, &size);
@@ -54,10 +56,8 @@ int main(int argc, char *argv[])
                         for (i = 0; i < size; i++)
                                 printf("%c", buff[i]);
                         printf("\r\n");
-
-                        socket_push();
                 }
         }
-*/
+#endif
         return 0;
 }

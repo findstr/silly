@@ -42,11 +42,23 @@ int main()
         }
  
         for (;;) {
+                int i;
                 fgets(buff, 1024, stdin);
                 *(unsigned short*)sbuff = htons(strlen(buff));
                 memcpy(sbuff + 2, buff, strlen(buff));
                 printf("send:%d\n", strlen(buff) + 2);
                 socket_write(sockfd, sbuff, strlen(buff) + 2); 
+                memset(sbuff, 0, sizeof(sbuff));
+                unsigned short len;
+                socket_read(sockfd, (char *)&len, sizeof(len));
+                len = ntohs(len);
+                printf("client:get data:%d...\n", len);
+                socket_read(sockfd, sbuff, len);
+                printf("client:...\n", len);
+                for (i = 0; i < len; i++) {
+                        printf("%c", sbuff[i]);
+                }
+                printf("\n");
         }
 
         close(sockfd);

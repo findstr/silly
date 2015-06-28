@@ -41,6 +41,7 @@ _align_socket()
 
         int psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
 
+        psize = ntohs(psize);
         if (S->packet_len >= psize + 6) {
                 int more = S->packet_len - psize - sizeof(int) - sizeof(unsigned short);
                 if (more > 0)
@@ -73,16 +74,16 @@ const char *socket_pull(int *fd, int *size)
                 return NULL;
 
         psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
+        printf("socket-pull, socket data2:%d, psize:%d, packet_size:%d\n", read_len, psize, S->packet_len);
         if (S->packet_len < psize + sizeof(unsigned short))
                 return NULL;
 
-        printf("socket pull:%d\n", S->packet_len);
+        printf("socket pull**:%d, psize:%d\n", S->packet_len, psize);
 
         *fd = *((int *)S->packet_buff);
         *size = psize;
 
-
-        return (S->packet_buff + sizeof(int) + sizeof(unsigned short));
+        return (S->packet_buff + sizeof(int));
 }
 
 int socket_send(int fd, unsigned char *buff, int size)
@@ -92,8 +93,6 @@ int socket_send(int fd, unsigned char *buff, int size)
         *((unsigned short *)(b + sizeof(int))) = (unsigned short)size;
 
         memcpy(b + 6, buff, size);
-
-        printf("***server send:%d*****\n", size + 6);
 
         //TODO:need repeat send, becuase this can be interrupt
         send(S->fd, b, size + 6, 0);

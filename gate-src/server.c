@@ -8,6 +8,7 @@
 #include <signal.h>
 
 #include "server.h"
+#include "socket.h"
 
 struct server {
         int fd;
@@ -42,6 +43,7 @@ struct server *server_create()
                 memset(S, 0, sizeof(*S));
                 S->fd = fd[0];
                 S->pid = child;
+                socket_init(S->fd);
                 return S;
         } else {                        //child
                 close(fd[0]);
@@ -90,7 +92,8 @@ int server_send(struct server *S, int fd, const char *buff)
 
 const char *server_read(struct server *S, int *fd)
 {
-        return NULL;
+        int dummy_size;
+        return socket_pull(fd, &dummy_size);
 }
 
 

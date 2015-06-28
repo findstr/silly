@@ -9,5 +9,7 @@ int ppoll_listen(int port);
 const char *ppoll_pull(int *fd);
 void ppoll_push();
 
+int ppoll_send(int fd, char *buff);
+
 
 #endif
