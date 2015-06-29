@@ -75,14 +75,19 @@ void server_free(struct server *S)
 
 int server_send(struct server *S, int fd, const char *buff)
 {
-        unsigned short psize = *((unsigned short *)buff);
+        unsigned short psize = ntohs(*((unsigned short *)buff));
         unsigned short dsize = psize + sizeof(psize);
-        char *b = (char *)malloc(sizeof(int) + psize);
+        char *b = (char *)malloc(sizeof(int) + dsize);
 
-        *((int *)b) = fd;
-        memcpy(b + sizeof(int), buff, dsize);
+        printf("gate:server-send:%d\n", psize);
+
+        *((unsigned short*)b) = htons(psize + 4);
+        *((int *)(b + 2)) = fd;
+        memcpy(b + 6, buff + 2, psize);
 
         dsize += sizeof(fd);
+
+        printf("gate:server-send:%x, %d\n",*((unsigned short*)b), dsize);
 
         //TODO:maybe interrupt it by signal
         send(S->fd, b, dsize, 0);
@@ -90,10 +95,9 @@ int server_send(struct server *S, int fd, const char *buff)
         return 0;
 }
 
-const char *server_read(struct server *S, int *fd)
+const char *server_read(struct server *S, int *fd, int *size)
 {
-        int dummy_size;
-        return socket_pull(fd, &dummy_size);
+        return socket_pull(fd, &size);
 }
 
 

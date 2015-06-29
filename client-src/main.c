@@ -36,6 +36,7 @@ int main()
         addr.sin_family = AF_INET;
         addr.sin_port = htons(8989);
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        //inet_pton(AF_INET, "192.155.83.65", &addr.sin_addr);
 
         err = connect(sockfd, (struct sockaddr *)&addr, sizeof(addr));
         if (err < 0) {

@@ -6,6 +6,8 @@
 
 #include "socket.h"
 
+int success = 0;
+
 struct socket {
         int fd;
         int packet_len;
@@ -36,18 +38,25 @@ void socket_exit()
 static int 
 _align_socket()
 {
-        if (S->packet_len <= 6)
+        if (success == 0)
                 return 0;
 
-        int psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
+        success = 0;
 
-        if (S->packet_len >= psize + 6) {
-                int more = S->packet_len - psize - sizeof(int) - sizeof(unsigned short);
+        int psize = ntohs(*((unsigned short*)(S->packet_buff)));
+
+        printf("server:align_socket:%d, %d\n", psize, S->packet_len);
+
+        if (S->packet_len <= 2)
+                return 0;
+
+        if (S->packet_len >= psize + 2) {
+                int more = S->packet_len - psize - sizeof(unsigned short);
                 if (more > 0)
-                        memmove(S->packet_buff, S->packet_buff + psize + sizeof(int) + sizeof(unsigned short), more);
-
+                        memmove(S->packet_buff, S->packet_buff + psize + sizeof(unsigned short), more);
                 S->packet_len = more;
         }
+        //printf("server:align_socket:%x, %d\n", psize, S->packet_len);
 
         return 0;
 }
@@ -66,21 +75,23 @@ const char *socket_pull(int *fd, int *size)
 
         if (read_len < 0)
                 return NULL;
-        printf("socket-pull, socket data:%d\n", read_len);
 
         S->packet_len += read_len;
+        printf("server:socket-pull, socket data:%d, packet_len:%d\n", read_len, S->packet_len);
         if (S->packet_len < sizeof(unsigned short) + sizeof(int))
                 return NULL;
 
-        psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
-        if (S->packet_len < psize + sizeof(unsigned short))
+        psize = ntohs(*((unsigned short*)S->packet_buff));
+        printf("server:socket-pull, socket len:%d, %x %x %x %x %x %x\n", psize, S->packet_buff[0], S->packet_buff[1], S->packet_buff[2] , S->packet_buff[3], S->packet_buff[4], S->packet_buff[5]);
+        if (S->packet_len < psize + 2)
                 return NULL;
 
-        printf("socket pull:%d\n", S->packet_len);
+        printf("socket pull:%d, %d\n", S->packet_len, psize);
 
-        *fd = *((int *)S->packet_buff);
-        *size = psize;
+        *fd = *((int *)(S->packet_buff + 2));
+        *size = psize - 4;
 
+        success = 1;
 
         return (S->packet_buff + sizeof(int) + sizeof(unsigned short));
 }
@@ -88,8 +99,8 @@ const char *socket_pull(int *fd, int *size)
 int socket_send(int fd, unsigned char *buff, int size)
 {
         char *b = (char *)malloc(size + sizeof(int) + sizeof(unsigned short));
-        *((int *)b) = fd;
-        *((unsigned short *)(b + sizeof(int))) = (unsigned short)size;
+        *((int *)(b + 2)) = fd;
+        *((unsigned short *)b) = ntohs((unsigned short)size + 4);
 
         memcpy(b + 6, buff, size);
 

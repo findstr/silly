@@ -6,6 +6,8 @@
 
 #include "socket.h"
 
+static int success = 0;
+
 struct socket {
         int fd;
         int packet_len;
@@ -36,16 +38,19 @@ void socket_exit()
 static int 
 _align_socket()
 {
-        if (S->packet_len <= 6)
+        if (success == 0)
                 return 0;
 
-        int psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
+        success = 0;
 
-        psize = ntohs(psize);
-        if (S->packet_len >= psize + 6) {
-                int more = S->packet_len - psize - sizeof(int) - sizeof(unsigned short);
+        if (S->packet_len <= 2)
+                return 0;
+
+        int psize = ntohs(*((unsigned short*)(S->packet_buff + 4))) + 4;
+        if (S->packet_len >= psize + 2) {
+                int more = S->packet_len - psize - sizeof(unsigned short);
                 if (more > 0)
-                        memmove(S->packet_buff, S->packet_buff + psize + sizeof(int) + sizeof(unsigned short), more);
+                        memmove(S->packet_buff, S->packet_buff + psize + sizeof(unsigned short), more);
 
                 S->packet_len = more;
         }
@@ -67,30 +72,33 @@ const char *socket_pull(int *fd, int *size)
 
         if (read_len < 0)
                 return NULL;
-        printf("socket-pull, socket data:%d\n", read_len);
+        printf("gate:socket-pull, socket data:%d\n", read_len);
 
         S->packet_len += read_len;
         if (S->packet_len < sizeof(unsigned short) + sizeof(int))
                 return NULL;
 
-        psize = *((unsigned short*)(S->packet_buff + sizeof(int)));
-        printf("socket-pull, socket data2:%d, psize:%d, packet_size:%d\n", read_len, psize, S->packet_len);
-        if (S->packet_len < psize + sizeof(unsigned short))
+        psize = ntohs(*((unsigned short*)(S->packet_buff)));
+        printf("gate:socket-pull, socket data2:%d, psize:%d, packet_size:%d\n", read_len, psize, S->packet_len);
+        if (S->packet_len < psize + 2)
                 return NULL;
 
-        printf("socket pull**:%d, psize:%d\n", S->packet_len, psize);
+        printf("gate:socket pull**:%d, psize:%d\n", S->packet_len, psize);
 
-        *fd = *((int *)S->packet_buff);
+        *fd = *((int *)(S->packet_buff + 2));
         *size = psize;
 
-        return (S->packet_buff + sizeof(int));
+        *((unsigned short*)(S->packet_buff + 4)) = htons(psize - 4);
+
+        success = 1;
+        return (S->packet_buff + 4);
 }
 
 int socket_send(int fd, unsigned char *buff, int size)
 {
         char *b = (char *)malloc(size + sizeof(int) + sizeof(unsigned short));
         *((int *)b) = fd;
-        *((unsigned short *)(b + sizeof(int))) = (unsigned short)size;
+        *((unsigned short *)(b + sizeof(int))) = htons((unsigned short)size + 4);
 
         memcpy(b + 6, buff, size);
 

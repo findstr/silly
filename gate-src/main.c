@@ -20,9 +20,9 @@ int main()
 
         for (;;) {
                 int i;
-                buff = server_read(svr_tbl[0], &fd);
+                unsigned short psize;
+                buff = server_read(svr_tbl[0], &fd, &psize);
                 if (buff) {
-                        unsigned short psize = *((unsigned short*)buff);
                         printf("---gate, fd:%d,send:%d\n", fd, psize);
                         for (i = 0; i < psize; i++)
                                 printf("%c", buff[i + 2]);

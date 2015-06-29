@@ -200,8 +200,7 @@ const char *ppoll_pull(int *socket_fd)
                 if (err > 0 && (c->packet_len + err) > 2) {
                         psize = ntohs(*(unsigned short *)c->packet_buff);
                         c->packet_len += err;
-                        if (c->packet_len >= psize + sizeof(psize)) {
-                                *(unsigned short *)c->packet_buff = psize;
+                        if (c->packet_len >= psize + 2) {
                                 *socket_fd = c->fd;
                                 P->curr_conn = c;
                                 return c->packet_buff;
@@ -226,7 +225,7 @@ void ppoll_push()
         assert(P->curr_conn);
         c = P->curr_conn;
 
-        psize = *(unsigned short *)c->packet_buff;
+        psize = ntohs(*(unsigned short *)c->packet_buff);
 
         more = c->packet_len - psize - 2;
         printf("push-->data len:%d\n", more);
@@ -239,8 +238,7 @@ void ppoll_push()
 
 int ppoll_send(int fd, char *buff)
 {
-       unsigned short len = *((unsigned short *)buff);
-       *((unsigned short *)buff) = htons(len);
+       unsigned short len = ntohs(*((unsigned short *)buff));
 
        send(fd, buff, len + 2, 0);
 
