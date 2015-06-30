@@ -9,7 +9,9 @@ int ppoll_listen(int port);
 const char *ppoll_pull(int *fd);
 void ppoll_push();
 
-int ppoll_send(int fd, char *buff);
+int ppoll_addsocket(int fd);
+
+int ppoll_send(int fd, const char *buff);
 
 
 #endif

@@ -6,8 +6,6 @@ struct server;
 struct server *server_create();
 void server_free(struct server *S);
 
-int server_send(struct server *S, int fd, const char *buff);
-const char *server_read(struct server *S, int *fd, int *size);
-
+int server_getfd(struct server *S);
 
 #endif

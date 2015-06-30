@@ -8,7 +8,6 @@
 #include <signal.h>
 
 #include "server.h"
-#include "socket.h"
 
 struct server {
         int fd;
@@ -43,7 +42,6 @@ struct server *server_create()
                 memset(S, 0, sizeof(*S));
                 S->fd = fd[0];
                 S->pid = child;
-                socket_init(S->fd);
                 return S;
         } else {                        //child
                 close(fd[0]);
@@ -73,31 +71,10 @@ void server_free(struct server *S)
         return ;
 }
 
-int server_send(struct server *S, int fd, const char *buff)
+int server_getfd(struct server *S)
 {
-        unsigned short psize = ntohs(*((unsigned short *)buff));
-        unsigned short dsize = psize + sizeof(psize);
-        char *b = (char *)malloc(sizeof(int) + dsize);
-
-        printf("gate:server-send:%d\n", psize);
-
-        *((unsigned short*)b) = htons(psize + 4);
-        *((int *)(b + 2)) = fd;
-        memcpy(b + 6, buff + 2, psize);
-
-        dsize += sizeof(fd);
-
-        printf("gate:server-send:%x, %d\n",*((unsigned short*)b), dsize);
-
-        //TODO:maybe interrupt it by signal
-        send(S->fd, b, dsize, 0);
-
-        return 0;
+        return S->fd;
 }
 
-const char *server_read(struct server *S, int *fd, int *size)
-{
-        return socket_pull(fd, &size);
-}
 
 

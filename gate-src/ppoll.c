@@ -235,8 +235,12 @@ void ppoll_push()
         c->packet_len = more;
 }
 
+int ppoll_addsocket(int fd)
+{
+        return _add_socket(fd);
+}
 
-int ppoll_send(int fd, char *buff)
+int ppoll_send(int fd, const char *buff)
 {
        unsigned short len = ntohs(*((unsigned short *)buff));
 
