@@ -21,7 +21,7 @@
 
 #include "sock.h"
 
-int main()
+int main(int argc, char *argv[])
 {
         int err;
         int sockfd;
@@ -29,14 +29,18 @@ int main()
         char buff[1024];
         char sbuff[1024];
 
+        if (argc == 1) {
+                printf("USAGE <client> <ip>\n");
+                return 0;
+        }
+
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
         bzero(&addr, sizeof(addr));
 
         addr.sin_family = AF_INET;
         addr.sin_port = htons(8989);
-        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-        //inet_pton(AF_INET, "192.155.83.65", &addr.sin_addr);
+        inet_pton(AF_INET, argv[1], &addr.sin_addr);
 
         err = connect(sockfd, (struct sockaddr *)&addr, sizeof(addr));
         if (err < 0) {
@@ -54,7 +58,7 @@ int main()
                 memset(sbuff, 0, sizeof(sbuff));
                 unsigned short len;
                 socket_read(sockfd, (char *)&len, sizeof(len));
-                len = ntohs(len);
+                len = htons(len);
                 printf("client:get data:%d...\n", len);
                 socket_read(sockfd, sbuff, len);
                 printf("client:...\n");
