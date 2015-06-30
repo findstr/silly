@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
                 memset(sbuff, 0, sizeof(sbuff));
                 unsigned short len;
                 socket_read(sockfd, (char *)&len, sizeof(len));
-                len = htons(len);
+                len = ntohs(len);
                 printf("client:get data:%d...\n", len);
                 socket_read(sockfd, sbuff, len);
                 printf("client:...\n");
