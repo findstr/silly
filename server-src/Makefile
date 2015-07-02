@@ -3,18 +3,23 @@ LD = gcc
 CCFLAG = -g -I ../lua53/ -Wall
 LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua
 BUILD_PATH = ..
+LUALIB_SRC = ../lualib-src
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 TARGET = server
 SRC = main.c socket.c
 
-all:$(BUILD_PATH)/$(TARGET) $(BUILD_PATH)/$(TARGET).so
+all:$(BUILD_PATH)/$(TARGET) $(BUILD_PATH)/$(TARGET).so $(BUILD_PATH)/crypt.so
 
 $(BUILD_PATH)/$(TARGET):$(OBJS)
 	$(LD) -o $@ $^ $(LDFLAG)
 
 $(BUILD_PATH)/$(TARGET).so:lua-server.c
 	gcc $(CCFLAG) -o $@ $< --share -fPIC
+
+$(BUILD_PATH)/crypt.so: $(LUALIB_SRC)/lua-crypt.c $(LUALIB_SRC)/lsha1.c
+	gcc $(CCFLAG) -o $@ $^ --share -fPIC
+
 
 -include $(SRC:.c=.d)
 
