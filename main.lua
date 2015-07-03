@@ -1,6 +1,6 @@
 local server = require("server")
 local crypt = require("crypt")
-
+local json = require("json")
 local CMD = {}
 
 local usr
@@ -8,9 +8,8 @@ local pwd
 
 
 function CMD.register(fd, data) 
-        local _, r, _, u, _, p = data:match('"(%w+)":"(%w+)","(%w+)":"(%w+)","(%w+)":"(%w+)"')
-        usr = u
-        pwd = p
+        usr = data.user
+        pwd = data.pwd
         server.send(fd, "I receive it")
 end
 
@@ -33,8 +32,8 @@ while true do
         local fd, data = server.pull()
         if (data) then
                 print("receive data:", data)
-                local _, request = data:match('"(%w+)":"(%w+)"')
-                assert(CMD[request](fd, data))
+                local t = json.decode(data)
+                assert(CMD[t.cmd](fd, t))
                 --[[
                 print("---fd:", fd);
                 print("---data:", data);
