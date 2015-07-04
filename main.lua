@@ -7,10 +7,10 @@ local usr
 local pwd
 
 
-function CMD.register(fd, data) 
+function CMD.register(fd, data, str) 
         usr = data.user
         pwd = data.pwd
-        server.send(fd, "I receive it")
+        server.send(fd, "I receive it" .. str)
 end
 
 
@@ -33,11 +33,7 @@ while true do
         if (data) then
                 print("receive data:", data)
                 local t = json.decode(data)
-                assert(CMD[t.cmd](fd, t))
-                --[[
-                print("---fd:", fd);
-                print("---data:", data);
-                server.send(fd, "i have receive:" .. data)
-                ]]--
+                assert(CMD[t.cmd])(fd, t, data)
+                --server.send(fd, "i have receive:" .. data)
         end
 end
