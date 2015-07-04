@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -33,6 +34,8 @@ int main(int argc, char *argv[])
         int size;
         lua_State *L = luaL_newstate();
         luaL_openlibs(L);
+
+        srand(time(NULL));
 
         if (_check_arg(argc, argv) < 0)
                 return -1;
