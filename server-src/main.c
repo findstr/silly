@@ -3,15 +3,16 @@
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <pthread.h>
 #include <sys/socket.h>
 
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
 
-#include "socket.h"
-
-static int fd;
+#include "event.h"
+#include "timer.h"
 
 static int
 _check_arg(int argc, char *argv[])
@@ -27,11 +28,24 @@ _check_arg(int argc, char *argv[])
         return 0;
 }
 
+static void *
+_timer(void *arg)
+{
+        for (;;) {
+                timer_dispatch();
+                usleep(1000);
+        }
+
+        return NULL;
+
+}
+
 int main(int argc, char *argv[])
 {
         int fd;
-        const char *buff;
-        int size;
+        int err;
+        pthread_t ntid;
+
         lua_State *L = luaL_newstate();
         luaL_openlibs(L);
 
@@ -41,15 +55,37 @@ int main(int argc, char *argv[])
                 return -1;
 
         fd = strtoul(argv[1], NULL, 0);
-        socket_init(fd);
-        
-#if 1
+
+        err = event_init();
+        if (err < 0)
+                return err;
+
+        err = timer_init();
+        if (err < 0)
+                return err;
+
+        event_add_gatefd(fd);
+
+        err = pthread_create(&ntid, NULL, _timer, NULL);
 
         if (luaL_loadfile(L, "main.lua") || lua_pcall(L, 0, 0, 0)) {
                 fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
 
                 return -1;
         }
+        
+        for (;;) {
+                event_dispatch();
+        }
+
+
+#if 0
+
+        socket_init(fd);
+        
+#if 1
+
+        
 #else   
         for (;;) {
                 int i;
@@ -62,5 +98,8 @@ int main(int argc, char *argv[])
                 }
         }
 #endif
+#endif
+        event_exit();
+
         return 0;
 }

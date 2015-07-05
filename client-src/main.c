@@ -56,6 +56,7 @@ int main(int argc, char *argv[])
                 printf("send:%d\n", (int)strlen(buff) + 2);
                 socket_write(sockfd, sbuff, strlen(buff) + 2); 
                 memset(sbuff, 0, sizeof(sbuff));
+#if 0
                 unsigned short len;
                 socket_read(sockfd, (char *)&len, sizeof(len));
                 len = ntohs(len);
@@ -66,6 +67,7 @@ int main(int argc, char *argv[])
                         printf("%c", sbuff[i]);
                 }
                 printf("\n");
+#endif
         }
 
         close(sockfd);

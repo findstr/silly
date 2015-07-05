@@ -1,13 +1,13 @@
 CC = gcc
 LD = gcc
 CCFLAG = -g -I ../lua53/ -Wall
-LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua
+LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua -lrt
 BUILD_PATH = ..
 LUALIB_SRC = ../lualib-src
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 TARGET = server
-SRC = main.c socket.c
+SRC = main.c event.c timer.c
 
 all:$(BUILD_PATH)/$(TARGET) $(BUILD_PATH)/$(TARGET).so $(BUILD_PATH)/crypt.so
 
