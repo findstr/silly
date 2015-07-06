@@ -8,9 +8,9 @@ end)
 function timer()
         
         print("----timer----------")
-        server.addtimer(5000, timer)
+        server.addtimer(500, timer)
 end
 
-server.addtimer(5000, timer)
+server.addtimer(500, timer)
 
 

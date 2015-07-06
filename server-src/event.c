@@ -130,9 +130,18 @@ int event_add_gatefd(int fd)
 int event_add_handler(const struct event_handler *handler)
 {
         int err;
-        err = write(EVENT->event_send_fd, handler, sizeof(*handler));
-        printf("----event_add_handler:%d, %d, %d\n", EVENT->event_send_fd, err, errno);
-        return 0;
+        for (;;) {
+                err = write(EVENT->event_send_fd, handler, sizeof(*handler));
+                if (err == -1) {
+                        if (errno == EINTR)
+                                continue;
+                        fprintf(stderr, "add handler error\n");
+                        return -1;
+                }
+                assert(err == sizeof(*handler));
+                return 0;
+        }
+        return -1;
 }
 
 int event_set_datahandler(int (*cb)(void *ud, enum event_ptype type, int fd, const char *buff, int size), void *ud)
@@ -184,7 +193,6 @@ _execute_handler(struct event *E)
 
         for (;;) {
                 err = read(E->event_recv_fd, &e, sizeof(e));
-                printf("---execute_handler:%d\n", err);
                 if (err < 0) {
                         if (errno == EINTR)
                                 continue;
@@ -219,7 +227,6 @@ int event_dispatch()
                 if (c)
                         _del_socket(EVENT, c);
         }
-        printf("---------dispatch--------\n");
         if (c == NULL) {  //event_recv_fd
                 _execute_handler(EVENT);
         } else if (c->fd == EVENT->gate_fd) {   //event from gate

@@ -87,20 +87,23 @@ int timer_dispatch()
         t = TIMER->list;
         last = TIMER->list;
         while (t) {
-                if (t->expire >= curr) {
+                if (t->expire <= curr) {
                         struct timer_node *tmp;
                         struct event_handler e;
                         e.ud = t->ud;
                         e.cb = t->cb;
                         event_add_handler(&e);
-                        last->next = t->next;
+                        if (last == TIMER->list)
+                                TIMER->list = t->next;
+                        else
+                                last->next = t->next;
                         tmp = t;
                         t = t->next;
                         free(tmp);
-                }
-                
-                if (t)
+                } else {
+                        last = t;
                         t = t->next;
+                }
         }
 
         __sync_lock_release(&TIMER->lock);
