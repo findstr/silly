@@ -15,9 +15,6 @@ _socket_recv_handler(void *ud, enum event_ptype type, int fd, const char *data, 
         lua_pushlightuserdata(L, _socket_recv_handler);
         lua_gettable(L, LUA_REGISTRYINDEX);
 
-        printf("-----socket_recv_handler\n");
-
-
         lua_pushinteger(L, type);
         lua_pushinteger(L, fd);
         assert(data);

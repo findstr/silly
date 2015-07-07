@@ -25,7 +25,9 @@ int main()
         for (;;) {
                 buff = ppoll_pull(&fd);
                 if (buff == NULL && fd != -1) {
-                        printf("gate:new connect:%d\n", fd);
+                        *((int *)(pbuff + 2)) = fd;
+                        *((unsigned short *)pbuff) = 4;
+                        ppoll_send(server_getfd(svr_tbl[0]), pbuff);
                 } else if (buff) {
                         if (fd == server_getfd(svr_tbl[0])) {
                                 unsigned short psize = *(unsigned short *)buff;

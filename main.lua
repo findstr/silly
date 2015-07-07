@@ -1,16 +1,28 @@
-local server = require("server")
---[[
-server.recv(function (type, fd, data)
-        print("--type:", type, "---fd:", fd, "---data:", data);
-end)
-]]--
+local socket= require("socket")
+local timer = require("timer")
 
-function timer()
-        
-        print("----timer----------")
-        server.addtimer(500, timer)
+function timer_handler()
+        print("heatbeat~")
+        timer.add(1000, timer_handler)
 end
 
-server.addtimer(500, timer)
+timer.add(1000, timer_handler)
+
+
+local CMD = {}
+
+function CMD.connect(fd)
+        print("---new connect:", fd, "---")
+        socket.read(fd, function(data)
+                print("---fd", fd, "--data", data)
+        end)
+end
+
+function CMD.disconnect(fd)
+        print("----disconnect---", fd)
+end
+
+socket.register(CMD)
+
 
 
