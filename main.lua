@@ -6,8 +6,9 @@ function timer_handler()
         timer.add(1000, timer_handler)
 end
 
-timer.add(1000, timer_handler)
+--timer.add(1000, timer_handler)
 
+--[[
 
 local CMD = {}
 
@@ -24,5 +25,11 @@ end
 
 socket.register(CMD)
 
+]]--
 
+local fd = socket.connect("127.0.0.1", 6379)
 
+socket.write(socket.CDATA, fd, "PING\r\n\r")
+socket.read(fd, function (data) 
+        print (data)
+end, socket.CDATA)

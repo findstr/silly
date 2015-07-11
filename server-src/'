@@ -30,15 +30,12 @@ _socket_recv_handler(void *ud, enum event_ptype type, int fd, const char *data, 
 static int
 _socket_connect(lua_State *L)
 {
-        int fd;
         const char *ip = luaL_checkstring(L, 1);
         int port = luaL_checkinteger(L, 2);
 
-        fd = event_connect(ip, port);
-        
-        lua_pushinteger(L, fd);
+        err = event_connect(ip, port);
 
-        return 1;
+        lua_pushinteger(L, err)
 }
 
 static int
@@ -55,22 +52,18 @@ static int
 _socket_send(lua_State *L)
 {
         int fd;
-        int type;
         size_t size;
         const char *data;
 
-        type = luaL_checkinteger(L, 1);
-        fd = luaL_checkinteger(L, 2);
-        data = luaL_checklstring(L, 3, &size);
+        fd = luaL_checkinteger(L, 1);
+        data = luaL_checklstring(L, 2, &size);
         if (data == NULL)
-                luaL_argerror(L, 3, "'data' should be a lstring\n");
+                luaL_argerror(L, 2, "'data' should be a lstring\n");
 
         if (fd < 0)
-                luaL_argerror(L, 2, "'fd' should be a valid socket fd\n");
+                luaL_argerror(L, 1, "'fd' should be a valid socket fd\n");
 
-        event_socketsend(type, fd, data, size);
-
-        lua_pop(L, 3);
+        event_socketsend(EVENT_GDATA, fd, data, size);
 
         return 0;
 }

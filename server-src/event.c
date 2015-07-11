@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
 
@@ -116,9 +117,27 @@ void event_exit()
         return ;
 }
 
-int event_connect(const char *addr, int port)
+int event_connect(const char *ip, int port)
 {
-        return 0;
+        int err;
+        int sockfd;
+        struct sockaddr_in addr;
+        
+        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, ip, &addr.sin_addr);
+
+        err = connect(sockfd, (struct sockaddr *)&addr, sizeof(addr));
+        if (err < 0) {
+                fprintf(stderr, "connect error:%d\n", errno);
+                return -1;
+        }
+
+        _add_socket(EVENT, sockfd);
+
+        return sockfd;
+
 }
 
 int event_add_gatefd(int fd)
@@ -151,6 +170,30 @@ int event_set_datahandler(int (*cb)(void *ud, enum event_ptype type, int fd, con
         return 0;
 }
 
+static const char *
+line_end(const char *src)
+{
+        while (*src != '\r' && *src)
+                src++;
+
+        if (*src == '\r')
+                return (src + 2);
+
+        return NULL;
+}
+
+static void
+_align_szsocket(struct conn *c)
+{
+        const char *end = line_end(c->packet_buff);
+        if (end == NULL)
+                return;
+
+        memmove(c->packet_buff, end, c->packet_len - (end - c->packet_buff));
+
+        return ;
+}
+
 static int 
 _align_socket(struct conn *c)
 {
@@ -169,18 +212,21 @@ _align_socket(struct conn *c)
 
 int event_socketsend(enum event_ptype type, int fd, const char *buff, int size)
 {
-        assert(type == EVENT_GDATA);
-        char *b = (char *)malloc(size + sizeof(int) + sizeof(unsigned short));
-        *((int *)(b + 2)) = fd;
-        *((unsigned short *)b) = ntohs((unsigned short)size + 4);
+        if (type == EVENT_GDATA) {
+                char *b = (char *)malloc(size + sizeof(int) + sizeof(unsigned short));
+                *((int *)(b + 2)) = fd;
+                *((unsigned short *)b) = ntohs((unsigned short)size + 4);
 
-        memcpy(b + 6, buff, size);
+                memcpy(b + 6, buff, size);
 
-        printf("***server send:%d*****\n", size + 6);
+                printf("***server send:%d*****\n", size + 6);
 
-        //TODO:need repeat send, becuase this can be interrupt
-        send(EVENT->gate_fd, b, size + 6, 0);
-
+                //TODO:need repeat send, becuase this can be interrupt
+                send(EVENT->gate_fd, b, size + 6, 0);
+                free(b);
+        } else {
+                send(fd, buff, size, 0);
+        }
         return 0;
 }
 
@@ -233,10 +279,11 @@ int event_dispatch()
                 _align_socket(c);
                 char *buff = c->packet_buff + c->packet_len;
                 int len = recv(c->fd, buff, PACKET_SIZE - c->packet_len, 0);
-                if (len < 0) {
+                if (len == 0 || (len == -1 && errno != EINTR))
                         _del_socket(EVENT, c);
+                
+                if (len <= 0)
                         return -1;
-                }
 
                 c->packet_len += len;
                 if (c->packet_len > 2) {
@@ -248,7 +295,18 @@ int event_dispatch()
                         }
                 }
         } else {                                //event from connection
-                assert(0);
+                _align_szsocket(c);
+                char *buff = c->packet_buff + c->packet_len;
+                int len = recv(c->fd, buff, PACKET_SIZE - c->packet_len, 0);
+                if (len == 0 || (len == -1 && errno != EINTR))
+                        _del_socket(EVENT, c);
+
+                if (len <= 0)
+                        return -1;
+                const char *end = line_end(c->packet_buff);
+                if (end == NULL)
+                        return -1;
+                EVENT->data_cb(EVENT->data_ud, EVENT_CDATA, c->fd, c->packet_buff, end - buff);
         }
 
         return 0;
