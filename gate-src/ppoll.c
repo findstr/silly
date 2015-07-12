@@ -174,7 +174,7 @@ const char *ppoll_pull(int *socket_fd)
         if (P->event_index == P->event_cnt) {
                 P->event_cnt = epoll_wait(P->epoll_fd, e_buff, EPOLL_SIZE, -1);
                 P->event_index = 0;
-                printf("after wait:%d\n", P->listen_fd);
+                //printf("after wait:%d\n", P->listen_fd);
         }
 
 
@@ -228,7 +228,7 @@ void ppoll_push()
         psize = ntohs(*(unsigned short *)c->packet_buff);
 
         more = c->packet_len - psize - 2;
-        printf("push-->data len:%d\n", more);
+        //printf("push-->data len:%d\n", more);
         if (more > 0)
                 memmove(c->packet_buff, c->packet_buff + psize + 2, more);
 

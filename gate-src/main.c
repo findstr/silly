@@ -26,7 +26,7 @@ int main()
                 buff = ppoll_pull(&fd);
                 if (buff == NULL && fd != -1) {
                         *((int *)(pbuff + 2)) = fd;
-                        *((unsigned short *)pbuff) = 4;
+                        *((unsigned short *)pbuff) = htons(4);
                         ppoll_send(server_getfd(svr_tbl[0]), pbuff);
                 } else if (buff) {
                         if (fd == server_getfd(svr_tbl[0])) {
@@ -44,7 +44,7 @@ int main()
                         ppoll_push();
                 }
                 
-                printf("gate:hello, fd:%d\n", fd);
+                //printf("gate:hello, fd:%d\n", fd);
         }
 
         return 0;
