@@ -232,7 +232,8 @@ _pop_packet(lua_State *L)
                 //TODO:when implete the cryption module, will use the lua_pushlightuserdata funciton,
                 //the lua_pushlstring function will be called by cryption module
 
-                lua_pushlstring(L, pk->buff, pk->size);         
+                lua_pushlstring(L, pk->buff, pk->size);
+                silly_free(pk->buff);
         }
 
         return 2;
