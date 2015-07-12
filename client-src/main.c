@@ -21,13 +21,44 @@
 
 #include "sock.h"
 
+char sbuff[1024];
+int sockfd;
+
+static void
+_send_cmd(const char *cmd)
+{
+        *(unsigned short*)sbuff = htons(strlen(cmd));
+        memcpy(sbuff + 2, cmd, strlen(cmd));
+        printf("send:%d\n", (int)strlen(cmd) + 2);
+        socket_write(sockfd, sbuff, strlen(cmd) + 2); 
+}
+
+static void
+_recv_cmd()
+{
+        unsigned short len;
+        socket_read(sockfd, (char *)&len, sizeof(len));
+        len = ntohs(len);
+        printf("client:get data:%d...\n", len);
+        socket_read(sockfd, sbuff, len);
+        sbuff[len] = 0;
+        printf("cmd->response:%s\n", sbuff);
+}
+
+static void
+_login()
+{
+        const char *cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r";
+
+        _send_cmd(cmd);
+        _recv_cmd();
+}
+
 int main(int argc, char *argv[])
 {
         int err;
-        int sockfd;
         struct sockaddr_in addr;
         char buff[1024];
-        char sbuff[1024];
 
         if (argc == 1) {
                 printf("USAGE <client> <ip>\n");
@@ -49,27 +80,10 @@ int main(int argc, char *argv[])
         }
  
         for (;;) {
-                int i;
                 fgets(buff, 1024, stdin);
-                *(unsigned short*)sbuff = htons(strlen(buff));
-                memcpy(sbuff + 2, buff, strlen(buff));
-                printf("send:%d\n", (int)strlen(buff) + 2);
-                socket_write(sockfd, sbuff, strlen(buff) + 2); 
-                memset(sbuff, 0, sizeof(sbuff));
-#if 0
-                unsigned short len;
-                socket_read(sockfd, (char *)&len, sizeof(len));
-                len = ntohs(len);
-                printf("client:get data:%d...\n", len);
-                socket_read(sockfd, sbuff, len);
-                printf("client:...\n");
-                for (i = 0; i < len; i++) {
-                        printf("%c", sbuff[i]);
-                }
-                printf("\n");
-#endif
+                if (strncmp(buff, "login", 5) == 0)
+                        _login();
         }
-
         close(sockfd);
 
         return 0;

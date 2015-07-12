@@ -1,7 +1,7 @@
 CC = gcc
 LD = gcc
 CCFLAG = -g -I ../lua53/ -Wall
-LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua -lrt
+LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua -lrt -lpthread
 BUILD_PATH = ..
 LUALIB_SRC = ../lualib-src
 OBJS = $(patsubst %.c,%.o,$(SRC))

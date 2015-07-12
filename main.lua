@@ -1,35 +1,63 @@
 local socket= require("socket")
 local timer = require("timer")
+local json = require("json")
+local game = require("game")
+local usrmgr = require("usrmgr")
 
-function timer_handler()
-        print("heatbeat~")
-        timer.add(1000, timer_handler)
-end
-
---timer.add(1000, timer_handler)
-
---[[
+local conn_process = {}
 
 local CMD = {}
 
-function CMD.connect(fd)
-        print("---new connect:", fd, "---")
-        socket.read(fd, function(data)
-                print("---fd", fd, "--data", data)
-        end)
+function CMD.auth(fd, cmd)
+        local res = {}
+        local valid
+
+        valid = usrmgr.reg(cmd.name)
+        
+        res.cmd="auth"
+        if (valid == true) then
+                res.uid = fd;
+                conn_process[fd].handler = game.handler
+        else
+                res.uid = -1;
+        end
+
+        print("auth result:", res.uid)
+
+        local sz =json.encode(res)
+
+        socket.write(socket.GDATA, fd, sz)
 end
 
-function CMD.disconnect(fd)
+function CMD.message(fd, cmd)
+        if conn_process[fd].handler then
+                conn_process[fd].handler(fd, cmd)
+        else
+                --kick it
+        end
+end
+
+
+local SOCKET = {}
+
+function SOCKET.connect(fd)
+        print("---new connect:", fd)
+        conn_process[fd] = {}
+        socket.read(fd, function(fd, data)
+                local cmd = json.decode(data)
+                local handler = CMD[cmd.cmd]
+                if handler then
+                        handler(fd, cmd)
+                else
+                        CMD.message(fd, cmd)
+                end
+        end, socket.GDATA)
+end
+
+function SOCKET.disconnect(fd)
+        conn_process[fd] = nil
         print("----disconnect---", fd)
 end
 
-socket.register(CMD)
+socket.register(SOCKET)
 
-]]--
-
-local fd = socket.connect("127.0.0.1", 6379)
-
-socket.write(socket.CDATA, fd, "PING\r\n\r")
-socket.read(fd, function (data) 
-        print (data)
-end, socket.CDATA)
