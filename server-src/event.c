@@ -284,14 +284,14 @@ int event_dispatch()
                 
                 if (len <= 0)
                         return -1;
-
                 c->packet_len += len;
                 if (c->packet_len > 2) {
                         int psize = ntohs(*((unsigned short *)buff));
-                        if (c->packet_len >= psize && EVENT->data_cb) {
+                        //printf("---server:psize:%d, %d, %p\n", c->packet_len, psize, EVENT->data_cb);
+                        if (c->packet_len >= (psize + 2) && EVENT->data_cb) {
                                 int fd;
                                 fd = *((int *)(c->packet_buff + 2));
-                                EVENT->data_cb(EVENT->data_ud, EVENT_GDATA, fd, c->packet_buff + 4, psize);
+                                EVENT->data_cb(EVENT->data_ud, EVENT_GDATA, fd, c->packet_buff + 6, psize - 4);
                         }
                 }
         } else {                                //event from connection
