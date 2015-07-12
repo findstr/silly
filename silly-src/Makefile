@@ -9,12 +9,15 @@ OBJS = $(patsubst %.c,%.o,$(SRC))
 TARGET = silly
 SRC = main.c silly_socket.c silly_queue.c silly_server.c silly_worker.c
 
-all:$(BUILD_PATH)/$(TARGET) server.so
+all:$(BUILD_PATH)/$(TARGET) server.so rawpacket.so
 
 $(BUILD_PATH)/$(TARGET):$(OBJS)
 	$(LD) -o $@ $^ $(LDFLAG)
 
 server.so: lualib-server.c
+	$(CC) $(CCFLAG) -o $@ $< --share -fPIC
+
+rawpacket.so: lualib-rawpacket.c
 	$(CC) $(CCFLAG) -o $@ $< --share -fPIC
 
 -include $(SRC:.c=.d)
@@ -29,4 +32,4 @@ server.so: lualib-server.c
 	$(CC) $(CCFLAG) -c -o $@ $<
 
 clean:
-	-rm $(SRC:.c=.d) $(SRC:.c=.o) server.so silly
+	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so silly

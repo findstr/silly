@@ -315,7 +315,7 @@ void silly_socket_close(int sid)
         return ;
 }
 
-int silly_socket_send(int sn, char *buff,  int size)
+int silly_socket_send(int sid, char *buff,  int size)
 {
 
         return 0;
@@ -351,13 +351,24 @@ _forward_msg(struct silly_socket *s, struct conn *c)
         } else if (len == 0) {
                 _socket_close(s, _conn_to_sid(s, c));
         } else {
+                assert(c->workid >= 0);
+                
+                struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
+                msg->type = SILLY_MESSAGE_SOCKET;
+                msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
+                msg->msg.socket->type = SILLY_SOCKET_DATA;
+                msg->msg.socket->sid = _conn_to_sid(s, c);
+                msg->msg.socket->data_size = len;
+                msg->msg.socket->data = buff;
+                
+                silly_server_push(c->workid, msg);         
+
                 //to predict the pakcet size
                 if (len == c->alloc_size)
                         c->alloc_size *= 2;
                 else if (len < c->alloc_size && c->alloc_size > MIN_READBUFF_LEN)
                         c->alloc_size = (len / MIN_READBUFF_LEN + 1) * MIN_READBUFF_LEN;
-                
-                fprintf(stdout, "_forward_msg:%d:%s\n", len, buff + 2);
+        
         }
 
         return ;
