@@ -21,7 +21,7 @@ _socket_recv_handler(void *ud, enum event_ptype type, int fd, const char *data, 
         lua_pushlstring(L, data, size);
 
         err = lua_pcall(L, 3, 0, 0);
-        if (err < 0)
+        if (err != 0)
                 fprintf(stderr, "socket_recv call failes:%s\n", lua_tostring(L, -1));
 
         return 0;
@@ -89,7 +89,7 @@ _timer_handler(void *ud)
         lua_gettable(t->L, LUA_REGISTRYINDEX);
 
         err = lua_pcall(t->L, 0, 0, 0);
-        if (err < 0)
+        if (err != 0)
                 fprintf(stderr, "timer handler call failes:%s\n", lua_tostring(t->L, -1));
 
         free(ud);
