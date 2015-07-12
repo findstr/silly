@@ -17,6 +17,7 @@ function CMD.auth(fd, cmd)
         res.cmd="auth"
         if (valid == true) then
                 res.uid = fd;
+                game.enter(fd)
                 conn_process[fd].handler = game.handler
         else
                 res.uid = -1;

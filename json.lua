@@ -47,10 +47,11 @@ function json.encode(tbl)
 end
 
 ------------test--------
+--[[
 local tbl = {room={{cmd="auth1", uid = "dafas"},
                 {cmd="auth2", sid = "123"}}}
 
 local sz = json.encode(tbl)
 print(sz)
-
+]]--
 return json

@@ -54,6 +54,25 @@ _login()
         _recv_cmd();
 }
 
+static void
+_room_create()
+{
+        const char *cmd = "{\"cmd\":\"room_create\", \"uid\":\"1\"}\r\n\r";
+
+        _send_cmd(cmd);
+        _recv_cmd();
+}
+
+
+static void
+_room_list()
+{
+        const char *cmd = "{\"cmd\":\"room_list\", \"page_index\":\"1\"}\r\n\r";
+
+        _send_cmd(cmd);
+        _recv_cmd();
+}
+
 int main(int argc, char *argv[])
 {
         int err;
@@ -83,6 +102,10 @@ int main(int argc, char *argv[])
                 fgets(buff, 1024, stdin);
                 if (strncmp(buff, "login", 5) == 0)
                         _login();
+                else if (strncmp(buff, "roomcreate", 10) == 0)
+                        _room_create();
+                else if (strncmp(buff, "roomlist", 8) == 0)
+                        _room_list();
         }
         close(sockfd);
 
