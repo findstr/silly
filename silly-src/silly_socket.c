@@ -317,7 +317,25 @@ void silly_socket_close(int sid)
 
 int silly_socket_send(int sid, char *buff,  int size)
 {
+        int err;
+        assert(sid >= 0);
+        struct conn *c = &SOCKET->conn_buff[sid];
 
+        for (;;) {
+                err = send(c->fd, buff, size, 0);
+                if (err == size) {
+                        break;
+                } else if (err == 0 || (err == -1 && errno != EAGAIN && errno != EINTR)) {
+                        fprintf(stderr, "_silly_socket_send return:%d, %d, %d\n",sid, err, errno);
+                        _socket_close(SOCKET, sid);
+                        break;
+                } else if (err > 0) {
+                        fprintf(stderr, "_silly_socket_send less\n");
+                        assert(0);
+                }
+        }
+
+        silly_free(buff);
         return 0;
 }
 

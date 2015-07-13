@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 #include <lua.h>
 #include <lauxlib.h>
 
@@ -239,6 +240,27 @@ _pop_packet(lua_State *L)
         return 2;
 }
 
+static int
+_pack_raw(lua_State *L)
+{
+        const char *str;
+        size_t size;
+        char *p;
+
+        str = luaL_checklstring(L, 1, &size);
+        assert(size < (unsigned short)-1);
+
+        p = silly_malloc(size + 2);
+        *(unsigned short *)p = htons(size);
+        memcpy(p + 2, str, size);
+
+        lua_pushlightuserdata(L, p);
+        luaL_getmetatable(L, "silly_message_socket");
+        lua_setmetatable(L, -2);
+        lua_pushinteger(L, size + 2);
+
+        return 2;
+}
 
 int luaopen_rawpacket(lua_State *L)
 {
@@ -246,6 +268,7 @@ int luaopen_rawpacket(lua_State *L)
                 {"create", _create_rawpacket},
                 {"push", _push_rawpacket},
                 {"pop", _pop_packet},
+                {"pack", _pack_raw},
                 {NULL, NULL},
         };
  

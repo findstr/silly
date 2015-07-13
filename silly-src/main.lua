@@ -12,8 +12,11 @@ server.recv(function (msg)
         local sid, data = raw.pop(packet)
         if (sid and data) then
                 print("lua.server.pop", sid, #data, data)
-                for i = 1, #data  do
-                        print (i, data:byte(i))
-                end
+
+                local p, s = raw.pack("helloworld");
+
+                print("lua.send", p, s)
+
+                server.send(sid, p, s);
         end
 end)

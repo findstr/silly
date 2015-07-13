@@ -2,10 +2,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <lua.h>
+#include <lualib.h>
 #include <lauxlib.h>
 
 #include "silly_message.h"
 #include "silly_worker.h"
+#include "silly_socket.h"
+#include "silly_malloc.h"
 
 static void
 _process_socket(lua_State *L, void *m)
@@ -51,10 +54,28 @@ _socket_recv(lua_State *L)
         return 0;
 }
 
+static int
+_socket_send(lua_State *L)
+{
+        int sid;
+        char *buff;
+        int size;
+ 
+        sid = luaL_checkinteger(L, 1);
+        buff = luaL_checkudata(L, 2, "silly_message_socket");
+        size = luaL_checkinteger(L, 3);
+
+        silly_socket_send(sid, buff, size);
+
+
+        return 0;
+}
+
 int luaopen_server(lua_State *L)
 {
         luaL_Reg tbl[] = {
                 {"recv", _socket_recv},
+                {"send", _socket_send},
                 {NULL, NULL},
         };
  
@@ -62,6 +83,7 @@ int luaopen_server(lua_State *L)
 
         luaL_newmetatable(L, "silly_message_socket");
         luaL_newmetatable(L, "silly_message_timer");
+        luaL_newmetatable(L, "silly_socket_packet");
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
         lua_State *m = lua_tothread(L, -1);
@@ -77,5 +99,6 @@ int luaopen_server(lua_State *L)
         lua_pushlightuserdata(L, (void *)w);
         luaL_setfuncs(L, tbl, 1);
         
+
         return 1;
 }
