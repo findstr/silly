@@ -343,6 +343,10 @@ static void
 _wait(struct silly_socket *s)
 {
         s->event_cnt = epoll_wait(s->epoll_fd, s->event_buff, EPOLL_EVENT_SIZE, -1);
+        if (s->event_cnt == -1) {
+                s->event_cnt = 0;
+                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
+        }
         s->event_index = 0;
 }
 
@@ -417,6 +421,9 @@ _process(struct silly_socket *s)
 {
         struct epoll_event *e;
         struct conn *c;
+
+        printf("_process:%d,%d\n", s->event_index, s->event_cnt);
+
         int e_index = s->event_index++;
 
         e = &s->event_buff[e_index];
@@ -455,7 +462,8 @@ int silly_socket_run()
         struct silly_socket *s = SOCKET;
         if (s->event_index == s->event_cnt)
                 _wait(s);
-         _process(s);
+        else
+                _process(s);
 
         return 0;
 }

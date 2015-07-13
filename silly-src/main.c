@@ -3,8 +3,9 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include "silly_server.h"
+#include "silly_timer.h"
 #include "silly_socket.h"
+#include "silly_server.h"
 
 static void *
 _socket(void *arg)
@@ -20,7 +21,7 @@ static void *
 _timer(void *arg)
 {
         for (;;) {
-
+                timer_dispatch();
                 usleep(1000);
         }
 
@@ -42,6 +43,7 @@ _server(void *arg)
 
 int main()
 {
+        timer_init();
         silly_socket_init();
         silly_server_init();
 
@@ -66,8 +68,8 @@ int main()
         pthread_join(pid[2], NULL);
 
         printf("----end-----\n");
-        silly_socket_exit();
         silly_server_exit();
-
+        silly_socket_exit();
+        timer_exit();
         return 0;
 }

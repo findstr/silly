@@ -7,7 +7,7 @@ LUALIB_SRC = ../lualib-src
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 TARGET = silly
-SRC = main.c silly_socket.c silly_queue.c silly_server.c silly_worker.c
+SRC = main.c silly_socket.c silly_queue.c silly_server.c silly_worker.c silly_timer.c
 
 all:$(BUILD_PATH)/$(TARGET) server.so rawpacket.so
 

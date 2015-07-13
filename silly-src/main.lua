@@ -5,7 +5,7 @@ print("hello lua")
 
 local packet = raw.create()
 
-server.recv(function (msg)
+server.socket_recv(function (msg)
         local fd, type = raw.push(packet, msg)
         print("lua.server.push", fd, type)
 
@@ -17,6 +17,14 @@ server.recv(function (msg)
 
                 print("lua.send", p, s)
 
-                server.send(sid, p, s);
+                server.socket_send(sid, p, s);
         end
 end)
+
+local function timer()
+        print("heartbeat~")
+        server.timer_add(1000, timer);
+end
+
+server.timer_add(1000, timer);
+

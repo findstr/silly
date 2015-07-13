@@ -1,14 +1,17 @@
 #include <time.h>
+#include <stdio.h>
 #include <stdlib.h>
 
-#include "event.h"
-#include "timer.h"
+#include "silly_message.h"
+#include "silly_malloc.h"
+#include "silly_server.h"
+#include "silly_timer.h"
 
 struct timer_node {
-        int     expire;
-        void    (*cb)(void *ud);
-        void    *ud;
-        struct timer_node *next;
+        int                     expire;
+        int                     workid;
+        uintptr_t               sig;
+        struct timer_node       *next;
 };
 
 struct timer {
@@ -46,24 +49,25 @@ _getms()
 }
 
 static struct timer_node *
-_new_node(int time, void (*cb)(void *ud), void *ud)
+_new_node(int time, int workid, uintptr_t sig)
 {
         struct timer_node *node = (struct timer_node *)malloc(sizeof(*node));
-        node->cb = cb;
-        node->ud = ud;
+        node->workid = workid;
+        node->sig = sig;
         node->expire = _getms() + time;
 
         return node;
 }
 
 //ms
-int timer_add(int time, void (*cb)(void *ud), void *ud)
+int timer_add(int time, int workid, uintptr_t sig)
 {
-        struct timer_node *n = _new_node(time, cb, ud);
-        if (n == NULL)
+        struct timer_node *n = _new_node(time, workid, sig);
+        if (n == NULL) {
+                fprintf(stderr, "_new_node fail\n");
                 return -1;
+        }
  
-
         while (__sync_lock_test_and_set(&TIMER->lock, 1))
                 ;
 
@@ -73,6 +77,18 @@ int timer_add(int time, void (*cb)(void *ud), void *ud)
         __sync_lock_release(&TIMER->lock);
 
         return 0;
+}
+
+static void
+_push_timer_event(struct timer *t, int workid, uintptr_t sig)
+{
+        struct silly_message *s = (struct silly_message *)silly_malloc(sizeof(*s));
+        s->type = SILLY_MESSAGE_TIMER;
+        s->msg.timer = silly_malloc(sizeof(struct silly_message_timer));
+        s->msg.timer->sig = sig;
+        silly_server_push(workid, s);
+
+        return ;
 }
 
 int timer_dispatch()
@@ -89,10 +105,7 @@ int timer_dispatch()
         while (t) {
                 if (t->expire <= curr) {
                         struct timer_node *tmp;
-                        struct event_handler e;
-                        e.ud = t->ud;
-                        e.cb = t->cb;
-                        event_add_handler(&e);
+                        _push_timer_event(TIMER, t->workid, t->sig);
                         if (last == TIMER->list)
                                 TIMER->list = t->next;
                         else

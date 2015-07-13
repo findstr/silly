@@ -37,6 +37,11 @@ void silly_worker_free(struct silly_worker *w)
         return ;
 }
 
+int silly_worker_getid(struct silly_worker *w)
+{
+        return w->workid;
+}
+
 int silly_worker_push(struct silly_worker *w, struct silly_message *msg)
 {
         return silly_queue_push(w->queue, msg); 
@@ -66,7 +71,7 @@ _process_socket(struct silly_worker *w, struct silly_message_socket *s)
 static void
 _process_timer(struct silly_worker *w, struct silly_message_timer *t)
 {
-        if (w->socket_cb)
+        if (w->timer_cb)
                 w->timer_cb(w->L, t);
         _free_timer_msg(t);
 }

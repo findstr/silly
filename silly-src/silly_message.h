@@ -1,6 +1,8 @@
 #ifndef _SILLY_MESSAGE_H
 #define _SILLY_MESSAGE_H
 
+#include <stdint.h>
+
 enum silly_message_type {
         SILLY_MESSAGE_TIMER     = 1,
         SILLY_MESSAGE_SOCKET    = 2,
@@ -22,7 +24,7 @@ struct silly_message_socket {
 };
 
 struct silly_message_timer {
-        int id;
+        uintptr_t sig;
 };
 
 struct silly_message {

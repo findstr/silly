@@ -9,6 +9,8 @@ typedef struct lua_State lua_State;
 struct silly_worker *silly_worker_create(int workid);
 void silly_worker_free(struct silly_worker *w);
 
+int silly_worker_getid(struct silly_worker *w);
+
 int silly_worker_push(struct silly_worker *w, struct silly_message *msg);
 
 int silly_worker_start(struct silly_worker *w);
