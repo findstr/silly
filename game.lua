@@ -57,6 +57,14 @@ function game.enter(fd)
         usr_pool[fd] = {}
         usr_pool[fd].fd = fd
         usr_pool[fd].handler = game.process
+        usr_pool[fd].kick = nil
+end
+
+function game.kick(fd)
+        if (usr_pool[fd].kick) then
+                usr_pool[fd].kick(fd)
+        end
+        usr_pool[fd] = {}
 end
 
 function game.handler(fd, cmd)

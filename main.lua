@@ -19,6 +19,7 @@ function CMD.auth(fd, cmd)
                 res.uid = fd;
                 game.enter(fd)
                 conn_process[fd].handler = game.handler
+                conn_process[fd].kick = game.kick
         else
                 res.uid = -1;
         end
@@ -56,6 +57,9 @@ function SOCKET.connect(fd)
 end
 
 function SOCKET.disconnect(fd)
+        if conn_process[fd].kick then
+                conn_process[fd].kick(fd)
+        end
         conn_process[fd] = nil
         print("----disconnect---", fd)
 end
