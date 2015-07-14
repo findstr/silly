@@ -8,8 +8,8 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <sys/epoll.h>
 
+#include "socket_poll.h"
 #include "silly_message.h"
 #include "silly_server.h"
 #include "silly_malloc.h"
@@ -40,9 +40,9 @@ struct conn {
 };
 
 struct silly_socket {
-        int                     epoll_fd;
-        //epoll buff
-        struct epoll_event      *event_buff;
+        int                     sp_fd;
+        
+        sp_event_t                *event_buff;
         int                     event_index;
         int                     event_cnt;
         
@@ -122,13 +122,12 @@ _release_conn(struct conn *c)
 int silly_socket_init()
 {
         int err;
-        int epoll_fd;
+        int sp_fd;
         int fd[2];
         struct conn *c;
-        struct epoll_event e;
         
-        epoll_fd = epoll_create(EPOLL_EVENT_SIZE);
-        if (epoll_fd < 1)
+        sp_fd = _sp_create(EPOLL_EVENT_SIZE);
+        if (sp_fd < 1)
                 goto end;
 
         err = pipe(fd);
@@ -141,21 +140,19 @@ int silly_socket_init()
         c->alloc_size = -1;
         c->workid = -1;
 
-        e.data.ptr = c;
-        e.events = EPOLLIN;
-        err = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd[0], &e);
+        err = _sp_add(sp_fd, fd[0], c);
         if (err < 0)
                 goto end;
 
         struct silly_socket *s = (struct silly_socket *)silly_malloc(sizeof(*s));
 
         s->reserve_sid = -1;
-        s->epoll_fd = epoll_fd;
+        s->sp_fd = sp_fd;
         s->ctrl_send_fd = fd[1];
         s->ctrl_recv_fd = fd[0];
         s->event_index = 0;
         s->event_cnt = 0;
-        s->event_buff = (struct epoll_event *)silly_malloc(sizeof(struct epoll_event) * EPOLL_EVENT_SIZE);
+        s->event_buff = (sp_event_t *)silly_malloc(sizeof(sp_event_t) * EPOLL_EVENT_SIZE);
         s->conn_buff = (struct conn *)silly_malloc(sizeof(struct conn) * MAX_CONN);
         s->ctrl_conn = c;
         _init_conn_buff(s);
@@ -164,8 +161,8 @@ int silly_socket_init()
 
         return 0;
 end:
-        if (epoll_fd >= 0)
-                close(epoll_fd);
+        if (sp_fd >= 0)
+                close(sp_fd);
         if (fd[0] >= 0)
                 close(fd[0]);
         if (fd[1] >= 0)
@@ -179,7 +176,7 @@ end:
 void silly_socket_exit()
 {
         assert(SOCKET);
-        close(SOCKET->epoll_fd);
+        close(SOCKET->sp_fd);
         close(SOCKET->ctrl_send_fd);
         close(SOCKET->ctrl_recv_fd);
         silly_free(SOCKET->event_buff);
@@ -218,7 +215,6 @@ _add_socket(struct silly_socket *s, int fd, enum stype type, int workid)
 {
         int err;
         int sid;
-        struct epoll_event      event;
         struct conn *c;
 
         c = _fetch_empty_conn(s);
@@ -234,9 +230,7 @@ _add_socket(struct silly_socket *s, int fd, enum stype type, int workid)
         else
                 c->workid = silly_server_balance(workid, sid);
  
-        event.data.ptr = c;
-        event.events = EPOLLIN;
-        err = epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, c->fd, &event);
+        err = _sp_add(s->sp_fd, c->fd, c);
         if (err < 0) {
                 _release_conn(c);
                 return -1;
@@ -249,7 +243,7 @@ static void
 _remove_socket(struct silly_socket *s, int sid)
 {
         struct conn *c = &s->conn_buff[sid];
-        epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, c->fd, NULL);
+        _sp_del(s->sp_fd, c->fd);
         _release_conn(c);
 
         return ;
@@ -342,7 +336,7 @@ int silly_socket_send(int sid, char *buff,  int size)
 static void
 _wait(struct silly_socket *s)
 {
-        s->event_cnt = epoll_wait(s->epoll_fd, s->event_buff, EPOLL_EVENT_SIZE, -1);
+        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
         if (s->event_cnt == -1) {
                 s->event_cnt = 0;
                 fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
@@ -419,7 +413,7 @@ _report_accept(struct silly_socket *s, int sid)
 static void
 _process(struct silly_socket *s)
 {
-        struct epoll_event *e;
+        sp_event_t *e;
         struct conn *c;
 
         printf("_process:%d,%d\n", s->event_index, s->event_cnt);

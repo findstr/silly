@@ -1,6 +1,6 @@
 CC = gcc
 LD = gcc
-CCFLAG = -g -I ../lua53/ -Wall
+CCFLAG = -g -D"__os_linux__" -I ../lua53/ -Wall
 LDFLAG = -lm -ldl -Wl,-E  -L ../lua53/ -llua -lrt -lpthread
 BUILD_PATH = .
 LUALIB_SRC = ../lualib-src
