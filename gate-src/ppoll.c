@@ -161,7 +161,7 @@ int ppoll_listen(int port)
         return 0;
 }
 
-const char *ppoll_pull(int *socket_fd)
+int ppoll_pull(int *socket_fd, const char **buff)
 {
         int i;
         int fd;
@@ -173,8 +173,10 @@ const char *ppoll_pull(int *socket_fd)
 
         if (P->event_index == P->event_cnt) {
                 P->event_cnt = epoll_wait(P->epoll_fd, e_buff, EPOLL_SIZE, -1);
+                if (P->event_cnt == -1)
+                        P->event_cnt = 0;
                 P->event_index = 0;
-                //printf("after wait:%d\n", P->listen_fd);
+                return -1;
         }
 
 
@@ -184,13 +186,17 @@ const char *ppoll_pull(int *socket_fd)
                 e_buff[i].events & EPOLLHUP ||
                 !(e_buff[i].events & EPOLLIN)) {
                 fprintf(stderr, "fd:%d occurs error now, 0x%x\n", c->fd, e_buff[i].events);
+                *socket_fd = -c->fd;
+                *buff = NULL;
                 _del_socket(c);
+                return 0;
         } else if (c->fd == P->listen_fd) {
                 fd = accept(P->listen_fd, NULL, 0);
                 if (fd >= 0) {
                         _add_socket(fd);
                         *socket_fd = fd;
-                        return NULL;
+                        *buff = NULL;
+                        return 0;
                 }
         } else {
                 unsigned short psize;
@@ -203,17 +209,20 @@ const char *ppoll_pull(int *socket_fd)
                         if (c->packet_len >= psize + 2) {
                                 *socket_fd = c->fd;
                                 P->curr_conn = c;
-                                return c->packet_buff;
+                                *buff = c->packet_buff;
+                                return 0;
                         }
                 } else if ((err == -1 && errno != EAGAIN) || err == 0) {
-                        _del_socket(c);
+                        *socket_fd = -c->fd;
+                        *buff = NULL;
                         fprintf(stderr, "fd:%d close or occurs error\n", c->fd);
+                        _del_socket(c);
+                        return 0;
                 }
         }
 
         P->curr_conn = NULL;
-        *socket_fd = -1;
-        return NULL;
+        return -1;
 }
 
 void ppoll_push()

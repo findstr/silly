@@ -48,8 +48,8 @@ server.recv(function (type, fd, data)
                 end
         else -- disconnect
                 assert(fd < 0)
-                assert(socket_poll.gate[-fd].disconnect)
-                socket_poll.gate[fd] = nil
+                assert(socket.disconnect)(-fd)
+                socket_poll.gate[-fd] = nil
         end
 end)
 

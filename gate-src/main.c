@@ -14,6 +14,7 @@ static struct server *svr_tbl[1];
 int main()
 {
         int fd;
+        int err;
         const char *buff;
         char *pbuff = (char *)malloc(64 * 1024);
         
@@ -23,8 +24,11 @@ int main()
         svr_tbl[0] = server_create();
         ppoll_addsocket(server_getfd(svr_tbl[0]));
         for (;;) {
-                buff = ppoll_pull(&fd);
-                if (buff == NULL && fd != -1) {
+                err = ppoll_pull(&fd, &buff);
+                if (err == -1)
+                        continue;
+
+                if (buff == NULL) {
                         *((int *)(pbuff + 2)) = fd;
                         *((unsigned short *)pbuff) = htons(4);
                         ppoll_send(server_getfd(svr_tbl[0]), pbuff);

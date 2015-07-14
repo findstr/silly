@@ -6,7 +6,7 @@ void ppoll_exit();
 
 int ppoll_listen(int port);
 
-const char *ppoll_pull(int *fd);
+int ppoll_pull(int *socket_fd, const char **buff);
 void ppoll_push();
 
 int ppoll_addsocket(int fd);
