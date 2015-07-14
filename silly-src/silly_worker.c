@@ -81,11 +81,11 @@ _process(struct silly_worker *w, struct silly_message *msg)
 {
         switch (msg->type) {
         case SILLY_MESSAGE_TIMER:
-                fprintf(stderr, "silly_worker:_process:timer\n");
+                //fprintf(stderr, "silly_worker:_process:timer\n");
                 _process_timer(w, msg->msg.timer);
                 break;
         case SILLY_MESSAGE_SOCKET:
-                fprintf(stderr, "silly_worker:_process:socket\n");
+                //fprintf(stderr, "silly_worker:_process:socket\n");
                 _process_socket(w, msg->msg.socket);
                 break;
         default:

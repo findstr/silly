@@ -77,13 +77,14 @@ _process_timer(lua_State *L, void *m)
         lua_gettable(L, LUA_REGISTRYINDEX);
         type = lua_type(L, -1);
         if (type == LUA_TFUNCTION) {
+                lua_pushlightuserdata(L, key);
+                lua_pushnil(L);
+                lua_settable(L, LUA_REGISTRYINDEX);
+
                 err = lua_pcall(L, 0, 0, 0);
                 if (err != 0)
                         fprintf(stderr, "timer handler call fail:%s\n", lua_tostring(L, -1));
 
-                lua_pushlightuserdata(L, key);
-                lua_pushnil(L);
-                lua_settable(L, LUA_REGISTRYINDEX);
         } else if (type != LUA_TNIL) {
                 fprintf(stderr, "_process_timer invalid type:%d\n", type);
         } else {
