@@ -106,6 +106,8 @@ int silly_worker_dispatch(struct silly_worker *w)
                 _process(w, msg);            
                 msg = silly_queue_pop(w->queue);
         }
+        
+        lua_gc(L, GCSTEP, 0);
 
         return 0;
 }
