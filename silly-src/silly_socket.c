@@ -124,7 +124,7 @@ int silly_socket_init()
         int err;
         int sp_fd;
         int fd[2];
-        struct conn *c;
+        struct conn *c = NULL;
         
         sp_fd = _sp_create(EPOLL_EVENT_SIZE);
         if (sp_fd < 1)
@@ -421,12 +421,11 @@ _process(struct silly_socket *s)
         int e_index = s->event_index++;
 
         e = &s->event_buff[e_index];
-        c = (struct conn *)e->data.ptr;
-        if (e->events & EPOLLERR ||
-                e->events & EPOLLHUP) {
-                fprintf(stderr, "_process:fd:%d occurs error now, 0x%x\n", c->fd, e->events);
+        c = (struct conn *)SP_UD(e);
+        if (SP_ERR(e)) {
+                fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
                 _socket_close(s, _conn_to_sid(s, c));
-        } else if (e->events & EPOLLIN) { //read
+        } else if (SP_READ(e)) { 
                 if (c->type == STYPE_LISTEN) {
                         int fd = accept(c->fd, NULL, 0);
                         if (fd >= 0) {
@@ -443,10 +442,10 @@ _process(struct silly_socket *s)
                 } else {
                         fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
                 }
-        } else if (e->events & EPOLLOUT) { //write
+        } else if (SP_WRITE(e)) {
 
         } else {
-                fprintf(stderr, "_process: unhandler epoll event:0x%x\n", e->events);
+                fprintf(stderr, "_process: unhandler epoll event:\n");
         }
 }
 

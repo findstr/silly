@@ -1,13 +1,13 @@
 #ifndef _SOCKET_POLL_H
 #define _SOCKET_POLL_H
 
-#ifdef  __os_linux__
+#if defined(__linux__)
 #include <sys/epoll.h>
 
 #define SP_READ(e)   (e->events & EPOLLIN)
 #define SP_WRITE(e)  (e->events & EPOLLOUT)
 #define SP_ERR(e)    (e->events & (EPOLLERR || EPOLLHUP))
-
+#define SP_UD(e)     (e->data.ptr)
 typedef struct epoll_event sp_event_t;
 
 static inline int
@@ -53,9 +53,14 @@ _sp_write_enable(int sp, int fd, void *ud, int enable)
 }
 
 
-#else
+#elif (defined(__macosx__))
 
 #include <sys/event.h>
+
+#define SP_READ(e)   (e->filter & EVFILT_READ)
+#define SP_WRITE(e)  (e->filter & EVFILT_WRITE)
+#define SP_ERR(e)    (e->filter & (!(EVFILT_READ || EVFILT_WRITE)))
+#define SP_UD(e)     (e->udata)
 
 typedef struct kevent sp_event_t;
 
@@ -80,8 +85,18 @@ _sp_add(int sp, int fd, void *ud)
         struct kevent event[1];
         EV_SET(&event[0], fd, EVFILT_READ, EV_ADD, 0, 0, ud);
 
-        return kevent(sq, event, 1, NULL, 0, NULL);
+        return kevent(sp, event, 1, NULL, 0, NULL);
 }
+
+static inline int
+_sp_del(int sp, int fd)
+{
+        struct kevent event[1];
+        EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+
+        return kevent(sp, event, 1, NULL, 0, NULL);
+}
+
 
 static inline int
 _sp_write_enable(int sp, int fd, void *ud, int enable)
@@ -91,7 +106,7 @@ _sp_write_enable(int sp, int fd, void *ud, int enable)
         (void)ud;
 
         EV_SET(&event[0], fd, EVFILT_WRITE, ctrl, 0, 0, NULL);
-        return kevent(kq, event, 1, NULL, 0, NULL);
+        return kevent(sp, event, 1, NULL, 0, NULL);
 }
 
 #endif

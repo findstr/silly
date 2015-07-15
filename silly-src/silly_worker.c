@@ -7,8 +7,8 @@
 
 #include "silly_malloc.h"
 #include "silly_queue.h"
-
 #include "silly_worker.h"
+
 
 struct silly_worker {
         int                     workid;
@@ -133,7 +133,7 @@ int silly_worker_start(struct silly_worker *w)
 }
 
 
-void silly_worker_register(struct silly_worker *w, enum silly_message_type type, void (*cb)(lua_State *L, void *msg))
+void silly_worker_register(struct silly_worker *w, enum silly_message_type type, void (*cb)(struct lua_State *L, void *msg))
 {
         switch (type) {
         case SILLY_MESSAGE_SOCKET:

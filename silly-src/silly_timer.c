@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __macosx__
+#include <mach/clock.h>
+#include <mach/mach.h>
+#endif
+
 #include "silly_message.h"
 #include "silly_malloc.h"
 #include "silly_server.h"
@@ -40,11 +45,20 @@ static int
 _getms()
 {
         int ms;
+#ifdef __macosx__
+        clock_serv_t cclock;
+        mach_timespec_t mts;
+        host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+        clock_get_time(cclock, &mts);
+        mach_port_deallocate(mach_task_self(), cclock);
+        ms = mts.tv_sec * 1000;
+        ms += mts.tv_nsec / 1000000;
+#else
         struct timespec tp;
         clock_gettime(CLOCK_MONOTONIC, &tp);
         ms = tp.tv_sec * 1000;
         ms += tp.tv_nsec / 1000000;
-
+#endif
         return ms;
 }
 
