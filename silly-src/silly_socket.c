@@ -416,7 +416,7 @@ _process(struct silly_socket *s)
         sp_event_t *e;
         struct conn *c;
 
-        printf("_process:%d,%d\n", s->event_index, s->event_cnt);
+        //printf("_process:%d,%d\n", s->event_index, s->event_cnt);
 
         int e_index = s->event_index++;
 

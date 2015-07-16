@@ -9,17 +9,30 @@
    2015-01-05    File created.
 =========================================================================
 **/
-#include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
-#include "sock.h"
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+
+int main()
+{
+        lua_State *L;
+
+        L = luaL_newstate();
+        luaL_openlibs(L);
+
+        if (luaL_loadfile(L, "main.lua") || lua_pcall(L, 0, 0, 0)) {
+                fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
+                lua_close(L);
+                return -1;
+        }
+
+        return 0;
+}
+
+/*
 
 int main(int argc, char *argv[])
 {
@@ -74,3 +87,4 @@ int main(int argc, char *argv[])
 
         return 0;
 }
+*/
