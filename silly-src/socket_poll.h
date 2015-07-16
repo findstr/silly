@@ -6,7 +6,7 @@
 
 #define SP_READ(e)   (e->events & EPOLLIN)
 #define SP_WRITE(e)  (e->events & EPOLLOUT)
-#define SP_ERR(e)    (e->events & (EPOLLERR || EPOLLHUP))
+#define SP_ERR(e)    (e->events & (EPOLLERR | EPOLLHUP))
 #define SP_UD(e)     (e->data.ptr)
 typedef struct epoll_event sp_event_t;
 
