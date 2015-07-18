@@ -17,7 +17,7 @@ platform:
 linux:
 	$(MAKE) all \
 		CCFLAG="-g -Wall -D__linux__"\
-		LDFLAG="-lm -ldl -Wl,-E  -L ../lua53/ -llua -lrt -lpthread"\
+		LDFLAG="-Wl,-E  -L ../lua53/ -llua -lm -ldl -lrt -lpthread"\
 		SHARED="--share -fPIC"\
 
 macosx:
