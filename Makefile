@@ -26,6 +26,7 @@ linux:
 		SHARED="--share -fPIC"
 
 macosx:
+	$(MAKE) -C lua53/ macosx
 	$(MAKE) all\
 		CCFLAG="-g -Wall -D__macosx__"\
 		LDFLAG="-lm -ldl -Wl,-no_compact_unwind  -L lua53/ -llua -lpthread"\
