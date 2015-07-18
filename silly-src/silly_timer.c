@@ -21,7 +21,7 @@ struct timer_node {
 
 struct timer {
         int     lock;       
-        struct timer_node *list;
+        struct timer_node list;
 };
 
 static struct timer *TIMER;
@@ -29,7 +29,7 @@ static struct timer *TIMER;
 int timer_init()
 {
         TIMER = (struct timer *)malloc(sizeof(*TIMER));
-        TIMER->list = NULL;
+        TIMER->list.next = NULL;
         TIMER->lock = 0;
 
         return 0;
@@ -37,7 +37,17 @@ int timer_init()
 
 void timer_exit()
 {
-        free(TIMER->list);
+        struct timer_node *n;
+        
+        n = TIMER->list.next;
+        while (n) {
+                struct timer_node *tmp;
+
+                tmp = n;
+                n = n->next;
+                free(tmp);
+        }
+
         free(TIMER);
 }
 
@@ -85,9 +95,9 @@ int timer_add(int time, int workid, uintptr_t sig)
         while (__sync_lock_test_and_set(&TIMER->lock, 1))
                 ;
 
-        n->next = TIMER->list;
-        TIMER->list = n;
-        
+        n->next = TIMER->list.next;
+        TIMER->list.next = n;
+
         __sync_lock_release(&TIMER->lock);
 
         return 0;
@@ -114,25 +124,23 @@ int timer_dispatch()
         while(__sync_lock_test_and_set(&TIMER->lock, 1))
                 ;
 
-        t = TIMER->list;
-        last = TIMER->list;
+        t = TIMER->list.next;
+        last = &TIMER->list;
         while (t) {
                 if (t->expire <= curr) {
                         struct timer_node *tmp;
                         _push_timer_event(TIMER, t->workid, t->sig);
-                        if (last == TIMER->list)
-                                TIMER->list = t->next;
-                        else
-                                last->next = t->next;
+                        last->next = t->next;
+                        
                         tmp = t;
                         t = t->next;
                         free(tmp);
                 } else {
-                        last = t;
                         t = t->next;
+                        last = last->next;
                 }
+                        
         }
-
         __sync_lock_release(&TIMER->lock);
 
         return 0;

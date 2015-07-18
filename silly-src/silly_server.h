@@ -13,7 +13,7 @@ int silly_server_balance(int workid, int sid);
 
 int silly_server_push(int handle, struct silly_message *msg);
 
-int silly_server_start(int handle);
+int silly_server_start(int handle, const char *bootstrap, const char *libpath, const char *clibpath);
 int silly_server_dispatch(int handle);
 
 

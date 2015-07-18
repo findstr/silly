@@ -229,7 +229,7 @@ _add_socket(struct silly_socket *s, int fd, enum stype type, int workid)
                 c->workid = workid;
         else
                 c->workid = silly_server_balance(workid, sid);
- 
+
         err = _sp_add(s->sp_fd, c->fd, c);
         if (err < 0) {
                 _release_conn(c);

@@ -63,9 +63,9 @@ int silly_server_balance(int workid, int sid)
         return workid;
 }
 
-int silly_server_start(int handle)
+int silly_server_start(int handle, const char *bootstrap, const char *libpath, const char *clibpath)
 {
-        return silly_worker_start(SILLY_SERVER->worklist[handle]);
+        return silly_worker_start(SILLY_SERVER->worklist[handle], bootstrap, libpath, clibpath);
 }
 
 int silly_server_dispatch(int handle)

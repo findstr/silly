@@ -9,8 +9,6 @@
 #include "silly_queue.h"
 #include "silly_worker.h"
 
-#define max(a, b)       ((a) > (b) ? (a) : (b))
-
 
 struct silly_worker {
         int                     workid;
@@ -83,7 +81,7 @@ _process(struct silly_worker *w, struct silly_message *msg)
 {
         switch (msg->type) {
         case SILLY_MESSAGE_TIMER:
-                //fprintf(stderr, "silly_worker:_process:%d\n", w->workid);
+                //fprintf(stderr, "silly_worker:_process:timer\n");
                 _process_timer(w, msg->msg.timer);
                 break;
         case SILLY_MESSAGE_SOCKET:
@@ -115,35 +113,11 @@ int silly_worker_dispatch(struct silly_worker *w)
 }
 
 static int
-_set_lib_path(lua_State *L, const char *libpath, const char *clibpath)
+_set_lib_path(const char *libpath, const char *clibpath)
 {
         const char *path;
-        const char *cpath;
-        size_t sz1 = strlen(libpath);
-        size_t sz2 = strlen(clibpath);
-        size_t sz3;
-        size_t sz4;
-        size_t need_sz;
-
-        lua_getglobal(L, "package");
-        lua_getfield(L, -1, "path");
-        path = luaL_checklstring(L, -1, &sz3);
-
-        lua_getfield(L, -2, "cpath");
-        cpath = luaL_checklstring(L, -1, &sz4);
-
-        need_sz = max(sz1, sz2) + max(sz3, sz4) + 1;
-        char new_path[need_sz];
-
-        snprintf(new_path, need_sz, "%s;%s", libpath, path);
-        lua_pushstring(L, new_path);
-        lua_setfield(L, -4, "path");
-
-        snprintf(new_path, need_sz, "%s;%s", clibpath, cpath);
-        lua_pushstring(L, new_path);
-        lua_setfield(L, -4, "cpath");
-
-        return 0;
+        int sz1 = strlen(libpath);
+        int sz2 = strlen(clibpath);
 }
 
 int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char *libpath, const char *clibpath)
@@ -155,7 +129,7 @@ int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char
         lua_pushlightuserdata(L, w);
         lua_settable(L, LUA_REGISTRYINDEX);
 
-        if (_set_lib_path(L, libpath, clibpath) != 0) {
+        if (_set_lib_path(libpath, clibpath) != 0) {
                 fprintf(stderr, "set lua libpath fail,%s\n", lua_tostring(L, -1));
                 lua_close(L);
                 return -1;

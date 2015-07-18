@@ -1,75 +1,55 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
-#include <unistd.h>
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+#include <string.h>
+#include "silly_run.h"
 
-#include "silly_timer.h"
-#include "silly_socket.h"
-#include "silly_server.h"
+#define ARRAY_SIZE(a)   (sizeof(a) / sizeof(a[0]))
 
-static void *
-_socket(void *arg)
+static int
+_get_int(lua_State *L, const char *key)
 {
-        for (;;) {
-                silly_socket_run();
-        }
-
-        return NULL;
+        lua_getglobal(L, key);
+        return luaL_checkinteger(L, -1);
 }
 
-static void *
-_timer(void *arg)
+static const char *
+_get_sz(lua_State *L, const char *key)
 {
-        for (;;) {
-                timer_dispatch();
-                usleep(1000);
-        }
-
-        return NULL;
+        lua_getglobal(L, key);
+        return luaL_checkstring(L, -1);
 }
 
-static void *
-_server(void *arg)
+static int
+_parse_config(lua_State *L, struct silly_config *config)
 {
-        int workid = *((int *)arg);
+        const char *sz;
+        config->listen_port = _get_int(L, "listen_port");
+        config->worker_count = _get_int(L, "worker_count");
+        sz = _get_sz(L, "bootstrap");
+        strncpy(config->bootstrap, sz, ARRAY_SIZE(config->bootstrap));
+        sz = _get_sz(L, "lualib_path");
+        strncpy(config->lualib_path, sz, ARRAY_SIZE(config->lualib_path));
+        sz = _get_sz(L, "lualib_cpath");
+        strncpy(config->lualib_cpath, sz, ARRAY_SIZE(config->lualib_cpath));
 
-        for (;;) {
-                silly_server_dispatch(workid);
-                usleep(1000);
-        }
-
-        return NULL;
+        return 0;
 }
 
 int main()
 {
-        timer_init();
-        silly_socket_init();
-        silly_server_init();
+        struct silly_config config;
+        lua_State *L = luaL_newstate();
+        if (luaL_loadfile(L, "config") || lua_pcall(L, 0, 0, 0)) {
+                fprintf(stderr, "parse config fail,%s\n", lua_tostring(L, -1));
+                lua_close(L);
+                return -1;
+        }
 
-        silly_socket_listen(8989, -1);
-        
-        srand(time(NULL));
+        _parse_config(L, &config);
+        silly_run(&config);
 
-        //start
-        int handle = silly_server_open();
-        
-        silly_server_start(handle);
-
-        pthread_t       pid[3];
-
-        pthread_create(&pid[0], NULL, _socket, NULL);
-        pthread_create(&pid[1], NULL, _timer, NULL);
-        pthread_create(&pid[2], NULL, _server, &handle);
-
-
-        pthread_join(pid[0], NULL);
-        pthread_join(pid[1], NULL);
-        pthread_join(pid[2], NULL);
-
-        printf("----end-----\n");
-        silly_server_exit();
-        silly_socket_exit();
-        timer_exit();
         return 0;
 }
