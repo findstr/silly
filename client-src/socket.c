@@ -92,6 +92,7 @@ int luaopen_socket(lua_State *L)
                 "send", _send,
                 "recv", _recv,
                 "close", _close,
+                NULL, NULL,
         };
 
         luaL_newlib(L, tbl);
