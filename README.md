@@ -1,19 +1,19 @@
-# silly
+# silly([Blog](http://blog.gotocoding.com/?p=446))
 --------
-##depend library:
+##DEPEND
 
 - sudo apt-get install libreadline-dev(debain)
 - yum install readline-devel(centos)
 
-##build
+##BUILD
 
 - make linux
 
-##run
+##RUN
 
 ./silly
 
-##config
+##CONFIG
 
 - deamon, 1 --> run as deamon, 0 --> normal
 - listen_port, the server listen port
