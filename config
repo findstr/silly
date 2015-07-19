@@ -2,5 +2,5 @@ deamon = 0      --not support now
 listen_port=8989
 worker_count = 3
 bootstrap = "logic/main.lua"
-lualib_path = "lualib/?.lua"
+lualib_path = "logic/?.lua;lualib/?.lua"
 lualib_cpath = "../?.so"
