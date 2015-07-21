@@ -13,26 +13,44 @@ end
 
 local encode_tbl, encode_array
 
-function encode_array(arr)
+function encode_array
+        local first = true
         local sz = ""
         for _, v in ipairs(arr) do
                 assert(type(v) == "table")
-                sz = sz .. encode_tbl(v) .. ','
+                if first then
+                        first = false
+                        sz = sz .. encode_tbl(v)
+                else
+                        sz = sz .. ',' .. encode_tbl(v)
+                end
         end
 
         return sz
 end
 
 function encode_tbl(tbl)
+        local first = true
         local l = tbl or {}
         local sz
 
         sz = '{'
         for k, v in pairs(tbl) do
                 if (type(v) == "table") then
-                        sz = sz .. k .. ':' .. '[' ..  encode_array(v) .. '],'
+                        if first  then
+                                first = false
+                                sz = sz .. k .. ':' .. '[' ..  encode_array(v) .. ']'
+                        else
+                                sz = sz .. ',' .. k .. ':' .. '[' ..  encode_array(v) .. ']'
+                        end
                 else
-                        sz = sz ..'"' .. k .. '"' .. ":" .. '"' .. v .. '"' .. ','
+                        if first then
+                                first = false
+                                sz = sz ..'"' .. k .. '"' .. ":" .. '"' .. v .. '"'
+                        else
+                                sz = sz ..',' .. '"' .. k .. '"' .. ":" .. '"' .. v .. '"'
+                        end
+                        
                 end
         end
 
