@@ -61,7 +61,7 @@ end
 
 function json.encode(tbl)
         local sz = encode_tbl(tbl)
-        return (sz .. '\r\n\r')
+        return (sz .. '\n\r')
 end
 
 ------------test--------
