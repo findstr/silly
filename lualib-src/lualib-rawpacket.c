@@ -83,7 +83,7 @@ _put_incomplete(struct rawpacket *p, struct incomplete *ic)
         
         ic->next = i;
         ic->prev = NULL;
-        i = ic;
+        p->incomplete_hash[INCOMPLETE_HASH(ic->fd)] = ic;
 }
 
 static void
@@ -111,7 +111,7 @@ _push_one_complete(struct rawpacket *p, struct incomplete *ic)
 }
 
 static int
-_push_raw_once(struct rawpacket *p, int fd, int size, const char *buff)
+_push_raw_once(struct rawpacket *p, int fd, int size, const uint8_t *buff)
 {
         int eat;
         struct incomplete *ic = _get_incomplete(p, fd);
@@ -174,7 +174,7 @@ _push_rawdata(struct rawpacket *p, struct silly_message_socket *s)
 {
         int n;
         int left;
-        char *d;
+        uint8_t *d;
         assert(s->type == SILLY_SOCKET_DATA);
 
         left = s->data_size;

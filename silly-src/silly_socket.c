@@ -367,7 +367,7 @@ static void
 _forward_msg(struct silly_socket *s, struct conn *c)
 {
         int len;
-        char *buff = (char *)silly_malloc(c->alloc_size);
+        uint8_t *buff = (uint8_t *)silly_malloc(c->alloc_size);
         
         len = recv(c->fd, buff, c->alloc_size, 0);
         if (len < 0) {

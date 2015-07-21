@@ -20,7 +20,7 @@ struct silly_message_socket {
         enum silly_socket_ptype type;
         int                     sid;
         int                     data_size;
-        char                    *data;
+        uint8_t                 *data;
 };
 
 struct silly_message_timer {

@@ -51,7 +51,7 @@ _socket_connect(lua_State *L)
 static int
 _socket_close(lua_State *L)
 {
-
+        return 0;
 }
 
 static int
