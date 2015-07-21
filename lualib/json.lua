@@ -13,7 +13,7 @@ end
 
 local encode_tbl, encode_array
 
-function encode_array
+function encode_array(arr)
         local first = true
         local sz = ""
         for _, v in ipairs(arr) do
