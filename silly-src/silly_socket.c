@@ -300,7 +300,7 @@ _report_close(struct silly_socket *s, int sid)
         struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
         
         msg->type = SILLY_MESSAGE_SOCKET;
-        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(msg->msg.socket));
+        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
 
         msg->msg.socket->sid = sid;
         msg->msg.socket->type = SILLY_SOCKET_CLOSE;
@@ -415,7 +415,7 @@ _report_accept(struct silly_socket *s, int sid)
         struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
         
         msg->type = SILLY_MESSAGE_SOCKET;
-        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(msg->msg.socket));
+        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
 
         msg->msg.socket->sid = sid;
         msg->msg.socket->type = SILLY_SOCKET_ACCEPT;
