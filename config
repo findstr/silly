@@ -1,4 +1,5 @@
 deamon = 0      --not support now
+debug = 1
 listen_port=8989
 worker_count = 3
 bootstrap = "logic/main.lua"
