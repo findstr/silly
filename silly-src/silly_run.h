@@ -2,6 +2,8 @@
 #define _SILLY_RUN_H
 
 struct silly_config {
+        int debug;
+        int deamon;
         int listen_port;
         int worker_count;
         char bootstrap[128];

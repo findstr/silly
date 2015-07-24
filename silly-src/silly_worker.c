@@ -7,6 +7,8 @@
 
 #include "silly_malloc.h"
 #include "silly_queue.h"
+#include "silly_debug.h"
+
 #include "silly_worker.h"
 
 #define max(a, b)       ((a) > (b) ? (a) : (b))
@@ -52,7 +54,14 @@ static void
 _process(struct silly_worker *w, struct silly_message *msg)
 {
         assert(w->process_cb);
-        w->process_cb(w->L, msg);
+        switch (msg->type) {
+        case SILLY_DEBUG:
+                silly_debug_process(w->L, msg);
+                break;
+        default: //forward to lua
+                w->process_cb(w->L, msg);
+        }
+
         silly_free(msg);
 }
 

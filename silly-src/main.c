@@ -26,6 +26,8 @@ static int
 _parse_config(lua_State *L, struct silly_config *config)
 {
         const char *sz;
+        config->debug = _get_int(L, "debug");
+        config->deamon = _get_int(L, "deamon");
         config->listen_port = _get_int(L, "listen_port");
         config->worker_count = _get_int(L, "worker_count");
         sz = _get_sz(L, "bootstrap");

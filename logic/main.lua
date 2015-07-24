@@ -75,6 +75,6 @@ function tm()
         timer.add(1000, tm)
 end
 
-timer.add(1000, tm);
+--timer.add(1000, tm);
 
 
