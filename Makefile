@@ -21,7 +21,7 @@ platform:
 linux:
 	$(MAKE) -C lua53/ linux
 	$(MAKE) all \
-		CCFLAG="-g -Wall -D__linux__"\
+		CCFLAG="-g -O2 -Wall -D__linux__"\
 		LDFLAG="-Wl,-E  -L lua53/ -llua -lm -ldl -lrt -lpthread"\
 		SHARED="--share -fPIC"
 

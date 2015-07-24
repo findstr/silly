@@ -70,4 +70,11 @@ end
 socket.register(EVENT)
 
 
+function tm()
+        print("Heartbeat~")
+        timer.add(1000, tm)
+end
+
+timer.add(1000, tm);
+
 

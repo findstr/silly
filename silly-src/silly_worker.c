@@ -16,8 +16,7 @@ struct silly_worker {
         int                     workid;
         struct silly_queue      *queue;
         lua_State               *L;
-        void                    (*socket_cb)(lua_State *L, void *msg);
-        void                    (*timer_cb)(lua_State *L, void *msg);
+        void                    (*process_cb)(lua_State *L, struct silly_message *msg);
 };
 
 struct silly_worker *silly_worker_create(int workid)
@@ -49,53 +48,11 @@ int silly_worker_push(struct silly_worker *w, struct silly_message *msg)
         return silly_queue_push(w->queue, msg); 
 }
 
- static void
-_free_timer_msg(struct silly_message_timer *t)
-{
-        silly_free(t);
-}
-
-static void
-_free_socket_msg(struct silly_message_socket *s)
-{
-        silly_free(s->data);
-        silly_free(s);
-}
-
-static void
-_process_socket(struct silly_worker *w, struct silly_message_socket *s)
-{
-        if (w->socket_cb)
-                w->socket_cb(w->L, s);
-        _free_socket_msg(s);
-}
-
-static void
-_process_timer(struct silly_worker *w, struct silly_message_timer *t)
-{
-        if (w->timer_cb)
-                w->timer_cb(w->L, t);
-        _free_timer_msg(t);
-}
-
 static void
 _process(struct silly_worker *w, struct silly_message *msg)
 {
-        switch (msg->type) {
-        case SILLY_MESSAGE_TIMER:
-                //fprintf(stderr, "silly_worker:_process:%d\n", w->workid);
-                _process_timer(w, msg->msg.timer);
-                break;
-        case SILLY_MESSAGE_SOCKET:
-                //fprintf(stderr, "silly_worker:_process:socket\n");
-                _process_socket(w, msg->msg.socket);
-                break;
-        default:
-                fprintf(stderr, "silly_worker:_process:unknow message type:%d\n", msg->type);
-                assert(0);
-                break;
-        }
-
+        assert(w->process_cb);
+        w->process_cb(w->L, msg);
         silly_free(msg);
 }
 
@@ -173,19 +130,10 @@ int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char
 }
 
 
-void silly_worker_register(struct silly_worker *w, enum silly_message_type type, void (*cb)(struct lua_State *L, void *msg))
+void silly_worker_register(struct silly_worker *w, void (*cb)(struct lua_State *L, struct silly_message *msg))
 {
-        switch (type) {
-        case SILLY_MESSAGE_SOCKET:
-                w->socket_cb = cb;            
-                break;
-        case SILLY_MESSAGE_TIMER:
-                w->timer_cb = cb;
-                break;
-        default:
-                fprintf(stderr, "silly_worker:silly_work_regiser:unkonw message type:%d\n", type);
-                break;
-        }
+        assert(cb);
+        w->process_cb = cb;
 }
 
 

@@ -106,10 +106,12 @@ int timer_add(int time, int workid, uintptr_t sig)
 static void
 _push_timer_event(struct timer *t, int workid, uintptr_t sig)
 {
-        struct silly_message *s = (struct silly_message *)silly_malloc(sizeof(*s));
-        s->type = SILLY_MESSAGE_TIMER;
-        s->msg.timer = silly_malloc(sizeof(struct silly_message_timer));
-        s->msg.timer->sig = sig;
+        struct silly_message *s;
+        struct silly_message_timer *tm;
+        s = (struct silly_message *)silly_malloc(sizeof(*s) + sizeof(*tm));
+        tm = (struct silly_message_timer *)(s + 1);
+        s->type = SILLY_TIMER_EXECUTE;
+        tm->sig = sig;
         silly_server_push(workid, s);
 
         return ;

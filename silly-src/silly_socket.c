@@ -297,15 +297,16 @@ int silly_socket_connect(const char *addr, int port, int workid)
 static void
 _report_close(struct silly_socket *s, int sid)
 {
-        struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
+        struct silly_message_socket *sm;
+        struct silly_message *msg;
         
-        msg->type = SILLY_MESSAGE_SOCKET;
-        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
+        msg = (struct silly_message *)silly_malloc(sizeof(*msg) + sizeof(*sm));
+        msg->type = SILLY_SOCKET_CLOSE;
 
-        msg->msg.socket->sid = sid;
-        msg->msg.socket->type = SILLY_SOCKET_CLOSE;
-        msg->msg.socket->data_size = 0;
-        msg->msg.socket->data = NULL;
+        sm = (struct silly_message_socket *)(msg + 1);
+        sm->sid = sid;
+        sm->data_size = 0;
+        sm->data = NULL;
 
         silly_server_push(s->conn_buff[sid].workid, msg);
 }
@@ -387,14 +388,16 @@ _forward_msg(struct silly_socket *s, struct conn *c)
                 _socket_close(s, _conn_to_sid(s, c));
         } else {
                 assert(c->workid >= 0);
+                struct silly_message_socket *sm;
+                struct silly_message *msg;
                 
-                struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
-                msg->type = SILLY_MESSAGE_SOCKET;
-                msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
-                msg->msg.socket->type = SILLY_SOCKET_DATA;
-                msg->msg.socket->sid = _conn_to_sid(s, c);
-                msg->msg.socket->data_size = len;
-                msg->msg.socket->data = buff;
+                msg = (struct silly_message *)silly_malloc(sizeof(*msg) + sizeof(*sm));
+                msg->type = SILLY_SOCKET_DATA;
+                
+                sm = (struct silly_message_socket *)(msg + 1);
+                sm->sid = _conn_to_sid(s, c);
+                sm->data_size = len;
+                sm->data = buff;
                 
                 silly_server_push(c->workid, msg);         
 
@@ -412,15 +415,16 @@ _forward_msg(struct silly_socket *s, struct conn *c)
 static void
 _report_accept(struct silly_socket *s, int sid)
 {
-        struct silly_message *msg = (struct silly_message *)silly_malloc(sizeof(*msg));
-        
-        msg->type = SILLY_MESSAGE_SOCKET;
-        msg->msg.socket = (struct silly_message_socket *)silly_malloc(sizeof(struct silly_message_socket));
+        struct silly_message_socket *sm;
+        struct silly_message *msg;
+       
+        msg =(struct silly_message *)silly_malloc(sizeof(*msg) + sizeof(*sm));
+        msg->type = SILLY_SOCKET_ACCEPT;
 
-        msg->msg.socket->sid = sid;
-        msg->msg.socket->type = SILLY_SOCKET_ACCEPT;
-        msg->msg.socket->data_size = 0;
-        msg->msg.socket->data = NULL;
+        sm = (struct silly_message_socket *)(msg + 1);
+        sm->sid = sid;
+        sm->data_size = 0;
+        sm->data = NULL;
 
         silly_server_push(s->conn_buff[sid].workid, msg);
 

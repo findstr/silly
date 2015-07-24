@@ -175,8 +175,7 @@ _push_rawdata(struct rawpacket *p, struct silly_message_socket *s)
         int n;
         int left;
         uint8_t *d;
-        assert(s->type == SILLY_SOCKET_DATA);
-
+        
         left = s->data_size;
         d = s->data;
 
@@ -194,17 +193,20 @@ static int
 _push_rawpacket(lua_State *L)
 {
         struct rawpacket                *p;
-        struct silly_message_socket     *s;
+        struct silly_message            *s;
+        struct silly_message_socket     *sm;
         
         p = luaL_checkudata(L, 1, "rawpacket");
-        s = luaL_checkudata(L, 2, "silly_message_socket");
+        s = luaL_checkudata(L, 2, "silly_message");
+
+        sm = (struct silly_message_socket *)(s + 1);
 
         if (s->type == SILLY_SOCKET_DATA)
-                _push_rawdata(p, s);
+                _push_rawdata(p, sm);
         else
-                assert(s->data == NULL);
+                assert(sm->data == NULL);
 
-        lua_pushinteger(L, s->sid);
+        lua_pushinteger(L, sm->sid);
         lua_pushinteger(L, s->type);
 
         return 2;
@@ -255,7 +257,7 @@ _pack_raw(lua_State *L)
         memcpy(p + 2, str, size);
 
         lua_pushlightuserdata(L, p);
-        luaL_getmetatable(L, "silly_message_socket");
+        luaL_getmetatable(L, "silly_socket_packet");
         lua_setmetatable(L, -2);
         lua_pushinteger(L, size + 2);
 

@@ -12,24 +12,25 @@
 #include "silly_timer.h"
 
 static void
-_process_socket(lua_State *L, void *m)
+_process_socket(lua_State *L, struct silly_message *m)
 {
         int err;
-        struct silly_message_socket *msg;
-
-        msg = (struct silly_message_socket *)m;
         
+        struct silly_message_socket *sm = (struct silly_message_socket *)(m + 1);
+
         lua_pushlightuserdata(L, _process_socket);
         lua_gettable(L, LUA_REGISTRYINDEX);
 
-        lua_pushlightuserdata(L, msg);
-        luaL_getmetatable(L, "silly_message_socket");
+        lua_pushlightuserdata(L, m);
+        luaL_getmetatable(L, "silly_message");
         lua_setmetatable(L, -2);
 
         err = lua_pcall(L, 1, 0, 0);
         if (err != 0)
                 fprintf(stderr, "_process_socket call failed:%s\n", lua_tostring(L, -1));
         
+        silly_free(sm->data);
+
         return ;
 }
 
@@ -57,10 +58,6 @@ _socket_close(lua_State *L)
 static int
 _socket_recv(lua_State *L)
 {
-        struct silly_worker *w;
-        w = lua_touserdata(L, lua_upvalueindex(1));
-        silly_worker_register(w, SILLY_MESSAGE_SOCKET, _process_socket);
-
         lua_pushlightuserdata(L, _process_socket);
         lua_insert(L, -2);
         lua_settable(L, LUA_REGISTRYINDEX);
@@ -76,7 +73,7 @@ _socket_send(lua_State *L)
         int size;
  
         sid = luaL_checkinteger(L, 1);
-        buff = luaL_checkudata(L, 2, "silly_message_socket");
+        buff = luaL_checkudata(L, 2, "silly_socket_packet");
         size = luaL_checkinteger(L, 3);
 
         silly_socket_send(sid, buff, size);
@@ -85,14 +82,14 @@ _socket_send(lua_State *L)
 }
 
 static void
-_process_timer(lua_State *L, void *m)
+_process_timer(lua_State *L, struct silly_message *m)
 {
         void *key;
         int type;
         int err;
-        struct silly_message_timer *msg = (struct silly_message_timer *)m;
+        struct silly_message_timer *tm = (struct silly_message_timer *)(m + 1);
 
-        key = (void *)msg->sig;
+        key = (void *)tm->sig;
         
         lua_pushlightuserdata(L, key);
         lua_gettable(L, LUA_REGISTRYINDEX);
@@ -160,6 +157,29 @@ _get_workid(lua_State *L)
 
 }
 
+static void
+_process_msg(lua_State *L, struct silly_message *msg)
+{
+
+        switch (msg->type) {
+        case SILLY_TIMER_EXECUTE:
+                //fprintf(stderr, "silly_worker:_process:%d\n", w->workid);
+                _process_timer(L, msg);
+                break;
+        case SILLY_SOCKET_ACCEPT:
+        case SILLY_SOCKET_CLOSE:
+        case SILLY_SOCKET_CONNECT:
+        case SILLY_SOCKET_DATA:
+                //fprintf(stderr, "silly_worker:_process:socket\n");
+                _process_socket(L, msg);
+                break;
+        default:
+                fprintf(stderr, "silly_worker:_process:unknow message type:%d\n", msg->type);
+                assert(0);
+                break;
+        }
+}
+
 int luaopen_silly(lua_State *L)
 {
         luaL_Reg tbl[] = {
@@ -175,7 +195,7 @@ int luaopen_silly(lua_State *L)
         luaL_checkversion(L);
 
 
-        luaL_newmetatable(L, "silly_message_socket");
+        luaL_newmetatable(L, "silly_message");
         luaL_newmetatable(L, "silly_message_timer");
         luaL_newmetatable(L, "silly_socket_packet");
 
@@ -188,7 +208,7 @@ int luaopen_silly(lua_State *L)
         struct silly_worker *w = lua_touserdata(L, -1);
         assert(w);
 
-        silly_worker_register(w, SILLY_MESSAGE_TIMER, _process_timer);
+        silly_worker_register(w, _process_msg);
 
         luaL_newlibtable(L, tbl);
         lua_pushlightuserdata(L, (void *)w);

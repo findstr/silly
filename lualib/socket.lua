@@ -9,10 +9,10 @@ local event = {
 local socket = {
 }
 
-local SILLY_SOCKET_ACCEPT       = 0   --a new connetiong
-local SILLY_SOCKET_CLOSE        = 1   --a close from client
-local SILLY_SOCKET_CONNECT      = 2   --a async connect result
-local SILLY_SOCKET_DATA         = 3   --a data packet(raw) from client
+local SILLY_SOCKET_ACCEPT       = 2   --a new connetiong
+local SILLY_SOCKET_CLOSE        = 3   --a close from client
+local SILLY_SOCKET_CONNECT      = 4   --a async connect result
+local SILLY_SOCKET_DATA         = 5   --a data packet(raw) from client
 
 
 function socket.register(handler)
