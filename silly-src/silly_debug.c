@@ -28,7 +28,8 @@ void silly_debug_process(lua_State *L, struct silly_message *msg)
         char filename[256];
         char *sz = (char *)(msg + 1);
 
-        sscanf(sz, "require(\"%[^\"]", filename);
+        if (sscanf(sz, "require(\"%[^\"]", filename) != 1)
+                return ;
 
         luaL_loadstring(L, require);
         lua_pushstring(L, filename);
