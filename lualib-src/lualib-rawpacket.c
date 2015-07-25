@@ -26,7 +26,7 @@ struct incomplete {
         int fd;
         int rsize;
         int psize;
-        char *buff;
+        uint8_t *buff;
         struct incomplete *prev;
         struct incomplete *next;
 };
@@ -97,7 +97,7 @@ _push_one_complete(struct rawpacket *p, struct incomplete *ic)
         pk->fd = ic->fd;
         assert(ic->psize == ic->rsize);
         pk->size = ic->psize;
-        pk->buff = ic->buff;
+        pk->buff = (char *)ic->buff;
 
         assert(p->head < p->cap);
         assert(p->tail < p->cap);
@@ -124,6 +124,8 @@ _push_raw_once(struct rawpacket *p, int fd, int size, const uint8_t *buff)
                 } else {                //have no enough psize info
                         assert(ic->rsize == -1);
                         ic->psize |= *buff;
+                        ic->buff = (uint8_t *)silly_malloc(ic->psize);
+
                         ++buff;
                         --size;
                         ++ic->rsize;
