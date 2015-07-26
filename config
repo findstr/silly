@@ -1,7 +1,7 @@
 deamon = 0      --not support now
-debug = 1
+debug = 0
 listen_port=8989
-worker_count = 3
-bootstrap = "logic/main.lua"
-lualib_path = "logic/?.lua;lualib/?.lua"
+worker_count = 8
+bootstrap = "test/testprofile.lua"
+lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "../?.so"
