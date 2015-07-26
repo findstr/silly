@@ -3,10 +3,8 @@ LD = gcc
 INCLUDE = -I lua53/ -I silly-src/
 PLATS=linux macosx
 
-BUILD_PATH = .
-LUALIB_SRC = ../lualib-src
-
-TARGET = silly
+BUILD_PATH ?= .
+TARGET ?= silly
 SRC = silly-src/main.c silly-src/silly_socket.c\
       silly-src/silly_queue.c silly-src/silly_server.c\
       silly-src/silly_worker.c silly-src/silly_timer.c\
