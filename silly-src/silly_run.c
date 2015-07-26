@@ -64,11 +64,13 @@ _debug(void *arg)
 
                 silly_server_push(0, msg);
         }
+
+        return NULL;
 }
 
 int silly_run(struct silly_config *config)
 {
-        int i;
+        int i, j;
         int tcnt;
 
         timer_init();
@@ -100,7 +102,7 @@ int silly_run(struct silly_config *config)
         if (config->debug > 0)
                 pthread_create(&pid[i++], NULL, _debug, NULL);
 
-        for (int j = 0; i < tcnt; i++, j++)
+        for (j = 0; i < tcnt; i++, j++)
                 pthread_create(&pid[i], NULL, _worker, &workid[j]);
 
         for (i = 0; i < tcnt; i++)
