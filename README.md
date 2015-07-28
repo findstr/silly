@@ -15,7 +15,7 @@
 
 ##CONFIG
 
-- deamon, 1 --> run as deamon, 0 --> normal
+- daemon, 1 --> run as daemon, 0 --> normal
 - listen_port, the server listen port
 - worker_count, open worker count
 - bootstrap, the bootstrap for every worker

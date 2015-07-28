@@ -9,6 +9,7 @@ SRC = silly-src/main.c silly-src/silly_socket.c\
       silly-src/silly_queue.c silly-src/silly_server.c\
       silly-src/silly_worker.c silly-src/silly_timer.c\
       silly-src/silly_run.c silly-src/silly_debug.c\
+      silly-src/silly_daemon.c
 
 
 OBJS = $(patsubst %.c,%.o,$(SRC))

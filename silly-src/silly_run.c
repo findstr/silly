@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include "silly_message.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
 #include "silly_socket.h"
 #include "silly_server.h"
+#include "silly_daemon.h"
 
 #include "silly_run.h"
 
@@ -72,6 +74,11 @@ int silly_run(struct silly_config *config)
 {
         int i, j;
         int tcnt;
+
+        if (config->daemon && silly_daemon(1, 0) == -1) {
+                fprintf(stderr, "daemon error:%d\n", errno);
+                exit(0);
+        }
 
         timer_init();
         silly_socket_init();
