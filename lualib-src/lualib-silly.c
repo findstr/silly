@@ -69,7 +69,7 @@ static int
 _socket_send(lua_State *L)
 {
         int sid;
-        char *buff;
+        uint8_t *buff;
         int size;
  
         sid = luaL_checkinteger(L, 1);

@@ -7,11 +7,25 @@ print("connect fd:", fd)
 
 local CMD = {}
 
+local function pause()
+        for line in io.stdin:lines() do
+                break;
+        end
+end
+
 function CMD.login()
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         socket.send(fd, cmd)
-        local res = socket.recv(fd)
-        print(res)
+        for i = 1, 100 do
+                if (i % 10 == 0) then
+                        pause()
+                end
+                local res = socket.recv(fd)
+                print("--")
+                print(res)
+        end
+
+        print("__recv finish__")
 end
 
 function CMD.roomlist()

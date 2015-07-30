@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <assert.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <string.h>
@@ -52,20 +53,33 @@ _send(lua_State *L)
 }
 
 static int
+_read(int fd, char *buff, int size)
+{
+        int oring = size;
+        int len;
+        while (size) {
+                len = recv(fd, buff, size, 0);
+                size -= len;
+                buff += len;
+        }
+        return 0;
+}
+
+static int
 _recv(lua_State *L)
 {
         int fd;
-        int size;
+        unsigned short size;
 
         fd = luaL_checkinteger(L, 1);
-
+        
         size = 0;
-        recv(fd, &size, 2, 0);
+        _read(fd, (char *)&size, 2);
         
         size = ntohs(size);
 
-        char buff[size];
-        recv(fd, buff, size, 0);
+        char buff[size + 1];
+        _read(fd, buff, size);
 
         lua_pushlstring(L, buff, size);
 

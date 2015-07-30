@@ -28,7 +28,9 @@ function CMD.auth(fd, cmd)
 
         local sz =json.encode(res)
 
-        socket.write(fd, sz)
+        for i = 1, 100 do
+                socket.write(fd, sz)
+        end
 end
 
 function CMD.kick(fd)
