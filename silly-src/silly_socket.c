@@ -512,8 +512,10 @@ _try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
         struct conn *c = &s->conn_buff[sid];
         struct wlist *w;
 
-        if (c->type == STYPE_RESERVE)
+        if (c->type == STYPE_RESERVE) {
+                silly_free(buff);
                 return ;
+        }
 
         assert(c->type == STYPE_SOCKET);
 
