@@ -8,6 +8,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 
 #include "socket_poll.h"
 #include "silly_message.h"
@@ -60,7 +61,7 @@ struct silly_socket {
         //ctrl pipe, call write can be automatic wen data less then 64k(from APUE)
         int                     ctrl_send_fd;
         int                     ctrl_recv_fd;
-        struct fd_set           ctrl_fdset;
+        fd_set                  ctrl_fdset;
         struct conn             *ctrl_conn;
 
         //reserve id(for socket fd remap)
@@ -356,10 +357,11 @@ _report_close(struct silly_socket *s, int sid)
 static void
 _clear_socket_event(struct silly_socket *s)
 {
+        int i;
         struct conn *c;
         sp_event_t *e;
  
-        for (int i = s->event_index; i < s->event_cnt; i++) {
+        for (i = s->event_index; i < s->event_cnt; i++) {
                 e = &s->event_buff[i];
                 c = SP_UD(e);
                 if (c->type == STYPE_RESERVE)
