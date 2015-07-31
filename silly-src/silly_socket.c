@@ -60,6 +60,7 @@ struct silly_socket {
         //ctrl pipe, call write can be automatic wen data less then 64k(from APUE)
         int                     ctrl_send_fd;
         int                     ctrl_recv_fd;
+        struct fd_set           ctrl_fdset;
         struct conn             *ctrl_conn;
 
         //reserve id(for socket fd remap)
@@ -164,7 +165,8 @@ int silly_socket_init()
         int sp_fd;
         int fd[2];
         struct conn *c = NULL;
-        
+ 
+
         sp_fd = _sp_create(EPOLL_EVENT_SIZE);
         if (sp_fd < 1)
                 goto end;
@@ -195,6 +197,7 @@ int silly_socket_init()
         s->conn_buff = (struct conn *)silly_malloc(sizeof(struct conn) * MAX_CONN);
         s->ctrl_conn = c;
         _init_conn_buff(s);
+        FD_ZERO(&s->ctrl_fdset);
 
         SOCKET = s;
 
@@ -351,13 +354,15 @@ _report_close(struct silly_socket *s, int sid)
 }
 
 static void
-_clear_socket_event(struct silly_socket *s, struct conn *c)
+_clear_socket_event(struct silly_socket *s)
 {
+        struct conn *c;
         sp_event_t *e;
  
         for (int i = s->event_index; i < s->event_cnt; i++) {
                 e = &s->event_buff[i];
-                if (SP_UD(e) == c)
+                c = SP_UD(e);
+                if (c->type == STYPE_RESERVE)
                         SP_CLR(e);
         }
 
@@ -370,7 +375,6 @@ _socket_close(struct silly_socket *s, int sid)
         struct conn *c = &s->conn_buff[sid];
         close(c->fd);
         _report_close(s, sid);
-        _clear_socket_event(s, c);
         _remove_socket(s, sid);
 
         return ;
@@ -525,6 +529,7 @@ _try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
                 if ((err == -1 && errno != EAGAIN && errno != EINTR) || err == 0) {
                         silly_free(buff);
                         _socket_close(s, sid);
+                        _clear_socket_event(s);
                         return ;
                 }
 
@@ -546,32 +551,59 @@ _try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
 }
 
 static void
-_ctrl_cmd(struct silly_socket *s, struct conn *c)
+_read_pipe_block(int fd, uint8_t *buff, int size)
 {
-        int err;
-        struct cmd_packet cmd;
-
-        for (;;) {
-                err = read(c->fd, &cmd, sizeof(cmd));
-                if (err == sizeof(cmd)) {
-                        break;
-                } else if (err == -1 && errno == EINTR){
-                        continue;
-                } else {
+       for (;;) {
+                int err = read(fd, buff, size);
+                if (err == -1) {
+                        if (errno == EINTR)
+                                continue;
                         fprintf(stderr, "_ctrl_cmd:occurs error:%d\n", err);
                         return ;
                 }
+                assert(err == size);
+                return ;
+        }
+}
+
+static int _has_cmd(struct silly_socket *s)
+{
+        int ret;
+        struct timeval tv = {0, 0};
+
+        FD_SET(s->ctrl_recv_fd, &s->ctrl_fdset);
+        ret = select(s->ctrl_recv_fd + 1, &s->ctrl_fdset, NULL, NULL, &tv);
+        if (ret == 1)
+                return 1;
+        
+        return 0;
+}
+
+/* At first , I worry about always has data come into the ctrl_recv_fd pipe,
+ * when _ctrl_cmd processing the last the command,
+ * but after days, I don't worry about it.
+ * Because when occurs this condition, only one reason, the system overload,
+ * we need to adjust the max connection count
+ */
+
+static void
+_ctrl_cmd(struct silly_socket *s)
+{
+        struct cmd_packet cmd;
+        if (_has_cmd(s)) {
+                _read_pipe_block(s->ctrl_recv_fd, (uint8_t *)&cmd, sizeof(cmd));
+                switch (cmd.op) {
+                case 'W':
+                        _try_send(s, cmd.ws.sid, cmd.ws.buff, cmd.ws.size);
+                        break;
+                default:
+                        fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.op);
+                        assert(!"oh, no!");
+                        break;
+                }
         }
 
-        switch (cmd.op) {
-        case 'W':
-                _try_send(s, cmd.ws.sid, cmd.ws.buff, cmd.ws.size);
-                break;
-        default:
-                fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.op);
-                assert(!"oh, no!");
-                break;
-        }
+        return ;
 }
 
 
@@ -610,7 +642,11 @@ _process(struct silly_socket *s)
         if (SP_ERR(e)) {
                 fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
                 _socket_close(s, _conn_to_sid(s, c));
-        } else if (SP_READ(e)) { 
+                _clear_socket_event(s);
+                return ;
+        }
+
+        if (SP_READ(e)) { 
                 if (c->type == STYPE_LISTEN) {
                         int fd = accept(c->fd, NULL, 0);
                         if (fd >= 0) {
@@ -624,12 +660,16 @@ _process(struct silly_socket *s)
                         }
                 } else if (c->type == STYPE_SOCKET) {
                         _forward_msg(s, c);
+                        _clear_socket_event(s);
                 } else if (c->type == STYPE_CTRL) {
-                        _ctrl_cmd(s, c);
+                        _ctrl_cmd(s);
+                        _clear_socket_event(s);
                 } else {
                         fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
                 }
-        } else if (SP_WRITE(e)) {
+        }
+
+        if (SP_WRITE(e)) {
                 struct wlist *w;
                 w = c->wl_head.next;
                 assert(w);
@@ -637,6 +677,7 @@ _process(struct silly_socket *s)
                         int err = _send(s, c, w->buff + w->offset, w->size);
                         if (err == -1) {
                                 _socket_close(s, _conn_to_sid(s, c));
+                                _clear_socket_event(s);
                                 break;
                         }
                         
@@ -659,9 +700,6 @@ _process(struct silly_socket *s)
                         c->wl_tail = &c->wl_head;
                         _sp_write_enable(s->sp_fd, c->fd, c, 0);
                 }
-
-        } else {
-                fprintf(stderr, "_process: unhandler epoll event:\n");
         }
 }
 

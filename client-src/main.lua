@@ -14,12 +14,10 @@ local function pause()
 end
 
 function CMD.login()
+        local a = 0
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         socket.send(fd, cmd)
         for i = 1, 100 do
-                if (i % 10 == 0) then
-                        pause()
-                end
                 local res = socket.recv(fd)
                 print("--")
                 print(res)
