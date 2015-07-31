@@ -1,4 +1,4 @@
-CC = gcc -std=gun99
+CC = gcc -std=gnu99
 LD = gcc
 INCLUDE = -I lua53/ -I silly-src/
 PLATS=linux macosx
