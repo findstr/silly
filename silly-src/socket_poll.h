@@ -7,8 +7,8 @@
 #define SP_READ(e)   (e->events & EPOLLIN)
 #define SP_WRITE(e)  (e->events & EPOLLOUT)
 #define SP_ERR(e)    (e->events & (EPOLLERR | EPOLLHUP))
-#define SP_CLR(e)    (e->events = 0)
 #define SP_UD(e)     (e->data.ptr)
+
 typedef struct epoll_event sp_event_t;
 
 static inline int
@@ -61,7 +61,6 @@ _sp_write_enable(int sp, int fd, void *ud, int enable)
 #define SP_READ(e)   (e->filter == EVFILT_READ)
 #define SP_WRITE(e)  (e->filter == EVFILT_WRITE)
 #define SP_ERR(e)    ((e->filter != EVFILT_READ) && (e->filter != EVFILT_WRITE))
-#define SP_CLR(e)    (e->filter = 0)
 #define SP_UD(e)     (e->udata)
 
 typedef struct kevent sp_event_t;

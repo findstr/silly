@@ -365,7 +365,7 @@ _clear_socket_event(struct silly_socket *s)
                 e = &s->event_buff[i];
                 c = SP_UD(e);
                 if (c->type == STYPE_RESERVE)
-                        SP_CLR(e);
+                        SP_UD(e) = NULL;
         }
 
         return ;
@@ -378,6 +378,7 @@ _socket_close(struct silly_socket *s, int sid)
         close(c->fd);
         _report_close(s, sid);
         _remove_socket(s, sid);
+        _clear_socket_event(s);
 
         return ;
 }
@@ -413,17 +414,6 @@ int silly_socket_send(int sid, uint8_t *buff,  int size)
         }
 
         return 0;
-}
-
-static void
-_wait(struct silly_socket *s)
-{
-        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
-        if (s->event_cnt == -1) {
-                s->event_cnt = 0;
-                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
-        }
-        s->event_index = 0;
 }
 
 static void
@@ -531,7 +521,6 @@ _try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
                 if ((err == -1 && errno != EAGAIN && errno != EINTR) || err == 0) {
                         silly_free(buff);
                         _socket_close(s, sid);
-                        _clear_socket_event(s);
                         return ;
                 }
 
@@ -608,6 +597,21 @@ _ctrl_cmd(struct silly_socket *s)
         return ;
 }
 
+static int
+_wait(struct silly_socket *s)
+{
+        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
+        if (s->event_cnt == -1) {
+                s->event_cnt = 0;
+                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
+                return -1;
+        }
+        s->event_index = 0;
+        _ctrl_cmd(s);
+
+        return 0;
+}
+
 
 static int
 _send(struct silly_socket *s, struct conn *c, uint8_t *buff, int size)
@@ -641,10 +645,12 @@ _process(struct silly_socket *s)
 
         e = &s->event_buff[e_index];
         c = (struct conn *)SP_UD(e);
+        if (c == NULL)          //the socket event has be cleared
+                return ;
+
         if (SP_ERR(e)) {
                 fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
                 _socket_close(s, _conn_to_sid(s, c));
-                _clear_socket_event(s);
                 return ;
         }
 
@@ -662,11 +668,7 @@ _process(struct silly_socket *s)
                         }
                 } else if (c->type == STYPE_SOCKET) {
                         _forward_msg(s, c);
-                        _clear_socket_event(s);
-                } else if (c->type == STYPE_CTRL) {
-                        _ctrl_cmd(s);
-                        _clear_socket_event(s);
-                } else {
+                } else if (c->type != STYPE_CTRL) {
                         fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
                 }
         }
@@ -679,7 +681,6 @@ _process(struct silly_socket *s)
                         int err = _send(s, c, w->buff + w->offset, w->size);
                         if (err == -1) {
                                 _socket_close(s, _conn_to_sid(s, c));
-                                _clear_socket_event(s);
                                 break;
                         }
                         
@@ -709,10 +710,11 @@ _process(struct silly_socket *s)
 int silly_socket_run()
 {
         struct silly_socket *s = SOCKET;
-        if (s->event_index == s->event_cnt)
-                _wait(s);
-        else
+        for (;;) {
+                if ((s->event_index == s->event_cnt) && _wait(s) == -1)
+                        continue;
                 _process(s);
+        }
 
         return 0;
 }
