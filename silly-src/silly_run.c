@@ -112,6 +112,8 @@ int silly_run(struct silly_config *config)
         for (j = 0; i < tcnt; i++, j++)
                 pthread_create(&pid[i], NULL, _worker, &workid[j]);
 
+        fprintf(stderr, "Silly is running!\n");
+
         for (i = 0; i < tcnt; i++)
                 pthread_join(pid[i + 2], NULL);
 
