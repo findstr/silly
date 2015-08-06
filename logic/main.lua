@@ -4,6 +4,7 @@ local core = require("core")
 local game = require("game")
 local usrmgr = require("usrmgr")
 local packet = require("packet")
+local log = require("log")
 
 local conn_process = {}
 local CMD = {}
@@ -74,6 +75,10 @@ function tm()
         print("Heartbeat~")
         timer.add(1000, tm)
 end
+
+local l = log.open("test.log")
+log.add(l , "DEBUG", "helloWorld")
+log.sync(l)
 
 --timer.add(1000, tm);
 

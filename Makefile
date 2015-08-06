@@ -32,7 +32,7 @@ macosx:
 		LDFLAG="-lm -ldl -Wl,-no_compact_unwind  -L lua53/ -llua -lpthread"\
 		SHARED="-dynamiclib -fPIC -Wl,-undefined,dynamic_lookup"
 
-all:$(BUILD_PATH)/$(TARGET) silly.so rawpacket.so profile.so
+all:$(BUILD_PATH)/$(TARGET) silly.so rawpacket.so profile.so log.so
 
 $(BUILD_PATH)/$(TARGET):$(OBJS)
 	$(LD) -o $@ $^ $(LDFLAG)
@@ -42,6 +42,8 @@ silly.so: lualib-src/lualib-silly.c
 rawpacket.so: lualib-src/lualib-rawpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 profile.so: lualib-src/lualib-profile.c
+	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
+log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 
 -include $(SRC:.c=.d)
