@@ -24,12 +24,25 @@ function socket.connect(ip, port)
         --not implement
 end
 
+function socket.packet(fd, pack, unpack)
+        event.socket[fd].pack = pack
+        event.socket[fd].unpack = unpack
+end
+
 function socket.read(fd, handler)
         event.socket[fd].recv = handler
 end
 
 function socket.write(fd, data)
-        local p, s = raw.pack(data);
+        local ed;
+        local pack = event.socket[fd].pack
+        if pack then
+                ed = pack(data)
+        else
+                ed = data
+        end
+
+        local p, s = raw.pack(ed);
         silly.socket_send(fd, p, s);
 end
 
@@ -60,12 +73,20 @@ end
 
 silly.socket_recv(function (msg)
         local fd, type, data
+        local cmd
+
         fd, type = raw.push(packet, msg)
         dispatch_event(fd, type);
 
         fd, data = raw.pop(packet)
         while fd and data do
-                dispatch_msg(fd, data)
+                local unpack = event.socket[fd].unpack
+                if unpack then
+                        cmd = unpack(data)
+                else
+                        cmd = data
+                end
+                dispatch_msg(fd, cmd)
                 fd, data = raw.pop(packet)
         end
 end)

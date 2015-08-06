@@ -1,9 +1,9 @@
 local socket = require("socket")
 local timer = require("timer")
 local core = require("core")
-local json = require("json")
 local game = require("game")
 local usrmgr = require("usrmgr")
+local packet = require("packet")
 
 local conn_process = {}
 local CMD = {}
@@ -26,10 +26,8 @@ function CMD.auth(fd, cmd)
 
         print("auth result:", res.uid)
 
-        local sz =json.encode(res)
-
         for i = 1, 100 do
-                socket.write(fd, sz .. i)
+                socket.write(fd, res)
         end
 end
 
@@ -52,8 +50,8 @@ local EVENT = {}
 
 function EVENT.accept(fd)
         conn_process[fd] = {}
-        socket.read(fd, function (fd, data)
-                local cmd = json.decode(data)
+        socket.packet(fd, packet.pack, packet.unpack)
+        socket.read(fd, function (fd, cmd)
                 local handler = CMD[cmd.cmd]
                 if handler then
                         handler(fd, cmd)

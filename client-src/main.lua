@@ -17,13 +17,8 @@ function CMD.login()
         local a = 0
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         socket.send(fd, cmd)
-        for i = 1, 100 do
-                local res = socket.recv(fd)
-                print("--")
-                print(res)
-        end
-
-        print("__recv finish__")
+        local res = socket.recv(fd)
+        print(res)
 end
 
 function CMD.roomlist()
