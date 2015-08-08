@@ -1,7 +1,7 @@
 daemon = 0
 debug = 0
 listen_port=8989
-worker_count = 8
+worker_count = 1
 bootstrap = "logic/main.lua"
 lualib_path = "logic/?.lua;lualib/?.lua"
 lualib_cpath = "../?.so"

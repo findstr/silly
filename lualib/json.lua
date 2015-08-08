@@ -6,7 +6,7 @@ function json.decode(str)
 
         j = "local t =" .. j .."; return t"
  
-        t = load(j)()
+        t = assert(load(j))()
 
         return t;
 end

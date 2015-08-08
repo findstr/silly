@@ -25,11 +25,13 @@ function CMD.auth(fd, cmd)
                 res.uid = -1;
         end
 
-        print("auth result:", res.uid)
+        print("auth result1:", res.uid)
+        
+        core.sleep(10000)
 
-        for i = 1, 100 do
-                socket.write(fd, res)
-        end
+        print("auth result2:", res.uid)
+
+        socket.write(fd, res)
 end
 
 function CMD.kick(fd)
@@ -52,7 +54,7 @@ local EVENT = {}
 function EVENT.accept(fd)
         conn_process[fd] = {}
         socket.packet(fd, packet.pack, packet.unpack)
-        socket.read(fd, function (fd, cmd)
+        socket.recv(fd, function (fd, cmd)
                 local handler = CMD[cmd.cmd]
                 if handler then
                         handler(fd, cmd)

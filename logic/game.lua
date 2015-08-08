@@ -29,7 +29,7 @@ function CMD.room_create(fd, cmd)
                 res.rid = -1
         end
 
-        socket.write(fd, json.encode(res))
+        socket.write(fd, res)
 end
 
 function CMD.room_list(fd, cmd)
@@ -37,12 +37,13 @@ function CMD.room_list(fd, cmd)
         assert(cmd.page_index == tostring(1))
         rl.cmd = "room_list"
         rl.room = {}
+        print("roomlist:", room_list)
         for k, v in pairs(room_list) do
                 print("name", v:getname())
                 rl.room[#rl.room + 1] = {name=v:getname(), rid = k}
         end
 
-        socket.write(fd, json.encode(rl))
+        socket.write(fd, rl)
 end
 
 function CMD.room_enter(fd, cmd)

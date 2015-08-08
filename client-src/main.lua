@@ -17,6 +17,12 @@ function CMD.login()
         local a = 0
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         socket.send(fd, cmd)
+        socket.send(fd, cmd)
+        socket.send(fd, cmd)
+        local res = socket.recv(fd)
+        print(res)
+        local res = socket.recv(fd)
+        print(res)
         local res = socket.recv(fd)
         print(res)
 end
