@@ -28,6 +28,14 @@ function core.block()
         return coroutine.yield()
 end
 
+function core.self()
+        return coroutine.running()
+end
+
+function core.run(co, ...)
+        return coroutine.resume(co, ...)
+end
+
 
 return core
 

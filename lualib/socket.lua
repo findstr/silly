@@ -105,7 +105,7 @@ function socket.connect(ip, port, handler)
         if event.socket[fd].isclose ~= 0 then
                 assert(event.socket[fd].isclose == 2)
                 event.socket[fd] = nil
-                return nil
+                return -1
         end
 
         -- now all the socket event can be process it in the socket coroutine
@@ -121,7 +121,6 @@ function socket.close(fd)
 end
 
 function socket.write(fd, data)
-        assert(event.socket[fd].status == SOCKET_PROCESSING)
         local ed;
         local pack = event.socket[fd].pack
         if pack then
