@@ -47,6 +47,7 @@ local function socket_co(...)
                         handler["close"](fd)
                         silly.socket_close(fd)
                         event.socket[fd] = nil
+                        return ;
                 end
 
                 p = table.remove(queue)
