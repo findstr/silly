@@ -32,8 +32,18 @@ function core.self()
         return coroutine.running()
 end
 
+local function resume_wrapper(ret, ...)
+        if (ret == true) then
+                return ...
+        else
+                local err = ...
+                print(err)
+                return nil
+        end
+end
+
 function core.run(co, ...)
-        return coroutine.resume(co, ...)
+        return resume_wrapper(coroutine.resume(co, ...))
 end
 
 
