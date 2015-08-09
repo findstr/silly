@@ -40,13 +40,17 @@ local function socket_co(...)
                 event.socket[fd].status = SOCKET_PROCESSING
                 msg = unwire(fd, p)
                 func(fd, msg)
-
                 -- check if the socket is close
-                if event.socket[fd].isclose ~= 0 then
+                if event.socket[fd].isclose ~= 0 and event.socket[fd] ~= SOCKET_CLOSE then
                         assert(event.socket[fd].isclose == 1)
                         handler["close"](fd)
+                end
+
+                if event.socket[fd].isclose ~= 0 then
                         silly.socket_close(fd)
                         event.socket[fd] = nil
+                        return ;
+                elseif event.socket[fd].status == SOCKET_CLOSE then
                         return ;
                 end
 
@@ -162,28 +166,25 @@ silly_message_handler[3] = function (fd)
         local handler = event.socket[fd].handler
         local status = event.socket[fd].status
         local co = event.socket[fd].co
-        if status ~= SOCKET_READY then
+        if status == SOCKET_PROCESSING then
                 event.socket[fd].isclose = 1
                 return ;
+        elseif status == SOCKET_READY then 
+                coroutine.resume(co, handler["close"], fd);
         end
-        coroutine.resume(co, handler["close"], fd);
+        
+        -- when status == SOCKET_CLOSE the server close the socket after the client
         silly.socket_close(fd)
         event.socket[fd] = nil  --it will release the packet of queue, the coroutine
 end
 
---SILLY_SOCKET_CLOSED       = 4   --a socket has been closed(all the resource has already free)
+--SILLY_SOCKET_CLOSED       = 4   --a socket has been closed(all the resource has already free), now only for connect
 silly_message_handler[4] = function (fd)
         local handler = event.socket[fd].handler
         local status = event.socket[fd].status
         local co = event.socket[fd].co
-        if status ~= SOCKET_READY then
-                event.socket[fd].isclose = 2
-                if (status == SOCKET_CONNECTING) then
-                        coroutine.resume(co, handler["close"], fd);
-                end
-
-                return ;
-        end
+        assert(status == SOCKET_CONNECTING)
+        event.socket[fd].isclose = 2
         coroutine.resume(co, handler["close"], fd);
         event.socket[fd] = nil  --it will release the packet of queue, the coroutine
 end
@@ -220,7 +221,7 @@ silly_message_handler[7] = function (fd)
 
                                 if status == SOCKET_READY then
                                         coroutine.resume(co, fun, fd, data)
-                                else
+                                elseif status == SOCKET_PROCESSING then
                                         print("insert")
                                         local q = event.socket[fd].queue
                                         table.insert(q, 1, data)
