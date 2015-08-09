@@ -121,6 +121,10 @@ function socket.close(fd)
 end
 
 function socket.write(fd, data)
+        if (event.socket[fd].isclose ~= 0) then -- client close the socket
+                return ;
+        end
+
         local ed;
         local pack = event.socket[fd].pack
         if pack then
