@@ -13,6 +13,7 @@ local socket = {
 local SOCKET_READY              = 1     --socket is ready for processing the msg
 local SOCKET_PROCESSING         = 2     --socket is process the msg
 local SOCKET_CONNECTING         = 3     --socket is connecting
+local SOCKET_CLOSE              = 4     --socket is close, but the resource has not already clear
 
 local function unwire(fd, msg)
         if msg == nil then
@@ -115,6 +116,7 @@ function socket.connect(ip, port, handler)
 end
 
 function socket.close(fd)
+        event.socket[fd].status = SOCKET_CLOSE
         silly.socket_shutdown(fd)
 end
 
@@ -205,21 +207,23 @@ silly_message_handler[7] = function (fd)
         assert(packet);
         fd, data = raw.pop(packet)
         while fd and data do
-                local handler = event.socket[fd].handler
-                if handler["data"] then
-                        local fun = handler["data"]
-                        local co = event.socket[fd].co
-                        local status = event.socket[fd].status
+                if (event.socket[fd].status ~= SOCKET_CLOSE) then
+                        local handler = event.socket[fd].handler
+                        if handler["data"] then
+                                local fun = handler["data"]
+                                local co = event.socket[fd].co
+                                local status = event.socket[fd].status
 
-                        if status == SOCKET_READY then
-                                coroutine.resume(co, fun, fd, data)
-                        else
-                                print("insert")
-                                local q = event.socket[fd].queue
-                                table.insert(q, 1, data)
+                                if status == SOCKET_READY then
+                                        coroutine.resume(co, fun, fd, data)
+                                else
+                                        print("insert")
+                                        local q = event.socket[fd].queue
+                                        table.insert(q, 1, data)
+                                end
                         end
                 end
-                       
+
                 fd, data = raw.pop(packet)
         end
 
@@ -233,11 +237,6 @@ silly.socket_recv(function (msg)
 
         fd, type = raw.push(packet, msg)
         silly_message_handler[type](fd) --event handler
-        fd, data = raw.pop(packet)
-        while fd and data do
-                silly_message_handler[7](fd, data)
-                fd, data = raw.pop(packet)
-        end
 end)
 
 return socket

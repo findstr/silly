@@ -602,6 +602,10 @@ _try_shutdown(struct silly_socket *s, int sid)
                 fprintf(stderr, "_try_shutdown, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
                 return ;
         }
+
+        if (c->type == STYPE_CLOSE) {   //the client first close the socket
+                return ;
+        }
  
         close(c->fd);
         _report_socket_event(s, sid, SILLY_SOCKET_SHUTDOWN);
