@@ -13,7 +13,8 @@ void silly_socket_exit();
 int silly_socket_listen(int port, int work_id);
 
 int silly_socket_connect(const char *addr, int port, int work_id);
-void silly_socket_kick(int sid);
+int silly_socket_shutdown(int sid);
+int silly_socket_close(int sid);
 
 int silly_socket_send(int sid, uint8_t *buff,  int size);
 

@@ -39,21 +39,55 @@ _socket_connect(lua_State *L)
 {
         const char *ip;
         int port;
+        int err;
+        int workid;
+        struct silly_worker *w;
+        
+        w = lua_touserdata(L, lua_upvalueindex(1));
+        workid = silly_worker_getid(w);
+
 
         ip = luaL_checkstring(L, 1);
         port = luaL_checkinteger(L, 2);
 
-        fprintf(stderr, "unimplement socket_connect, ip:%s, port:%d\n", ip, port);
+        err = silly_socket_connect(ip, port, workid);
 
-        return 0;
+        lua_pushinteger(L, err);
+
+        return 1;
 }
 
 
 static int
 _socket_close(lua_State *L)
 {
-        return 0;
+        int err;
+        int sid;
+
+        sid = luaL_checkinteger(L, 1);
+
+        err = silly_socket_close(sid);
+
+        lua_pushinteger(L, err);
+
+        return 1;
 }
+
+static int
+_socket_shutdown(lua_State *L)
+{
+        int err;
+        int sid;
+
+        sid = luaL_checkinteger(L, 1);
+
+        err = silly_socket_shutdown(sid);
+
+        lua_pushinteger(L, err);
+
+        return 1;
+}
+
 
 static int
 _socket_recv(lua_State *L)
@@ -168,7 +202,9 @@ _process_msg(lua_State *L, struct silly_message *msg)
                 break;
         case SILLY_SOCKET_ACCEPT:
         case SILLY_SOCKET_CLOSE:
-        case SILLY_SOCKET_CONNECT:
+        case SILLY_SOCKET_CLOSED:
+        case SILLY_SOCKET_SHUTDOWN:
+        case SILLY_SOCKET_CONNECTED:
         case SILLY_SOCKET_DATA:
                 //fprintf(stderr, "silly_worker:_process:socket\n");
                 _process_socket(L, msg);
@@ -186,6 +222,7 @@ int luaopen_silly(lua_State *L)
                 {"workid", _get_workid},
                 {"socket_connect", _socket_connect},
                 {"socket_close", _socket_close},
+                {"socket_shutdown", _socket_shutdown},
                 {"socket_recv", _socket_recv},
                 {"socket_send", _socket_send},
                 {"timer_add", _timer_add},

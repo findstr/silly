@@ -1,7 +1,7 @@
 local io = require("io")
 local socket = require("socket")
 
-local fd = socket.connect("127.0.0.1", 8989);
+local fd = socket.connect("127.0.0.1", 8988);
 
 print("connect fd:", fd)
 

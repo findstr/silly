@@ -19,5 +19,15 @@ function core.sleep(ms)
         coroutine.yield()
 end
 
+function core.start(func)
+        local co = coroutine.create(func)
+        coroutine.resume(co)
+end
+
+function core.block()
+        return coroutine.yield()
+end
+
+
 return core
 
