@@ -11,50 +11,84 @@ function json.decode(str)
         return t;
 end
 
-local encode_tbl, encode_array
+local encode_tbl, encode_array, encode_object
+
+local function table_type(tbl)
+        assert(type(tbl) == "table")
+        for k, v in pairs(tbl) do
+                if type(k) ~= "number" then
+                        return "object"
+                end
+        end
+
+        return "array"
+end
 
 function encode_array(arr)
         local first = true
-        local sz = ""
+        local sz = "["
         for _, v in ipairs(arr) do
-                assert(type(v) == "table")
+                local encode
+                if (type(v) == "table") then
+                        encode = encode_tbl(v)
+                else
+                        encode = '"' .. v .. '"'
+                end
+                
                 if first then
                         first = false
-                        sz = sz .. encode_tbl(v)
                 else
-                        sz = sz .. ',' .. encode_tbl(v)
+                        sz = sz .. ','
                 end
+                        
+                sz = sz .. encode
         end
+
+        return sz .. "]"
+end
+
+function encode_object(tbl)
+        local sz = ""
+        local first = true
+        local encode
+
+        sz = "{"
+        for k, v in pairs(tbl) do
+                if (type(v) == "table") then
+                        encode = encode_tbl(v)
+                else
+                        encode = '"' .. k .. '"' .. ":" .. '"' .. v .. '"'
+                end
+
+                if first then
+                        first = false
+                else
+                        sz = sz .. ","
+                end
+               
+                sz = sz .. encode
+
+        end
+        sz = sz .. "}"
 
         return sz
 end
 
+
 function encode_tbl(tbl)
+        local sz = ""
         local first = true
-        local l = tbl or {}
-        local sz
+        local t;
 
-        sz = '{'
-        for k, v in pairs(tbl) do
-                if (type(v) == "table") then
-                        if first  then
-                                first = false
-                                sz = sz .. k .. ':' .. '[' ..  encode_array(v) .. ']'
-                        else
-                                sz = sz .. ',' .. k .. ':' .. '[' ..  encode_array(v) .. ']'
-                        end
-                else
-                        if first then
-                                first = false
-                                sz = sz ..'"' .. k .. '"' .. ":" .. '"' .. v .. '"'
-                        else
-                                sz = sz ..',' .. '"' .. k .. '"' .. ":" .. '"' .. v .. '"'
-                        end
-                        
-                end
+        assert(type(tbl) == "table")
+
+        t = table_type(tbl)
+        print("encode_tbl", t)
+        if t == "object" then
+                sz = sz .. encode_object(tbl)
+        elseif t == "array" then
+                sz = sz .. encode_array(tbl)
         end
-
-        sz = sz .. '}'
 
         return sz
 end
@@ -64,12 +98,6 @@ function json.encode(tbl)
         return sz
 end
 
-------------test--------
---[[
-local tbl = {room={{cmd="auth1", uid = "dafas"},
-                {cmd="auth2", sid = "123"}}}
-
-local sz = json.encode(tbl)
-print(sz)
-]]--
 return json
+
+

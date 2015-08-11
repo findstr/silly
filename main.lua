@@ -43,4 +43,11 @@ end
 local b, c = test2()
 print("fsdaf", b, c)
 
+local t = {"hello", "world"}
+
+for k ,v in pairs(t) do
+        print(type(k))
+end
+
+
 
