@@ -83,7 +83,6 @@ function encode_tbl(tbl)
         assert(type(tbl) == "table")
 
         t = table_type(tbl)
-        print("encode_tbl", t)
         if t == "object" then
                 sz = sz .. encode_object(tbl)
         elseif t == "array" then
