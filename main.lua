@@ -1,53 +1,21 @@
-
---[[
 local socket = require("socket")
 local core = require("core")
 
-local EVENT = {}
+--service
+local SERVICE = {}
 
-function EVENT.accept(fd)
-
-end
-function EVENT.close(fd)
-        print("closexx")
+function SERVICE.accept(fd)
+        print(fd, "service-come in")
 end
 
-function EVENT.data(fd, data)
-        print("data", data)
-end
-core.start(function()
-        
-        local fd = socket.connect("127.0.0.1", 8989, EVENT)
-        print("connect fd:", fd)
-        local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
-        socket.write(fd, cmd)
-end)
-]]--
-
-
-local t = {}
-
-local function sep_res(res, ...)
-        print (res)
-        return ...
+function SERVICE.close(fd)
+        print(fd, "service-leave")
 end
 
-local function test1()
-        return 1, 3, 4
+function SERVICE.data(fd, data)
+        print("service-data", data)
+        socket.write(fd, "PONG")
 end
 
-local function test2()
-        return sep_res(test1())
-end
-
-local b, c = test2()
-print("fsdaf", b, c)
-
-local t = {"hello", "world"}
-
-for k ,v in pairs(t) do
-        print(type(k))
-end
-
-
+socket.service(SERVICE)
 

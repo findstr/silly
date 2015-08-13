@@ -7,15 +7,12 @@ function core.workid()
         return silly.workid()
 end
 
-local function wakeup()
-        local co = coroutine.running()
-        return function ()
-                coroutine.resume(co)
-        end
+local function wakeup(co)
+        coroutine.resume(co)
 end
 
 function core.sleep(ms)
-        timer.add(ms, wakeup())
+        timer.add(ms, wakeup, coroutine.running())
         coroutine.yield()
 end
 

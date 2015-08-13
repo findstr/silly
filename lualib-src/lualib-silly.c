@@ -118,22 +118,26 @@ _socket_send(lua_State *L)
 static void
 _process_timer(lua_State *L, struct silly_message *m)
 {
-        void *key;
         int type;
         int err;
+        int pn;
         struct silly_message_timer *tm = (struct silly_message_timer *)(m + 1);
 
-        key = (void *)tm->sig;
-        
-        lua_pushlightuserdata(L, key);
+        lua_pushlightuserdata(L, (void *)tm->handle);
         lua_gettable(L, LUA_REGISTRYINDEX);
         type = lua_type(L, -1);
-        if (type == LUA_TFUNCTION) {
-                lua_pushlightuserdata(L, key);
-                lua_pushnil(L);
-                lua_settable(L, LUA_REGISTRYINDEX);
+ 
+        //the really session
+        if (tm->session == 0) {
+                pn = 0;
+        } else {
+                lua_pushlightuserdata(L, (void *)tm->session);
+                lua_gettable(L, LUA_REGISTRYINDEX);
+                pn = 1;
+        }
 
-                err = lua_pcall(L, 0, 0, 0);
+        if (type == LUA_TFUNCTION) {
+                err = lua_pcall(L, pn, 0, 0);
                 if (err != 0)
                         fprintf(stderr, "timer handler call fail:%s\n", lua_tostring(L, -1));
 
@@ -146,31 +150,41 @@ _process_timer(lua_State *L, struct silly_message *m)
         return ;
 }
 
-
 static int
 _timer_add(lua_State *L)
 {
         int err;
         int workid;
         int time;
+        void *handle;
+        void *session;
         struct silly_worker *w;
         w = lua_touserdata(L, lua_upvalueindex(1));
  
         time = luaL_checkinteger(L, 1);
-
         if (lua_type(L, 2) != LUA_TFUNCTION) {
                 fprintf(stderr, "timer handler need a lua function\n");
                 return 0;
         }
+ 
+        //save the real session, maybe a table/coroutine/closure/function
+        session = (void *)lua_topointer(L, 3);
+        if (session != NULL) {
+                lua_pushlightuserdata(L, session);
+                lua_insert(L, -2);
+                lua_settable(L, LUA_REGISTRYINDEX);
+        } else {
+                lua_pop(L, 1);
+        }
 
-        uintptr_t key = (uintptr_t)lua_topointer(L, 2);
-        lua_pushlightuserdata(L, (void *)key);
+        handle = (void *)lua_topointer(L, 2);
+        lua_pushlightuserdata(L, handle); 
         lua_insert(L, -2);
         lua_settable(L, LUA_REGISTRYINDEX);
-        
+ 
         workid = silly_worker_getid(w);
 
-        err = timer_add(time, workid, key);
+        err = timer_add(time, workid, (uintptr_t)handle, (uintptr_t)session);
 
         lua_pushinteger(L, err);
 
