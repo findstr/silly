@@ -18,12 +18,6 @@ for i = 1, 30 do
         timer.add(10, tm, closure[i])
 end
 
-function tm1(c)
-        print("tm1", c)
-end
-
-timer.add(10, tm1)
-
 core.start(function()
         print("hello")
         core.sleep(5000)

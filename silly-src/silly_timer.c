@@ -15,8 +15,7 @@
 struct timer_node {
         int                     expire;
         int                     workid;
-        uintptr_t               handle;
-        uintptr_t               session;
+        uint64_t                session;
         struct timer_node       *next;
 };
 
@@ -74,11 +73,10 @@ _getms()
 }
 
 static struct timer_node *
-_new_node(int time, int workid, uintptr_t handle, uintptr_t session)
+_new_node(int time, int workid, uint64_t session)
 {
         struct timer_node *node = (struct timer_node *)malloc(sizeof(*node));
         node->workid = workid;
-        node->handle = handle;
         node->session = session;
         node->expire = _getms() + time;
 
@@ -86,9 +84,9 @@ _new_node(int time, int workid, uintptr_t handle, uintptr_t session)
 }
 
 //ms
-int timer_add(int time, int workid, uintptr_t handle, uintptr_t session)
+int timer_add(int time, int workid, uint64_t session)
 {
-        struct timer_node *n = _new_node(time, workid, handle, session);
+        struct timer_node *n = _new_node(time, workid, session);
         if (n == NULL) {
                 fprintf(stderr, "_new_node fail\n");
                 return -1;
@@ -106,14 +104,13 @@ int timer_add(int time, int workid, uintptr_t handle, uintptr_t session)
 }
 
 static void
-_push_timer_event(struct timer *t, int workid, uintptr_t handle, uintptr_t session)
+_push_timer_event(struct timer *t, int workid, uint64_t session)
 {
         struct silly_message *s;
         struct silly_message_timer *tm;
         s = (struct silly_message *)silly_malloc(sizeof(*s) + sizeof(*tm));
         tm = (struct silly_message_timer *)(s + 1);
         s->type = SILLY_TIMER_EXECUTE;
-        tm->handle = handle;
         tm->session = session;
         silly_server_push(workid, s);
 
@@ -134,7 +131,7 @@ int timer_dispatch()
         while (t) {
                 if (t->expire <= curr) {
                         struct timer_node *tmp;
-                        _push_timer_event(TIMER, t->workid, t->handle, t->session);
+                        _push_timer_event(TIMER, t->workid, t->session);
                         last->next = t->next;
                         
                         tmp = t;

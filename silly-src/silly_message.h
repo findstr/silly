@@ -26,8 +26,7 @@ struct silly_message_socket {
 };
 
 struct silly_message_timer {
-        uintptr_t handle;
-        uintptr_t session;
+        uint64_t session;
 };
 
 struct silly_message_debug {
