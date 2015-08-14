@@ -121,7 +121,7 @@ _fetch_empty_conn(struct silly_socket *s, enum stype type)
         for (i = 0; i < MAX_CONN; i++) {
                 id = __sync_add_and_fetch(&s->reserve_sid, 1);
                 if (id < 0) {
-                        id = -id;
+                        id = id & 0x7fffffff;
                         __sync_and_and_fetch(&s->reserve_sid, 0x7fffffff);
                 }
                 
