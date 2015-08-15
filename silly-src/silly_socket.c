@@ -376,6 +376,11 @@ _clear_socket_event(struct silly_socket *s)
         for (i = s->event_index; i < s->event_cnt; i++) {
                 e = &s->event_buff[i];
                 c = SP_UD(e);
+
+                //after the _wait be called, this function can be more than once, so the c can be NULL
+                if (c == NULL)
+                        continue;
+
                 if (c->type == STYPE_RESERVE || c->type == STYPE_CLOSE)
                         SP_UD(e) = NULL;
         }
@@ -498,12 +503,15 @@ int silly_socket_send(int sid, uint8_t *buff,  int size)
         return err;
 }
 
-static void
+static int
 _forward_msg(struct silly_socket *s, struct conn *c)
 {
+        int err;
         int len;
         uint8_t *buff = (uint8_t *)silly_malloc(c->alloc_size);
         
+        err = 0;
+
         len = recv(c->fd, buff, c->alloc_size, 0);
         if (len < 0) {
                 switch (errno) {
@@ -516,10 +524,12 @@ _forward_msg(struct silly_socket *s, struct conn *c)
                 default:
                         fprintf(stderr, "_forward_msg, %s\n", strerror(errno));
                         _socket_close(s, c->sid);
+                        err = -1;
                         break;
                 }
         } else if (len == 0) {
                 _socket_close(s, c->sid);
+                err = -1;
         } else {
                 assert(c->workid >= 0);
                 struct silly_message_socket *sm;
@@ -543,7 +553,7 @@ _forward_msg(struct silly_socket *s, struct conn *c)
         
         }
 
-        return ;
+        return err;
 }
 
 static void
@@ -696,7 +706,7 @@ static void
 _ctrl_cmd(struct silly_socket *s)
 {
         struct cmd_packet cmd;
-        if (_has_cmd(s)) {
+        while (_has_cmd(s)) {
                 _read_pipe_block(s->ctrl_recv_fd, (uint8_t *)&cmd, sizeof(cmd));
                 switch (cmd.op) {
                 case 'W':
@@ -757,6 +767,7 @@ _send(struct silly_socket *s, struct conn *c, uint8_t *buff, int size)
 static void
 _process(struct silly_socket *s)
 {
+        int err;
         sp_event_t *e;
         struct conn *c;
 
@@ -776,22 +787,31 @@ _process(struct silly_socket *s)
         }
 
         if (SP_READ(e)) { 
+                err = 0;
                 if (c->type == STYPE_LISTEN) {
                         int fd = accept(c->fd, NULL, 0);
                         if (fd >= 0) {
-                                int err = _add_socket(s, fd, STYPE_SOCKET, c->workid);
+                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid);
                                 if (err < 0) {
                                         fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
                                         close(fd);
+                                        err = -1;
                                 } else {        //now the err is sid(socket id)
                                         _report_socket_event(s, err, SILLY_SOCKET_ACCEPT);
                                 }
+                        } else {
+                                err = -1;
                         }
                 } else if (c->type == STYPE_SOCKET) {
-                        _forward_msg(s, c);
+                        err = _forward_msg(s, c);
                 } else if (c->type != STYPE_CTRL) {
+                        err = -1;
                         fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
                 }
+
+                if (err < 0)            //this socket have already occurs error, so ignore the write event
+                        return ;
+
         }
 
         if (SP_WRITE(e)) {
@@ -825,6 +845,8 @@ _process(struct silly_socket *s)
                         _sp_write_enable(s->sp_fd, c->fd, c, 0);
                 }
         }
+
+        return ;
 }
 
 

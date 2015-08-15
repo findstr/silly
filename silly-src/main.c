@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -49,6 +50,8 @@ int main()
                 lua_close(L);
                 return -1;
         }
+        
+        signal(SIGPIPE, SIG_IGN);
 
         _parse_config(L, &config);
         silly_run(&config);
