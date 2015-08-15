@@ -284,6 +284,7 @@ _pack_raw(lua_State *L)
         assert(size < (unsigned short)-1);
 
         p = silly_malloc(size);
+        *((unsigned short *)p) = htons(size);
         memcpy(p + 2, str, size);
 
         lua_pushlightuserdata(L, p);
