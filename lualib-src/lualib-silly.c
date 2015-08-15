@@ -21,11 +21,16 @@ _process_socket(lua_State *L, struct silly_message *m)
         lua_pushlightuserdata(L, _process_socket);
         lua_gettable(L, LUA_REGISTRYINDEX);
 
-        lua_pushlightuserdata(L, m);
-        luaL_getmetatable(L, "silly_message");
+        lua_pushinteger(L, sm->sid);            //socket id
+        lua_pushinteger(L, m->type);            //message type
+
+        lua_pushlightuserdata(L, sm->data);      //socket data
+        luaL_getmetatable(L, "silly_socket_data");
         lua_setmetatable(L, -2);
 
-        err = lua_pcall(L, 1, 0, 0);
+        lua_pushinteger(L, sm->data_size);       //socket data size
+
+        err = lua_pcall(L, 4, 0, 0);
         if (err != 0)
                 fprintf(stderr, "_process_socket call failed:%s\n", lua_tostring(L, -1));
         
@@ -90,7 +95,7 @@ _socket_shutdown(lua_State *L)
 
 
 static int
-_socket_recv(lua_State *L)
+_socket_register(lua_State *L)
 {
         lua_pushlightuserdata(L, _process_socket);
         lua_insert(L, -2);
@@ -218,7 +223,7 @@ int luaopen_silly(lua_State *L)
                 {"socket_connect", _socket_connect},
                 {"socket_close", _socket_close},
                 {"socket_shutdown", _socket_shutdown},
-                {"socket_recv", _socket_recv},
+                {"socket_register", _socket_register},
                 {"socket_send", _socket_send},
                 {"timer_add", _timer_add},
                 {"timer_register", _timer_register},
@@ -228,8 +233,8 @@ int luaopen_silly(lua_State *L)
         luaL_checkversion(L);
 
 
-        luaL_newmetatable(L, "silly_message");
         luaL_newmetatable(L, "silly_message_timer");
+        luaL_newmetatable(L, "silly_socket_data");
         luaL_newmetatable(L, "silly_socket_packet");
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);

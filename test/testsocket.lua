@@ -1,5 +1,6 @@
 local socket = require("socket")
 local core = require("core")
+local spacker = require("spacker")
 
 --connect
 local CONN = {}
@@ -12,15 +13,14 @@ function CONN.close(fd)
 end
 
 function CONN.data(fd, data)
-        print("data", data)
+        print("data", #data, data)
         socket.close(fd)
 end
 
 core.start(function()
-        
-        local fd = socket.connect("127.0.0.1", 8989, CONN)
+        local fd = socket.connect("127.0.0.1", 6379, CONN, spacker:create("linepacket"))
         print("connect fd:", fd)
-        local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
+        local cmd = "*1\r\n$4\r\nPING\r\n"
         socket.write(fd, cmd)
 end)
 
@@ -36,9 +36,9 @@ function SERVICE.close(fd)
 end
 
 function SERVICE.data(fd, data)
-        print("service-data", data)
-        socket.write(fd, "hello")
+        print("test recv", fd, data)
+        socket.write(fd, "+PONG\r\n")
 end
 
-socket.service(SERVICE)
+socket.service(SERVICE, spacker:create("binpacket"))
 

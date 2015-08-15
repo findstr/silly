@@ -16,19 +16,6 @@ function core.sleep(ms)
         coroutine.yield()
 end
 
-function core.start(func)
-        local co = coroutine.create(func)
-        coroutine.resume(co)
-end
-
-function core.block()
-        return coroutine.yield()
-end
-
-function core.self()
-        return coroutine.running()
-end
-
 local function resume_wrapper(ret, ...)
         if (ret == true) then
                 return ...
@@ -37,6 +24,25 @@ local function resume_wrapper(ret, ...)
                 print(err)
                 return nil
         end
+end
+
+
+function core.start(func)
+        local co = coroutine.create(func)
+        return resume_wrapper(coroutine.resume(co))
+end
+
+function core.create(func)
+        local co = coroutine.create(func)
+        return co
+end
+
+function core.block()
+        return coroutine.yield()
+end
+
+function core.self()
+        return coroutine.running()
 end
 
 function core.run(co, ...)

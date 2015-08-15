@@ -31,7 +31,7 @@ struct incomplete {
         struct incomplete *next;
 };
 
-struct rawpacket {
+struct binpacket {
         struct incomplete       *incomplete_hash[INCOMPLETE_HASH_SIZE];
         int                     cap;                            //default DEFAULT_QUEUE_SIZE
         int                     head;
@@ -40,21 +40,21 @@ struct rawpacket {
 };
 
 static int
-_create_rawpacket(lua_State *L)
+_create_binpacket(lua_State *L)
 {
-        struct rawpacket *r = lua_newuserdata(L, sizeof(struct rawpacket));
+        struct binpacket *r = lua_newuserdata(L, sizeof(struct binpacket));
         memset(r, 0, sizeof(*r));
 
         r->cap = DEFAULT_QUEUE_SIZE;
 
-        luaL_getmetatable(L, "rawpacket");
+        luaL_getmetatable(L, "binpacket");
         lua_setmetatable(L, -2);
 
         return 1;
 }
 
 static struct incomplete *
-_get_incomplete(struct rawpacket *p, int fd)
+_get_incomplete(struct binpacket *p, int fd)
 {
         struct incomplete *i;
 
@@ -75,8 +75,14 @@ _get_incomplete(struct rawpacket *p, int fd)
         return NULL;
 }
 
+static struct binpacket *
+_get_binpacket(lua_State *L)
+{
+        return luaL_checkudata(L, 1, "binpacket");
+}
+
 static void
-_put_incomplete(struct rawpacket *p, struct incomplete *ic)
+_put_incomplete(struct binpacket *p, struct incomplete *ic)
 {
         struct incomplete *i;
         i = p->incomplete_hash[INCOMPLETE_HASH(ic->fd)];
@@ -87,7 +93,35 @@ _put_incomplete(struct rawpacket *p, struct incomplete *ic)
 }
 
 static void
-_push_one_complete(struct rawpacket *p, struct incomplete *ic)
+_expand_queue(lua_State *L, struct binpacket *p)
+{
+        int i, h;
+        struct binpacket *new = lua_newuserdata(L, sizeof(struct binpacket) + sizeof(struct packet) * p->cap);
+        new->cap = p->cap + DEFAULT_QUEUE_SIZE;
+        new->head = p->cap;
+        new->tail = 0;
+        
+        memcpy(new->incomplete_hash, p->incomplete_hash, sizeof(new->incomplete_hash));
+
+        h = p->tail;
+        for (i = 0; i < p->cap; i++) {
+                new->queue[i] = p->queue[h % p->cap];
+                ++h;
+        }
+
+        luaL_getmetatable(L, "binpacket");
+        lua_setmetatable(L, -2);
+
+        p->head = p->tail = 0;
+
+        lua_replace(L, 1);
+
+        return ;
+
+}
+
+static void
+_push_one_complete(lua_State *L, struct binpacket *p, struct incomplete *ic)
 {
         struct packet *pk;
         int h = p->head;
@@ -103,17 +137,17 @@ _push_one_complete(struct rawpacket *p, struct incomplete *ic)
         assert(p->tail < p->cap);
         if (p->head == p->tail) {
                 fprintf(stderr, "packet queue full\n");
-                assert(!"queue full\n");
+                _expand_queue(L, p);
         }
-
 
         return ;
 }
 
 static int
-_push_raw_once(struct rawpacket *p, int fd, int size, const uint8_t *buff)
+_push_raw_once(lua_State *L, int fd, int size, const uint8_t *buff)
 {
         int eat;
+        struct binpacket *p = _get_binpacket(L);
         struct incomplete *ic = _get_incomplete(p, fd);
         if (ic) {       //continue it
                 if (ic->rsize >= 0) {   //have already alloc memory
@@ -160,7 +194,7 @@ _push_raw_once(struct rawpacket *p, int fd, int size, const uint8_t *buff)
 
 
         if (ic->rsize == ic->psize) {
-                _push_one_complete(p, ic);
+                _push_one_complete(L, p, ic);
                 silly_free(ic);
         } else {
                 assert(ic->rsize < ic->psize);
@@ -172,17 +206,17 @@ _push_raw_once(struct rawpacket *p, int fd, int size, const uint8_t *buff)
 }
 
 static void
-_push_rawdata(struct rawpacket *p, struct silly_message_socket *s)
+_push_rawdata(lua_State *L, int sid, uint8_t *data, int data_size)
 {
         int n;
         int left;
         uint8_t *d;
         
-        left = s->data_size;
-        d = s->data;
+        left = data_size;
+        d = data;
 
         do {
-                n = _push_raw_once(p, s->sid, left, d);
+                n = _push_raw_once(L, sid, left, d);
                 left -= n;
                 d += n;
 
@@ -192,26 +226,21 @@ _push_rawdata(struct rawpacket *p, struct silly_message_socket *s)
 }
 
 static int
-_push_rawpacket(lua_State *L)
+_push_binpacket(lua_State *L)
 {
-        struct rawpacket                *p;
-        struct silly_message            *s;
-        struct silly_message_socket     *sm;
+        int                     sid;
+        uint8_t                 *data;
+        int                     data_size;
         
-        p = luaL_checkudata(L, 1, "rawpacket");
-        s = luaL_checkudata(L, 2, "silly_message");
+        sid = luaL_checkinteger(L, 2);
+        data = (uint8_t *)luaL_checkudata(L, 3, "silly_socket_data");
+        data_size = luaL_checkinteger(L, 4);
 
-        sm = (struct silly_message_socket *)(s + 1);
+        _push_rawdata(L, sid, data, data_size);
 
-        if (s->type == SILLY_SOCKET_DATA)
-                _push_rawdata(p, sm);
-        else
-                assert(sm->data == NULL);
+        lua_settop(L, 1);
 
-        lua_pushinteger(L, sm->sid);
-        lua_pushinteger(L, s->type);
-
-        return 2;
+        return 1;
 }
 
 static int
@@ -219,8 +248,8 @@ _pop_packet(lua_State *L)
 {
         int t;
         struct packet *pk;
-        struct rawpacket *p;
-        p = luaL_checkudata(L, 1, "rawpacket");
+        struct binpacket *p;
+        p = luaL_checkudata(L, 1, "binpacket");
 
         assert(p->head < p->cap);
         assert(p->tail < p->cap);
@@ -254,8 +283,7 @@ _pack_raw(lua_State *L)
         str = luaL_checklstring(L, 1, &size);
         assert(size < (unsigned short)-1);
 
-        p = silly_malloc(size + 2);
-        *(unsigned short *)p = htons(size);
+        p = silly_malloc(size);
         memcpy(p + 2, str, size);
 
         lua_pushlightuserdata(L, p);
@@ -266,11 +294,11 @@ _pack_raw(lua_State *L)
         return 2;
 }
 
-int luaopen_rawpacket(lua_State *L)
+int luaopen_binpacket(lua_State *L)
 {
         luaL_Reg tbl[] = {
-                {"create", _create_rawpacket},
-                {"push", _push_rawpacket},
+                {"create", _create_binpacket},
+                {"push", _push_binpacket},
                 {"pop", _pop_packet},
                 {"pack", _pack_raw},
                 {NULL, NULL},
@@ -278,7 +306,7 @@ int luaopen_rawpacket(lua_State *L)
  
         luaL_checkversion(L);
 
-        luaL_newmetatable(L, "rawpacket");
+        luaL_newmetatable(L, "binpacket");
 
         luaL_newlibtable(L, tbl);
         luaL_setfuncs(L, tbl, 0);
