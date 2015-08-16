@@ -16,8 +16,11 @@ function socketfifo:create(config)
         fifo.status = FIFO_CLOSE
         fifo.ip = config.ip
         fifo.port = config.port
+        fifo.packer = config.packer
         fifo.conn_queue = {}
-        fifo.req_queue = {}
+        fifo.co_queue = {}
+        fifo.res_queue = {}
+        fifo.process_res = nil
 
         return fifo
 end
@@ -35,16 +38,23 @@ local function wake_up_conn(fifo, res)
         fifo.conn_queue = {}
 end
 
-local function wait_for_response(fifo)
+local function wait_for_response(fifo, response)
         local co = core.self()
-        table.insert(fifo.req_queue, 1, co)
+        table.insert(fifo.co_queue, 1, co)
+        table.insert(fifo.res_queue, 1, response)
         return core.block()
 end
 
 local function wakeup_one_response(fifo, data)
-        local co = table.remove(fifo.req_queue)
-        assert(co)
-        core.run(co, data)
+        if fifo.process_res == nil then
+                fifo.process_res = table.remove(fifo.res_queue)
+        end
+
+        if fifo.process_res(data) then
+                local co = table.remove(fifo.co_queue)
+                fifo.process_res = nil
+                core.run(co)
+        end
 end
 
 --EVENT
@@ -65,7 +75,6 @@ local function gen_event(fifo)
         end,
 
         function (fd, data)
-                print("fifo - data", data)
                 wakeup_one_response(fifo, data)
         end
 end
@@ -81,7 +90,7 @@ function socketfifo:connect()
                 EVENT.accept , EVENT.close, EVENT.data = gen_event(self)
 
                 self.status = FIFO_CONNECTING
-                self.fd = socket.connect(self.ip, self.port, EVENT)
+                self.fd = socket.connect(self.ip, self.port, EVENT, self.packer)
                 if (self.fd < 0) then
                         res = false
                         self.status = FIFO_CLOSE
@@ -103,11 +112,13 @@ function socketfifo:connect()
 
 end
 
-function socketfifo:request(cmd, need_response)
+-- the respose function will be called in the socketfifo coroutine
+-- so the response function must be nonblock
+function socketfifo:request(cmd, response)
         local res
         socket.write(self.fd, cmd)
-        if need_response then
-                res = wait_for_response(self)
+        if response then
+                res = wait_for_response(self, response)
         else
                 res = nil
         end
