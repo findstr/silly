@@ -283,7 +283,7 @@ _pack_raw(lua_State *L)
         str = luaL_checklstring(L, 1, &size);
         assert(size < (unsigned short)-1);
 
-        p = silly_malloc(size);
+        p = silly_malloc(size + 2);
         *((unsigned short *)p) = htons(size);
         memcpy(p + 2, str, size);
 
