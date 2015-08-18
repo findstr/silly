@@ -17,13 +17,12 @@ function core.sleep(ms)
 end
 
 local function resume_wrapper(ret, ...)
-        if (ret == true) then
-                return ...
-        else
+        if (ret == false) then
                 local err = ...
                 print(err)
-                return nil
         end
+
+        return ret, ...
 end
 
 

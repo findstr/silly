@@ -32,7 +32,7 @@ end
 
 local function wake_up_conn(fifo, res)
         for _, v in pairs(fifo.conn_queue) do
-                core.run(v)
+                socket.wakeup(v)
         end
 
         fifo.conn_queue = {}
@@ -53,28 +53,28 @@ local function wakeup_one_response(fifo, data)
         if fifo.process_res(data) then
                 local co = table.remove(fifo.co_queue)
                 fifo.process_res = nil
-                core.run(co)
+                socket.wakeup(co)
         end
 end
 
 --EVENT
 local function gen_event(fifo)
-        return function (fd)
+        return function (fd)    -- accept
                 print("fifo - accept", fifo)
         end,
 
-        function (fd)
+        function (fd)           -- close 
                 print("fifo - close", fifo)
                 local co = table.remove(fifo.req_queue)
                 print("fifo - close2", #fifo.req_queue)
                 while co do
                         print("fifo - close3", co)
-                        core.run(co, nil)
+                        socket.wakeup(co, nil)
                         co = table.remove(fifo.req_queue)
                 end
         end,
 
-        function (fd, data)
+        function (fd, data)     -- data
                 wakeup_one_response(fifo, data)
         end
 end

@@ -7,7 +7,7 @@ local event = {
 }
 
 local socket_pool = {}
-
+local coroutine_pool = {}
 local socket = {}
 
 local SOCKET_READY              = 1     --socket is ready for processing the msg
@@ -48,6 +48,7 @@ local function socket_co(...)
 
                 if socket_pool[fd].isclose ~= 0 then
                         silly.socket_close(fd)
+                        coroutine_pool[socket_pool[fd].co] = nil
                         socket_pool[fd] = nil
                         return ;
                 elseif socket_pool[fd].status == SOCKET_CLOSE then
@@ -76,6 +77,8 @@ local function init_new_socket(fd)
                 co = core.create(socket_co),
                 packer = nil,
         }
+
+        coroutine_pool[socket_pool[fd].co] = fd
 
         return 0
 end
@@ -121,7 +124,7 @@ function socket.connect(ip, port, handler, packer)
         socket_pool[fd].status = SOCKET_READY
         if socket_pool[fd].isclose ~= 0 then
                 assert(socket_pool[fd].isclose == 2)
-                socket_pool[fd] = nil
+                coroutine_pool[co] = nil
                 return -1
         end
 
@@ -153,6 +156,18 @@ function socket.write(fd, data)
 
         local p, s = socket_pool[fd].packer:pack(ed);
         silly.socket_send(fd, p, s);
+end
+
+function socket.wakeup(co, ...)
+        local res = core.run(co, ...)
+        if res == false then    --run occurs error
+                local fd = coroutine_pool[co]
+                local handler = socket_pool[fd].handler
+                --when run to here, the coroutine of this socket has already been dead
+                --so run it at the coroutine who wakeup it
+                handler["close"](fd)    
+                socket.close(fd);
+        end
 end
 
 --socket event
@@ -189,6 +204,7 @@ silly_message_handler[3] = function (fd)
         
         -- when status == SOCKET_CLOSE the server close the socket after the client
         silly.socket_close(fd)
+        coroutine_pool[co] = nil
         socket_pool[fd] = nil  --it will release the packet of queue, the coroutine
 end
 
@@ -206,6 +222,9 @@ end
 --SILLY_SOCKET_SHUTDOWN     = 5                  //a socket shutdown has already processed
 silly_message_handler[5] = function (fd)
         silly.socket_close(fd)
+        local co = socket_pool[fd].co
+
+        coroutine_pool[co] = fd
         socket_pool[fd] = nil
 end
 
@@ -227,6 +246,7 @@ silly_message_handler[7] = function (fd, data, size)
 
         fd, data = packer:pop()
         while fd and data do
+                print("data", socket_pool[fd].status)
                 if (socket_pool[fd].status ~= SOCKET_CLOSE) then
                         local handler = socket_pool[fd].handler
                         if handler["data"] then
@@ -235,7 +255,7 @@ silly_message_handler[7] = function (fd, data, size)
                                 local status = socket_pool[fd].status
 
                                 if status == SOCKET_READY then
-                                        core.run(co, fun, fd, data)
+                                        socket.wakeup(co, fun, fd, data)
                                 elseif status == SOCKET_PROCESSING then
                                         print("insert")
                                         local q = socket_pool[fd].queue
