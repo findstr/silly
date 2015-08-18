@@ -246,7 +246,6 @@ silly_message_handler[7] = function (fd, data, size)
 
         fd, data = packer:pop()
         while fd and data do
-                print("data", socket_pool[fd].status)
                 if (socket_pool[fd].status ~= SOCKET_CLOSE) then
                         local handler = socket_pool[fd].handler
                         if handler["data"] then
