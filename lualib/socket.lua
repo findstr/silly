@@ -164,8 +164,8 @@ function socket.wakeup(co, ...)
                 local fd = coroutine_pool[co]
                 local handler = socket_pool[fd].handler
                 --when run to here, the coroutine of this socket has already been dead
-                --so run it at the coroutine who wakeup it
-                handler["close"](fd)    
+                --so run it at a new coroutine
+                core.start(handler["close"], fd)
                 socket.close(fd);
         end
 end

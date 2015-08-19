@@ -26,9 +26,9 @@ local function resume_wrapper(ret, ...)
 end
 
 
-function core.start(func)
+function core.start(func, ...)
         local co = coroutine.create(func)
-        return resume_wrapper(coroutine.resume(co))
+        return resume_wrapper(coroutine.resume(co, ...))
 end
 
 function core.create(func)
