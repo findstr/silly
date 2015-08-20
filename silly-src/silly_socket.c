@@ -167,8 +167,9 @@ static void
 _free_conn(struct conn *c, enum stype type)
 {
         assert(type == STYPE_CLOSE || type == STYPE_RESERVE);
-        _free_wlist(c); //the same effect to memory barrier, i think
+        _free_wlist(c);
         c->sid = -1;
+        __sync_synchronize();
         c->type =  type;
 
         return ;
