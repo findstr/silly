@@ -68,6 +68,11 @@ int silly_server_start(int handle, const char *bootstrap, const char *libpath, c
         return silly_worker_start(SILLY_SERVER->worklist[handle], bootstrap, libpath, clibpath);
 }
 
+void silly_server_stop(int handle)
+{
+        return silly_worker_stop(SILLY_SERVER->worklist[handle]);
+}
+
 int silly_server_dispatch(int handle)
 {
         assert(handle < SILLY_SERVER->workcnt);

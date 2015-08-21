@@ -7,6 +7,10 @@ function core.workid()
         return silly.workid()
 end
 
+function core.exit(func)
+        silly.exit_register(func)
+end
+
 local function wakeup(co)
         coroutine.resume(co)
 end

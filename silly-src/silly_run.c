@@ -14,10 +14,12 @@
 
 #include "silly_run.h"
 
+static int      run = 1;
+
 static void *
 _socket(void *arg)
 {
-        for (;;) {
+        while (run) {
                 silly_socket_run();
         }
 
@@ -27,7 +29,7 @@ _socket(void *arg)
 static void *
 _timer(void *arg)
 {
-        for (;;) {
+        while (run) {
                 timer_dispatch();
                 usleep(1000);
         }
@@ -40,10 +42,12 @@ _worker(void *arg)
 {
         int workid = *((int *)arg);
 
-        for (;;) {
+        while (run) {
                 silly_server_dispatch(workid);
                 usleep(1000);
         }
+
+        silly_server_stop(workid);
 
         return NULL;
 }
@@ -52,7 +56,7 @@ static void *
 _debug(void *arg)
 {
         char buff[1024];
-        for (;;) {
+        while (run) {
                 int n;
                 struct silly_message *msg;
                 char *sz;
@@ -70,6 +74,13 @@ _debug(void *arg)
         return NULL;
 }
 
+static void
+_sig_hup(int signum)
+{
+        run = 0;
+        return ;
+}
+
 int silly_run(struct silly_config *config)
 {
         int i, j;
@@ -79,6 +90,9 @@ int silly_run(struct silly_config *config)
                 fprintf(stderr, "daemon error:%d\n", errno);
                 exit(0);
         }
+
+        signal(SIGPIPE, SIG_IGN);
+        signal(SIGHUP, _sig_hup);
 
         timer_init();
         silly_socket_init();
@@ -120,5 +134,8 @@ int silly_run(struct silly_config *config)
         silly_server_exit();
         silly_socket_exit();
         timer_exit();
+
+        fprintf(stderr, "silly has already exit...\n");
+
         return 0;
 }

@@ -19,6 +19,7 @@ struct silly_worker {
         struct silly_queue      *queue;
         lua_State               *L;
         void                    (*process_cb)(lua_State *L, struct silly_message *msg);
+        void                    (*exit)(lua_State *L);
 };
 
 struct silly_worker *silly_worker_create(int workid)
@@ -138,11 +139,19 @@ int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char
         return 0;
 }
 
+void silly_worker_stop(struct silly_worker *w)
+{
+        w->exit(w->L);
 
-void silly_worker_register(struct silly_worker *w, void (*cb)(struct lua_State *L, struct silly_message *msg))
+        return ;
+}
+
+
+void silly_worker_register(struct silly_worker *w, void (*cb)(struct lua_State *L, struct silly_message *msg), void (*exit)(lua_State *L))
 {
         assert(cb);
         w->process_cb = cb;
+        w->exit = exit;
 }
 
 

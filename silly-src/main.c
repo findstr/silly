@@ -51,8 +51,6 @@ int main()
                 return -1;
         }
         
-        signal(SIGPIPE, SIG_IGN);
-
         _parse_config(L, &config);
         silly_run(&config);
 

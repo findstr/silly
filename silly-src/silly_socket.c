@@ -233,10 +233,18 @@ end:
 
 void silly_socket_exit()
 {
+        int i;
         assert(SOCKET);
         close(SOCKET->sp_fd);
         close(SOCKET->ctrl_send_fd);
         close(SOCKET->ctrl_recv_fd);
+
+        for (i = 0; i < MAX_CONN; i++) {
+                struct conn *c = &SOCKET->conn_buff[i];
+                if (c->type == STYPE_SOCKET || c->type == STYPE_LISTEN)
+                        close(c->fd);
+        }
+
         silly_free(SOCKET->event_buff);
         silly_free(SOCKET->conn_buff);
         silly_free(SOCKET->ctrl_conn);
@@ -856,7 +864,7 @@ int silly_socket_run()
         struct silly_socket *s = SOCKET;
         for (;;) {
                 if ((s->event_index == s->event_cnt) && _wait(s) == -1)
-                        continue;
+                        return 0;
                 _process(s);
         }
 
