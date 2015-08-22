@@ -57,8 +57,10 @@ function encode_object(tbl)
                 if (type(v) == "table") then
                         encode = encode_tbl(v)
                 else
-                        encode = '"' .. k .. '"' .. ":" .. '"' .. v .. '"'
+                        encode = '"' .. v .. '"'
                 end
+
+                encode = '"' .. k .. '"' .. ":" .. encode
 
                 if first then
                         first = false
