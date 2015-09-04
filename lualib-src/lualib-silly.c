@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/time.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -204,8 +205,6 @@ _exit_register(lua_State *L)
         return 0;
 }
 
-
-
 static int
 _get_workid(lua_State *L)
 {
@@ -245,6 +244,21 @@ _process_msg(lua_State *L, struct silly_message *msg)
         }
 }
 
+static int
+_get_global_ms(lua_State *L)
+{
+        uint64_t ms;
+        struct timeval tv;
+
+        gettimeofday(&tv, NULL);
+
+        ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+
+        lua_pushinteger(L, ms);
+
+        return 1;
+}
+
 int luaopen_silly(lua_State *L)
 {
         luaL_Reg tbl[] = {
@@ -257,6 +271,7 @@ int luaopen_silly(lua_State *L)
                 {"timer_add", _timer_add},
                 {"timer_register", _timer_register},
                 {"exit_register", _exit_register},
+                {"global_ms", _get_global_ms},
                 {NULL, NULL},
         };
  

@@ -2,6 +2,6 @@ daemon = 0
 debug = 0
 listen_port=8988
 worker_count = 1
-bootstrap = "test/testlog.lua"
+bootstrap = "test/testtimer.lua"
 lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "../?.so"

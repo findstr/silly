@@ -20,7 +20,10 @@ end
 
 core.start(function()
         print("hello")
+        print("current begin", timer.current())
         core.sleep(5000)
+        print("current end", timer.current())
         print("world")
 end)
+
 

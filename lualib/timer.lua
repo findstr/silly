@@ -29,6 +29,10 @@ function timer.add(ms, handler, param)
         silly.timer_add(ms, session)
 end
 
+function timer.current()
+        return silly.global_ms()
+end
+
 local function timer_handler(session)
         assert(session_function[session])(session_param[session])
         session_function[session] = nil
