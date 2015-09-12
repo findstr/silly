@@ -64,13 +64,12 @@ local function gen_event(fifo)
         end,
 
         function (fd)           -- close 
-                print("fifo - close", fifo)
-                local co = table.remove(fifo.req_queue)
-                print("fifo - close2", #fifo.req_queue)
+                local co = table.remove(fifo.co_queue)
+                table.remove(fifo.res_queue)
                 while co do
-                        print("fifo - close3", co)
                         socket.wakeup(co, nil)
-                        co = table.remove(fifo.req_queue)
+                        co = table.remove(fifo.co_queue)
+                        table.remove(fifo.res_queue)
                 end
         end,
 
@@ -110,6 +109,27 @@ function socketfifo:connect()
                 end
         end
 
+end
+
+function socketfifo:close()
+        print("self", self, self.status)
+        if self.status == FIFO_CLOSE then
+                return 
+        end
+
+        self.status = FIFO_CLOSE
+        local co = table.remove(self.co_queue)
+        table.remove(self.res_queue)
+        while co do
+                socket.wakeup(co, nil)
+                co = table.remove(self.co_queue)
+                table.remove(self.res_queue)
+        end
+
+        socket.close(self.fd)
+
+
+        return 
 end
 
 -- the respose function will be called in the socketfifo coroutine

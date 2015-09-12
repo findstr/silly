@@ -1,28 +1,38 @@
 local socketfifo = require("socketfifo")
 local core = require("core")
+local spacker = require("spacker")
 
 local fifo = socketfifo:create{
                                 ip = '127.0.0.1', 
-                                port = 8989
+                                port = 8989,
+                                packer = spacker:create("binpacket")
                         }
 
+local function read_ack(data)
+        print("recv:", data)
+        return true
+end
 
 core.start(function ()
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         print("1 - connect before")
         local res = fifo:connect()
-        print("1 - connect after", res)
-        res = fifo:request(cmd, true)
+        print("1 - connect after", res, fifo)
+        res = fifo:request(cmd, read_ack)
         print("1 - ", res)
+        fifo:close()
+        print("1 - ", fifo.status)
 end)
 
 core.start(function ()
         local cmd = "{\"cmd\":\"auth\", \"name\":\"findstr\"}\r\n\r"
         print("2 - connect before")
         local res = fifo:connect()
-        print("2 - connect after", res)
-        res = fifo:request(cmd, true)
+        print("2 - connect after", res, fifo)
+        res = fifo:request(cmd, read_ack)
         print("2 - ", res)
+        fifo:close()
+        print("2 - ", fifo.status)
 end)
 
 
