@@ -1,36 +1,45 @@
 local bp = require("binpacket")
 local lp = require("linepacket")
+local rp = require("rawpacket")
 
 local bpacket = nil
 
 local spacker = {
-        format = nil
+        mode = nil
 }
 
 local spacker_bp = nil
+local spacker_rp = nil
 
-function spacker:create(format)
-        if format == nil then
-                format = self.format
+local function create_once(self, mode, p, packer)
+        if p == nil then
+                p = {
+                        mode = mode,
+                        packer = packer,
+                        packer_inst = packer:create(),
+                }
+
+                self.__index = self
+                setmetatable(p, self)
         end
+       
+        return p;
+end
 
-        assert(format == "binpacket" or format == "linepacket")
+function spacker:create(mode)
+        if mode == nil then
+                mode = self.mode
+        end
+        
+        assert(mode == "binpacket" or mode == "linepacket" or mode == "raw")
 
-        if format == "binpacket" then
-                if spacker_bp == nil then
-                        spacker_bp = {
-                                format = "binpacket",
-                                packer = bp,
-                                packer_inst = bp.create(),
-                        }
-
-                        self.__index = self
-                        setmetatable(spacker_bp, self)
-                end
-                return spacker_bp;
-        elseif format == "linepacket" then
+        if mode == "binpacket" then
+                return create_once(self, mode, spacker_bp, bp)
+        elseif mode == "raw" then
+                return create_once(self, mode, spacker_rp, rp)
+        elseif mode == "linepacket" then
                 local t = {
-                        format = "linepacket",
+                        mode = "linepacket",
                         packer = lp,
                         packer_inst = lp.create(),
                 }

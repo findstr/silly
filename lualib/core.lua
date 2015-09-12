@@ -48,6 +48,10 @@ function core.self()
         return coroutine.running()
 end
 
+function core.running()
+        return coroutine.running()
+end
+
 function core.run(co, ...)
         return resume_wrapper(coroutine.resume(co, ...))
 end
