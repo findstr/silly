@@ -56,6 +56,10 @@ function core.run(co, ...)
         return resume_wrapper(coroutine.resume(co, ...))
 end
 
+function core.wakeup(co, ...)
+        return resume_wrapper(coroutine.resume(co, ...))
+end
+
 
 return core
 

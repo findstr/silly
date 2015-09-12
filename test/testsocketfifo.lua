@@ -8,9 +8,10 @@ local fifo = socketfifo:create{
                                 packer = spacker:create("binpacket")
                         }
 
-local function read_ack(data)
-        print("recv:", data)
-        return true
+local function read_ack(sfifo)
+        local res = sfifo:read(3)
+        print("read", res)
+
 end
 
 core.start(function ()

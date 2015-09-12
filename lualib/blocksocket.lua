@@ -54,6 +54,31 @@ local function pop_data(bsocket, byte)
         return table.concat(res, "")
 end
 
+local function has_line(self, termi)
+        local pos = 0
+        local _, start = string.find(self.data_head, termi)
+        if start ~= nil then
+                pos = pos + start
+                return start
+        end
+
+        pos = pos + #self.data_head
+
+        for _, v in pairs(self.data_queue) do
+                _, start = string.find(v, termi)
+                if start ~= nil then
+                        pos = pos + start
+                        return pos
+                end
+
+                pos = pos + #v
+        end
+
+        return nil
+
+end
+
+
 local function event_function(bsocket)
         return function (fd)    -- accept
                 print("blocksocket - accept", bsocket)
@@ -72,26 +97,37 @@ local function event_function(bsocket)
                 else
                         table.insert(bsocket.data_queue, data)
                 end
-                
+ 
+                local len
                 bsocket.data_size = bsocket.data_size + #data
-                if bsocket.data_size < bsocket.read_len then
-                        return;
-                end
+                if bsocket.linetermi == "" then
+                        if bsocket.data_size < bsocket.read_len then
+                                return;
+                        end
 
-                assert(bsocket.read_len <= bsocket.data_size)
-                wakeup(bsocket, pop_data(bsocket, bsocket.read_len))
+                        len = bsocket.read_len
+                        bsocket.read_len = 0
+                else
+                        len = has_line(bsocket, bsocket.linetermi)
+                        if len == nil then
+                                return
+                        end
+                        bsocket.linetermi = ""
+                end
+                wakeup(bsocket, pop_data(bsocket, len))
         end
 end
 
 
-function blocksocket:connect(ip, port)
+function blocksocket:connect(ip, port, dthread)
         local t = {
                 data_head  = "",
                 data_queue = {},
                 data_size   = 0,
-                readthread = nil,
                 read_len = 0,
                 status = STATUS_CONNECTED,
+                readthread = dthread,
+                linetermi = "",
         }
 
         setmetatable(t, {__index = self})
@@ -127,6 +163,22 @@ function blocksocket:read(nr)
         else
                 return pop_data(self, nr)
         end
+end
+
+function blocksocket:readline(termi)
+        if self.status == STATUS_CLOSE then
+                return nil
+        end
+
+        local has = has_line(self, termi)
+        if has ~= nil then
+                return pop_data(self, has)
+        else
+                self.linetermi = termi
+                self.readthread = core.running()
+                return core.block()
+        end
+
 end
 
 function blocksocket:write(data)

@@ -32,6 +32,7 @@ core.start(function ()
 
         dprint("STRLEN bar", redis.strlen("foo"))
 
+        print("test finish")
 
 end)
 

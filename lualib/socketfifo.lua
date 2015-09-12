@@ -1,5 +1,8 @@
-local socket = require("socket")
+local socket = require("blocksocket")
 local core = require("core")
+local s = require("socket")
+
+local wakeup = s.wakeup
 
 local FIFO_CONNECTING   = 1
 local FIFO_CONNECTED    = 2
@@ -20,7 +23,6 @@ function socketfifo:create(config)
         fifo.conn_queue = {}
         fifo.co_queue = {}
         fifo.res_queue = {}
-        fifo.process_res = nil
 
         return fifo
 end
@@ -32,7 +34,7 @@ end
 
 local function wake_up_conn(fifo, res)
         for _, v in pairs(fifo.conn_queue) do
-                socket.wakeup(v)
+                wakeup(v)
         end
 
         fifo.conn_queue = {}
@@ -45,36 +47,22 @@ local function wait_for_response(fifo, response)
         return core.block()
 end
 
-local function wakeup_one_response(fifo, data)
-        if fifo.process_res == nil then
-                fifo.process_res = table.remove(fifo.res_queue)
-        end
+local function wakeup_response(fifo)
+        return function ()
+                while fifo.sock do
+                        local process_res = table.remove(fifo.res_queue)
+                        local co = table.remove(fifo.co_queue)
+                        if process_res == nil and co == nil  then
+                                return
+                        end
 
-        if fifo.process_res(data) then
-                local co = table.remove(fifo.co_queue)
-                fifo.process_res = nil
-                socket.wakeup(co)
-        end
-end
-
---EVENT
-local function gen_event(fifo)
-        return function (fd)    -- accept
-                print("fifo - accept", fifo)
-        end,
-
-        function (fd)           -- close 
-                local co = table.remove(fifo.co_queue)
-                table.remove(fifo.res_queue)
-                while co do
-                        socket.wakeup(co, nil)
-                        co = table.remove(fifo.co_queue)
-                        table.remove(fifo.res_queue)
+                        local err = process_res(fifo)
+                        if err == false then
+                                fifo:close()
+                                return 
+                        end
+                        wakeup(co)
                 end
-        end,
-
-        function (fd, data)     -- data
-                wakeup_one_response(fifo, data)
         end
 end
 
@@ -85,12 +73,10 @@ function socketfifo:connect()
 
         if self.status == FIFO_CLOSE then
                 local res
-                local EVENT = {}
-                EVENT.accept , EVENT.close, EVENT.data = gen_event(self)
 
                 self.status = FIFO_CONNECTING
-                self.fd = socket.connect(self.ip, self.port, EVENT, self.packer)
-                if (self.fd < 0) then
+                self.sock = socket:connect(self.ip, self.port, core.create(wakeup_response(self)))
+                if self.socket == nil then
                         res = false
                         self.status = FIFO_CLOSE
                 else
@@ -112,7 +98,6 @@ function socketfifo:connect()
 end
 
 function socketfifo:close()
-        print("self", self, self.status)
         if self.status == FIFO_CLOSE then
                 return 
         end
@@ -121,22 +106,21 @@ function socketfifo:close()
         local co = table.remove(self.co_queue)
         table.remove(self.res_queue)
         while co do
-                socket.wakeup(co, nil)
+                wakeup(co)
                 co = table.remove(self.co_queue)
                 table.remove(self.res_queue)
         end
 
-        socket.close(self.fd)
-
+        self.sock:close()
+        self.sock = nil
 
         return 
 end
 
 -- the respose function will be called in the socketfifo coroutine
--- so the response function must be nonblock
 function socketfifo:request(cmd, response)
         local res
-        socket.write(self.fd, cmd)
+        res = self.sock:write(cmd)
         if response then
                 res = wait_for_response(self, response)
         else
@@ -146,6 +130,15 @@ function socketfifo:request(cmd, response)
         return res
 end
 
+local function read_write_wrapper(func)
+        return function (self, d)
+                return func(self.sock, d)
+        end
+end
+
+socketfifo.read = read_write_wrapper(socket.read)
+socketfifo.write = read_write_wrapper(socket.write)
+socketfifo.readline = read_write_wrapper(socket.readline)
 
 return socketfifo
 

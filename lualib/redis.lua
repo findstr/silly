@@ -28,43 +28,19 @@ local function reset_response(packet)
 end
 
 response_header[header:byte(1)] = function (res)        --'+'
-        response.param_count = 1
-        response.success = true
         table.insert(response.packet, res)
 end
 
 response_header[header:byte(2)] = function (res)        --'-'
-        response.param_count = 1
-        response.success = false
         table.insert(response.packet, res)
 end
 
 response_header[header:byte(3)] = function (res)        --':'
-        response.param_count = 1
-        response.success = true
         table.insert(response.packet, tonumber(res))
 end
 
-response_header[header:byte(4)] = function (res)        --'*'
-        response.param_count = tonumber(res)
-        assert(#response.packet == 0)
-        response.success = true
-end
-
-response_header[header:byte(5)] = function (res)        --'$'
-        if response.param_count == 0 then
-                response.param_count = 1
-                response.success = true
-        end
-        response.need_count = tonumber(res)
-end
-
-function response_header.data(res)                      --data
-        assert(#res == response.need_count)
-        table.insert(response.packet, res)
-end
-
-local function read_response(data)
+local function read_response()
+        local data = sfifo:readline("\r\n")
         local head = data:byte(1)
         local func = response_header[head]
         local res = data
@@ -77,23 +53,28 @@ local function read_response(data)
 
         func(res)
 
-        if response.param_count == #response.packet then
-                return true
-        else
-                return false
+        return true
+end
+
+
+response_header[header:byte(4)] = function (res)        --'*'
+        local nr = tonumber(res)
+        for i = 1, nr do
+                read_response()
         end
+end
+
+response_header[header:byte(5)] = function (res)        --'$'
+        local nr = tonumber(res)
+        local param = sfifo:read(nr + 2)
+        table.insert(response.packet, string.sub(param, 1, -3))
 end
 
 local function request(cmd)
         sfifo:request(cmd, read_response)
-
-        local r
-        local success
-
-        assert(response.param_count == #response.packet)
         
-        success = response.success
-        if response.param_count == 1 then
+        success = true
+        if #response.packet == 1 then
                 r = table.remove(response.packet)
                 reset_response(response.packet)
         else
@@ -152,22 +133,6 @@ setmetatable(redis, {__index = function (self, k)
         return f
 end
 })
-
---[[
-function redis.ping()
-        local cmd = "*1\r\n$4\r\nPING\r\n"
-        local res = request(cmd)
-        print(res)
-end
-
-function redis.set(k, v)
-        local cmd = string.format("*2\r\n$3\r\nGET\r\n$3\r\nbar\r\n")
-        local res = request(cmd)
-        print("set-res", res)
-        print("set-end")
-end
-]]--
-
 
 
 return redis
