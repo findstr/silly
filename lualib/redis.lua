@@ -1,14 +1,12 @@
 local fifo = require("socketfifo")
 local spacker = require("spacker")
 
+local tinsert = table.insert
+local tunpack = table.unpack
+local tconcat = table.concat
+
 local redis = {}
 
-local response = {
-        param_count = 0,
-        need_count = 0,
-        success = false,
-        packet = {},
-}
 local sfifo = fifo:create {
                                 ip = "127.0.0.1",
                                 port = 6379,
@@ -19,28 +17,35 @@ local response_header = {}
 
 local header = "+-:*$"
 
-local function reset_response(packet)
-        assert(packet)
-        response.param_count = 0
-        response.need_count = 0
-        response.success = false
-        response.packet = packet
-end
-
 response_header[header:byte(1)] = function (res)        --'+'
-        table.insert(response.packet, res)
+        return true, true, res
 end
 
 response_header[header:byte(2)] = function (res)        --'-'
-        table.insert(response.packet, res)
+        return true, false, res
 end
 
 response_header[header:byte(3)] = function (res)        --':'
-        table.insert(response.packet, tonumber(res))
+        return true, true, tonumber(res)
 end
+
+response_header[header:byte(5)] = function (res)        --'$'
+        local nr = tonumber(res)
+        if nr == -1 then
+                return true, false, nil
+        end
+
+        local param = sfifo:read(nr + 2)
+        return true, true, string.sub(param, 1, -3)
+end
+
 
 local function read_response()
         local data = sfifo:readline("\r\n")
+        if data == nil then
+                return false
+        end
+
         local head = data:byte(1)
         local func = response_header[head]
         local res = data
@@ -51,44 +56,37 @@ local function read_response()
                 func = response_header.data
         end
 
-        func(res)
-
-        return true
+        return func(res)
 end
-
 
 response_header[header:byte(4)] = function (res)        --'*'
+        local cmd_success = true
+        local cmd_res = {}
         local nr = tonumber(res)
         for i = 1, nr do
-                read_response()
+                local ok, success, data = read_response()
+                if ok == false then
+                        return false
+                end
+                cmd_success = cmd_success and success
+                tinsert(cmd_res, data)
         end
-end
 
-response_header[header:byte(5)] = function (res)        --'$'
-        local nr = tonumber(res)
-        local param = sfifo:read(nr + 2)
-        table.insert(response.packet, string.sub(param, 1, -3))
+        if #cmd_res == 1 then
+                return true, cmd_success, tunpack(cmd_res)
+        else
+                return true, cmd_success, cmd_res
+        end
 end
 
 local function request(cmd)
-        sfifo:request(cmd, read_response)
-        
-        success = true
-        if #response.packet == 1 then
-                r = table.remove(response.packet)
-                reset_response(response.packet)
-        else
-                r = response.packet
-                reset_response({})
-        end
-
-        return success, r
+        return sfifo:request(cmd, read_response)
 end
 
 local function pack_param(lines, param)
         local p =  tostring(param)
-        table.insert(lines, string.format("$%d", #p))
-        table.insert(lines, p)
+        tinsert(lines, string.format("$%d", #p))
+        tinsert(lines, p)
 end
 
 local function pack_cmd(cmd, param)
@@ -106,7 +104,7 @@ local function pack_cmd(cmd, param)
                 pack_param(lines, v)
         end
 
-        local sz = table.concat(lines, "\r\n")
+        local sz = tconcat(lines, "\r\n")
 
         return sz .. "\r\n"
 

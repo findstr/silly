@@ -2,7 +2,9 @@ local socket = require("blocksocket")
 local core = require("core")
 local s = require("socket")
 
-local wakeup = s.wakeup
+local tunpack = table.unpack
+local tinsert = table.insert
+local tremove = table.remove
 
 local FIFO_CONNECTING   = 1
 local FIFO_CONNECTED    = 2
@@ -10,6 +12,11 @@ local FIFO_CLOSE        = 3
 
 local socketfifo = {
 }
+
+local function wakeup(v, dummy, ...)
+        assert(dummy == nil or dummy == true)
+        s.wakeup(v, ...)
+end
 
 function socketfifo:create(config)
         local fifo = {}
@@ -23,6 +30,7 @@ function socketfifo:create(config)
         fifo.conn_queue = {}
         fifo.co_queue = {}
         fifo.res_queue = {}
+        fifo.auth = nil
 
         return fifo
 end
@@ -42,26 +50,26 @@ end
 
 local function wait_for_response(fifo, response)
         local co = core.self()
-        table.insert(fifo.co_queue, 1, co)
-        table.insert(fifo.res_queue, 1, response)
+        tinsert(fifo.co_queue, 1, co)
+        tinsert(fifo.res_queue, 1, response)
         return core.block()
 end
 
 local function wakeup_response(fifo)
         return function ()
                 while fifo.sock do
-                        local process_res = table.remove(fifo.res_queue)
-                        local co = table.remove(fifo.co_queue)
+                        local process_res = tremove(fifo.res_queue)
+                        local co = tremove(fifo.co_queue)
                         if process_res == nil and co == nil  then
                                 return
                         end
 
-                        local err = process_res(fifo)
-                        if err == false then
+                        local res = { process_res(fifo) }
+                        if res[1] == false then
                                 fifo:close()
                                 return 
                         end
-                        wakeup(co)
+                        wakeup(co, tunpack(res))
                 end
         end
 end
@@ -84,6 +92,10 @@ function socketfifo:connect()
                         res = true
                 end
 
+                if self.auth then
+                        wait_for_response(self, self.auth)
+                end
+
                 wake_up_conn(self)
                 return res
         elseif self.status == FIFO_CONNECTING then
@@ -103,12 +115,12 @@ function socketfifo:close()
         end
 
         self.status = FIFO_CLOSE
-        local co = table.remove(self.co_queue)
-        table.remove(self.res_queue)
+        local co = tremove(self.co_queue)
+        tremove(self.res_queue)
         while co do
                 wakeup(co)
-                co = table.remove(self.co_queue)
-                table.remove(self.res_queue)
+                co = tremove(self.co_queue)
+                tremove(self.res_queue)
         end
 
         self.sock:close()
@@ -122,7 +134,7 @@ function socketfifo:request(cmd, response)
         local res
         res = self.sock:write(cmd)
         if response then
-                res = wait_for_response(self, response)
+                return wait_for_response(self, response)
         else
                 res = nil
         end
