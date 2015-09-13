@@ -47,20 +47,11 @@ core.start(function()
                         password = ""
                 }
 
-        print ("test - connected success", db)
+        print ("mysql connect:", db)
 
-        local t = db:query("show databases;")
-        dprint(t)
-        
-        local t = db:query("use mysql;")
-        dprint(t)
 
-        local t = db:query("show tables;")
-        dprint(t)
-
-        local t = db:query("select * from user;")
-        dprint(t)
-
-        local t = db:query("show tables;")
-        dprint(t)
+        for lines in io.stdin:lines() do
+                local t = db:query(lines)
+                dprint(t)
+        end
 end)
