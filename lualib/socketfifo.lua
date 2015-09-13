@@ -13,8 +13,10 @@ local FIFO_CLOSE        = 3
 local socketfifo = {
 }
 
-local function wakeup(v, dummy, ...)
-        assert(dummy == nil or dummy == true)
+local function wakeup(v, dummy1, dummy2, ...)
+        assert(dummy1 == nil or dummy1 == true)
+        assert(dummy2 == nil or dummy2 == true)
+
         s.wakeup(v, ...)
 end
 
@@ -66,13 +68,15 @@ local function wakeup_response(fifo)
                                 return
                         end
 
-                        local res = { process_res(fifo) }
-                        if res[1] == false then
+                        local res = { pcall(process_res, fifo) }
+                        if res[1] and res[2] then
+                                wakeup(co, tunpack(res))
+                        else
+                                print("wakeup_response", res[1], res[2])
                                 wakeup(co)
                                 fifo:close()
                                 return 
                         end
-                        wakeup(co, tunpack(res))
                 end
         end
 end

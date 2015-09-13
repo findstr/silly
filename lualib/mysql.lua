@@ -590,6 +590,8 @@ local function _mysql_login(self, opts)
                 print("login status: " .. typ)
 
                 self.state = STATE_CONNECTED
+
+                return true
         end
 end
 
