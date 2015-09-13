@@ -10,7 +10,6 @@ local redis = {}
 local sfifo = fifo:create {
                                 ip = "127.0.0.1",
                                 port = 6379,
-                                packer = spacker:create("linepacket"),
                         }
 
 local response_header = {}
@@ -36,6 +35,9 @@ response_header[header:byte(5)] = function (res)        --'$'
         end
 
         local param = sfifo:read(nr + 2)
+        if param == nil then
+                return false
+        end
         return true, true, string.sub(param, 1, -3)
 end
 

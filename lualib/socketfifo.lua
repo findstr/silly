@@ -55,6 +55,7 @@ local function wait_for_response(fifo, response)
         return core.block()
 end
 
+--this function will be run the indepedent coroutine
 local function wakeup_response(fifo)
         return function ()
                 while fifo.sock do
@@ -66,6 +67,7 @@ local function wakeup_response(fifo)
 
                         local res = { process_res(fifo) }
                         if res[1] == false then
+                                wakeup(co)
                                 fifo:close()
                                 return 
                         end
@@ -84,7 +86,7 @@ function socketfifo:connect()
 
                 self.status = FIFO_CONNECTING
                 self.sock = socket:connect(self.ip, self.port, core.create(wakeup_response(self)))
-                if self.socket == nil then
+                if self.sock == nil then
                         res = false
                         self.status = FIFO_CLOSE
                 else
@@ -113,7 +115,6 @@ function socketfifo:close()
         if self.status == FIFO_CLOSE then
                 return 
         end
-
         self.status = FIFO_CLOSE
         local co = tremove(self.co_queue)
         tremove(self.res_queue)

@@ -144,9 +144,13 @@ function blocksocket:connect(ip, port, dthread)
 end
 
 function blocksocket:close()
-        assert(self.readthread == nil)
-        socket.close(self.fd)
+        if self.status == STATUS_CLOSE then
+                return
+        end
         self.status = STATUS_CLOSE
+
+        assert(self.readthread == core.self())
+        socket.close(self.fd)
 
         return
 end
