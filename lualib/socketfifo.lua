@@ -27,10 +27,10 @@ function socketfifo:create(config)
         fifo.ip = config.ip
         fifo.port = config.port
         fifo.packer = config.packer
+        fifo.auth = config.auth
         fifo.conn_queue = {}
         fifo.co_queue = {}
         fifo.res_queue = {}
-        fifo.auth = nil
 
         return fifo
 end
@@ -62,6 +62,7 @@ local function wakeup_response(fifo)
                         local process_res = tremove(fifo.res_queue)
                         local co = tremove(fifo.co_queue)
                         if process_res == nil and co == nil  then
+                                assert(fifo:read() == "")
                                 return
                         end
 
@@ -93,6 +94,7 @@ function socketfifo:connect()
                         self.status = FIFO_CONNECTED
                         res = true
                 end
+
 
                 if self.auth then
                         wait_for_response(self, self.auth)

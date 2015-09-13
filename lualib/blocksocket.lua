@@ -160,6 +160,10 @@ function blocksocket:read(nr)
                 return nil
         end
 
+        if nr == nil then
+                nr = self.data_size
+        end
+
         if nr > self.data_size then
                 self.read_len = nr
                 self.readthread = core.running()
