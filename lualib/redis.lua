@@ -7,28 +7,23 @@ local tconcat = table.concat
 
 local redis = {}
 
-local sfifo = fifo:create {
-                                ip = "127.0.0.1",
-                                port = 6379,
-                        }
-
 local response_header = {}
 
 local header = "+-:*$"
 
-response_header[header:byte(1)] = function (res)        --'+'
+response_header[header:byte(1)] = function (sfifo, res)        --'+'
         return true, true, res
 end
 
-response_header[header:byte(2)] = function (res)        --'-'
+response_header[header:byte(2)] = function (sfifo, res)        --'-'
         return true, false, res
 end
 
-response_header[header:byte(3)] = function (res)        --':'
+response_header[header:byte(3)] = function (sfifo, res)        --':'
         return true, true, tonumber(res)
 end
 
-response_header[header:byte(5)] = function (res)        --'$'
+response_header[header:byte(5)] = function (sfifo, res)        --'$'
         local nr = tonumber(res)
         if nr == -1 then
                 return true, false, nil
@@ -42,7 +37,7 @@ response_header[header:byte(5)] = function (res)        --'$'
 end
 
 
-local function read_response()
+local function read_response(sfifo)
         local data = sfifo:readline("\r\n")
         if data == nil then
                 return false
@@ -58,15 +53,15 @@ local function read_response()
                 func = response_header.data
         end
 
-        return func(res)
+        return func(sfifo, res)
 end
 
-response_header[header:byte(4)] = function (res)        --'*'
+response_header[header:byte(4)] = function (sfifo, res)        --'*'
         local cmd_success = true
         local cmd_res = {}
         local nr = tonumber(res)
         for i = 1, nr do
-                local ok, success, data = read_response()
+                local ok, success, data = read_response(sfifo)
                 if ok == false then
                         return false
                 end
@@ -81,8 +76,8 @@ response_header[header:byte(4)] = function (res)        --'*'
         end
 end
 
-local function request(cmd)
-        return sfifo:request(cmd, read_response)
+local function request(self, cmd)
+        return self.sfifo:request(cmd, read_response)
 end
 
 local function pack_param(lines, param)
@@ -105,27 +100,51 @@ local function pack_cmd(cmd, param)
         for _, v in ipairs (param) do
                 pack_param(lines, v)
         end
-
+        
         local sz = tconcat(lines, "\r\n")
+
 
         return sz .. "\r\n"
 
 end
 
+function redis:create(config)
+        local t = {
+                ip = config.ip,
+                port = config.port,
+                user = config.user,
+                passwd = config.passwd,
+                sfifo = fifo:create {
+                                ip = config.ip,
+                                port = config.port
+                        },
+        }
 
-function redis.connect()
-        return sfifo:connect()
+        setmetatable(t, {__index = self})
+
+        return t
+end
+
+function redis:connect()
+        if self.sfifo:closed() then
+                self.sfifo = fifo:create {
+                                        ip = self.ip,
+                                        port = self.port
+                                }
+        end
+
+        return self.sfifo:connect()
 end
 
 setmetatable(redis, {__index = function (self, k)
         local cmd = string.upper(k)
-        local f = function (p, ...)
+        local f = function (self, p, ...)
                 if type(p) == "table" then
-                        return request(pack_cmd(cmd, p))
+                        return request(self, pack_cmd(cmd, p))
                 elseif p ~= nil then
-                        return request(pack_cmd(cmd, {p, ...}))
+                        return request(self, pack_cmd(cmd, {p, ...}))
                 else
-                        return request(pack_cmd(cmd, {}))
+                        return request(self, pack_cmd(cmd, {}))
                 end
         end
 

@@ -20,12 +20,17 @@ local function wakeup(v, dummy1, dummy2, ...)
         s.wakeup(v, ...)
 end
 
+--when close the socket fifo, we must wakeup all the wait coroutine
+--but the coroutine which we wakeup can be call connect too,
+--if so, things will become complicated
+--so, the socketfifo will be implemented can only be connected once
+
 function socketfifo:create(config)
         local fifo = {}
         self.__index = self
         setmetatable(fifo, self)
 
-        fifo.status = FIFO_CLOSE
+        fifo.status = false
         fifo.ip = config.ip
         fifo.port = config.port
         fifo.packer = config.packer
@@ -61,32 +66,37 @@ end
 local function wakeup_response(fifo)
         return function ()
                 while fifo.sock do
-                        local process_res = tremove(fifo.res_queue)
-                        local co = tremove(fifo.co_queue)
-                        if process_res == nil and co == nil  then
-                                assert(fifo:read() == "")
+                        if fifo.sock:closed() then
+                                fifo:close()
                                 return
                         end
 
-                        local res = { pcall(process_res, fifo) }
-                        if res[1] and res[2] then
-                                wakeup(co, tunpack(res))
+                        local process_res = tremove(fifo.res_queue)
+                        local co = tremove(fifo.co_queue)
+                        if process_res and co then
+                                local res = { pcall(process_res, fifo) }
+                                if res[1] and res[2] then
+                                        wakeup(co, tunpack(res))
+                                else
+                                        print("wakeup_response", res[1], res[2])
+                                        wakeup(co)
+                                        fifo:close()
+                                        return 
+                                end
                         else
-                                print("wakeup_response", res[1], res[2])
-                                wakeup(co)
-                                fifo:close()
-                                return 
+                                assert(fifo:read() == "")
+                                core.block()
                         end
                 end
         end
 end
 
-function socketfifo:connect()
+local function block_connect(self)
         if self.status == FIFO_CONNECTED then
                 return true;
         end
 
-        if self.status == FIFO_CLOSE then
+        if self.status == false then
                 local res
 
                 self.status = FIFO_CONNECTING
@@ -115,6 +125,11 @@ function socketfifo:connect()
                 end
         end
 
+        return false
+end
+
+function socketfifo:connect()
+        return block_connect(self)
 end
 
 function socketfifo:close()
@@ -136,9 +151,14 @@ function socketfifo:close()
         return 
 end
 
+function socketfifo:closed()
+        return self.status == FIFO_CLOSE
+end
+
 -- the respose function will be called in the socketfifo coroutine
 function socketfifo:request(cmd, response)
         local res
+        assert(block_connect(self))
         res = self.sock:write(cmd)
         if response then
                 return wait_for_response(self, response)

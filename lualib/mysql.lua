@@ -144,7 +144,7 @@ local function _compute_token(password, scramble)
         local n = #stage1
         local bytes = new_tab(n, 0)
         for i = 1, n do
-             bytes[i] = strchar(bxor(strbyte(stage3, i), strbyte(stage1, i)))
+             bytes[i] = strchar(strbyte(stage3, i) ~ strbyte(stage1, i))
         end
 
         return concat(bytes)

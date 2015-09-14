@@ -9,11 +9,6 @@ local STATUS_CLOSE      = 2
 
 local function wakeup(bsocket, ...)
         local co = bsocket.readthread 
-        if co == nil then
-                return
-        end
-
-        bsocket.readthread = nil
         core.run(co, ...)
 end
 
@@ -151,8 +146,13 @@ function blocksocket:close()
 
         assert(self.readthread == core.self())
         socket.close(self.fd)
+        self.fd = -1
 
         return
+end
+
+function blocksocket:closed()
+        return self.status == STATUS_CLOSE
 end
 
 function blocksocket:read(nr)
@@ -166,7 +166,7 @@ function blocksocket:read(nr)
 
         if nr > self.data_size then
                 self.read_len = nr
-                self.readthread = core.running()
+                assert(self.readthread == core.running())
                 return core.block()
         else
                 return pop_data(self, nr)
@@ -183,7 +183,7 @@ function blocksocket:readline(termi)
                 return pop_data(self, has)
         else
                 self.linetermi = termi
-                self.readthread = core.running()
+                assert(self.readthread == core.running())
                 return core.block()
         end
 

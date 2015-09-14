@@ -12,27 +12,42 @@ local function dprint(cmd, success, value)
         end
 end
 
+local db = redis:create {
+        ip = "127.0.0.1",
+        port = 6379
+}
+
 core.start(function ()
-        redis.connect()
-        dprint("PING", redis.ping())
-        dprint("SET bar hello", redis.set("bar", "hello"))
-        dprint("GET bar", redis.get("bar"))
-        dprint("KEYS *", redis.keys("*"))
-        dprint("EXISTS bar", redis.exists("bar"))
-        dprint("EXISTS hello", redis.exists("hello"))
-        dprint("DEL bar", redis.del("bar"))
-        dprint("EXISTS bar", redis.exists("bar"))
-        dprint("DEL bar", redis.del("bar"))
+        print("Connect", db:connect())
+        dprint("PING", db:ping())
+        dprint("SET bar hello", db:set("bar", "hello"))
+        dprint("GET bar", db:get("bar"))
+        dprint("KEYS *", db:keys("*"))
+        dprint("EXISTS bar", db:exists("bar"))
+        dprint("EXISTS hello", db:exists("hello"))
+        dprint("DEL bar", db:del("bar"))
+        dprint("EXISTS bar", db:exists("bar"))
+        dprint("DEL bar", db:del("bar"))
 
-        dprint("SET foo 1", redis.set("foo", 1))
-        dprint("TYPE foo", redis.type("foo"))
-        dprint("TYPE bar", redis.type("bar"))
-        dprint("LPUSH bar 1", redis.lpush("bar", 1))
-        dprint("TYPE bar", redis.type("bar"))
+        dprint("SET foo 1", db:set("foo", 1))
+        dprint("TYPE foo", db:type("foo"))
+        dprint("TYPE bar", db:type("bar"))
+        dprint("LPUSH bar 1", db:lpush("bar", 1))
+        dprint("TYPE bar", db:type("bar"))
 
-        dprint("STRLEN bar", redis.strlen("foo"))
+        dprint("STRLEN bar", db:strlen("foo"))
 
         print("test finish")
 
+end)
+
+core.start(function ()
+        core.sleep(1000)
+        print("test begin2")
+        print("Connect", db:connect())
+        dprint("PING", db:ping())
+        dprint("SET bar hello", db:set("bar", "hello"))
+        dprint("GET bar", db:get("bar"))
+        print("test finish2")
 end)
 
