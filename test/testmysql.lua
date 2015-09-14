@@ -40,15 +40,13 @@ local function dprint(tbl)
 end
 
 core.start(function()
-        local db = mysql:connect {
+        local db = mysql:create {
                         host = "127.0.0.1",
                         port = 3306,
                         user = "root",
                         password = ""
                 }
-
-        print ("mysql connect:", db)
-
+        print ("mysql connect:", db:connect())
 
         for lines in io.stdin:lines() do
                 local t = db:query(lines)

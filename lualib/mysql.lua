@@ -595,8 +595,20 @@ local function _mysql_login(self, opts)
         end
 end
 
-function _M.connect(self, opts)
-        local self = {}
+function _M.create(self, opts)
+        local self = {
+                opts = opts,
+                auth = nil,
+                sock = nil,
+        }
+        
+        self.auth = _mysql_login(self, opts)
+        self.sock = sfifo:create {
+                        ip = opts.host,
+                        port = opts.port or 3306,
+                        auth = self.auth
+        }
+
         setmetatable(self, mt)
 
         local max_packet_size = opts.max_packet_size
@@ -606,26 +618,21 @@ function _M.connect(self, opts)
         self._max_packet_size = max_packet_size
         self.compact = opts.compact_arrays
 
-        local database = opts.database or ""
-        local user = opts.user or ""
-        local host = opts.host
-        local port
-        if host then
-                port = opts.port or 3306
-        end
-
-        self.sock = sfifo:create {
-                port = port,
-                ip = host,
-                auth = _mysql_login(self, opts),
-        }
-
-        local res = self.sock:connect()
-        if res == false then
-                return nil
-        end
-
         return self
+end
+
+function _M.connect(self)
+        local opts = self.opts
+
+        if self.sock:closed() then
+                self.sock = sfifo:create {
+                        ip = self.opts.host,
+                        port = opts.port or 3306,
+                        auth = self.auth
+                }
+        end
+
+        return self.sock:connect()
 end
 
 
