@@ -37,6 +37,7 @@ $(LUASTATICLIB):
 	make -C lua53/ $(PLAT)
 
 #-----------project
+LUACLIB_PATH ?= luaclib
 INCLUDE = -I lua53/ -I silly-src/
 SRC = silly-src/main.c silly-src/silly_socket.c\
       silly-src/silly_queue.c silly-src/silly_server.c\
@@ -48,24 +49,36 @@ OBJS = $(patsubst %.c,%.o,$(SRC))
 
 linux macosx: all
 
-all:$(BUILD_PATH)/$(TARGET) silly.so binpacket.so profile.so log.so linepacket.so crypt.so rawpacket.so
+all: \
+	$(LUACLIB_PATH)	\
+	$(BUILD_PATH)/$(TARGET) \
+	$(LUACLIB_PATH)/silly.so \
+	$(LUACLIB_PATH)/binpacket.so \
+	$(LUACLIB_PATH)/profile.so \
+	$(LUACLIB_PATH)/log.so \
+	$(LUACLIB_PATH)/linepacket.so \
+	$(LUACLIB_PATH)/crypt.so \
+	$(LUACLIB_PATH)/rawpacket.so
 
 $(BUILD_PATH)/$(TARGET):$(OBJS) $(LUASTATICLIB)
 	$(LD) -o $@ $^ $(LDFLAG)
 
-silly.so: lualib-src/lualib-silly.c
+$(LUACLIB_PATH):
+	mkdir $(LUACLIB_PATH)
+
+$(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED) 
-binpacket.so: lualib-src/lualib-binpacket.c
+$(LUACLIB_PATH)/binpacket.so: lualib-src/lualib-binpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-profile.so: lualib-src/lualib-profile.c
+$(LUACLIB_PATH)/profile.so: lualib-src/lualib-profile.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-log.so: lualib-src/lualib-log.c
+$(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-linepacket.so: lualib-src/lualib-linepacket.c
+$(LUACLIB_PATH)/linepacket.so: lualib-src/lualib-linepacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-crypt.so: lualib-src/lualib-crypt.c lualib-src/lsha1.c
+$(LUACLIB_PATH)/crypt.so: lualib-src/lualib-crypt.c lualib-src/lsha1.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-rawpacket.so: lualib-src/lualib-rawpacket.c
+$(LUACLIB_PATH)/rawpacket.so: lualib-src/lualib-rawpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 -include $(SRC:.c=.d)
@@ -82,5 +95,6 @@ rawpacket.so: lualib-src/lualib-rawpacket.c
 clean:
 	make -C lua53/ clean
 	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so silly
+	-rm -rf $(LUACLIB_PATH)
 
 
