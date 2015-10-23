@@ -1,7 +1,11 @@
 daemon = 0
 debug = 0
-listen_port=8988
+ports = {
+        port1 = 8989,
+        port2 = 8992,
+        port3 = 8993,
+}
 worker_count = 1
-bootstrap = "test/testmysql.lua"
+bootstrap = "test/testports.lua"
 lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "../?.so"

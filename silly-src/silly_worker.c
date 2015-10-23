@@ -5,6 +5,7 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include "silly_config.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
 #include "silly_debug.h"
@@ -15,11 +16,12 @@
 
 
 struct silly_worker {
-        int                     workid;
-        struct silly_queue      *queue;
-        lua_State               *L;
-        void                    (*process_cb)(lua_State *L, struct silly_message *msg);
-        void                    (*exit)(lua_State *L);
+        int                             workid;
+        struct silly_queue              *queue;
+        lua_State                       *L;
+        const struct silly_config       *config;
+        void                            (*process_cb)(lua_State *L, struct silly_message *msg);
+        void                            (*exit)(lua_State *L);
 };
 
 struct silly_worker *silly_worker_create(int workid)
@@ -110,10 +112,31 @@ _set_lib_path(lua_State *L, const char *libpath, const char *clibpath)
         lua_pushstring(L, new_path);
         lua_setfield(L, -4, "cpath");
 
+        //clear the stack
+        lua_settop(L, 0);
+
         return 0;
 }
 
-int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char *libpath, const char *clibpath)
+static int
+_set_listen_ports(lua_State *L, const struct listen_port *port, int port_count)
+{
+        int i;
+
+        lua_newtable(L);
+        
+        for (i = 0; i < port_count; i++) { 
+                lua_pushinteger(L, port[i].port);
+                lua_pushstring(L, port[i].name);
+                lua_settable(L, -3);
+        }
+
+        lua_setglobal(L, "__socket_ports");
+
+        return 0;
+}
+
+int silly_worker_start(struct silly_worker *w, const struct silly_config *config)
 {
         lua_State *L = luaL_newstate();
         luaL_openlibs(L);
@@ -122,13 +145,19 @@ int silly_worker_start(struct silly_worker *w, const char *bootstrap, const char
         lua_pushlightuserdata(L, w);
         lua_settable(L, LUA_REGISTRYINDEX);
 
-        if (_set_lib_path(L, libpath, clibpath) != 0) {
+        if (_set_lib_path(L, config->lualib_path, config->lualib_cpath) != 0) {
                 fprintf(stderr, "set lua libpath fail,%s\n", lua_tostring(L, -1));
                 lua_close(L);
                 return -1;
         }
 
-        if (luaL_loadfile(L, bootstrap) || lua_pcall(L, 0, 0, 0)) {
+        if (_set_listen_ports(L, config->ports, config->listen_count) != 0) {
+                fprintf(stderr, "set listen ports fail,%s\n", lua_tostring(L, -1));
+                lua_close(L);
+                return -1;
+        }
+
+        if (luaL_loadfile(L, config->bootstrap) || lua_pcall(L, 0, 0, 0)) {
                 fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
                 lua_close(L);
                 return -1;

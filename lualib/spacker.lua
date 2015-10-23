@@ -31,15 +31,15 @@ function spacker:create(mode)
                 mode = self.mode
         end
         
-        assert(mode == "binpacket" or mode == "linepacket" or mode == "raw")
+        assert(mode == "bin" or mode == "line" or mode == "raw")
 
-        if mode == "binpacket" then
+        if mode == "bin" then
                 return create_once(self, mode, spacker_bp, bp)
         elseif mode == "raw" then
                 return create_once(self, mode, spacker_rp, rp)
-        elseif mode == "linepacket" then
+        elseif mode == "line" then
                 local t = {
-                        mode = "linepacket",
+                        mode = "line",
                         packer = lp,
                         packer_inst = lp.create(),
                 }

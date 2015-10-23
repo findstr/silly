@@ -5,6 +5,7 @@
 #include <lualib.h>
 #include <lauxlib.h>
 #include <string.h>
+#include "silly_config.h"
 #include "silly_run.h"
 
 #define ARRAY_SIZE(a)   (sizeof(a) / sizeof(a[0]))
@@ -23,13 +24,32 @@ _get_sz(lua_State *L, const char *key)
         return luaL_checkstring(L, -1);
 }
 
+static int 
+_get_ports(lua_State *L, struct listen_port *ports, int count)
+{
+        int i;
+
+        lua_settop(L, 0);
+        lua_getglobal(L, "ports");
+        lua_pushnil(L);
+ 
+        for (i = 0; (i < count) && lua_next(L, 1) != 0; i++) {
+                strncpy(ports[i].name, luaL_checkstring(L, -2), ARRAY_SIZE(ports[i].name));
+                ports[i].port = luaL_checkinteger(L, -1);
+                lua_pop(L, 1);
+        }
+
+        return i;
+}
+
+
 static int
 _parse_config(lua_State *L, struct silly_config *config)
 {
         const char *sz;
         config->debug = _get_int(L, "debug");
         config->daemon = _get_int(L, "daemon");
-        config->listen_port = _get_int(L, "listen_port");
+        config->listen_count = _get_ports(L, config->ports, ARRAY_SIZE(config->ports));
         config->worker_count = _get_int(L, "worker_count");
         sz = _get_sz(L, "bootstrap");
         strncpy(config->bootstrap, sz, ARRAY_SIZE(config->bootstrap));

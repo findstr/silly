@@ -46,6 +46,7 @@ struct wlist {
 struct conn {
         int             fd;
         int             sid;
+        int             port;
         enum stype      type;
         int             alloc_size;
         int             workid;
@@ -101,6 +102,7 @@ _init_conn_buff(struct silly_socket *s)
         for (i = 0; i < MAX_CONN; i++) {
                 c->sid = -1;
                 c->fd = -1;
+                c->port = -1;
                 c->type = STYPE_RESERVE;
                 c->alloc_size = MIN_READBUFF_LEN;
                 c->workid = -1;
@@ -131,6 +133,7 @@ _fetch_empty_conn(struct silly_socket *s, enum stype type)
                                 assert(c->wl_head.next == NULL);
                                 assert(c->wl_tail == &c->wl_head);
                                 assert(c->sid == -1);
+                                assert(c->port == -1);
                                 c->alloc_size = MIN_READBUFF_LEN;
                                 c->sid = id;
                                 return c;
@@ -169,6 +172,7 @@ _free_conn(struct conn *c, enum stype type)
         assert(type == STYPE_CLOSE || type == STYPE_RESERVE);
         _free_wlist(c);
         c->sid = -1;
+        c->port = -1;
         __sync_synchronize();
         c->type =  type;
 
@@ -277,11 +281,12 @@ _nonblock_it(int fd)
 }
 
 static int
-_init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid)
+_init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int port)
 {
         int err;
 
         c->fd = fd;
+        c->port = port;
         c->alloc_size = MIN_READBUFF_LEN;
         if (c->type == STYPE_LISTEN)               //listen is the special
                 c->workid = workid;
@@ -298,7 +303,7 @@ _init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid)
 }
 
 static int
-_add_socket(struct silly_socket *s, int fd, enum stype type, int workid)
+_add_socket(struct silly_socket *s, int fd, enum stype type, int workid, int port)
 {
         int err;
         struct conn *c;
@@ -307,7 +312,7 @@ _add_socket(struct silly_socket *s, int fd, enum stype type, int workid)
         if (c == NULL)
                 return -1;
 
-        err = _init_new_socket(s, c, fd, workid);
+        err = _init_new_socket(s, c, fd, workid, port);
         if (err < 0)
                 return err;
 
@@ -343,7 +348,7 @@ int silly_socket_listen(int port, int workid)
         if (err < 0)
                 goto end;
        
-        err = _add_socket(SOCKET, fd, STYPE_LISTEN, workid);
+        err = _add_socket(SOCKET, fd, STYPE_LISTEN, workid, port);
         if (err < 0)
                 goto end;
 
@@ -354,7 +359,7 @@ end:
 }
 
 static void
-_report_socket_event(struct silly_socket *s, int sid, enum silly_message_type type)
+_report_socket_event(struct silly_socket *s, int sid, enum silly_message_type type, int port)
 {
         struct silly_message_socket *sm;
         struct silly_message *msg;
@@ -364,6 +369,7 @@ _report_socket_event(struct silly_socket *s, int sid, enum silly_message_type ty
 
         sm = (struct silly_message_socket *)(msg + 1);
         sm->sid = sid;
+        sm->port = port;
         sm->data_size = 0;
         sm->data = NULL;
 
@@ -410,7 +416,7 @@ _socket_close(struct silly_socket *s, int sid)
         }
         
         close(c->fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_CLOSE);
+        _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
         _sp_del(s->sp_fd, c->fd);
         _free_conn(c, STYPE_CLOSE);
         _clear_socket_event(s);
@@ -597,16 +603,16 @@ _try_connect(struct silly_socket *s, int sid, const char *ip, int port)
         err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
         if (err == 0) {
                 struct conn *c =  &s->conn_buff[CONN_INDEX(sid)];
-                err = _init_new_socket(s, c, fd, c->workid);
+                err = _init_new_socket(s, c, fd, c->workid, port);
                 if (err >= 0) {//now the err contain the sid
                         c->type = STYPE_SOCKET;
-                        _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED);
+                        _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED, -1);
                         return ;
                 }
         }
 
         close(fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_CLOSED);
+        _report_socket_event(s, sid, SILLY_SOCKET_CLOSED, -1);
         _free_conn(&s->conn_buff[CONN_INDEX(sid)], STYPE_RESERVE);
         fprintf(stderr, "_try_connect:ip:%s, errno:%d\n", ip, errno);
         
@@ -627,7 +633,7 @@ _try_shutdown(struct silly_socket *s, int sid)
         }
  
         close(c->fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_SHUTDOWN);
+        _report_socket_event(s, sid, SILLY_SOCKET_SHUTDOWN, -1);
         _sp_del(s->sp_fd, c->fd);
         _free_conn(c, STYPE_CLOSE);
         _clear_socket_event(s);
@@ -800,13 +806,13 @@ _process(struct silly_socket *s)
                 if (c->type == STYPE_LISTEN) {
                         int fd = accept(c->fd, NULL, 0);
                         if (fd >= 0) {
-                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid);
+                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid, c->port);
                                 if (err < 0) {
                                         fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
                                         close(fd);
                                         err = -1;
                                 } else {        //now the err is sid(socket id)
-                                        _report_socket_event(s, err, SILLY_SOCKET_ACCEPT);
+                                        _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->port);
                                 }
                         } else {
                                 err = -1;

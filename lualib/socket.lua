@@ -1,10 +1,10 @@
 local silly = require("silly")
 local core = require("core")
 
-local event = {
-        handler = {},
-        packer = nil,
-}
+local socket_ports = __socket_ports
+
+local event_handler = {}
+local event_packer = {}
 
 local socket_pool = {}
 local coroutine_pool = {}
@@ -63,7 +63,7 @@ local function socket_co(...)
         end
 end
 
-local function init_new_socket(fd)
+local function init_new_socket(fd, handler, packer)
         if socket_pool[fd] then
                 print("double connect")
                 return -1;
@@ -72,10 +72,10 @@ local function init_new_socket(fd)
         socket_pool[fd] = {
                 status = SOCKET_READY,
                 queue = {},
-                handler = event.handler,
+                handler = handler,
+                packer = packer,
                 isclose = 0,            --0:runing, 1:close, 2:closed
                 co = core.create(socket_co),
-                packer = nil,
         }
 
         coroutine_pool[socket_pool[fd].co] = fd
@@ -94,24 +94,24 @@ end
 --close(fd)
 --data(fd, packet)
 
-function socket.service(handler, packer)
+function socket.listen(port_name, handler, packer)
+        assert(handler)
         assert(packer)
-        event.handler = handler
-        event.packer = packer
+
+        event_handler[port_name] = handler
+        event_packer[port_name] = packer
 end
 
 function socket.connect(ip, port, handler, packer)
+        assert(packer)
+        assert(handler)
+
         local fd = silly.socket_connect(ip, port);
         if fd < 0 then
                 return -1
         end
 
-        init_new_socket(fd)
-        if packer then
-                socket_pool[fd].packer = packer
-        else
-                socket_pool[fd].packer = event.packer 
-        end
+        init_new_socket(fd, handler, packer)
 
         --connect will be runned in core.start coroutine
         local co = socket_pool[fd].co
@@ -174,13 +174,25 @@ end
 
 local silly_message_handler = {}
 --SILLY_SOCKET_ACCEPT       = 2   --a new connetiong
-silly_message_handler[2] = function (fd)
-        local err = init_new_socket(fd)
+silly_message_handler[2] = function (fd, port)
+        local port_name = socket_ports[port]
+        assert(port_name)
+        local handler = event_handler[port_name]
+        local packer = event_packer[port_name]
+
+        local err = init_new_socket(fd, handler, packer)
         if err == -1 then
+                print("accept init_new_socket error")
                 return
         end
 
-        socket_pool[fd].packer = event.packer:create()
+        if (handler == nil or packer == nil) then
+                print("accept a socket from unlisten port")
+                socket.close(fd)
+                return
+        end
+
+        socket_pool[fd].packer = packer:create()
 
         local co = socket_pool[fd].co
         local handler = socket_pool[fd].handler
@@ -223,8 +235,7 @@ end
 silly_message_handler[5] = function (fd)
         silly.socket_close(fd)
         local co = socket_pool[fd].co
-
-        coroutine_pool[co] = fd
+        coroutine_pool[co] = nil
         socket_pool[fd] = nil
 end
 
@@ -237,7 +248,7 @@ silly_message_handler[6] = function (fd)
 end
 
 --SILLY_SOCKET_DATA         = 7   --a data packet(raw) from client
-silly_message_handler[7] = function (fd, data, size)
+silly_message_handler[7] = function (fd, port, data, size)
         assert(fd);
 
         local packer = socket_pool[fd].packer
@@ -268,8 +279,8 @@ silly_message_handler[7] = function (fd, data, size)
 end
 
 
-silly.socket_register(function (fd, type, ...)
-        silly_message_handler[type](fd, ...) --event handler
+silly.socket_register(function (fd, port, type, ...)
+        silly_message_handler[type](fd, port, ...) --event handler
 end)
 
 return socket

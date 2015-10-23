@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 
+#include "silly_config.h"
 #include "silly_message.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
@@ -85,6 +86,7 @@ _sig_hup(int signum)
 int silly_run(struct silly_config *config)
 {
         int i, j;
+        int err;
         int tcnt;
 
         if (config->daemon && silly_daemon(1, 0) == -1) {
@@ -99,7 +101,13 @@ int silly_run(struct silly_config *config)
         silly_socket_init();
         silly_server_init();
 
-        silly_socket_listen(config->listen_port, -1);
+        for (i = 0; i < config->listen_count; i++) {
+                err = silly_socket_listen(config->ports[i].port, -1);
+                if (err == -1) {
+                        fprintf(stderr, "listen :%d(%s) error\n", config->ports[i].port, config->ports[i].name);
+                        return -1;
+                }
+        }
         
         srand(time(NULL));
 
@@ -107,7 +115,7 @@ int silly_run(struct silly_config *config)
         int     workid[config->worker_count];
         for (i = 0; i < config->worker_count; i++) {
                 workid[i] = silly_server_open();
-                silly_server_start(workid[i], config->bootstrap, config->lualib_path, config->lualib_cpath);
+                silly_server_start(workid[i], config);
         }
         
         tcnt = 2;

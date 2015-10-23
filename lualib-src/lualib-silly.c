@@ -23,6 +23,7 @@ _process_socket(lua_State *L, struct silly_message *m)
         lua_gettable(L, LUA_REGISTRYINDEX);
 
         lua_pushinteger(L, sm->sid);            //socket id
+        lua_pushinteger(L, sm->port);           //socket port
         lua_pushinteger(L, m->type);            //message type
 
         lua_pushlightuserdata(L, sm->data);      //socket data
@@ -31,7 +32,7 @@ _process_socket(lua_State *L, struct silly_message *m)
 
         lua_pushinteger(L, sm->data_size);       //socket data size
 
-        err = lua_pcall(L, 4, 0, 0);
+        err = lua_pcall(L, 5, 0, 0);
         if (err != 0)
                 fprintf(stderr, "_process_socket call failed:%s\n", lua_tostring(L, -1));
         
