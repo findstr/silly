@@ -54,7 +54,7 @@ all: \
 	$(BUILD_PATH)/$(TARGET) \
 	$(LUACLIB_PATH)/silly.so \
 	$(LUACLIB_PATH)/binpacket.so \
-	$(LUACLIB_PATH)/profile.so \
+	$(LUACLIB_PATH)/lprofiler.so \
 	$(LUACLIB_PATH)/log.so \
 	$(LUACLIB_PATH)/linepacket.so \
 	$(LUACLIB_PATH)/crypt.so \
@@ -70,7 +70,7 @@ $(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED) 
 $(LUACLIB_PATH)/binpacket.so: lualib-src/lualib-binpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/profile.so: lualib-src/lualib-profile.c
+$(LUACLIB_PATH)/lprofiler.so: lualib-src/lualib-lprofiler.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)

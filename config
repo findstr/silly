@@ -6,6 +6,6 @@ ports = {
         port3 = 8993,
 }
 worker_count = 1
-bootstrap = "test/testprofile.lua"
+bootstrap = "test/testprofiler.lua"
 lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "luaclib/?.so"

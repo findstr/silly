@@ -1,4 +1,4 @@
-local profile = require("profile")
+local profiler = require("profiler")
 local core = require("core")
 
 local function dump_table(title, tbl)
@@ -13,7 +13,6 @@ local function dump_table(title, tbl)
 end
 
 --test single function
-
 local function testa(n)
         local f = function()
                 for i = 1, 10000000 do
@@ -28,15 +27,15 @@ end
 local f1 = testa(5)
 local f2 = testa(8)
 
-profile.start()
+profiler.start()
 
 f1()
 f2()
 f1()
 
-profile.stop()
+profiler.stop()
 
-local tbl = profile.report()
+local tbl = profiler.report()
 for k, v in pairs(tbl) do
         print("===========thread", k)
         dump_table("total_time-------", v.total_time)
@@ -48,10 +47,20 @@ print("-----------------test coroutine----------------------")
 
 -- test thread
 local function test3()
-        coroutine.yield()
+        f1()
+        f2()
+        core.sleep(3000)
+        f1()
+end
+
+local function test4()
+        f1()
+        f2()
+        f1()
 end
 
 local function test2()
+        test4()
         test3()
 end
 local function test1 ()
@@ -64,21 +73,18 @@ end
 
 
 core.start(function()
-        profile.start()
-        local t = coroutine.wrap(test)
-        local t1 = coroutine.wrap(test)
-        print("------------test1 begin--------------")
-        t()
-        core.sleep(3000);
-        t1()
-        t();
-        t1();
-
-        profile.stop()
+        profiler.start()
+        test()
+        test()
+        test()
+        test()
+        test()
+        test()
+        profiler.stop()
 
         print("-----------test1 run--------------------")
 
-        local tbl = profile.report()
+        local tbl = profiler.report()
         print(tbl)
         for k, v in pairs(tbl) do
                 print("===========thread", k)
