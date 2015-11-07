@@ -1,6 +1,6 @@
-local socketfifo = require("socketfifo")
+local socketfifo = require "socketfifo"
 local core = require "silly.core"
-local spacker = require("spacker")
+local spacker = require "spacker"
 
 local fifo = socketfifo:create{
                                 ip = '127.0.0.1', 

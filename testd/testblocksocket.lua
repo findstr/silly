@@ -1,4 +1,4 @@
-local bsocket = require("blocksocket")
+local bsocket = require "blocksocket"
 local core = require "silly.core"
 
 core.start(function()

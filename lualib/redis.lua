@@ -1,5 +1,5 @@
-local fifo = require("socketfifo")
-local spacker = require("spacker")
+local fifo = require "socketfifo"
+local spacker = require "spacker"
 
 local tinsert = table.insert
 local tunpack = table.unpack

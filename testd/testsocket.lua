@@ -1,6 +1,6 @@
 local socket = require "silly.socket"
 local core = require "silly.core"
-local spacker = require("spacker")
+local spacker = require "spacker"
 
 --connect
 local CONN = {}

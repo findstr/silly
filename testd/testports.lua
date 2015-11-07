@@ -1,4 +1,4 @@
-local spacker = require("spacker")
+local spacker = require "spacker"
 local core = require "silly.core"
 local socket = require "silly.socket"
 

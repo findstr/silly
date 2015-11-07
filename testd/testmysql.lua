@@ -1,7 +1,7 @@
 --[[
 local socket = require "silly.socket"
 local core = require "silly.core"
-local spacker = require("spacker")
+local spacker = require "spacker"
 
 --connect
 local CONN = {}
@@ -27,7 +27,7 @@ end)
 ]]--
 
 local core = require "silly.core"
-local mysql = require("mysql")
+local mysql = require "mysql"
 
 local function dprint(tbl)
         for _, v in pairs(tbl) do

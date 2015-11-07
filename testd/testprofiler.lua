@@ -1,4 +1,4 @@
-local profiler = require("profiler")
+local profiler = require "profiler"
 local core = require "silly.core"
 
 local function dump_table(title, tbl)

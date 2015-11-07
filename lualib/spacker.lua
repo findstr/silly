@@ -1,6 +1,6 @@
-local bp = require("binpacket")
-local lp = require("linepacket")
-local rp = require("rawpacket")
+local bp = require "binpacket"
+local lp = require "linepacket"
+local rp = require "rawpacket"
 
 local bpacket = nil
 

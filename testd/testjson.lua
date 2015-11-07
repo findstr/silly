@@ -1,4 +1,4 @@
-local json = require("json")
+local json = require "json"
 
 local function test(tbl)
         local sz = json.encode(tbl)

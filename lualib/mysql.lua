@@ -1,9 +1,9 @@
 -- Copyright (C) 2012 Yichun Zhang (agentzh)
 
 
-local sfifo = require("socketfifo")
-local crypt = require("crypt")
-local spacker = require("spacker")
+local sfifo = require "socketfifo"
+local crypt = require "crypt"
+local spacker = require "spacker"
 local sub = string.sub
 local strbyte = string.byte
 local strchar = string.char

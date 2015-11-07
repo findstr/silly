@@ -1,5 +1,5 @@
 local core = require "silly.core"
-local log = require("log")
+local log = require "log"
 
 
 local l = log.open("test.log")

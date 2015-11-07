@@ -1,6 +1,6 @@
 local socket = require "silly.socket"
 local timer = require "silly.timer"
-local test = require("test")
+local test = require "test"
 
 local function tm()
         test.echo();

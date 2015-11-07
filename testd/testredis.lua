@@ -1,5 +1,5 @@
 local core = require "silly.core"
-local redis = require("redis")
+local redis = require "redis"
 
 local function dprint(cmd, success, value)
         print(string.format('====%s:%s', cmd, success and "success" or "fail"))

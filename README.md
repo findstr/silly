@@ -1,22 +1,23 @@
-# silly([Blog](http://blog.gotocoding.com/?p=446))
+# silly([blog](http://blog.gotocoding.com/?p=446))
 --------
-##DEPEND
+##depend
 
 - sudo apt-get install libreadline-dev(debain)
 - yum install readline-devel(centos)
 
-##BUILD
+##build
 
 - make linux
+- make macosx
 
-##RUN
+##run
 
-./silly
+./silly configfile
 
-##CONFIG
+##configfile
 
 - daemon, 1 --> run as daemon, 0 --> normal
-- listen_port, the server listen port
+- listen, the server listen ports
 - worker_count, open worker count
 - bootstrap, the bootstrap for every worker
 - lualib_path, will append the package.path (in luaVM)
