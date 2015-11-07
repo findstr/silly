@@ -1,5 +1,5 @@
 local bsocket = require("blocksocket")
-local core = require("core")
+local core = require "silly.core"
 
 core.start(function()
         local fd = bsocket:connect("127.0.0.1", 8989)

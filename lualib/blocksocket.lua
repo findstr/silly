@@ -1,6 +1,6 @@
-local socket = require("socket")
-local core = require("core")
-local spacker = require("spacker")
+local socket = require "silly.socket"
+local core = require "silly.core"
+local spacker = require "spacker"
 
 local blocksocket = {}
 

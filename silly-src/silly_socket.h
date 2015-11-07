@@ -10,9 +10,9 @@
 int silly_socket_init();
 void silly_socket_exit();
 
-int silly_socket_listen(int port, int work_id);
+int silly_socket_listen(const char *ip, uint16_t port, int backlog, int work_id);
 
-int silly_socket_connect(const char *addr, int port, int work_id);
+int silly_socket_connect(const char *addr, int port, int workid);
 int silly_socket_shutdown(int sid);
 int silly_socket_close(int sid);
 

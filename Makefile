@@ -39,11 +39,17 @@ $(LUASTATICLIB):
 #-----------project
 LUACLIB_PATH ?= luaclib
 INCLUDE = -I lua53/ -I silly-src/
-SRC = silly-src/main.c silly-src/silly_socket.c\
-      silly-src/silly_queue.c silly-src/silly_server.c\
-      silly-src/silly_worker.c silly-src/silly_timer.c\
-      silly-src/silly_run.c silly-src/silly_debug.c\
-      silly-src/silly_daemon.c
+SRC = \
+      silly-src/main.c\
+      silly-src/silly_socket.c\
+      silly-src/silly_queue.c\
+      silly-src/silly_server.c\
+      silly-src/silly_worker.c\
+      silly-src/silly_timer.c\
+      silly-src/silly_run.c\
+      silly-src/silly_debug.c\
+      silly-src/silly_daemon.c\
+      silly-src/silly_env.c\
 
 OBJS = $(patsubst %.c,%.o,$(SRC))
 

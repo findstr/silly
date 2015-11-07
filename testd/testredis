@@ -1,0 +1,14 @@
+daemon = 0
+debug = 0
+
+--ip:port:backlog
+listen = {
+        port1="0.0.0.0:8989:5",
+        port2="0.0.0.0:8988:5",
+        port3="0.0.0.0:8987:5",
+};
+
+worker_count = 1
+bootstrap = "testd/testredis.lua"
+lualib_path = "testd/?.lua;lualib/?.lua"
+lualib_cpath = "luaclib/?.so"

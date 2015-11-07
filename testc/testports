@@ -1,0 +1,11 @@
+daemon = 0
+debug = 0
+
+--ip:port:backlog
+listen = {
+};
+
+worker_count = 1
+bootstrap = "testc/testports.lua"
+lualib_path = "testc/?.lua;lualib/?.lua"
+lualib_cpath = "luaclib/?.so"

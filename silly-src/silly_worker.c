@@ -118,24 +118,6 @@ _set_lib_path(lua_State *L, const char *libpath, const char *clibpath)
         return 0;
 }
 
-static int
-_set_listen_ports(lua_State *L, const struct listen_port *port, int port_count)
-{
-        int i;
-
-        lua_newtable(L);
-        
-        for (i = 0; i < port_count; i++) { 
-                lua_pushinteger(L, port[i].port);
-                lua_pushstring(L, port[i].name);
-                lua_settable(L, -3);
-        }
-
-        lua_setglobal(L, "__socket_ports");
-
-        return 0;
-}
-
 int silly_worker_start(struct silly_worker *w, const struct silly_config *config)
 {
         lua_State *L = luaL_newstate();
@@ -147,12 +129,6 @@ int silly_worker_start(struct silly_worker *w, const struct silly_config *config
 
         if (_set_lib_path(L, config->lualib_path, config->lualib_cpath) != 0) {
                 fprintf(stderr, "set lua libpath fail,%s\n", lua_tostring(L, -1));
-                lua_close(L);
-                return -1;
-        }
-
-        if (_set_listen_ports(L, config->ports, config->listen_count) != 0) {
-                fprintf(stderr, "set listen ports fail,%s\n", lua_tostring(L, -1));
                 lua_close(L);
                 return -1;
         }
@@ -176,11 +152,20 @@ void silly_worker_stop(struct silly_worker *w)
 }
 
 
-void silly_worker_register(struct silly_worker *w, void (*cb)(struct lua_State *L, struct silly_message *msg), void (*exit)(lua_State *L))
+void silly_worker_message(struct silly_worker *w, void (*msg)(struct lua_State *L, struct silly_message *msg))
 {
-        assert(cb);
-        w->process_cb = cb;
+        assert(msg);
+        w->process_cb = msg;
+
+        return ;
+}
+
+void silly_worker_exit(struct silly_worker *w, void (*exit)(struct lua_State *L))
+{
+        assert(exit);
         w->exit = exit;
+        
+        return ;
 }
 
 

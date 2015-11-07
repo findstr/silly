@@ -7,6 +7,7 @@
 #include <errno.h>
 
 #include "silly_config.h"
+#include "silly_env.h"
 #include "silly_message.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
@@ -77,7 +78,7 @@ _debug(void *arg)
 }
 
 static void
-_sig_hup(int signum)
+_sig_term(int signum)
 {
         run = 0;
         return ;
@@ -95,18 +96,42 @@ int silly_run(struct silly_config *config)
         }
 
         signal(SIGPIPE, SIG_IGN);
-        signal(SIGHUP, _sig_hup);
+        signal(SIGHUP, _sig_term);
+        signal(SIGINT, _sig_term);
+        signal(SIGTERM, _sig_term);
 
         timer_init();
         silly_socket_init();
         silly_server_init();
 
         for (i = 0; i < config->listen_count; i++) {
-                err = silly_socket_listen(config->ports[i].port, -1);
-                if (err == -1) {
-                        fprintf(stderr, "listen :%d(%s) error\n", config->ports[i].port, config->ports[i].name);
+                int n;
+                char ip[32];
+                char port[32];
+                char backlog[32];
+                
+                uint16_t        nport;
+                int             nbacklog;
+
+                backlog[0] = '\0';
+                n = sscanf(config->listen[i].addr, "%[0-9.]:%[0-9]:%[0-9]", ip, port, backlog);
+                if (n < 2) {
+                        fprintf(stderr, "Invalid listen of %s\n", config->listen[i].name);
                         return -1;
                 }
+                nport = (uint16_t)strtoul(port, NULL, 0);
+                nbacklog = (int)strtol(backlog, NULL, 0);
+                if (nbacklog == 0)
+                        nbacklog = 10;
+
+                err = silly_socket_listen(ip, nport, nbacklog, -1);
+                if (err == -1) {
+                        fprintf(stderr, "listen :%s(%s) error\n", config->listen[i].addr, config->listen[i].name);
+                        return -1;
+                }
+
+                snprintf(port, sizeof(port) / sizeof(port[0]), "%d", err);
+                silly_env_set(config->listen[i].name, port);
         }
         
         srand(time(NULL));

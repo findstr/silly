@@ -1,5 +1,5 @@
 local socketfifo = require("socketfifo")
-local core = require("core")
+local core = require "silly.core"
 local spacker = require("spacker")
 
 local fifo = socketfifo:create{

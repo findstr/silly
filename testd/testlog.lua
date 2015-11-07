@@ -1,4 +1,4 @@
-local core = require("core")
+local core = require "silly.core"
 local log = require("log")
 
 

@@ -21,7 +21,7 @@ struct silly_message {
 
 struct silly_message_socket {
         int                     sid;
-        int                     port;
+        int                     portid;
         int                     data_size;
         uint8_t                 *data;
 };

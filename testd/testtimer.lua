@@ -1,5 +1,5 @@
-local timer = require("timer")
-local core = require("core")
+local timer = require "silly.timer"
+local core = require "silly.core"
 
 local closure = {}
 

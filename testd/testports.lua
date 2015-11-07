@@ -1,6 +1,6 @@
 local spacker = require("spacker")
-local core = require("core")
-local socket = require("socket")
+local core = require "silly.core"
+local socket = require "silly.socket"
 
 local EVENT_PORT1 = {}
 

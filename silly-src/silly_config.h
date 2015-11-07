@@ -1,9 +1,9 @@
 #ifndef _SILLY_CONFIG_H
 #define _SILLY_CONFIG_H
 
-struct listen_port {
-        int     port;
-        char    name[64];
+struct silly_listen {
+        char name[32];
+        char addr[64];
 };
 
 struct silly_config {
@@ -11,7 +11,7 @@ struct silly_config {
         int daemon;
         int listen_count;
         //please forgive my shortsighted, i think listen max to 16 ports is very many
-        struct  listen_port ports[16];
+        struct silly_listen listen[16];
         int listen_port;
         int worker_count;
         char bootstrap[128];

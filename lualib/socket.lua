@@ -1,5 +1,6 @@
-local silly = require("silly")
-local core = require("core")
+local silly = require "silly"
+local core = require "silly.core"
+local env = require "silly.env"
 
 local socket_ports = __socket_ports
 
@@ -47,7 +48,7 @@ local function socket_co(...)
                 end
 
                 if socket_pool[fd].isclose ~= 0 then
-                        silly.socket_close(fd)
+                        silly.socketclose(fd)
                         coroutine_pool[socket_pool[fd].co] = nil
                         socket_pool[fd] = nil
                         return ;
@@ -97,16 +98,24 @@ end
 function socket.listen(port_name, handler, packer)
         assert(handler)
         assert(packer)
+        local portid = env.get("listen." .. port_name)
+        if portid then
+                portid = tonumber(portid)
+        end
+        if portid == nil then
+                print("invalid port name")
+                return false
+        end
 
-        event_handler[port_name] = handler
-        event_packer[port_name] = packer
+        event_handler[portid] = handler
+        event_packer[portid] = packer
 end
 
 function socket.connect(ip, port, handler, packer)
         assert(packer)
         assert(handler)
 
-        local fd = silly.socket_connect(ip, port);
+        local fd = silly.socketconnect(ip, port);
         if fd < 0 then
                 return -1
         end
@@ -137,7 +146,7 @@ end
 
 function socket.close(fd)
         socket_pool[fd].status = SOCKET_CLOSE
-        silly.socket_shutdown(fd)
+        silly.socketshutdown(fd)
 end
 
 function socket.write(fd, data)
@@ -155,7 +164,7 @@ function socket.write(fd, data)
         end
 
         local p, s = socket_pool[fd].packer:pack(ed);
-        silly.socket_send(fd, p, s);
+        silly.socketsend(fd, p, s);
 end
 
 function socket.wakeup(co, ...)
@@ -174,11 +183,9 @@ end
 
 local silly_message_handler = {}
 --SILLY_SOCKET_ACCEPT       = 2   --a new connetiong
-silly_message_handler[2] = function (fd, port)
-        local port_name = socket_ports[port]
-        assert(port_name)
-        local handler = event_handler[port_name]
-        local packer = event_packer[port_name]
+silly_message_handler[2] = function (fd, portid)
+        local handler = event_handler[portid]
+        local packer = event_packer[portid]
 
         local err = init_new_socket(fd, handler, packer)
         if err == -1 then
@@ -215,7 +222,7 @@ silly_message_handler[3] = function (fd)
         end
         
         -- when status == SOCKET_CLOSE the server close the socket after the client
-        silly.socket_close(fd)
+        silly.socketclose(fd)
         coroutine_pool[co] = nil
         socket_pool[fd] = nil  --it will release the packet of queue, the coroutine
 end
@@ -233,7 +240,7 @@ end
 
 --SILLY_SOCKET_SHUTDOWN     = 5                  //a socket shutdown has already processed
 silly_message_handler[5] = function (fd)
-        silly.socket_close(fd)
+        silly.socketclose(fd)
         local co = socket_pool[fd].co
         coroutine_pool[co] = nil
         socket_pool[fd] = nil
@@ -279,7 +286,7 @@ silly_message_handler[7] = function (fd, port, data, size)
 end
 
 
-silly.socket_register(function (fd, port, type, ...)
+silly.socketentry(function (fd, port, type, ...)
         silly_message_handler[type](fd, port, ...) --event handler
 end)
 

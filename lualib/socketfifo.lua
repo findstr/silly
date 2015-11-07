@@ -1,6 +1,6 @@
 local socket = require("blocksocket")
-local core = require("core")
-local s = require("socket")
+local core = require "silly.core"
+local s = require "silly.socket"
 
 local tunpack = table.unpack
 local tinsert = table.insert

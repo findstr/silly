@@ -1,6 +1,6 @@
 --[[
-local socket = require("socket")
-local core = require("core")
+local socket = require "silly.socket"
+local core = require "silly.core"
 local spacker = require("spacker")
 
 --connect
@@ -26,7 +26,7 @@ end)
 
 ]]--
 
-local core = require("core")
+local core = require "silly.core"
 local mysql = require("mysql")
 
 local function dprint(tbl)

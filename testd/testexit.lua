@@ -1,4 +1,4 @@
-local core = require("core")
+local core = require "silly.core"
 
 core.exit(function()
         print("exit")

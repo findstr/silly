@@ -46,7 +46,7 @@ struct wlist {
 struct conn {
         int             fd;
         int             sid;
-        int             port;
+        int             portid;
         enum stype      type;
         int             alloc_size;
         int             workid;
@@ -71,6 +71,9 @@ struct silly_socket {
 
         //reserve id(for socket fd remap)
         int                     reserve_sid;
+
+        //reserved for listen index
+        int                     reserve_portid;
 };
 
 struct cmd_packet {      //for reduce the system call, waste some memory
@@ -92,7 +95,7 @@ struct cmd_packet {      //for reduce the system call, waste some memory
         };
 };
 
-struct silly_socket *SOCKET;
+static struct silly_socket *SOCKET;
 
 static void 
 _init_conn_buff(struct silly_socket *s)
@@ -102,7 +105,7 @@ _init_conn_buff(struct silly_socket *s)
         for (i = 0; i < MAX_CONN; i++) {
                 c->sid = -1;
                 c->fd = -1;
-                c->port = -1;
+                c->portid = -1;
                 c->type = STYPE_RESERVE;
                 c->alloc_size = MIN_READBUFF_LEN;
                 c->workid = -1;
@@ -133,7 +136,7 @@ _fetch_empty_conn(struct silly_socket *s, enum stype type)
                                 assert(c->wl_head.next == NULL);
                                 assert(c->wl_tail == &c->wl_head);
                                 assert(c->sid == -1);
-                                assert(c->port == -1);
+                                assert(c->portid == -1);
                                 c->alloc_size = MIN_READBUFF_LEN;
                                 c->sid = id;
                                 return c;
@@ -172,7 +175,7 @@ _free_conn(struct conn *c, enum stype type)
         assert(type == STYPE_CLOSE || type == STYPE_RESERVE);
         _free_wlist(c);
         c->sid = -1;
-        c->port = -1;
+        c->portid = -1;
         __sync_synchronize();
         c->type =  type;
 
@@ -208,6 +211,7 @@ int silly_socket_init()
         struct silly_socket *s = (struct silly_socket *)silly_malloc(sizeof(*s));
 
         s->reserve_sid = -1;
+        s->reserve_portid = -1;
         s->sp_fd = sp_fd;
         s->ctrl_send_fd = fd[1];
         s->ctrl_recv_fd = fd[0];
@@ -281,12 +285,12 @@ _nonblock_it(int fd)
 }
 
 static int
-_init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int port)
+_init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int portid)
 {
         int err;
 
         c->fd = fd;
-        c->port = port;
+        c->portid = portid;
         c->alloc_size = MIN_READBUFF_LEN;
         if (c->type == STYPE_LISTEN)               //listen is the special
                 c->workid = workid;
@@ -303,7 +307,7 @@ _init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int
 }
 
 static int
-_add_socket(struct silly_socket *s, int fd, enum stype type, int workid, int port)
+_add_socket(struct silly_socket *s, int fd, enum stype type, int workid, int portid)
 {
         int err;
         struct conn *c;
@@ -312,25 +316,32 @@ _add_socket(struct silly_socket *s, int fd, enum stype type, int workid, int por
         if (c == NULL)
                 return -1;
 
-        err = _init_new_socket(s, c, fd, workid, port);
+        err = _init_new_socket(s, c, fd, workid, portid);
         if (err < 0)
                 return err;
 
         return c->sid;
 }
 
-int silly_socket_listen(int port, int workid)
+static int
+_alloc_portid(struct silly_socket *s)
+{
+        return ++(s->reserve_portid);
+}
+
+int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
 {
         int err;
         int fd;
         int reuse;
+        int portid;
         struct sockaddr_in addr;
 
         bzero(&addr, sizeof(addr));
 
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        inet_pton(AF_INET, ip, &addr.sin_addr);
 
         fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
@@ -344,22 +355,23 @@ int silly_socket_listen(int port, int workid)
 
         _nonblock_it(fd);
 
-        err = listen(fd, 5);
+        err = listen(fd, backlog);
         if (err < 0)
                 goto end;
        
-        err = _add_socket(SOCKET, fd, STYPE_LISTEN, workid, port);
+        portid = _alloc_portid(SOCKET);
+
+        err = _add_socket(SOCKET, fd, STYPE_LISTEN, workid, portid);
         if (err < 0)
                 goto end;
-
-        return 0;
+        return portid;
 end:
         close(fd);
         return -1;
 }
 
 static void
-_report_socket_event(struct silly_socket *s, int sid, enum silly_message_type type, int port)
+_report_socket_event(struct silly_socket *s, int sid, enum silly_message_type type, int portid)
 {
         struct silly_message_socket *sm;
         struct silly_message *msg;
@@ -369,7 +381,7 @@ _report_socket_event(struct silly_socket *s, int sid, enum silly_message_type ty
 
         sm = (struct silly_message_socket *)(msg + 1);
         sm->sid = sid;
-        sm->port = port;
+        sm->portid = portid;
         sm->data_size = 0;
         sm->data = NULL;
 
@@ -603,7 +615,7 @@ _try_connect(struct silly_socket *s, int sid, const char *ip, int port)
         err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
         if (err == 0) {
                 struct conn *c =  &s->conn_buff[CONN_INDEX(sid)];
-                err = _init_new_socket(s, c, fd, c->workid, port);
+                err = _init_new_socket(s, c, fd, c->workid, _alloc_portid(s));
                 if (err >= 0) {//now the err contain the sid
                         c->type = STYPE_SOCKET;
                         _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED, -1);
@@ -806,13 +818,13 @@ _process(struct silly_socket *s)
                 if (c->type == STYPE_LISTEN) {
                         int fd = accept(c->fd, NULL, 0);
                         if (fd >= 0) {
-                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid, c->port);
+                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid, c->portid);
                                 if (err < 0) {
                                         fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
                                         close(fd);
                                         err = -1;
                                 } else {        //now the err is sid(socket id)
-                                        _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->port);
+                                        _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->portid);
                                 }
                         } else {
                                 err = -1;

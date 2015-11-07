@@ -19,7 +19,9 @@ void silly_worker_stop(struct silly_worker *w);
 
 int silly_worker_dispatch(struct silly_worker *w);
 
-void silly_worker_register(struct silly_worker *w, void (*cb)(struct lua_State *L, struct silly_message *msg), void (*exit)(struct lua_State *L));
+void silly_worker_message(struct silly_worker *w, void (*msg)(struct lua_State *L, struct silly_message *msg));
+
+void silly_worker_exit(struct silly_worker *w, void (*exit)(struct lua_State *L));
 
 #endif
 

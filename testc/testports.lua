@@ -1,6 +1,6 @@
 local spacker = require("spacker")
-local core = require("core")
-local socket = require("socket")
+local core = require "silly.core"
+local socket = require "silly.socket"
 
 local EVENT = {}
 
@@ -16,10 +16,8 @@ core.start(function()
         local fd = socket.connect("127.0.0.1", 8989, EVENT, spacker:create("line"))
         print("connect 8989", fd)
         socket.write(fd, "hello\n")
-        local fd = socket.connect("127.0.0.1", 8992, EVENT, spacker:create("line"))
-        print("connect 8993", fd)
-        local fd = socket.connect("127.0.0.1", 8993, EVENT, spacker:create("line"))
-        print("connect 8993", fd)
+        local fd = socket.connect("127.0.0.1", 8988, EVENT, spacker:create("line"))
+        print("connect 8988", fd)
         socket.write(fd, "how are you\n")
 end)
 
