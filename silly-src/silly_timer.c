@@ -1,6 +1,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #ifdef __macosx__
 #include <mach/clock.h>
@@ -26,7 +27,8 @@ struct timer {
 
 static struct timer *TIMER;
 
-int timer_init()
+int
+timer_init()
 {
         TIMER = (struct timer *)malloc(sizeof(*TIMER));
         TIMER->list.next = NULL;
@@ -35,7 +37,8 @@ int timer_init()
         return 0;
 }
 
-void timer_exit()
+void
+timer_exit()
 {
         struct timer_node *n;
         
@@ -51,10 +54,22 @@ void timer_exit()
         free(TIMER);
 }
 
-static int
+uint32_t
+timer_now()
+{
+        uint32_t ms;
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        ms = tv.tv_sec * 1000;
+        ms += tv.tv_usec / 1000;
+
+        return ms;
+}
+
+static uint32_t
 _getms()
 {
-        int ms;
+        uint32_t ms;
 #ifdef __macosx__
         clock_serv_t cclock;
         mach_timespec_t mts;
@@ -84,7 +99,8 @@ _new_node(int time, int workid, uint64_t session)
 }
 
 //ms
-int timer_add(int time, int workid, uint64_t session)
+int
+timer_add(int time, int workid, uint64_t session)
 {
         struct timer_node *n = _new_node(time, workid, session);
         if (n == NULL) {
@@ -117,7 +133,8 @@ _push_timer_event(struct timer *t, int workid, uint64_t session)
         return ;
 }
 
-int timer_dispatch()
+int
+timer_dispatch()
 {
         int curr = _getms();
         struct timer_node *t;

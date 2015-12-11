@@ -7,11 +7,11 @@ local session_index = 1
 local session_function = {}
 local session_param = {}
 
+timer.now = silly.timernow
+
 local function get_session_id()
         local id = session_index;
-
         assert(session_function[id] == nil)
-
         session_index = session_index + 1
         if (session_index < 0) then
                 session_index = 1;
@@ -27,10 +27,6 @@ function timer.add(ms, handler, param)
         session_param[session] = param
 
         silly.timeradd(ms, session)
-end
-
-function timer.current()
-        return silly.global_ms()
 end
 
 local function timer_handler(session)

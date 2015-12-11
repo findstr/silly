@@ -22,16 +22,16 @@
 #define ARRAY_SIZE(a)           (sizeof(a) / sizeof(a[0]))
 
 #define EPOLL_EVENT_SIZE        100
-#define MAX_CONN                (1 << 14)
+#define MAX_CONN_COUNT          (1 << 16)
 #define MIN_READBUFF_LEN        64
 
-#define CONN_INDEX(sid)         (sid % MAX_CONN)
+#define HASH(sid)               (sid % MAX_CONN_COUNT)
 
 enum stype {
         STYPE_RESERVE,
         STYPE_LISTEN,           //listen fd
         STYPE_SOCKET,           //socket normal status
-        STYPE_CLOSE,            //socket is closed
+        STYPE_HALFCLOSE,        //socket is closed
         STYPE_CONNECTING,       //socket is connecting, if success it will be STYPE_SOCKET
         STYPE_CTRL,             //pipe cmd type
 };
@@ -46,7 +46,6 @@ struct wlist {
 struct conn {
         int             fd;
         int             sid;
-        int             portid;
         enum stype      type;
         int             alloc_size;
         int             workid;
@@ -71,9 +70,6 @@ struct silly_socket {
 
         //reserve id(for socket fd remap)
         int                     reserve_sid;
-
-        //reserved for listen index
-        int                     reserve_portid;
 };
 
 struct cmd_packet {      //for reduce the system call, waste some memory
@@ -102,10 +98,9 @@ _init_conn_buff(struct silly_socket *s)
 {
         int i;
         struct conn *c = s->conn_buff;
-        for (i = 0; i < MAX_CONN; i++) {
+        for (i = 0; i < MAX_CONN_COUNT; i++) {
                 c->sid = -1;
                 c->fd = -1;
-                c->portid = -1;
                 c->type = STYPE_RESERVE;
                 c->alloc_size = MIN_READBUFF_LEN;
                 c->workid = -1;
@@ -118,25 +113,24 @@ _init_conn_buff(struct silly_socket *s)
 }
 
 static struct conn *
-_fetch_empty_conn(struct silly_socket *s, enum stype type)
+_fetch_conn(struct silly_socket *s, enum stype type)
 {
         int i;
         int id;
 
-        for (i = 0; i < MAX_CONN; i++) {
+        for (i = 0; i < MAX_CONN_COUNT; i++) {
                 id = __sync_add_and_fetch(&s->reserve_sid, 1);
                 if (id < 0) {
                         id = id & 0x7fffffff;
                         __sync_and_and_fetch(&s->reserve_sid, 0x7fffffff);
                 }
                 
-                struct conn *c = &s->conn_buff[CONN_INDEX(id)];
+                struct conn *c = &s->conn_buff[HASH(id)];
                 if (c->type == STYPE_RESERVE) {
                         if (__sync_bool_compare_and_swap(&c->type, STYPE_RESERVE, type)) {
                                 assert(c->wl_head.next == NULL);
                                 assert(c->wl_tail == &c->wl_head);
-                                assert(c->sid == -1);
-                                assert(c->portid == -1);
+                                assert(c->fd == -1);
                                 c->alloc_size = MIN_READBUFF_LEN;
                                 c->sid = id;
                                 return c;
@@ -148,36 +142,40 @@ _fetch_empty_conn(struct silly_socket *s, enum stype type)
 }
 
 static void
-_free_wlist(struct conn *c)
+_wlist_free(struct conn *c)
 {
         struct wlist *w;
         struct wlist *t;
-
         w = c->wl_head.next;
         while (w) {
                 t = w;
                 w = w->next;
-
                 assert(t->buff);
                 silly_free(t->buff);
                 silly_free(t);
         }
-
         c->wl_head.next = NULL;
         c->wl_tail = &c->wl_head;
 
         return ;
 }
 
-static void
-_free_conn(struct conn *c, enum stype type)
+static __inline int
+_wlist_check_empty(struct conn *c)
 {
-        assert(type == STYPE_CLOSE || type == STYPE_RESERVE);
-        _free_wlist(c);
-        c->sid = -1;
-        c->portid = -1;
-        __sync_synchronize();
-        c->type =  type;
+        if (c->wl_head.next == NULL)
+                return 1;
+        else
+                return 0;
+}
+
+static void
+_free_conn(struct conn *c)
+{
+        assert(c->type != STYPE_RESERVE);
+        _wlist_free(c);
+        c->fd = -1;
+        c->type =  STYPE_RESERVE;
 
         return ;
 }
@@ -188,8 +186,7 @@ int silly_socket_init()
         int sp_fd;
         int fd[2];
         struct conn *c = NULL;
- 
-
+        
         sp_fd = _sp_create(EPOLL_EVENT_SIZE);
         if (sp_fd < 1)
                 goto end;
@@ -211,14 +208,13 @@ int silly_socket_init()
         struct silly_socket *s = (struct silly_socket *)silly_malloc(sizeof(*s));
 
         s->reserve_sid = -1;
-        s->reserve_portid = -1;
         s->sp_fd = sp_fd;
         s->ctrl_send_fd = fd[1];
         s->ctrl_recv_fd = fd[0];
         s->event_index = 0;
         s->event_cnt = 0;
         s->event_buff = (sp_event_t *)silly_malloc(sizeof(sp_event_t) * EPOLL_EVENT_SIZE);
-        s->conn_buff = (struct conn *)silly_malloc(sizeof(struct conn) * MAX_CONN);
+        s->conn_buff = (struct conn *)silly_malloc(sizeof(struct conn) * MAX_CONN_COUNT);
         s->ctrl_conn = c;
         _init_conn_buff(s);
         FD_ZERO(&s->ctrl_fdset);
@@ -247,9 +243,9 @@ void silly_socket_exit()
         close(SOCKET->ctrl_send_fd);
         close(SOCKET->ctrl_recv_fd);
 
-        for (i = 0; i < MAX_CONN; i++) {
+        for (i = 0; i < MAX_CONN_COUNT; i++) {
                 struct conn *c = &SOCKET->conn_buff[i];
-                if (c->type == STYPE_SOCKET || c->type == STYPE_LISTEN)
+                if (c->type == STYPE_SOCKET || c->type == STYPE_LISTEN || c->type == STYPE_HALFCLOSE)
                         close(c->fd);
         }
 
@@ -266,7 +262,6 @@ _nonblock_it(int fd)
 {
         int err;
         int flag;
-
         flag = fcntl(fd, F_GETFL, 0);
         if (flag < 0) {
                 fprintf(stderr, "fcntl get err\n");
@@ -274,7 +269,6 @@ _nonblock_it(int fd)
         }
 
         flag |= O_NONBLOCK;
-
         err = fcntl(fd, F_SETFL, flag);
         if (err < 0) {
                 fprintf(stderr, "fcntl set err\n");
@@ -285,12 +279,11 @@ _nonblock_it(int fd)
 }
 
 static int
-_init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int portid)
+_add_socket(struct silly_socket *s, struct conn *c, int fd, int workid)
 {
         int err;
 
         c->fd = fd;
-        c->portid = portid;
         c->alloc_size = MIN_READBUFF_LEN;
         if (c->type == STYPE_LISTEN)               //listen is the special
                 c->workid = workid;
@@ -298,35 +291,26 @@ _init_new_socket(struct silly_socket *s, struct conn *c, int fd, int workid, int
                 c->workid = silly_server_balance(workid, c->sid);
 
         err = _sp_add(s->sp_fd, c->fd, c);
-        if (err < 0) {
-                _free_conn(c, STYPE_RESERVE);
-                return -1;
-        }
-
-        return 0;
+        return err;
 }
 
 static int
-_add_socket(struct silly_socket *s, int fd, enum stype type, int workid, int portid)
+_fetch_and_add(struct silly_socket *s, int fd, enum stype type, int workid)
 {
         int err;
         struct conn *c;
 
-        c = _fetch_empty_conn(s, type);
+        c = _fetch_conn(s, type);
         if (c == NULL)
                 return -1;
 
-        err = _init_new_socket(s, c, fd, workid, portid);
-        if (err < 0)
+        err = _add_socket(s, c, fd, workid);
+        if (err < 0) {
+                _free_conn(c);
                 return err;
+        }
 
         return c->sid;
-}
-
-static int
-_alloc_portid(struct silly_socket *s)
-{
-        return ++(s->reserve_portid);
 }
 
 int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
@@ -334,7 +318,6 @@ int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
         int err;
         int fd;
         int reuse;
-        int portid;
         struct sockaddr_in addr;
 
         bzero(&addr, sizeof(addr));
@@ -359,12 +342,12 @@ int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
         if (err < 0)
                 goto end;
        
-        portid = _alloc_portid(SOCKET);
-
-        err = _add_socket(SOCKET, fd, STYPE_LISTEN, workid, portid);
-        if (err < 0)
+        err = _fetch_and_add(SOCKET, fd, STYPE_LISTEN, workid);
+        if (err < 0) {
+                close(fd);
                 goto end;
-        return portid;
+        }
+        return err;
 end:
         close(fd);
         return -1;
@@ -385,12 +368,10 @@ _report_socket_event(struct silly_socket *s, int sid, enum silly_message_type ty
         sm->data_size = 0;
         sm->data = NULL;
 
-        silly_server_push(s->conn_buff[CONN_INDEX(sid)].workid, msg);
+        silly_server_push(s->conn_buff[HASH(sid)].workid, msg);
 
         //mesage handler will free it, so don't free it at here
-
         return ;
-
 }
 
 static void
@@ -403,35 +384,44 @@ _clear_socket_event(struct silly_socket *s)
         for (i = s->event_index; i < s->event_cnt; i++) {
                 e = &s->event_buff[i];
                 c = SP_UD(e);
-
                 //after the _wait be called, this function can be more than once, so the c can be NULL
                 if (c == NULL)
                         continue;
-
-                if (c->type == STYPE_RESERVE || c->type == STYPE_CLOSE)
+                if (c->type == STYPE_RESERVE)
                         SP_UD(e) = NULL;
         }
 
         return ;
 }
 
-//call _socket_close only when read or send error
+static void
+_close(struct silly_socket *s, struct conn *c)
+{
+        close(c->fd);
+        _sp_del(s->sp_fd, c->fd);
+        _free_conn(c);
+        _clear_socket_event(s);
+
+        return ;
+}
+
+//call _force_close only when read or send error
 //because maybe the worker queue has this socket data, so the socket type only be the STYPE_CLOSE
 //when call the silly_socket_close, this socket will be realy free
 static void
-_socket_close(struct silly_socket *s, int sid)
+_force_close(struct silly_socket *s, int sid)
 {
-        struct conn *c = &s->conn_buff[CONN_INDEX(sid)];
-        if (c->sid != sid || c->type == STYPE_RESERVE || c->type == STYPE_CLOSE) {
+        struct conn *c = &s->conn_buff[HASH(sid)];
+        assert(c->sid == sid);
+        if (c->sid != sid || c->type == STYPE_RESERVE) {
                 fprintf(stderr, "_socket_close, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
                 return ;
         }
-        
-        close(c->fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
-        _sp_del(s->sp_fd, c->fd);
-        _free_conn(c, STYPE_CLOSE);
-        _clear_socket_event(s);
+
+        _wlist_free(c);
+        if (c->type != STYPE_HALFCLOSE)
+                _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
+        _close(s, c);
 
         return ;
 }
@@ -462,7 +452,7 @@ int silly_socket_connect(const char *addr, int port, int workid)
         struct cmd_packet cmd;
         struct conn *c;
 
-        c = _fetch_empty_conn(SOCKET, STYPE_CONNECTING);
+        c = _fetch_conn(SOCKET, STYPE_CONNECTING);
         if (c == NULL)
                 return -1;
         c->workid = workid;
@@ -473,19 +463,19 @@ int silly_socket_connect(const char *addr, int port, int workid)
 
         err = _block_send_cmd(SOCKET, &cmd);
         if (err < 0) {
-                _free_conn(c, STYPE_RESERVE);
+                _free_conn(c);
                 return err;
         }
 
         return c->sid;
 }
 
-int silly_socket_shutdown(int sid)
+int silly_socket_close(int sid)
 {
         int err;
         struct cmd_packet cmd;
-        struct conn *c = &SOCKET->conn_buff[CONN_INDEX(sid)];
-        if (c->sid != sid || c->type == STYPE_RESERVE)
+        struct conn *c = &SOCKET->conn_buff[HASH(sid)];
+        if (c->sid != sid || c->type == STYPE_RESERVE || c->type == STYPE_HALFCLOSE)
                 return -1;
 
         cmd.op = 'K';
@@ -496,23 +486,11 @@ int silly_socket_shutdown(int sid)
         return err;
 }
 
-int silly_socket_close(int sid)
-{
-        struct conn *c = &SOCKET->conn_buff[CONN_INDEX(sid)];
-        if (c->sid != sid || c->type == STYPE_RESERVE)
-                return -1;
-        assert(c->type == STYPE_CLOSE);
-
-        c->type = STYPE_RESERVE;
-
-        return 0;
-}
-
 int silly_socket_send(int sid, uint8_t *buff,  int size)
 {
         int err;
         assert(sid >= 0);
-        struct conn *c = &SOCKET->conn_buff[CONN_INDEX(sid)];
+        struct conn *c = &SOCKET->conn_buff[HASH(sid)];
         struct cmd_packet cmd;
 
         if (c->sid != sid || c->type != STYPE_SOCKET) {
@@ -550,12 +528,12 @@ _forward_msg(struct silly_socket *s, struct conn *c)
                         break;
                 default:
                         fprintf(stderr, "_forward_msg, %s\n", strerror(errno));
-                        _socket_close(s, c->sid);
+                        _force_close(s, c->sid);
                         err = -1;
                         break;
                 }
         } else if (len == 0) {
-                _socket_close(s, c->sid);
+                _force_close(s, c->sid);
                 err = -1;
         } else {
                 assert(c->workid >= 0);
@@ -584,7 +562,7 @@ _forward_msg(struct silly_socket *s, struct conn *c)
 }
 
 static void
-_append_wlist(struct conn *c, uint8_t *buff, int offset, int size)
+_wlist_append(struct conn *c, uint8_t *buff, int offset, int size)
 {
         struct wlist *w;
         w = (struct wlist *)silly_malloc(sizeof(*w));
@@ -605,50 +583,42 @@ _try_connect(struct silly_socket *s, int sid, const char *ip, int port)
         int err;
         int fd;
         struct sockaddr_in      addr;
+        struct conn *c =  &s->conn_buff[HASH(sid)];
 
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         inet_pton(AF_INET, ip, &addr.sin_addr);
 
         fd = socket(AF_INET, SOCK_STREAM, 0);
- 
         err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err == 0) {
-                struct conn *c =  &s->conn_buff[CONN_INDEX(sid)];
-                err = _init_new_socket(s, c, fd, c->workid, _alloc_portid(s));
-                if (err >= 0) {//now the err contain the sid
-                        c->type = STYPE_SOCKET;
-                        _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED, -1);
-                        return ;
-                }
-        }
+        if (err == 0)
+                err = _add_socket(s, c, fd, c->workid);
 
-        close(fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_CLOSED, -1);
-        _free_conn(&s->conn_buff[CONN_INDEX(sid)], STYPE_RESERVE);
-        fprintf(stderr, "_try_connect:ip:%s, errno:%d\n", ip, errno);
-        
+        if (err >= 0) {//now the err contain the sid
+                c->type = STYPE_SOCKET;
+                _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED, -1);
+        } else {
+                _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
+                close(fd);
+                _free_conn(c);
+                fprintf(stderr, "_try_connect:ip:%s, errno:%d\n", ip, errno);
+        }
         return ;
 }
 
 static void
-_try_shutdown(struct silly_socket *s, int sid)
+_try_close(struct silly_socket *s, int sid)
 {
-        struct conn *c = &s->conn_buff[CONN_INDEX(sid)];
+        struct conn *c = &s->conn_buff[HASH(sid)];
         if (c->sid != sid || c->type == STYPE_RESERVE) {
-                fprintf(stderr, "_try_shutdown, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
-                return ;
-        }
-
-        if (c->type == STYPE_CLOSE) {   //the client first close the socket
+                fprintf(stderr, "_try_close, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
                 return ;
         }
  
-        close(c->fd);
-        _report_socket_event(s, sid, SILLY_SOCKET_SHUTDOWN, -1);
-        _sp_del(s->sp_fd, c->fd);
-        _free_conn(c, STYPE_CLOSE);
-        _clear_socket_event(s);
+        if (_wlist_check_empty(c)) //already send all the data, directly close it
+                _close(s, c);
+        else
+                c->type = STYPE_HALFCLOSE;
 
         return ;
 }
@@ -656,38 +626,33 @@ _try_shutdown(struct silly_socket *s, int sid)
 static void
 _try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
 {
-        assert(sid < MAX_CONN);
-        struct conn *c = &s->conn_buff[CONN_INDEX(sid)];
+        struct conn *c = &s->conn_buff[HASH(sid)];
         struct wlist *w;
 
         if (c->sid != sid || c->type != STYPE_SOCKET) {
                 silly_free(buff);
                 return ;
         }
-
         assert(c->type == STYPE_SOCKET);
-
         w = c->wl_head.next;
         if (w == NULL) {        //write list empty, then try send
                 int err = send(c->fd, buff, size, 0);
                 if ((err == -1 && errno != EAGAIN && errno != EINTR) || err == 0) {
                         silly_free(buff);
-                        _socket_close(s, sid);
+                        _force_close(s, sid);
                         return ;
                 }
-
                 if (err == -1)  //EINTR, EAGAIN means send no data
                         err = 0;
-
                 if (err == size) {      //send ok
                         silly_free(buff);
                         return ;
                 }
                 assert(err >= 0);
-                _append_wlist(c, buff, err, size - err);
+                _wlist_append(c, buff, err, size - err);
                 _sp_write_enable(s->sp_fd, c->fd, c, 1);
         } else {
-                _append_wlist(c, buff, 0, size);
+                _wlist_append(c, buff, 0, size);
         }
 
         return ;
@@ -743,7 +708,7 @@ _ctrl_cmd(struct silly_socket *s)
                         _try_connect(s, cmd.os.sid, cmd.os.ip, cmd.os.port);
                         break;
                 case 'K':
-                        _try_shutdown(s, cmd.ks.sid);
+                        _try_close(s, cmd.ks.sid);
                         break;
                 default:
                         fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.op);
@@ -754,22 +719,6 @@ _ctrl_cmd(struct silly_socket *s)
 
         return ;
 }
-
-static int
-_wait(struct silly_socket *s)
-{
-        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
-        if (s->event_cnt == -1) {
-                s->event_cnt = 0;
-                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
-                return -1;
-        }
-        s->event_index = 0;
-        _ctrl_cmd(s);
-
-        return 0;
-}
-
 
 static int
 _send(struct silly_socket *s, struct conn *c, uint8_t *buff, int size)
@@ -791,99 +740,107 @@ _send(struct silly_socket *s, struct conn *c, uint8_t *buff, int size)
         return 0;
 }
 
-static void
-_process(struct silly_socket *s)
+static int
+_wait(struct silly_socket *s)
+{
+        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
+        if (s->event_cnt == -1) {
+                s->event_index = 0;
+                s->event_cnt = 0;
+                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
+                return -1;
+        }
+        s->event_index = 0;
+        _ctrl_cmd(s);
+
+        return 0;
+}
+
+
+
+int silly_socket_poll()
 {
         int err;
         sp_event_t *e;
         struct conn *c;
-
-        //printf("_process:%d,%d\n", s->event_index, s->event_cnt);
-
-        int e_index = s->event_index++;
-
-        e = &s->event_buff[e_index];
-        c = (struct conn *)SP_UD(e);
-        if (c == NULL)          //the socket event has be cleared
-                return ;
-
-        if (SP_ERR(e)) {
-                fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
-                _socket_close(s, c->sid);
-                return ;
-        }
-
-        if (SP_READ(e)) { 
-                err = 0;
-                if (c->type == STYPE_LISTEN) {
-                        int fd = accept(c->fd, NULL, 0);
-                        if (fd >= 0) {
-                                err = _add_socket(s, fd, STYPE_SOCKET, c->workid, c->portid);
-                                if (err < 0) {
-                                        fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
-                                        close(fd);
-                                        err = -1;
-                                } else {        //now the err is sid(socket id)
-                                        _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->portid);
-                                }
-                        } else {
-                                err = -1;
-                        }
-                } else if (c->type == STYPE_SOCKET) {
-                        err = _forward_msg(s, c);
-                } else if (c->type != STYPE_CTRL) {
-                        err = -1;
-                        fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
-                }
-
-                if (err < 0)            //this socket have already occurs error, so ignore the write event
-                        return ;
-
-        }
-
-        if (SP_WRITE(e)) {
-                struct wlist *w;
-                w = c->wl_head.next;
-                assert(w);
-                while (w) {
-                        int err = _send(s, c, w->buff + w->offset, w->size);
-                        if (err == -1) {
-                                _socket_close(s, c->sid);
-                                break;
-                        }
-                        
-                        if (err < w->size) {    //send some
-                                w->size -= err;
-                                w->offset += err;
-                                break;
-                        }
-
-                        assert(err == w->size); //send one complete
-                        c->wl_head.next = w->next;
-
-                        silly_free(w->buff);
-                        silly_free(w);
-
-                        w = c->wl_head.next;
-                }
-
-                if (w == NULL) {
-                        c->wl_tail = &c->wl_head;
-                        _sp_write_enable(s->sp_fd, c->fd, c, 0);
-                }
-        }
-
-        return ;
-}
-
-
-int silly_socket_run()
-{
         struct silly_socket *s = SOCKET;
-        for (;;) {
-                if ((s->event_index == s->event_cnt) && _wait(s) == -1)
-                        return 0;
-                _process(s);
+        if (_wait(s) == -1)
+                return 0;
+
+        while (s->event_index < s->event_cnt) {
+                int e_index = s->event_index++;
+                //printf("_process:%d,%d\n", s->event_index, s->event_cnt);
+
+                e = &s->event_buff[e_index];
+                c = (struct conn *)SP_UD(e);
+                if (c == NULL)          //the socket event has be cleared
+                        continue;
+
+                if (SP_ERR(e)) {
+                        fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
+                        _force_close(s, c->sid);
+                        continue;
+                }
+                if (SP_READ(e)) { 
+                        err = 0;
+                        if (c->type == STYPE_LISTEN) {
+                                int fd = accept(c->fd, NULL, 0);
+                                if (fd >= 0) {
+                                        err = _fetch_and_add(s, fd, STYPE_SOCKET, c->workid);
+                                        if (err < 0) {
+                                                fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
+                                                close(fd);
+                                                err = -1;
+                                        } else {        //now the err is sid(socket id)
+                                                _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->sid);
+                                        }
+                                } else {
+                                        err = -1;
+                                }
+                        } else if (c->type == STYPE_SOCKET) {
+                                err = _forward_msg(s, c);
+                        } else if (c->type != STYPE_CTRL) {
+                                err = -1;
+                                fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
+                        }
+
+                        if (err < 0)            //this socket have already occurs error, so ignore the write event
+                                continue;
+                }
+                if (SP_WRITE(e)) {
+                        struct wlist *w;
+                        w = c->wl_head.next;
+                        assert(w);
+                        while (w) {
+                                int err = _send(s, c, w->buff + w->offset, w->size);
+                                if (err == -1) {
+                                        _force_close(s, c->sid);
+                                        break;
+                                }
+                                
+                                if (err < w->size) {    //send some
+                                        w->size -= err;
+                                        w->offset += err;
+                                        break;
+                                }
+
+                                assert(err == w->size); //send one complete
+                                c->wl_head.next = w->next;
+
+                                silly_free(w->buff);
+                                silly_free(w);
+
+                                w = c->wl_head.next;
+                        }
+
+                        if (w == NULL) {
+                                c->wl_tail = &c->wl_head;
+                                _sp_write_enable(s->sp_fd, c->fd, c, 0);
+                        }
+
+                        if (w == NULL && c->type == STYPE_HALFCLOSE)
+                                _close(s, c);
+                }
         }
 
         return 0;

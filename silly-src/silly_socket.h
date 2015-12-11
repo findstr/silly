@@ -13,12 +13,11 @@ void silly_socket_exit();
 int silly_socket_listen(const char *ip, uint16_t port, int backlog, int work_id);
 
 int silly_socket_connect(const char *addr, int port, int workid);
-int silly_socket_shutdown(int sid);
 int silly_socket_close(int sid);
 
 int silly_socket_send(int sid, uint8_t *buff,  int size);
 
-int silly_socket_run();
+int silly_socket_poll();
 
 #endif
 

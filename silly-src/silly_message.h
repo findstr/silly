@@ -7,8 +7,6 @@ enum silly_message_type {
         SILLY_TIMER_EXECUTE     = 1,
         SILLY_SOCKET_ACCEPT     = 2,            //a new connetiong
         SILLY_SOCKET_CLOSE,                     //a close from client
-        SILLY_SOCKET_CLOSED,                    //a socket has been closed(all the resource has already free)
-        SILLY_SOCKET_SHUTDOWN,                  //a socket shutdown has already processed
         SILLY_SOCKET_CONNECTED,                 //a async connect result
         SILLY_SOCKET_DATA,                      //a data packet(raw) from client
         SILLY_DEBUG             = 0xffff,       // debug message

@@ -74,7 +74,7 @@ int silly_worker_dispatch(struct silly_worker *w)
         
         msg = silly_queue_pop(w->queue);
         while (msg) {
-                _process(w, msg);            
+                _process(w, msg);
                 msg = silly_queue_pop(w->queue);
         }
         

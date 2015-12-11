@@ -23,7 +23,7 @@ static void *
 _socket(void *arg)
 {
         while (run) {
-                silly_socket_run();
+                silly_socket_poll();
         }
 
         return NULL;

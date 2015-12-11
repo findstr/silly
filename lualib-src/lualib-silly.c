@@ -69,32 +69,18 @@ _socket_entry(lua_State *L, struct silly_message *m)
         int err;
         
         struct silly_message_socket *sm = (struct silly_message_socket *)(m + 1);
-
         lua_pushlightuserdata(L, _socket_entry);
         lua_gettable(L, LUA_REGISTRYINDEX);
-
-        lua_pushinteger(L, sm->sid);            //socket id
-        lua_pushinteger(L, sm->portid);         //socket portid
-        lua_pushinteger(L, m->type);            //message type
-
-        lua_pushlightuserdata(L, sm->data);      //socket data
-        luaL_getmetatable(L, "silly_socket_data");
-        lua_setmetatable(L, -2);
-
-        lua_pushinteger(L, sm->data_size);       //socket data size
-
-        err = lua_pcall(L, 5, 0, 0);
+        lua_pushinteger(L, m->type);
+        lua_pushinteger(L, sm->sid);
+        lua_pushinteger(L, sm->portid);
+        lua_pushlightuserdata(L, m);
+        err = lua_pcall(L, 4, 0, 0);
         if (err != 0)
                 fprintf(stderr, "_socket_entry call failed:%s\n", lua_tostring(L, -1));
-        
-        silly_free(sm->data);
 
         return ;
 }
-
-
-
-
 
 static int
 _lworkid(lua_State *L)
@@ -169,6 +155,15 @@ _ltimer_add(lua_State *L)
         return 1;
 }
 
+static int
+_ltimer_now(lua_State *L)
+{
+        uint32_t ms = timer_now();
+        lua_pushinteger(L, ms);
+        return 1;
+}
+
+
 
 static int
 _lsocket_entry(lua_State *L)
@@ -217,19 +212,6 @@ _lsocket_close(lua_State *L)
 }
 
 static int
-_lsocket_shutdown(lua_State *L)
-{
-        int err;
-        int sid;
-
-        sid = luaL_checkinteger(L, 1);
-        err = silly_socket_shutdown(sid);
-        lua_pushinteger(L, err);
-
-        return 1;
-}
-
-static int
 _lsocket_send(lua_State *L)
 {
         int sid;
@@ -245,6 +227,18 @@ _lsocket_send(lua_State *L)
         return 0;
 }
 
+static int
+_ldrop(lua_State *L)
+{
+        struct silly_message *m = (struct silly_message *)lua_touserdata(L, 1);
+        if (m->type == SILLY_SOCKET_DATA) {
+                struct silly_message_socket *sm = (struct silly_message_socket *)(m + 1);
+                assert(sm->data);
+                silly_free(sm->data);
+        }
+        return 0;
+}
+
 static void
 _process_msg(lua_State *L, struct silly_message *msg)
 {
@@ -256,8 +250,6 @@ _process_msg(lua_State *L, struct silly_message *msg)
                 break;
         case SILLY_SOCKET_ACCEPT:
         case SILLY_SOCKET_CLOSE:
-        case SILLY_SOCKET_CLOSED:
-        case SILLY_SOCKET_SHUTDOWN:
         case SILLY_SOCKET_CONNECTED:
         case SILLY_SOCKET_DATA:
                 //fprintf(stderr, "silly_worker:_process:socket\n");
@@ -279,14 +271,15 @@ int luaopen_silly(lua_State *L)
                 {"setenv",      _lsetenv},
                 {"exit",        _lexit},
                 //timer
-                {"timerentry", _ltimer_entry},
-                {"timeradd",   _ltimer_add},
+                {"timerentry",  _ltimer_entry},
+                {"timeradd",    _ltimer_add},
+                {"timernow",    _ltimer_now},
                 //socket
                 {"socketentry",         _lsocket_entry},
                 {"socketconnect",       _lsocket_connect},
                 {"socketclose",         _lsocket_close},
-                {"socketshutdown",      _lsocket_shutdown},
                 {"socketsend",          _lsocket_send},
+                {"dropmessage",          _ldrop},
                 //end
                 {NULL, NULL},
         };

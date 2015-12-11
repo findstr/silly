@@ -31,7 +31,7 @@ struct incomplete {
         struct incomplete *next;
 };
 
-struct binpacket {
+struct netpacket {
         struct incomplete       *incomplete_hash[INCOMPLETE_HASH_SIZE];
         int                     cap;                            //default DEFAULT_QUEUE_SIZE
         int                     head;
@@ -40,33 +40,36 @@ struct binpacket {
 };
 
 static int
-_create_binpacket(lua_State *L)
+lcreate(lua_State *L)
 {
-        struct binpacket *r = lua_newuserdata(L, sizeof(struct binpacket));
+        struct netpacket *r = lua_newuserdata(L, sizeof(struct netpacket));
         memset(r, 0, sizeof(*r));
 
         r->cap = DEFAULT_QUEUE_SIZE;
 
-        luaL_getmetatable(L, "binpacket");
+        luaL_getmetatable(L, "netpacket");
         lua_setmetatable(L, -2);
 
         return 1;
 }
 
+static __inline struct netpacket *
+get_netpacket(lua_State *L)
+{
+        return luaL_checkudata(L, 1, "netpacket");
+}
+
 static struct incomplete *
-_get_incomplete(struct binpacket *p, int fd)
+get_incomplete(struct netpacket *p, int fd)
 {
         struct incomplete *i;
-
         i = p->incomplete_hash[INCOMPLETE_HASH(fd)];
-        
         while (i) {
                 if (i->fd == fd) {
                         if (i->prev == NULL)
                                 p->incomplete_hash[INCOMPLETE_HASH(fd)] = i->next;
                         else
                                 i->prev->next = i->next;
-                                                                          
                         return i;
                 }
                 i = i->next;
@@ -75,41 +78,33 @@ _get_incomplete(struct binpacket *p, int fd)
         return NULL;
 }
 
-static struct binpacket *
-_get_binpacket(lua_State *L)
-{
-        return luaL_checkudata(L, 1, "binpacket");
-}
-
 static void
-_put_incomplete(struct binpacket *p, struct incomplete *ic)
+put_incomplete(struct netpacket *p, struct incomplete *ic)
 {
         struct incomplete *i;
         i = p->incomplete_hash[INCOMPLETE_HASH(ic->fd)];
-        
         ic->next = i;
         ic->prev = NULL;
         p->incomplete_hash[INCOMPLETE_HASH(ic->fd)] = ic;
 }
 
 static void
-_expand_queue(lua_State *L, struct binpacket *p)
+expand_queue(lua_State *L, struct netpacket *p)
 {
         int i, h;
-        struct binpacket *new = lua_newuserdata(L, sizeof(struct binpacket) + sizeof(struct packet) * p->cap);
+        struct netpacket *new = lua_newuserdata(L, sizeof(struct netpacket) + sizeof(struct packet) * p->cap);
         new->cap = p->cap + DEFAULT_QUEUE_SIZE;
         new->head = p->cap;
         new->tail = 0;
         
         memcpy(new->incomplete_hash, p->incomplete_hash, sizeof(new->incomplete_hash));
-
         h = p->tail;
         for (i = 0; i < p->cap; i++) {
                 new->queue[i] = p->queue[h % p->cap];
                 ++h;
         }
 
-        luaL_getmetatable(L, "binpacket");
+        luaL_getmetatable(L, "netpacket");
         lua_setmetatable(L, -2);
 
         p->head = p->tail = 0;
@@ -117,11 +112,10 @@ _expand_queue(lua_State *L, struct binpacket *p)
         lua_replace(L, 1);
 
         return ;
-
 }
 
 static void
-_push_one_complete(lua_State *L, struct binpacket *p, struct incomplete *ic)
+push_complete(lua_State *L, struct netpacket *p, struct incomplete *ic)
 {
         struct packet *pk;
         int h = p->head;
@@ -137,18 +131,18 @@ _push_one_complete(lua_State *L, struct binpacket *p, struct incomplete *ic)
         assert(p->tail < p->cap);
         if (p->head == p->tail) {
                 fprintf(stderr, "packet queue full\n");
-                _expand_queue(L, p);
+                expand_queue(L, p);
         }
 
         return ;
 }
 
 static int
-_push_raw_once(lua_State *L, int fd, int size, const uint8_t *buff)
+push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 {
         int eat;
-        struct binpacket *p = _get_binpacket(L);
-        struct incomplete *ic = _get_incomplete(p, fd);
+        struct netpacket *p = get_netpacket(L);
+        struct incomplete *ic = get_incomplete(p, fd);
         if (ic) {       //continue it
                 if (ic->rsize >= 0) {   //have already alloc memory
                         assert(ic->buff);
@@ -192,21 +186,18 @@ _push_raw_once(lua_State *L, int fd, int size, const uint8_t *buff)
                 }
         }
 
-
         if (ic->rsize == ic->psize) {
-                _push_one_complete(L, p, ic);
+                push_complete(L, p, ic);
                 silly_free(ic);
         } else {
                 assert(ic->rsize < ic->psize);
-                _put_incomplete(p, ic);
+                put_incomplete(p, ic);
         }
-
-
         return eat;
 }
 
 static void
-_push_rawdata(lua_State *L, int sid, uint8_t *data, int data_size)
+push(lua_State *L, int sid, uint8_t *data, int data_size)
 {
         int n;
         int left;
@@ -214,42 +205,35 @@ _push_rawdata(lua_State *L, int sid, uint8_t *data, int data_size)
         
         left = data_size;
         d = data;
-
         do {
-                n = _push_raw_once(L, sid, left, d);
+                n = push_once(L, sid, left, d);
                 left -= n;
                 d += n;
-
         } while (left);
+
+        silly_free(data);
 
         return ;
 }
 
-static int
-_push_binpacket(lua_State *L)
+static void
+clear_incomplete(lua_State *L, int sid)
 {
-        int                     sid;
-        uint8_t                 *data;
-        int                     data_size;
-        
-        sid = luaL_checkinteger(L, 2);
-        data = (uint8_t *)luaL_checkudata(L, 3, "silly_socket_data");
-        data_size = luaL_checkinteger(L, 4);
-
-        _push_rawdata(L, sid, data, data_size);
-
-        lua_settop(L, 1);
-
-        return 1;
+        struct netpacket *p = get_netpacket(L);
+        struct incomplete *ic = get_incomplete(p, sid);
+        if (ic == NULL)
+                return ;
+        silly_free(ic);
+        return ;
 }
 
 static int
-_pop_packet(lua_State *L)
+lpop(lua_State *L)
 {
         int t;
         struct packet *pk;
-        struct binpacket *p;
-        p = luaL_checkudata(L, 1, "binpacket");
+        struct netpacket *p;
+        p = luaL_checkudata(L, 1, "netpacket");
 
         assert(p->head < p->cap);
         assert(p->tail < p->cap);
@@ -257,24 +241,21 @@ _pop_packet(lua_State *L)
         if (p->tail == p->head) {       //empty
                 lua_pushnil(L);
                 lua_pushnil(L);
+                lua_pushnil(L);
         } else {
                 t = p->tail;
                 p->tail = (p->tail + 1) % p->cap;
                 pk = &p->queue[t];
                 lua_pushinteger(L, pk->fd);
-        
-                //TODO:when implete the cryption module, will use the lua_pushlightuserdata funciton,
-                //the lua_pushlstring function will be called by cryption module
-
-                lua_pushlstring(L, pk->buff, pk->size);
-                silly_free(pk->buff);
+                lua_pushlightuserdata(L, pk->buff);
+                lua_pushinteger(L, pk->size);
         }
 
-        return 2;
+        return 3;
 }
 
 static int
-_pack_raw(lua_State *L)
+lpack(lua_State *L)
 {
         const char *str;
         size_t size;
@@ -295,20 +276,71 @@ _pack_raw(lua_State *L)
         return 2;
 }
 
-int luaopen_binpacket(lua_State *L)
+static int
+ltostring(lua_State *L)
+{
+        char *data = lua_touserdata(L, 1);
+        lua_Integer n = luaL_checkinteger(L, 2);
+        lua_pushlstring(L, data, n);
+        silly_free(data);
+        return 1;
+}
+
+static int
+lclear(lua_State *L)
+{
+        int sid = luaL_checkinteger(L, 2);
+        assert(sid >= 0);
+        clear_incomplete(L, sid);
+
+        return 0;
+}
+
+//@input
+//      netpacket
+//      type
+//      fd
+static int
+lmessage(lua_State *L)
+{
+        struct silly_message *msg = lua_touserdata(L, 2);
+        struct silly_message_socket *sm = (struct silly_message_socket *)(msg + 1);
+        enum silly_message_type mt = msg->type;
+
+        lua_settop(L, 1);
+
+        switch (mt) {
+        case SILLY_SOCKET_DATA:
+                push(L, sm->sid, sm->data, sm->data_size);
+                return 1;
+        case SILLY_SOCKET_CLOSE:
+                clear_incomplete(L, sm->sid);
+                return 1;
+        case SILLY_SOCKET_ACCEPT:
+        case SILLY_SOCKET_CONNECTED:
+                return 1;
+        default:
+                assert(!"never come here");
+                fprintf(stderr, "lmessage unspport:%d\n", mt);
+                return 1;
+        }
+}
+
+int luaopen_netpacket(lua_State *L)
 {
         luaL_Reg tbl[] = {
-                {"create", _create_binpacket},
-                {"push", _push_binpacket},
-                {"pop", _pop_packet},
-                {"pack", _pack_raw},
+                {"create",      lcreate},
+                {"pop",         lpop},
+                {"pack",        lpack},
+                {"tostring",    ltostring},
+                {"clear",       lclear},
+                {"message",     lmessage},
                 {NULL, NULL},
         };
  
         luaL_checkversion(L);
 
-        luaL_newmetatable(L, "binpacket");
-
+        luaL_newmetatable(L, "netpacket");
         luaL_newlibtable(L, tbl);
         luaL_setfuncs(L, tbl, 0);
         

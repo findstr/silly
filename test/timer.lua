@@ -20,9 +20,9 @@ end
 
 core.start(function()
         print("hello")
-        print("current begin", timer.current())
+        print("current begin", timer.now())
         core.sleep(5000)
-        print("current end", timer.current())
+        print("current end", timer.now())
         print("world")
 end)
 

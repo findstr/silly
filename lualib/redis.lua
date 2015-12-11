@@ -1,5 +1,4 @@
 local fifo = require "socketfifo"
-local spacker = require "spacker"
 
 local tinsert = table.insert
 local tunpack = table.unpack
@@ -52,6 +51,7 @@ local function read_response(sfifo)
                 res = string.sub(res, 1, #res - 2)
                 func = response_header.data
         end
+
 
         return func(sfifo, res)
 end

@@ -59,12 +59,11 @@ all: \
 	$(LUACLIB_PATH)	\
 	$(BUILD_PATH)/$(TARGET) \
 	$(LUACLIB_PATH)/silly.so \
-	$(LUACLIB_PATH)/binpacket.so \
 	$(LUACLIB_PATH)/lprofiler.so \
 	$(LUACLIB_PATH)/log.so \
-	$(LUACLIB_PATH)/linepacket.so \
 	$(LUACLIB_PATH)/crypt.so \
-	$(LUACLIB_PATH)/rawpacket.so
+	$(LUACLIB_PATH)/netpacket.so \
+	$(LUACLIB_PATH)/netstream.so
 
 $(BUILD_PATH)/$(TARGET):$(OBJS) $(LUASTATICLIB)
 	$(LD) -o $@ $^ $(LDFLAG)
@@ -74,17 +73,15 @@ $(LUACLIB_PATH):
 
 $(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED) 
-$(LUACLIB_PATH)/binpacket.so: lualib-src/lualib-binpacket.c
+$(LUACLIB_PATH)/netpacket.so: lualib-src/lualib-netpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/lprofiler.so: lualib-src/lualib-lprofiler.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/linepacket.so: lualib-src/lualib-linepacket.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/crypt.so: lualib-src/lualib-crypt.c lualib-src/lsha1.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/rawpacket.so: lualib-src/lualib-rawpacket.c
+$(LUACLIB_PATH)/netstream.so: lualib-src/lualib-netstream.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 -include $(SRC:.c=.d)
@@ -99,8 +96,9 @@ $(LUACLIB_PATH)/rawpacket.so: lualib-src/lualib-rawpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
 
 clean:
-	make -C lua53/ clean
 	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so silly
 	-rm -rf $(LUACLIB_PATH)
 
+cleanall: clean
+	make -C lua53/ clean
 

@@ -6,6 +6,7 @@ listen = {
 };
 
 worker_count = 1
-bootstrap = "testc/testports.lua"
-lualib_path = "testc/?.lua;lualib/?.lua"
+bootstrap = "test/socketc.lua"
+lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "luaclib/?.so"
+
