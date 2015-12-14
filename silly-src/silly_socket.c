@@ -508,6 +508,17 @@ int silly_socket_send(int sid, uint8_t *buff,  int size)
         return err;
 }
 
+int silly_socket_terminate()
+{
+        int err;
+        struct cmd_packet cmd;
+        
+        cmd.op = 'T';
+        err = _block_send_cmd(SOCKET, &cmd);
+
+        return err;
+}
+
 static int
 _forward_msg(struct silly_socket *s, struct conn *c)
 {
@@ -519,6 +530,7 @@ _forward_msg(struct silly_socket *s, struct conn *c)
 
         len = recv(c->fd, buff, c->alloc_size, 0);
         if (len < 0) {
+                silly_free(buff);
                 switch (errno) {
                 case EINTR:
                         fprintf(stderr, "_forward_msg, EINTR\n");
@@ -533,6 +545,7 @@ _forward_msg(struct silly_socket *s, struct conn *c)
                         break;
                 }
         } else if (len == 0) {
+                silly_free(buff);
                 _force_close(s, c->sid);
                 err = -1;
         } else {
@@ -709,6 +722,8 @@ _ctrl_cmd(struct silly_socket *s)
                         break;
                 case 'K':
                         _try_close(s, cmd.ks.sid);
+                        break;
+                case 'T':       //just to return from sp_wait
                         break;
                 default:
                         fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.op);

@@ -8,6 +8,7 @@
 
 
 int silly_socket_init();
+int silly_socket_terminate();
 void silly_socket_exit();
 
 int silly_socket_listen(const char *ip, uint16_t port, int backlog, int work_id);

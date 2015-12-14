@@ -17,7 +17,7 @@
 
 #include "silly_run.h"
 
-static int      run = 1;
+static int run = 1;
 
 static void *
 _socket(void *arg)
@@ -81,6 +81,8 @@ static void
 _sig_term(int signum)
 {
         run = 0;
+        silly_socket_terminate();
+
         return ;
 }
 
@@ -142,28 +144,26 @@ int silly_run(struct silly_config *config)
                 workid[i] = silly_server_open();
                 silly_server_start(workid[i], config);
         }
-        
+ 
         tcnt = 2;
         if (config->debug > 0)
                 ++tcnt;
-
         tcnt += config->worker_count;
         pthread_t pid[tcnt];
-
+        
         i = 0;
         pthread_create(&pid[i++], NULL, _socket, NULL);
         pthread_create(&pid[i++], NULL, _timer, NULL);
-
         if (config->debug > 0)
                 pthread_create(&pid[i++], NULL, _debug, NULL);
 
-        for (j = 0; i < tcnt; i++, j++)
+        for (j = 0; j < config->worker_count; i++, j++)
                 pthread_create(&pid[i], NULL, _worker, &workid[j]);
 
-        fprintf(stderr, "Silly is running!\n");
+        fprintf(stderr, "Silly is running...\n");
 
         for (i = 0; i < tcnt; i++)
-                pthread_join(pid[i + 2], NULL);
+                pthread_join(pid[i], NULL);
 
         silly_server_exit();
         silly_socket_exit();
