@@ -78,8 +78,6 @@ int silly_worker_dispatch(struct silly_worker *w)
                 msg = silly_queue_pop(w->queue);
         }
         
-        lua_gc(w->L, LUA_GCSTEP, 0);
-
         return 0;
 }
 
@@ -133,6 +131,7 @@ int silly_worker_start(struct silly_worker *w, const struct silly_config *config
                 return -1;
         }
 
+	lua_gc(L, LUA_GCRESTART, 0);
         if (luaL_loadfile(L, config->bootstrap) || lua_pcall(L, 0, 0, 0)) {
                 fprintf(stderr, "call main.lua fail,%s\n", lua_tostring(L, -1));
                 lua_close(L);
