@@ -11,8 +11,7 @@
 - make macosx
 
 ##run
-
-USAGE: ./silly <configfile>
+    ./silly <configfile>
 
 ##field of configfile
 
