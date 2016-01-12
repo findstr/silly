@@ -12,9 +12,9 @@
 
 ##run
 
-./silly configfile
+USAGE: ./silly <configfile>
 
-##configfile
+##field of configfile
 
 - daemon, 1 --> run as daemon, 0 --> normal
 - listen, the server listen ports
