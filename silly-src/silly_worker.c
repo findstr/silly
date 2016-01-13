@@ -148,6 +148,7 @@ void silly_worker_stop(struct silly_worker *w)
         if (w->exit)
                 w->exit(w->L);
 
+        lua_close(w->L);
         return ;
 }
 

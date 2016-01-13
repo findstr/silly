@@ -30,7 +30,7 @@ int silly_server_exit()
         int i;
         for (i = 0; i < SILLY_SERVER->workcnt; i++)
                 silly_worker_free(SILLY_SERVER->worklist[i]);
-
+        silly_free(SILLY_SERVER->worklist);
         silly_free(SILLY_SERVER);
 
         return 0;

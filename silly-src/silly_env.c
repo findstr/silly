@@ -27,7 +27,6 @@ void silly_env_set(const char *key, const char *value)
         lua_State *L = E->L;
         lua_pushstring(L, value);
         lua_setglobal(L, key);
-
         return ;
 }
 
@@ -40,3 +39,12 @@ silly_env_init()
 
         return 0;
 }
+
+void
+silly_env_exit()
+{
+        lua_close(E->L);
+        silly_free(E);
+        return ;
+}
+

@@ -147,7 +147,6 @@ int main(int argc, char *argv[])
         silly_env_init();
         L = luaL_newstate();
         luaL_openlibs(L);
-        
         err = luaL_loadstring(L, load_config);
         lua_pushstring(L, config_file);
         assert(err == LUA_OK);
@@ -161,6 +160,9 @@ int main(int argc, char *argv[])
         _init_env(L);
         _parse_config(L, &config);
         silly_run(&config);
+
+        lua_close(L);
+        silly_env_exit();
 
         return 0;
 }
