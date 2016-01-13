@@ -145,7 +145,8 @@ int silly_worker_start(struct silly_worker *w, const struct silly_config *config
 
 void silly_worker_stop(struct silly_worker *w)
 {
-        w->exit(w->L);
+        if (w->exit)
+                w->exit(w->L);
 
         return ;
 }
