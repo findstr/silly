@@ -122,6 +122,8 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
         if (nb->head == NULL)
                 nb->tail = NULL;
 
+        assert(n->buff);
+        silly_free(n->buff);
         n->buff = NULL;
 
         lua_rawgeti(L, POOL, 1);
@@ -288,7 +290,6 @@ lclear(struct lua_State *L)
         struct node_buffer *nb = (struct node_buffer *)luaL_checkudata(L, 2, "nodebuffer");
         nb->size = 0;
         while (nb->head) {
-                silly_free(nb->head->buff);
                 remove_node(L, nb, nb->head);
         }
 
