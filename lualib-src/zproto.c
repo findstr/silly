@@ -32,7 +32,9 @@ struct zproto_record {
 struct zproto_buffer {
         size_t  cap;
         int     start;
-        char    *p;
+        uint8_t *p;
+        size_t  pack_cap;
+        uint8_t *pack_p;
 };
 
 struct zproto {
@@ -42,6 +44,8 @@ struct zproto {
         struct zproto_record    record;
         struct pool_chunk       *now;
         struct pool_chunk       chunk;
+        struct zproto_buffer    ebuffer;
+        struct zproto_buffer    dbuffer;
 };
 
 
@@ -432,21 +436,16 @@ void
 zproto_free(struct zproto *z)
 {
         pool_free(z);
+        if (z->ebuffer.p)
+                free(z->ebuffer.p);
+        if (z->ebuffer.pack_p)
+                free(z->ebuffer.pack_p);
+
+        assert(z->dbuffer.p == NULL);
         free(z);
         return ;
 }
-
 //////////encode/decode
-
-void
-zproto_buffer_drop(struct zproto_buffer *zb)
-{
-        free(zb->p);
-        free(zb);
-
-        return ;
-}
-
 void
 zproto_buffer_fill(struct zproto_buffer *zb, int32_t pos, int32_t val)
 {
@@ -455,44 +454,48 @@ zproto_buffer_fill(struct zproto_buffer *zb, int32_t pos, int32_t val)
         return ;
 }
 
-struct zproto_buffer *
-zproto_encode_begin(int32_t protocol)
+static void
+buffer_check(struct zproto_buffer *zb, int sz, int pack)
 {
-        struct zproto_buffer *zb = (struct zproto_buffer *)malloc(sizeof(*zb));
-        memset(zb, 0 , sizeof(*zb));
-        zb->cap = ZBUFFER_SIZE;
-        zb->p = (char *)malloc(zb->cap);
+        if (zb->cap < (sz + zb->start)) {
+                zb->cap = zb->cap + ((sz + ZBUFFER_SIZE - 1) / ZBUFFER_SIZE) * ZBUFFER_SIZE;
+                zb->p = realloc(zb->p, zb->cap);
+                assert(zb->cap >= sz);
+        }
+
+        if (zb->pack_cap < pack) {
+                zb->pack_cap = 
+                        zb->pack_cap + ((pack + ZBUFFER_SIZE - 1) / ZBUFFER_SIZE) * ZBUFFER_SIZE;
+                zb->pack_p = realloc(zb->pack_p, zb->pack_cap);
+                assert(zb->pack_cap >= pack);
+        }
+
+        return ;
+}
+
+struct zproto_buffer *
+zproto_encode_begin(struct zproto *z, int32_t protocol)
+{
+        struct zproto_buffer *zb = &z->ebuffer;
+        buffer_check(zb, sizeof(int32_t), 0);
+        zb->start = 0;
         *(int32_t *)(zb->p) = protocol;
         zb->start += sizeof(int32_t);
         return zb;
 }
 
-char *
+const uint8_t *
 zproto_encode_end(struct zproto_buffer *zb, int *sz)
 {
-        char *p = zb->p;
         *sz = zb->start;
-        free(zb);
-        return p;
+        return zb->p;
 }
 
-static void
-resize_buffer(struct zproto_buffer *zb, int sz)
-{
-        if (zb->cap >= (sz + zb->start))
-                return ;
-
-        zb->cap *= 2;
-        zb->p = realloc(zb->p, zb->cap);
-        assert(zb->cap >= sz);
-
-        return ;
-}
 
 int32_t
 zproto_encode_record(struct zproto_buffer *zb)
 {
-        resize_buffer(zb, sizeof(int32_t));
+        buffer_check(zb, sizeof(int32_t), 0);
         int32_t nr = zb->start;
         zb->start += sizeof(int32_t);
         return nr;
@@ -504,7 +507,7 @@ zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zp
         int lasttag = last ? last->tag : 0;
         int skip;
 
-        resize_buffer(zb, sizeof(int32_t));
+        buffer_check(zb, sizeof(int32_t), 0);
         skip = field->tag - lasttag - 1;
         assert(skip >= 0);
 
@@ -515,7 +518,7 @@ zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zp
                 return ;
 
         //tag of array need count
-        resize_buffer(zb, sizeof(int32_t));
+        buffer_check(zb, sizeof(int32_t), 0);
         int32_t *nr = (int32_t *)&zb->p[zb->start];
         zb->start += sizeof(int32_t);
         *nr = count;
@@ -529,14 +532,13 @@ zproto_encode(struct zproto_buffer *zb, struct zproto_field *last, struct zproto
                 zproto_encode_tag(zb, last, field, 0);
         }
 
-
         if ((field->type & ZPROTO_TYPE) == ZPROTO_INTEGER) {
-                resize_buffer(zb, sizeof(int32_t));
+                buffer_check(zb, sizeof(int32_t), 0);
                 assert(sz == sizeof(int32_t));
                 *(int32_t *)&zb->p[zb->start] = *(int32_t *)data;
                 zb->start += sizeof(int32_t);
         } else if ((field->type & ZPROTO_TYPE) == ZPROTO_STRING) {
-                resize_buffer(zb, sizeof(int32_t) + sz);
+                buffer_check(zb, sizeof(int32_t) + sz, 0);
                 *(int32_t *)&zb->p[zb->start] = sz;
                 zb->start += sizeof(int32_t);
                 memcpy(&zb->p[zb->start], data, sz);
@@ -546,7 +548,7 @@ zproto_encode(struct zproto_buffer *zb, struct zproto_field *last, struct zproto
         return ;
 }
 
-int32_t zproto_decode_protocol(char *buff, int sz)
+int32_t zproto_decode_protocol(uint8_t *buff, int sz)
 {
         if (sz < sizeof(int32_t))
                 return -1;
@@ -554,12 +556,11 @@ int32_t zproto_decode_protocol(char *buff, int sz)
 }
 
 struct zproto_buffer *
-zproto_decode_begin(char *buff, int sz)
+zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz)
 {
-        struct zproto_buffer *zb = (struct zproto_buffer *)malloc(sizeof(*zb));
-        memset(zb, 0 , sizeof(*zb));
+        struct zproto_buffer *zb = &z->dbuffer;
+        zb->p = (uint8_t *)buff;
         zb->cap = sz;
-        zb->p = buff;
         zb->start += sizeof(int32_t);   //skip protocol field
         return zb;
 }
@@ -567,9 +568,7 @@ zproto_decode_begin(char *buff, int sz)
 void
 zproto_decode_end(struct zproto_buffer *zb)
 {
-        free(zb->p);
-        free(zb);
-        
+        zb->p = NULL;
         return ;
 }
 
@@ -608,7 +607,7 @@ zproto_decode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zp
 }
 
 int
-zproto_decode(struct zproto_buffer *zb, struct zproto_field *field, char **data, int32_t *sz)
+zproto_decode(struct zproto_buffer *zb, struct zproto_field *field, uint8_t **data, int32_t *sz)
 {
         if (zb->start + sizeof(int32_t) > zb->cap)
                 return -1;
@@ -630,6 +629,202 @@ zproto_decode(struct zproto_buffer *zb, struct zproto_field *field, char **data,
         return 0;
 }
 
+
+//////////pack
+static int
+pack_seg(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        int i;
+        int pack_sz = 0;
+        uint8_t *hdr = dst++;
+        *hdr = 0;
+        sn = sn < 8 ? sn : 8;
+        for (i = 0; i < sn; i++) {
+                if (src[i]) {
+                        *hdr |= 1 << i;
+                        *dst++ = src[i];
+                        ++pack_sz;
+                        --dn;
+                }
+        }
+
+        assert(dn >= 0);
+        return pack_sz;
+}
+
+static int
+pack_ff(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        int i;
+        int pack_sz = 0;
+
+        sn = sn < 8 ? sn : 8;
+        for (i = 0; i < sn; i++) {
+                if (*src)
+                        ++pack_sz;
+        }
+        
+        if (pack_sz >= 6)       //6, 7, 8
+                memcpy(dst, src, sn);
+        
+        return pack_sz;
+
+}
+
+
+static int
+pack(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        int pack_sz;
+        uint8_t *ff_n = NULL;
+        uint8_t *dst_start = dst;
+        int needn = ((sn + 2047) / 2048) * 2 + sn;
+        if (sn % 8 != 0)
+                ++needn;
+
+        if (needn > dn)
+                return -1;
+        
+        pack_sz = -1;
+        while (sn > 0) {
+                if (pack_sz != 8) {  //pack segment
+                        pack_sz = pack_seg(src, sn, dst, dn);
+                        src += 8;
+                        sn -= 8;
+                        dst += pack_sz + 1;             //skip the data+header
+                        dn -= pack_sz + 1;
+                        if (pack_sz == 8 && sn > 0) {   //it's 0xff
+                                ff_n = dst;
+                                ++dst;
+                                --dn;
+                        } else {
+                                ff_n = NULL;
+                        }
+                } else if (pack_sz == 8) {
+                        *ff_n = 0;
+                        for (;;) {
+                                pack_sz = pack_ff(src, sn, dst, dn);
+                                if (pack_sz == 6 || pack_sz == 7 || pack_sz == 8) {
+                                        src += 8;
+                                        sn -= 8;
+                                        dst += pack_sz;
+                                        dn -= pack_sz;
+                                        ++(*ff_n);
+                                } else {
+                                        break;
+                                }
+                        }
+                }
+        }
+
+        return dst - dst_start;
+}
+
+static int
+unpack_seg(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        int i;
+        uint8_t hdr;
+        int unpack_sz = 0;
+        if (dn < 8)
+                return -1;
+        
+        hdr = *src++;
+        for (i = 0; i < 8; i++) {
+                if (hdr & (1 << i)) {
+                        *dst++ = *src++;
+                        ++unpack_sz;
+                } else {
+                        *dst++ = 0x0;
+                }
+        }
+
+        return unpack_sz;
+}
+
+static int
+unpack_ff(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        if (dn < 8)
+                return -1;
+        sn = sn < 8 ? sn : 8;
+        memcpy(dst, src, sn);
+        memset(&dst[sn], 0, 8 - sn);
+        return sn;
+}
+
+static int
+unpack(const uint8_t *src, int sn, uint8_t *dst, int dn)
+{
+        int unpack_sz = -1;
+        int ff_n = -1;
+        uint8_t *dst_start = dst;
+        while (sn > 0) {
+                if (unpack_sz != 8) {
+                        unpack_sz = unpack_seg(src, sn, dst, dn);
+                        if (unpack_sz < 0)      //not enough storage space
+                                return -1;
+
+                        src += unpack_sz + 1;
+                        sn -= unpack_sz + 1;
+                        dst += 8;
+                        dn -= 8;
+
+                        if (unpack_sz == 8 && sn > 0) {
+                                ff_n = *src;
+                                ++src;
+                                --sn;
+                        }
+                } else if (unpack_sz == 8) {
+                        int i;
+                        int n;
+                        for (i = 0; i < ff_n; i++) {
+                                n = unpack_ff(src, sn, dst, dn);
+                                if (n < 0)
+                                        return -1;
+
+                                src += n;
+                                sn -= n;
+                                dst += 8;
+                                dn -= 8;
+                        }
+                        unpack_sz = -1; //restart unpack
+                }
+        }
+
+        return dst - dst_start;
+}
+
+const uint8_t *
+zproto_pack(struct zproto *z, const uint8_t *src, int sz, int *osz)
+{
+        int n;
+        int needn = ((sz + 2047) / 2048) * 2 + sz;
+        if (sz % 8 != 0)
+                ++needn;
+
+        buffer_check(&z->ebuffer, 0, needn);
+        
+        n = pack(src, sz, z->ebuffer.pack_p, needn);
+        assert(n > 0);
+        *osz = n;
+        return z->ebuffer.pack_p;
+}
+
+const uint8_t *
+zproto_unpack(struct zproto *z, const uint8_t *src, int sz, int *osz)
+{
+        for (;;) {
+                int n;
+                n = unpack(src, sz, z->ebuffer.pack_p, z->ebuffer.pack_cap);
+                if (n < 0) {
+                        buffer_check(&z->ebuffer, 0, z->ebuffer.pack_cap * 2 + ZBUFFER_SIZE);
+                } else {
+                        *osz = n;
+                        return z->ebuffer.pack_p;
+                }
+        }
+}
 
 //for debug
 
@@ -664,10 +859,12 @@ dump_record(struct zproto_record *proto)
 
 }
 
+
 void
 zproto_dump(struct zproto *z)
 {
         struct zproto_record *r = z->record.child;
         dump_record(r);
 }
+
 

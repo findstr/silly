@@ -83,10 +83,19 @@ lquery(lua_State *L)
 static int
 lprotocol(lua_State *L)
 {
-        char *data = lua_touserdata(L, 1);
-        int sz = luaL_checkinteger(L, 2);
+        int sz;
+        const char *data;
+        
+        if (lua_type(L, 1) == LUA_TSTRING) {
+                size_t n;
+                data = luaL_checklstring(L, 1, &n);
+                sz = (int)n;
+        } else {
+                data = lua_touserdata(L, 1);
+                sz = luaL_checkinteger(L, 2);
+        }
 
-        lua_pushinteger(L, zproto_decode_protocol(data, sz));
+        lua_pushinteger(L, zproto_decode_protocol((uint8_t *)data, sz));
         return 1;
 }
 
@@ -191,21 +200,26 @@ lencode(lua_State *L)
 {
         int err;
         int sz;
-        char *data;
+        const uint8_t *data;
+        struct zproto *z = zproto(L);
         struct zproto_record *proto = (struct zproto_record *)lua_touserdata(L, 2);
         int protocol = luaL_checkinteger(L, 3);
         
-        struct zproto_buffer *zb = zproto_encode_begin(protocol);
+        struct zproto_buffer *zb = zproto_encode_begin(z, protocol);
         err = encode_table(L, zb, proto);
         if (err < 0) {
-                zproto_buffer_drop(zb);
                 data = NULL;
         } else {
                 data = zproto_encode_end(zb, &sz);
         }
-        assert(data);
-        lua_pushlightuserdata(L, data);
-        lua_pushinteger(L, sz);
+
+        if (data) {
+                lua_pushlightuserdata(L, (char *)data);
+                lua_pushinteger(L, sz);
+        } else {
+                lua_pushnil(L);
+                lua_pushnil(L);
+        }
 
         return 2;
 }
@@ -217,16 +231,16 @@ decode_data(lua_State *L, struct zproto_field *field, struct  zproto_buffer *zb)
         int err;
 
         if ((field->type & ZPROTO_TYPE) == ZPROTO_STRING) {
-                char *str;
+                uint8_t *str;
                 int32_t sz;
                 err = zproto_decode(zb, field, &str, &sz);
                 if (err < 0)
                         return err;
-                lua_pushlstring(L, str, sz);
+                lua_pushlstring(L, (char *)str, sz);
         } else if ((field->type & ZPROTO_TYPE) == ZPROTO_INTEGER) {
                 int32_t *d;
                 int32_t sz;
-                err = zproto_decode(zb, field, (char **)&d, &sz);
+                err = zproto_decode(zb, field, (uint8_t **)&d, &sz);
                 if (err < 0)
                         return err;
                 assert(sz == sizeof(int32_t));
@@ -291,11 +305,20 @@ static int
 ldecode(lua_State *L)
 {
         int err;
+        uint8_t *ud;
+        int sz;
+        struct zproto *z = zproto(L);
         struct zproto_record *proto = lua_touserdata(L, 2);
-        char *ud = lua_touserdata(L, 3);
-        int sz = luaL_checkinteger(L, 4);
-        struct zproto_buffer *zb = zproto_decode_begin(ud, sz);
-        
+        if (lua_type(L, 3) == LUA_TSTRING) {
+                size_t n;
+                ud = (uint8_t *)luaL_checklstring(L, 3, &n);
+                sz = (int)n;
+        } else {
+                ud = lua_touserdata(L, 3);
+                sz = luaL_checkinteger(L, 4);
+        }
+
+        struct zproto_buffer *zb = zproto_decode_begin(z, ud, sz);
         lua_newtable(L);
         err = decode_table(L, proto, zb);
         zproto_decode_end(zb);
@@ -307,6 +330,54 @@ ldecode(lua_State *L)
         return 1;
 }
 
+static int
+ltostring(lua_State *L)
+{
+        const uint8_t *ud = (uint8_t *)lua_touserdata(L, 2);
+        size_t sz = luaL_checkinteger(L, 3);
+
+        lua_pushlstring(L, (const char *)ud, sz);
+
+        return 1;
+}
+
+static int
+lpack(lua_State *L)
+{
+        const uint8_t *pack;
+        int osz;
+        const uint8_t *ud = (uint8_t *)lua_touserdata(L, 2);
+        int sz = (int) luaL_checkinteger(L, 3);
+
+        pack = zproto_pack(zproto(L), ud, sz, &osz);
+        if (pack)
+                lua_pushlstring(L, (char *)pack, osz);
+        else
+                lua_pushnil(L);
+
+        return 1;
+}
+
+static int
+lunpack(lua_State *L)
+{
+        size_t sz;
+        int osz;
+        const uint8_t *ud;
+        const uint8_t *unpack;
+        ud = (uint8_t *)luaL_checklstring(L, 2, &sz);
+        unpack = zproto_unpack(zproto(L), ud, sz, &osz);
+        if (unpack) {
+                lua_pushlightuserdata(L, (uint8_t *)unpack);
+                lua_pushinteger(L, osz);
+        } else {
+                lua_pushnil(L);
+                lua_pushnil(L);
+        }
+
+        return 2;
+}
+
 int
 luaopen_zproto_c(lua_State *L)
 {
@@ -315,9 +386,14 @@ luaopen_zproto_c(lua_State *L)
                 {"parse", lparse},
                 {"free", lfree},
                 {"query", lquery},
+                //encode/decode
                 {"protocol", lprotocol},
                 {"encode", lencode},
                 {"decode", ldecode},
+                //pack/unpack
+                {"pack", lpack},
+                {"unpack", lunpack},
+                {"tostring", ltostring},
                 {NULL, NULL},
         };
 

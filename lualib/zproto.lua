@@ -49,7 +49,6 @@ function zproto:encode(typ, protocol, packet)
         assert(typ)
         assert(packet)
         return engine.encode(self.proto, record, protocol, packet)
-
 end
 
 function zproto:protocol(data, sz)
@@ -59,6 +58,18 @@ end
 function zproto:decode(typ, data, sz)
         local record = query(self, typ)
         return engine.decode(self.proto, record, data, sz)
+end
+
+function zproto:tostring(data, sz)
+        return engine.tostring(self.proto, data, sz)
+end
+
+function zproto:pack(data, sz)
+        return engine.pack(self.proto, data, sz)
+end
+
+function zproto:unpack(str)
+        return engine.unpack(self.proto, str);
 end
 
 return zproto
