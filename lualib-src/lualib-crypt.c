@@ -4,9 +4,10 @@
 
 //come frome lsha1.c
 int lsha1(lua_State *L);
+int lhmac_sha1(lua_State *L);
 
 static int
-_randomkey(lua_State *L)
+lrandomkey(lua_State *L)
 {
         int i;
         char buff[8];
@@ -19,11 +20,13 @@ _randomkey(lua_State *L)
         return 1;
 }
 
-int luaopen_crypt(lua_State *L)
+int 
+luaopen_crypt(lua_State *L)
 {
         luaL_Reg tbl[] = {
                 {"sha1", lsha1},
-                {"randomkey", _randomkey},
+                {"randomkey", lrandomkey},
+                {"hmac", lhmac_sha1},
                 {NULL, NULL},
         };
 
