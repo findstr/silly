@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local gate = require "gate"
+local np = require "netpacket"
 
 gate.listen {
         port = "port1",
@@ -29,7 +30,6 @@ gate.listen {
         close = function(fd)
                 print("close", fd)
         end,
-
         data = function(fd, msg)
                 print("data", fd, msg)
                 gate.send(fd, msg)
@@ -37,5 +37,4 @@ gate.listen {
                 print("port2 data finish", core.running())
         end,
 }
-
 

@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local gate = require "gate"
+local np = require "netpacket"
 
 core.start(function()
         print("connect 8989 start")

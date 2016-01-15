@@ -326,6 +326,21 @@ lmessage(lua_State *L)
         }
 }
 
+static int
+ldrop(lua_State *L)
+{
+        int type;
+        type = lua_type(L, 1);
+        if (type == LUA_TUSERDATA) {
+                void *p = lua_touserdata(L, 1);
+                silly_free(p);
+        } else {
+                luaL_error(L, "invalid data");
+        }
+
+        return 0;
+}
+
 int luaopen_netpacket(lua_State *L)
 {
         luaL_Reg tbl[] = {
@@ -335,6 +350,7 @@ int luaopen_netpacket(lua_State *L)
                 {"tostring",    ltostring},
                 {"clear",       lclear},
                 {"message",     lmessage},
+                {"drop",        ldrop},
                 {NULL, NULL},
         };
  

@@ -15,7 +15,14 @@ local function dispatch_socket(fd)
         --push it into socket queue, when process may yield
         while f do
                 assert(f == fd)
-                local m = np.tostring(d, s)
+                local m
+                local unpack = socket_config[fd].unpack
+                if unpack then
+                        m = unpack(d, s)
+                        np.drop(d);
+                else
+                        m = np.tostring(d, s)
+                end
                 table.insert(socket_queue[fd], 1, m)
                 f, d, s = np.pop(queue)
         end
@@ -114,7 +121,17 @@ function gate.close(fd)
 end
 
 function gate.send(fd, data)
-        core.write(fd, np.pack(data))
+        local d
+        local sc = socket_config[fd]
+        if sc == nil then
+                return false
+        end
+        if sc.pack then
+                d = sc.pack(data)
+        else
+                d = data
+        end
+        core.write(fd, np.pack(d))
 end
 
 
