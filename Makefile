@@ -81,11 +81,11 @@ $(LUACLIB_PATH)/lprofiler.so: lualib-src/lualib-lprofiler.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/crypt.so: lualib-src/lualib-crypt.c lualib-src/lsha1.c
+$(LUACLIB_PATH)/crypt.so: lualib-src/crypt/lualib-crypt.c lualib-src/crypt/lsha1.c lualib-src/crypt/aes.c lualib-src/crypt/sha256.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/netstream.so: lualib-src/lualib-netstream.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/zproto.so: lualib-src/lualib-zproto.c lualib-src/zproto.c
+$(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lualib-zproto.c lualib-src/zproto/zproto.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 -include $(SRC:.c=.d)
