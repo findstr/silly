@@ -9,36 +9,54 @@ local listen_config = {}
 local socket_config = {}
 local socket_queue = {}
 
+local function push_message(fd, data, sz)
+        table.insert(socket_queue[fd], 1, data)
+        table.insert(socket_queue[fd], 1, sz)
+end
+
+local function pop_message(fd)
+        local d = table.remove(socket_queue[fd])
+        local s = table.remove(socket_queue[fd])
+        return d, s
+end
+
+local function clear_socket(fd)
+        while true do
+                local d, _ = pop_message(fd)
+                if not d then
+                        return
+                end
+                core.drop(d)
+        end
+end
+
 local function dispatch_socket(fd)
         local empty = #socket_queue[fd] == 0
         local f, d, s = np.pop(queue)
         --push it into socket queue, when process may yield
         while f do
                 assert(f == fd)
-                local m
-                local unpack = socket_config[fd].unpack
-                if unpack then
-                        m = unpack(d, s)
-                        np.drop(d);
-                else
-                        m = np.tostring(d, s)
-                end
-                table.insert(socket_queue[fd], 1, m)
+                push_message(f, d, s)
                 f, d, s = np.pop(queue)
         end
 
         --if socket_queue[fd] is not empty, it blocked by last message process, directly return
-        if empty == false then
+        if empty == false or (not socket_config[fd]) then
                 return
         end
-
-        local m = table.remove(socket_queue[fd])
-        while m do
-                socket_config[fd].data(fd, m)
+        local data, sz = pop_message(fd)
+        while data do
+                local unpack = socket_config[fd].unpack
+                if unpack then
+                        socket_config[fd].data(fd, unpack(data, sz))
+                        core.drop(data)
+                else
+                        socket_config[fd].data(fd, np.tostring(data, sz))
+                end
                 if socket_queue[fd] == nil then         --already closed
                         return ;
                 end
-                m = table.remove(socket_queue[fd])
+                data, sz = pop_message(fd)
         end
 end
 
@@ -56,6 +74,7 @@ function EVENT.close(fd)
         if sc == nil then       --have already closed
                 return ;
         end
+        clear_socket(fd)
         socket_config[fd] = nil
         socket_queue[fd] = nil
         assert(sc).close(fd)
@@ -114,24 +133,28 @@ function gate.close(fd)
         if sc == nil then
                 return false
         end
+        clear_socket(fd)
         socket_config[fd] = nil
         socket_queue[fd] = nil
         np.clear(queue, fd)
         core.close(fd)
 end
 
-function gate.send(fd, data)
+function gate.send(fd, ...)
         local d
         local sc = socket_config[fd]
         if sc == nil then
                 return false
         end
         if sc.pack then
-                d = sc.pack(data)
+                d = sc.pack(...)
         else
-                d = data
+                d = ... 
         end
-        core.write(fd, np.pack(d))
+        if not d then
+                return false
+        end
+        return core.write(fd, np.pack(d))
 end
 
 
