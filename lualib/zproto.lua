@@ -68,8 +68,8 @@ function zproto:pack(data, sz)
         return engine.pack(self.proto, data, sz)
 end
 
-function zproto:unpack(str)
-        return engine.unpack(self.proto, str);
+function zproto:unpack(data, sz)
+        return engine.unpack(self.proto, data, sz);
 end
 
 return zproto
