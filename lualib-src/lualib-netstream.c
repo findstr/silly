@@ -396,8 +396,6 @@ lpack(struct lua_State *L)
         memcpy(p, str, size);
 
         lua_pushlightuserdata(L, p);
-        luaL_getmetatable(L, "silly_socket_packet");
-        lua_setmetatable(L, -2);
         lua_pushinteger(L, size);
         
         return 2;

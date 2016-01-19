@@ -219,7 +219,7 @@ lsocket_send(lua_State *L)
         int size;
  
         sid = luaL_checkinteger(L, 1);
-        buff = luaL_checkudata(L, 2, "silly_socket_packet");
+        buff = lua_touserdata(L, 2);
         size = luaL_checkinteger(L, 3);
 
         silly_socket_send(sid, buff, size);
@@ -285,10 +285,6 @@ int luaopen_silly(lua_State *L)
         };
  
         luaL_checkversion(L);
-
-
-        luaL_newmetatable(L, "silly_socket_data");
-        luaL_newmetatable(L, "silly_socket_packet");
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
         lua_State *m = lua_tothread(L, -1);

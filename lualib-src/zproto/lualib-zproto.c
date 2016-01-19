@@ -29,8 +29,6 @@ loadstring(lua_State *L, int frompath)
                 zproto_free(z);
         } else {
                 lua_pushlightuserdata(L, z);
-                luaL_getmetatable(L, "zproto");
-                lua_setmetatable(L, -2);
         }
 
         return 1;
@@ -48,21 +46,21 @@ lparse(lua_State *L)
         return loadstring(L, 0);
 }
 
+static struct zproto *
+zproto(lua_State *L)
+{
+        struct zproto *z = (struct zproto *)lua_touserdata(L, 1);
+        return z;
+}
+
 static int
 lfree(lua_State *L)
 {
-        struct zproto *z = (struct zproto *)luaL_checkudata(L, 1, "zproto");
+        struct zproto *z = zproto(L);
         assert(z);
         zproto_free(z);
 
         return 0;
-}
-
-static struct zproto *
-zproto(lua_State *L)
-{
-        struct zproto *z = (struct zproto *)luaL_checkudata(L, 1, "zproto");
-        return z;
 }
 
 static int
@@ -399,9 +397,6 @@ luaopen_zproto_c(lua_State *L)
 
         luaL_checkversion(L);
 
-        luaL_newmetatable(L, "zproto");
-        luaL_newmetatable(L, "zproto.record");
-        
         luaL_newlib(L, tbl);
 
         return 1;
