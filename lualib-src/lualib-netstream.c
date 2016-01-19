@@ -183,13 +183,13 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
         struct node *n = nb->head;
         if (n->size >= sz) {
                 char *s = &n->buff[n->start];
+                lua_pushlstring(L, s, sz);
                 n->start += sz;
                 n->size -= sz; 
                 if (n->size == 0)
                         remove_node(L, nb, n);
 
 
-                lua_pushlstring(L, s, sz);
 
         } else {
                 char *buff = (char *)silly_malloc(sz);
