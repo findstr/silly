@@ -85,7 +85,7 @@ $(LUACLIB_PATH)/crypt.so: lualib-src/crypt/lualib-crypt.c lualib-src/crypt/lsha1
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/netstream.so: lualib-src/lualib-netstream.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lualib-zproto.c lualib-src/zproto/zproto.c
+$(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 -include $(SRC:.c=.d)

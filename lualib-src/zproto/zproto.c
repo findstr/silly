@@ -14,8 +14,8 @@
 
 
 struct pool_chunk {
-        int start;
-        int last;
+        size_t start;
+        size_t last;
         struct pool_chunk *next;
 };
 
@@ -282,7 +282,7 @@ field(struct zproto *z, struct zproto_record *proto)
         char field[64];
         char type[64];
         skip_space(z);
-        n = sscanf(z->data, ".%64[a-zA-Z0-9]:%64[]a-zA-Z0-9\[]%*[' '|'\t']%d", field, type, &tag);
+        n = sscanf(z->data, ".%64[a-zA-Z0-9_]:%64[]a-zA-Z0-9\[]%*[' '|'\t']%d", field, type, &tag);
         if (n != 3) {
                 fprintf(stderr, "line:%d synax error: expect field definition, but found:%s\n", z->linenr, z->data);
                 THROW(z);
@@ -328,7 +328,7 @@ record(struct zproto *z, struct zproto_record *proto)
 
         next_token(z);
         
-        while (*z->data != '.') {       //child record
+        while (*z->data != '.' && *z->data != '}') {       //child record
                 record(z, new);
                 skip_space(z);
         }
@@ -337,7 +337,6 @@ record(struct zproto *z, struct zproto_record *proto)
                 field(z, new);
                 next_line(z);
         }
-
         if (*z->data != '}') {
                 fprintf(stderr, "line:%d syntax error: expect '}', but found:%s\n", z->linenr, z->data);
                 THROW(z);
@@ -447,7 +446,7 @@ zproto_free(struct zproto *z)
 }
 //////////encode/decode
 void
-zproto_buffer_fill(struct zproto_buffer *zb, int32_t pos, int32_t val)
+zproto_buffer_fill(struct zproto_buffer *zb, size_t pos, int32_t val)
 {
         assert(pos < zb->cap);
         *(int32_t *)&zb->p[pos] = val;
@@ -455,7 +454,7 @@ zproto_buffer_fill(struct zproto_buffer *zb, int32_t pos, int32_t val)
 }
 
 static void
-buffer_check(struct zproto_buffer *zb, int sz, int pack)
+buffer_check(struct zproto_buffer *zb, size_t sz, size_t pack)
 {
         if (zb->cap < (sz + zb->start)) {
                 zb->cap = zb->cap + ((sz + ZBUFFER_SIZE - 1) / ZBUFFER_SIZE) * ZBUFFER_SIZE;
@@ -492,11 +491,11 @@ zproto_encode_end(struct zproto_buffer *zb, int *sz)
 }
 
 
-int32_t
+size_t
 zproto_encode_record(struct zproto_buffer *zb)
 {
         buffer_check(zb, sizeof(int32_t), 0);
-        int32_t nr = zb->start;
+        size_t nr = zb->start;
         zb->start += sizeof(int32_t);
         return nr;
 }
@@ -548,7 +547,7 @@ zproto_encode(struct zproto_buffer *zb, struct zproto_field *last, struct zproto
         return ;
 }
 
-int32_t zproto_decode_protocol(uint8_t *buff, int sz)
+int32_t zproto_decode_protocol(uint8_t *buff, size_t sz)
 {
         if (sz < sizeof(int32_t))
                 return -1;
@@ -559,6 +558,7 @@ struct zproto_buffer *
 zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz)
 {
         struct zproto_buffer *zb = &z->dbuffer;
+        zb->start = 0;
         zb->p = (uint8_t *)buff;
         zb->cap = sz;
         zb->start += sizeof(int32_t);   //skip protocol field

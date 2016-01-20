@@ -222,7 +222,7 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 }
 
 static int 
-compare(struct node *n, int start, int sz, const char *delim, size_t delim_len)
+compare(struct node *n, int start, int sz, const char *delim, int delim_len)
 {
         while (delim_len > 0) {
                 if (sz >= delim_len) {
@@ -245,8 +245,8 @@ compare(struct node *n, int start, int sz, const char *delim, size_t delim_len)
 }
 
 static int
-checkdelim(struct node_buffer *nb, const char *delim, size_t delim_len)
-{       
+checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
+{
         int ret = -1;
         int nr = 0;
         struct node *n;

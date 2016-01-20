@@ -39,6 +39,7 @@ local function query(self, typ)
                 record = engine.query(self.proto, typ)
                 self.protocache[typ] = record
         end
+        assert(record)
 
         return record
 end

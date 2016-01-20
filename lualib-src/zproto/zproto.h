@@ -31,17 +31,17 @@ struct zproto_record *zproto_query(struct zproto *z, const char *name);
 struct zproto_field *zproto_field(struct zproto *z, struct zproto_record *proto);
 
 void zproto_buffer_drop(struct zproto_buffer *zb);
-void zproto_buffer_fill(struct zproto_buffer *zb, int32_t pos, int32_t val);
+void zproto_buffer_fill(struct zproto_buffer *zb, size_t pos, int32_t val);
 
 //encode
 struct zproto_buffer *zproto_encode_begin(struct zproto *z, int32_t protocol);
 const uint8_t *zproto_encode_end(struct zproto_buffer *zb, int *sz);
-int32_t zproto_encode_record(struct zproto_buffer *zb);
+size_t zproto_encode_record(struct zproto_buffer *zb);
 void zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zproto_field *field, int32_t count);
 void zproto_encode(struct zproto_buffer *zb, struct zproto_field *last, struct zproto_field *field, const char *data, int32_t sz);
 
 //decode
-int32_t zproto_decode_protocol(uint8_t *buffer, int sz);
+int32_t zproto_decode_protocol(uint8_t *buffer, size_t sz);
 struct zproto_buffer *zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz);
 void zproto_decode_end(struct zproto_buffer *zb);
 int32_t zproto_decode_record(struct zproto_buffer *zb);
