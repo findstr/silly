@@ -69,16 +69,6 @@ function socket.connect(ip, port)
                 co = false,
         }
 
-        setmetatable(s, {
-                        __index = self,
-                        __gc = function(t)
-                                ns.clear(nb_pool, t.sbuffer)
-                                if t.fd then
-                                        core.close(t.fd)
-                                end
-                        end
-                })
-
         socket_pool[fd] = s
         return fd
 end
