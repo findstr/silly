@@ -350,7 +350,7 @@ lcheckline(struct lua_State *L)
         size_t delim_len;
         const char *delim = lua_tolstring(L, 2, &delim_len);
         int readn = checkdelim(nb, delim, delim_len);
-        lua_pushboolean(L, readn <= nb->size);
+        lua_pushboolean(L, readn != -1 && readn <= nb->size);
         return 1;
 }
 
