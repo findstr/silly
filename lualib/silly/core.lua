@@ -80,7 +80,6 @@ local socket_type = {
         [5] = "data",           --SILLY_SOCKET_DATA = 5
 }
 
-local listen_dispatch = {}
 local socket_dispatch = {}
 local socket_connect = {}
 
@@ -89,13 +88,13 @@ function core.listen(port, dispatch)
         assert(dispatch)
         local portid = env.get("listen." .. port)
         if portid == nil then
-                print("invald port name")
-                return false
+                print("invald port name" .. port)
+                return nil 
         end
         portid = tonumber(portid)
-        listen_dispatch[portid] = dispatch 
+        socket_dispatch[portid] = dispatch 
 
-        return true
+        return portid
 
 end
 
@@ -135,8 +134,8 @@ local SOCKET = {}
 function SOCKET.accept(_, fd, portid, _)
         assert(socket_dispatch[fd] == nil)
         assert(socket_connect[fd] == nil)
-        assert(listen_dispatch[portid])
-        socket_dispatch[fd] = assert(listen_dispatch[portid])
+        assert(socket_dispatch[portid])
+        socket_dispatch[fd] = assert(socket_dispatch[portid])
         return socket_dispatch[fd]
 end
 

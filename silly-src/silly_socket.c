@@ -317,7 +317,7 @@ int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
 {
         int err;
         int fd;
-        int reuse;
+        int reuse = 1;
         struct sockaddr_in addr;
 
         bzero(&addr, sizeof(addr));
@@ -349,6 +349,7 @@ int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
         }
         return err;
 end:
+        perror("listen");
         close(fd);
         return -1;
 }

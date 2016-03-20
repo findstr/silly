@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local ns = require "netstream"
+local env = require "silly.env"
 
 local nb_pool = {}
 local socket_pool = {}
@@ -8,12 +9,34 @@ local socket = {}
 
 local EVENT = {}
 
-function EVENT.close(_, fd, _, _)
+local function new_socket(fd)
+        local s = {
+                fd = fd,
+                delim = false,
+                suspend = false,
+                co = false,
+        }
+
+        socket_pool[fd] = s
+end
+
+function EVENT.accept(fd, portid)
+        local lc = socket_pool[portid];
+        new_socket(fd)
+        local ok = pcall(lc, fd)
+        if not ok then
+                socket.close(fd)
+        end
+end
+
+function EVENT.close(fd, _, _)
         local s = socket_pool[fd]
         if s == nil then
                 return
         end
-        ns.clear(s.sbuffer)
+        if s.sbuffer then
+                ns.clear(nb_pool, s.sbuffer)
+        end
         if s.co then
                 local co = s.co
                 s.co = false
@@ -22,7 +45,7 @@ function EVENT.close(_, fd, _, _)
         socket_pool[fd] = nil
 end
 
-function EVENT.data(_, fd, _, message)
+function EVENT.data(fd, _, message)
         local s = socket_pool[fd]
         s.sbuffer = ns.push(nb_pool, s.sbuffer, message)
         if not s.delim then     --non suspend read
@@ -49,27 +72,27 @@ function EVENT.data(_, fd, _, message)
         end
 end
 
-local function socket_dispatch(type, fd, _, message)
-        local s = assert(socket_pool[fd])
-        assert(type ~= "accept")
-        assert(EVENT[type])(type, fd, _, message)
+local function socket_dispatch(type, fd, portid, message)
+        assert(EVENT[type])(fd, portid, message)
 end
 
+function socket.listen(port, config)
+        assert(port)
+        assert(config)
+        local portid = core.listen(port, socket_dispatch)
+        if not portid then
+                return false
+        end
+        socket_pool[portid] = config
+        return true
+end
 
 function socket.connect(ip, port)
         local fd = core.connect(ip, port, socket_dispatch)
         if fd < 0 then
                 return fd
         end
-
-        s = {
-                fd = fd,
-                delim = false,
-                suspend = false,
-                co = false,
-        }
-
-        socket_pool[fd] = s
+        new_socket(fd)
         return fd
 end
 

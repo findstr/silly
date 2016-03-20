@@ -5,7 +5,6 @@ local np = require "netpacket"
 local gate = {}
 
 local queue = np.create()
-local listen_config = {}
 local socket_config = {}
 local socket_queue = {}
 
@@ -63,10 +62,13 @@ end
 local EVENT = {}
 
 function EVENT.accept(fd, portid)
-        local lc = listen_config[portid];
+        local lc = socket_config[portid];
         socket_config[fd] = lc
         socket_queue[fd] = {}
-        lc.accept(fd)
+        local ok = pcall(lc.accept, fd)
+        if not ok then
+                gate.close(fd)
+        end
 end
 
 function EVENT.close(fd)
@@ -77,11 +79,14 @@ function EVENT.close(fd)
         clear_socket(fd)
         socket_config[fd] = nil
         socket_queue[fd] = nil
-        assert(sc).close(fd)
+        pcall(assert(sc).close, fd)
 end
 
 function EVENT.data(fd)
-        dispatch_socket(fd)
+        local ok = pcall(dispatch_socket, fd)
+        if not ok then
+                gate.close(fd)
+        end
 end
 
 function EVENT.connected(fd)
@@ -117,14 +122,11 @@ end
 
 function gate.listen(config)
         assert(config)
-        local portid = env.get("listen." .. config.port)
-        if portid == nil then
-                print("invald port name")
+        local portid = core.listen(config.port, gate_dispatch)
+        if not portid then
                 return false
         end
-        portid = tonumber(portid)
-        listen_config[portid] = config
-        core.listen(config.port, gate_dispatch)
+        socket_config[portid] = config
         return true
 end
 
