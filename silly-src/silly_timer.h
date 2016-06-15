@@ -3,12 +3,11 @@
 
 #include <stdint.h>
 
-int timer_init();
-void timer_exit();
-int timer_add(int time, int workid, uint64_t session);
-uint32_t timer_now();
-int timer_dispatch();
-
+void silly_timer_init();
+void silly_timer_exit();
+void silly_timer_dispatch();
+uint32_t silly_timer_timeout(uint32_t expire);
+uint32_t silly_timer_now();
 
 #endif
 

@@ -12,13 +12,13 @@
 typedef struct epoll_event sp_event_t;
 
 static inline int
-_sp_create(int nr)
+sp_create(int nr)
 {
         return epoll_create(nr);
 }
 
 static inline int
-_sp_wait(int sp, sp_event_t *event_buff, int cnt)
+sp_wait(int sp, sp_event_t *event_buff, int cnt)
 {
         int ret;
         ret = epoll_wait(sp, event_buff, cnt, -1);
@@ -26,7 +26,7 @@ _sp_wait(int sp, sp_event_t *event_buff, int cnt)
 }
 
 static inline int
-_sp_add(int sp, int fd, void *ud)
+sp_add(int sp, int fd, void *ud)
 {
         struct epoll_event      event;
         event.data.ptr = ud;
@@ -35,13 +35,13 @@ _sp_add(int sp, int fd, void *ud)
 }
 
 static inline int
-_sp_del(int sp, int fd)
+sp_del(int sp, int fd)
 {
         return epoll_ctl(sp, EPOLL_CTL_DEL, fd, NULL);
 }
 
 static inline int
-_sp_write_enable(int sp, int fd, void *ud, int enable)
+sp_write_enable(int sp, int fd, void *ud, int enable)
 {
         struct epoll_event      event;
         event.data.ptr = ud;
@@ -66,14 +66,14 @@ _sp_write_enable(int sp, int fd, void *ud, int enable)
 typedef struct kevent sp_event_t;
 
 static inline int
-_sp_create(int nr)
+sp_create(int nr)
 {
         (void)nr;
         return kqueue();
 }
 
 static inline int
-_sp_wait(int sp, sp_event_t *event_buff, int cnt)
+sp_wait(int sp, sp_event_t *event_buff, int cnt)
 {
         int ret;
         ret = kevent(sp, NULL, 0, event_buff, cnt, NULL);
@@ -81,7 +81,7 @@ _sp_wait(int sp, sp_event_t *event_buff, int cnt)
 }
 
 static inline int
-_sp_del(int sp, int fd)
+sp_del(int sp, int fd)
 {
         struct kevent event[1];
         EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
@@ -93,7 +93,7 @@ _sp_del(int sp, int fd)
 }
 
 static inline int
-_sp_write_enable(int sp, int fd, void *ud, int enable)
+sp_write_enable(int sp, int fd, void *ud, int enable)
 {
         struct kevent event[1];
         int ctrl = enable ? EV_ENABLE : EV_DISABLE;
@@ -104,7 +104,7 @@ _sp_write_enable(int sp, int fd, void *ud, int enable)
 }
 
 static inline int
-_sp_add(int sp, int fd, void *ud)
+sp_add(int sp, int fd, void *ud)
 {
         int ret;
         struct kevent event[1];
@@ -120,9 +120,9 @@ _sp_add(int sp, int fd, void *ud)
                 kevent(sp, event, 1, NULL, 0, NULL);
         }
 
-        ret = _sp_write_enable(sp, fd, ud, 0);
+        ret = sp_write_enable(sp, fd, ud, 0);
         if (ret == -1)
-                _sp_del(sp, fd);
+                sp_del(sp, fd);
 
         return ret;
 }

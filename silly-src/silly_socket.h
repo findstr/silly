@@ -8,15 +8,13 @@
 
 
 int silly_socket_init();
-int silly_socket_terminate();
 void silly_socket_exit();
+void silly_socket_terminate();
 
-int silly_socket_listen(const char *ip, uint16_t port, int backlog, int work_id);
-
-int silly_socket_connect(const char *addr, int port, int workid);
+int silly_socket_listen(const char *ip, uint16_t port, int backlog);
+int silly_socket_connect(const char *addr, int port);
 int silly_socket_close(int sid);
-
-int silly_socket_send(int sid, uint8_t *buff,  int size);
+int silly_socket_send(int sid, uint8_t *buff,  size_t size);
 
 int silly_socket_poll();
 

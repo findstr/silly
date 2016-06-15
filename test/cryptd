@@ -3,10 +3,10 @@ debug = 0
 
 --ip:port:backlog
 listen = {
-};
+}
 
 worker_count = 1
-bootstrap = "test/cryptd.lua"
+bootstrap = true 
 lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "luaclib/?.so"
 

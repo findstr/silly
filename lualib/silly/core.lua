@@ -1,101 +1,164 @@
 local silly = require "silly"
-local timer = require "silly.timer"
 local env = require "silly.env"
 
 local core = {}
 
-function core.workid()
-        return silly.workid()
-end
+local tinsert = table.insert
+local tremove = table.remove
 
 --coroutine pool
-local coroutine_cap = 0
-local coroutine_pool = {}
+local cocap = 0
+local copool = {}
 
-local function coroutine_create(f)
-        local co = table.remove(coroutine_pool)
+local function cocreate(f)
+        local co = table.remove(copool)
         if co then
                 coroutine.resume(co, f)
                 return co
         end
 
-        local function coroutine_call()
+        local function cocall()
                 while true do
-                        local func = coroutine.yield()
+                        local func = coroutine.yield("EXIT")
                         local ok, err = pcall(func, coroutine.yield())
                         if ok == false then
                                 print(err)
                                 print(debug.traceback())
                         end
-                        if coroutine_cap <= 100 then
-                                local co = coroutine.running()
-                                table.insert(coroutine_pool, co)
-                        else
-                                coroutine_cap = coroutine_cap - 1
-                                return ;
-                        end
                 end
         end
 
-        co = coroutine.create(coroutine_call)
+        co = coroutine.create(cocall)
         coroutine.resume(co)    --wakeup the new coroutine
         coroutine.resume(co, f)       --pass the function handler
-        coroutine_cap = coroutine_cap + 1
+        cocap = cocap + 1
         return co
 end
 
-core.create = coroutine_create
-core.yield = coroutine.yield
 core.running = coroutine.running
-core.resume = coroutine.resume
-
-core.exit = silly.exit_register
+core.quit = silly.quit
 core.write = silly.socketsend
 core.drop = silly.dropmessage
 
-local function wakeup(co)
-        core.resume(co)
+local wakeup_co_status = {}
+local wakeup_co_param = {}
+local wait_co_status = {}
+local sleep_co_session = {}
+local sleep_session_co = {}
+
+local function waitfor(co, ret, typ, ...)
+        if ret == false then
+                return
+        end
+        if typ == "WAIT" then
+                assert(wakeup_co_status[co] == nil)
+                assert(wait_co_status[co])
+                assert(sleep_co_session[co] == nil)
+        elseif typ == "SLEEP" then
+                assert(wakeup_co_status[co] == nil)
+                assert(wait_co_status[co] == nil)
+                assert(sleep_co_session[co])
+        elseif typ == "WAKEUP" then
+                assert(wakeup_co_status[co] == nil)
+                assert(wait_co_status[co]== nil)
+                assert(sleep_co_session[co] == nil)
+                return ...
+        elseif typ == "EXIT" then
+                if cocap <= 100 then
+                        assert(co)
+                        table.insert(copool, co)
+                end
+        else
+                print("silly.core waitfor unkonw return type", typ)
+                print(debug.traceback())
+        end
+
+end
+
+local function dispatch_wakeup()
+        local k, v
+        while true do
+                k, v = next(wakeup_co_status, k)
+                if not k then
+                        break
+                end
+                local co = k
+                local param = wakeup_co_param[co]
+                wakeup_co_status[co] = nil
+                wakeup_co_param[co] = nil
+                if not param then
+                        param = {}
+                end
+                waitfor(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
+        end
+end
+
+function core.fork(func)
+        local co = cocreate(func)
+        assert(co)
+        wakeup_co_status[co] = "FORK"
+end
+
+function core.wait()
+        local co = coroutine.running()
+        assert(wakeup_co_status[co] == nil)
+        assert(sleep_co_session[co] == nil)
+        assert(wait_co_status[co] == nil)
+        wait_co_status[co] = "WAIT"
+        return waitfor(co, true, coroutine.yield("WAIT"))
+end
+
+function core.wakeup(co, ...)
+        assert(wait_co_status[co] or sleep_co_session[co])
+        assert(wakeup_co_status[co] == nil)
+        wakeup_co_status[co] = "WAKEUP"
+        wakeup_co_param[co] = table.pack(...)
+        wait_co_status[co] = nil
 end
 
 function core.sleep(ms)
-        timer.add(ms, wakeup, core.running())
-        core.yield()
+        local co = coroutine.running()
+        local session = silly.timeout(ms)
+        sleep_session_co[session] = co
+        sleep_co_session[co] = session
+        waitfor(co, true, coroutine.yield("SLEEP"))
 end
 
 function core.start(func, ...)
-        local co = core.create(func)
-        return coroutine.resume(co, ...)
+        local co = cocreate(func)
+        waitfor(co, coroutine.resume(co, ...))
 end
 
-function core.wakeup(co)
-        timer.add(0, wakeup, co)
-end
 
---socket dispatch message
-
-local socket_type = {
-        [2] = "accept",         --SILLY_SOCKET_ACCEPT   = 2
-        [3] = "close",          --SILLY_SOCKET_CLOSE    = 3
-        [4] = "connected",      -- SILLY_SOCKET_CONNECTED = 4
-        [5] = "data",           --SILLY_SOCKET_DATA = 5
-}
-
+--socket
 local socket_dispatch = {}
 local socket_connect = {}
 
 function core.listen(port, dispatch)
         assert(port)
         assert(dispatch)
-        local portid = env.get("listen." .. port)
-        if portid == nil then
-                print("invald port name" .. port)
-                return nil 
+        local ip, port, backlog = port:match("([0-9%.]*)@([0-9]+):?([0-9]*)")
+        if ip == "" then
+                ip = "0.0.0.0"
         end
-        portid = tonumber(portid)
-        socket_dispatch[portid] = dispatch 
-
-        return portid
-
+        if backlog == "" then
+                backlog = 5
+        else
+                backlog = tonumber(backlog)
+                assert(backlog > 0, "backlog need large than 0")
+        end
+        port = tonumber(port)
+        if port == 0 then
+                print("listen invaild port", port)
+                return nil
+        end
+        local id = silly.socketlisten(ip, port, backlog);
+        if id < 0 then
+                print("listen", port, "error",  id)
+                return nil
+        end
+        socket_dispatch[id] = dispatch 
+        return id
 end
 
 function core.connect(ip, port, dispatch)
@@ -108,14 +171,13 @@ function core.connect(ip, port, dispatch)
                 return -1
         end
         assert(socket_connect[fd] == nil)
-        socket_connect[fd] = core.running()
-        local ok = core.yield()
+        socket_connect[fd] = coroutine.running()
+        local ok = core.wait()
         socket_connect[fd] = nil
         if ok ~= true then
                 return -1
         end
         socket_dispatch[fd] = assert(dispatch)
-
         return fd
 end
 
@@ -129,9 +191,25 @@ function core.close(fd)
         return silly.socketclose(fd)
 end
 
---the socket handler can't be yield
-local SOCKET = {}
-function SOCKET.accept(_, fd, portid, _)
+--the message handler can't be yield
+local messagetype = {
+        [1] = "expire",         --SILLY_TEXPIRE         =1
+        [2] = "accept",         --SILLY_SACCEPT         = 2
+        [3] = "close",          --SILLY_SCLOSE          = 3
+        [4] = "connected",      --SILLY_SCONNECTED      = 4
+        [5] = "data",           --SILLY_SDATA           = 5
+}
+
+local MSG = {}
+function MSG.expire(session, _, _)
+        local co = sleep_session_co[session]
+        assert(sleep_co_session[co] == session)
+        core.wakeup(co)
+        sleep_session_co[session] = nil
+        sleep_co_session[co] = nil
+end
+
+function MSG.accept(fd, _, portid, addr)
         assert(socket_dispatch[fd] == nil)
         assert(socket_connect[fd] == nil)
         assert(socket_dispatch[portid])
@@ -139,10 +217,10 @@ function SOCKET.accept(_, fd, portid, _)
         return socket_dispatch[fd]
 end
 
-function SOCKET.close(_, fd, _, _)
+function MSG.close(fd, _, _)
         local co = socket_connect[fd]
         if co then      --connect fail
-                core.resume(co, false)
+                core.wakeup(co, false)
                 return nil;
         end
         local sd = socket_dispatch[fd]
@@ -154,36 +232,36 @@ function SOCKET.close(_, fd, _, _)
         return d
 end
 
-function SOCKET.connected(_, fd, _, _)
+function MSG.connected(fd, _, _)
         local co = socket_connect[fd]
         if co == nil then       --have already closed
                 assert(socket_dispatch[fd] == nil)
                 return
         end
-        core.resume(co, true)
-
+        core.wakeup(co, true)
         return nil
 end
 
-function SOCKET.data(_, fd, _, _)
+function MSG.data(fd, _, _)
         --do nothing
         return socket_dispatch[fd]
 end
 
-local function dispatch_message(type, fd, portid, message)
-        local type = socket_type[type]
+local function dispatch(type, fd, message, ...)
+        local type = messagetype[type]
         --may run other coroutine here(like connected)
-        local dispatch = assert(SOCKET[type])(type, fd, portid, message)
+        local dispatch = assert(MSG[type], type)(fd, message, ...)
         --check if the socket has closed
         if dispatch == nil then     --have ready close
                 core.drop(message)
-                return ;
+        else
+                local co = cocreate(dispatch)
+                waitfor(co, coroutine.resume(co, type, fd, message, ...))
         end
-        local co = core.create(dispatch)
-        core.resume(co, type, fd, portid, message)
+        dispatch_wakeup()
 end
 
-silly.socketentry(dispatch_message)
+silly.dispatch(dispatch)
 
 return core
 

@@ -3,13 +3,13 @@ local gate = require "gate"
 local np = require "netpacket"
 
 gate.listen {
-        port = "port1",
-        accept = function(fd)
-                print("accept", fd)
+        port = "@9999",
+        accept = function(fd, addr)
+                print("accept", fd, addr)
         end,
 
-        close = function(fd)
-                print("close", fd)
+        close = function(fd, errno)
+                print("close", fd, errno)
         end,
 
         data = function(fd, msg)
@@ -17,24 +17,24 @@ gate.listen {
                 gate.send(fd, msg)
                 core.sleep(1000)
                 gate.send(fd, msg .. "t\n")
-                print("port1 data finish", core.running())
+                print("port1 data finish")
         end,
 }
 
 gate.listen {
-        port = "port2",
-        accept = function(fd)
-                print("accept", fd)
+        port = "@9998",
+        accept = function(fd, addr)
+                print("accept", fd, addr)
         end,
 
-        close = function(fd)
-                print("close", fd)
+        close = function(fd, errno)
+                print("close", fd, errno)
         end,
         data = function(fd, msg)
                 print("data", fd, msg)
                 gate.send(fd, msg)
                 core.sleep(100)
-                print("port2 data finish", core.running())
+                print("port2 data finish")
         end,
 }
 

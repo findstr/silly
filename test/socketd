@@ -1,0 +1,13 @@
+daemon = 0
+debug = 0
+
+--ip:port:backlog
+listen = {
+        port = "127.0.0.1:8989:5"
+};
+
+worker_count = 1
+bootstrap = "test/socketd.lua"
+lualib_path = "test/?.lua;lualib/?.lua"
+lualib_cpath = "luaclib/?.so"
+

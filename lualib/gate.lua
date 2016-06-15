@@ -61,17 +61,17 @@ end
 
 local EVENT = {}
 
-function EVENT.accept(fd, portid)
+function EVENT.accept(fd, portid, addr)
         local lc = socket_config[portid];
         socket_config[fd] = lc
         socket_queue[fd] = {}
-        local ok = pcall(lc.accept, fd)
+        local ok = pcall(lc.accept, fd, addr)
         if not ok then
                 gate.close(fd)
         end
 end
 
-function EVENT.close(fd)
+function EVENT.close(fd, errno)
         local sc = socket_config[fd]
         if sc == nil then       --have already closed
                 return ;
@@ -79,12 +79,13 @@ function EVENT.close(fd)
         clear_socket(fd)
         socket_config[fd] = nil
         socket_queue[fd] = nil
-        pcall(assert(sc).close, fd)
+        pcall(assert(sc).close, fd, errno)
 end
 
 function EVENT.data(fd)
-        local ok = pcall(dispatch_socket, fd)
+        local ok, err = pcall(dispatch_socket, fd)
         if not ok then
+                print("gate dispatch socket error:", err)
                 gate.close(fd)
         end
 end
@@ -98,7 +99,7 @@ local function dispatch_message(q, type, ...)
         assert(EVENT[type])(...)
 end
 
-local function gate_dispatch(type, fd, portid, message) 
+local function gate_dispatch(type, fd, message, ...)
         --have already closed
         if type ~= "accept" and socket_config[fd] == nil then                  
                 assert(socket_queue[fd] == nil)
@@ -106,7 +107,7 @@ local function gate_dispatch(type, fd, portid, message)
                 return ;
         end
 
-        dispatch_message(np.message(queue, message), type, fd, portid)
+        dispatch_message(np.message(queue, message), type, fd, ...)
 end
 
 function gate.connect(config)

@@ -20,17 +20,17 @@ local function new_socket(fd)
         socket_pool[fd] = s
 end
 
-function EVENT.accept(fd, portid)
+function EVENT.accept(fd, _, portid, addr)
         local lc = socket_pool[portid];
         new_socket(fd)
-        local ok, err = pcall(lc, fd)
+        local ok, err = pcall(lc, fd, addr)
         if not ok then
                 print(err)
                 socket.close(fd)
         end
 end
 
-function EVENT.close(fd, _, _)
+function EVENT.close(fd, _, errno)
         local s = socket_pool[fd]
         if s == nil then
                 return
@@ -41,12 +41,12 @@ function EVENT.close(fd, _, _)
         if s.co then
                 local co = s.co
                 s.co = false
-                core.resume(co, false)
+                core.wakeup(co, false)
         end
         socket_pool[fd] = nil
 end
 
-function EVENT.data(fd, _, message)
+function EVENT.data(fd, message)
         local s = socket_pool[fd]
         s.sbuffer = ns.push(nb_pool, s.sbuffer, message)
         if not s.delim then     --non suspend read
@@ -60,7 +60,7 @@ function EVENT.data(fd, _, message)
                         local co = s.co
                         s.co = false
                         s.delim = false
-                        core.resume(co, true)
+                        core.wakeup(co, true)
                 end
         elseif type(s.delim) == "string" then
                 assert(s.co)
@@ -68,13 +68,13 @@ function EVENT.data(fd, _, message)
                         local co = s.co
                         s.co = false
                         s.delim = false
-                        core.resume(co, true)
+                        core.wakeup(co, true)
                 end
         end
 end
 
-local function socket_dispatch(type, fd, portid, message)
-        assert(EVENT[type])(fd, portid, message)
+local function socket_dispatch(type, fd, message, ...)
+        assert(EVENT[type])(fd, message, ...)
 end
 
 function socket.listen(port, config)
@@ -120,7 +120,7 @@ end
 local function suspend(s)
         assert(not s.co)
         s.co = core.running()
-        return core.yield()
+        return core.wait()
 end
 
 

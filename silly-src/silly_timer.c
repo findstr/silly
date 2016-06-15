@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,66 +9,35 @@
 #include <mach/mach.h>
 #endif
 
-#include "silly_message.h"
+#include "silly.h"
+#include "silly_worker.h"
 #include "silly_malloc.h"
-#include "silly_server.h"
 #include "silly_timer.h"
 
-struct timer_node {
-        int                     expire;
-        int                     workid;
-        uint64_t                session;
-        struct timer_node       *next;
+#define CHUNKSIZE        (32)
+
+struct node {
+        int             expire;
+        uint64_t        session;
+        struct node     *next;
 };
 
-struct timer {
+struct chunk {
+        struct chunk *next;
+        //append CHUNKSIZE nodes
+};
+
+struct silly_timer {
         int     lock;       
-        struct timer_node list;
+        struct node list;
+        struct node *nodefree;
+        struct chunk *nodepool;
 };
 
-static struct timer *TIMER;
-
-int
-timer_init()
-{
-        TIMER = (struct timer *)malloc(sizeof(*TIMER));
-        TIMER->list.next = NULL;
-        TIMER->lock = 0;
-
-        return 0;
-}
-
-void
-timer_exit()
-{
-        struct timer_node *n;
-        
-        n = TIMER->list.next;
-        while (n) {
-                struct timer_node *tmp;
-
-                tmp = n;
-                n = n->next;
-                free(tmp);
-        }
-
-        free(TIMER);
-}
-
-uint32_t
-timer_now()
-{
-        uint32_t ms;
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        ms = tv.tv_sec * 1000;
-        ms += tv.tv_usec / 1000;
-
-        return ms;
-}
+static struct silly_timer *TIMER;
 
 static uint32_t
-_getms()
+getms()
 {
         uint32_t ms;
 #ifdef __macosx__
@@ -87,73 +57,103 @@ _getms()
         return ms;
 }
 
-static struct timer_node *
-_new_node(int time, int workid, uint64_t session)
-{
-        struct timer_node *node = (struct timer_node *)malloc(sizeof(*node));
-        node->workid = workid;
-        node->session = session;
-        node->expire = _getms() + time;
-
-        return node;
-}
-
-//ms
-int
-timer_add(int time, int workid, uint64_t session)
-{
-        struct timer_node *n = _new_node(time, workid, session);
-        if (n == NULL) {
-                fprintf(stderr, "_new_node fail\n");
-                return -1;
-        }
- 
-        while (__sync_lock_test_and_set(&TIMER->lock, 1))
-                ;
-
-        n->next = TIMER->list.next;
-        TIMER->list.next = n;
-
-        __sync_lock_release(&TIMER->lock);
-
-        return 0;
-}
-
 static void
-_push_timer_event(struct timer *t, int workid, uint64_t session)
+newchunk(struct silly_timer *timer)
 {
-        struct silly_message *s;
-        struct silly_message_timer *tm;
-        s = (struct silly_message *)silly_malloc(sizeof(*s) + sizeof(*tm));
-        tm = (struct silly_message_timer *)(s + 1);
-        s->type = SILLY_TIMER_EXECUTE;
-        tm->session = session;
-        silly_server_push(workid, s);
-
+        int i;
+        size_t sz = sizeof(struct chunk) + sizeof(struct node) * CHUNKSIZE;
+        struct chunk *ck = silly_malloc(sz);
+        struct node *nh = (struct node *)(ck + 1);
+        struct node *nt = nh;
+        for (i = 0; i < CHUNKSIZE - 1; i++) {
+                nh[i].next = (++nt);
+        }
+        nt->next = timer->nodefree;
+        timer->nodefree = nh;
+        ck->next = timer->nodepool;
+        timer->nodepool = ck->next;
         return ;
 }
 
-int
-timer_dispatch()
+static struct node *
+newnode(struct silly_timer *timer, uint32_t expire)
 {
-        int curr = _getms();
-        struct timer_node *t;
-        struct timer_node *last;
+        struct node *n = timer->nodefree;
+        if (n == NULL)
+                newchunk(timer);
+        n = timer->nodefree;
+        assert(n);
+        timer->nodefree = n->next;
+        uint32_t session = silly_worker_genid();
+        n->session = session;
+        n->expire = getms() + expire;
+        return n;
+}
 
+static void
+freenode(struct silly_timer *timer, struct node *n)
+{
+        n->next = timer->nodefree;
+        timer->nodefree = n;
+        return ;
+}
+
+uint32_t
+silly_timer_now()
+{
+        uint32_t ms;
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        ms = tv.tv_sec * 1000;
+        ms += tv.tv_usec / 1000;
+        return ms;
+}
+
+uint32_t
+silly_timer_timeout(uint32_t expire)
+{
+        struct node *n = newnode(TIMER, expire);
+        if (n == NULL) {
+                fprintf(stderr, "silly timer alloc node failed\n");
+                return -1;
+        }
+        while (__sync_lock_test_and_set(&TIMER->lock, 1))
+                ;
+        n->next = TIMER->list.next;
+        TIMER->list.next = n;
+        __sync_lock_release(&TIMER->lock);
+        return n->session;
+}
+
+static void
+timeout(struct silly_timer *t, uint64_t session)
+{
+        struct silly_message_texpire *te;
+        te = silly_malloc(sizeof(*te));
+        te->type = SILLY_TEXPIRE;
+        te->session = session;
+        silly_worker_push(tocommon(te));
+        return ;
+}
+
+void
+silly_timer_dispatch()
+{
+        uint32_t curr = getms();
+        struct node *t;
+        struct node *last;
         while(__sync_lock_test_and_set(&TIMER->lock, 1))
                 ;
-
         t = TIMER->list.next;
         last = &TIMER->list;
         while (t) {
                 if (t->expire <= curr) {
-                        struct timer_node *tmp;
-                        _push_timer_event(TIMER, t->workid, t->session);
+                        struct node *tmp;
+                        timeout(TIMER, t->session);
                         last->next = t->next;
-                        
                         tmp = t;
                         t = t->next;
-                        free(tmp);
+                        freenode(TIMER, tmp);
                 } else {
                         t = t->next;
                         last = last->next;
@@ -162,7 +162,31 @@ timer_dispatch()
         }
         __sync_lock_release(&TIMER->lock);
 
-        return 0;
+        return ;
 }
 
+void
+silly_timer_init()
+{
+        TIMER = silly_malloc(sizeof(*TIMER));
+        TIMER->list.next = NULL;
+        TIMER->lock = 0;
+        TIMER->nodefree = NULL;
+        TIMER->nodepool = NULL;
+        return ;
+}
+
+void
+silly_timer_exit()
+{
+        struct chunk *ck = TIMER->nodepool;
+        while (ck) {
+                struct chunk *tmp;
+                tmp = ck;
+                ck = ck->next;
+                silly_free(tmp);
+        }
+        silly_free(TIMER);
+        return ;
+}
 

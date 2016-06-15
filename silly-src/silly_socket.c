@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -10,22 +11,26 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 
+#include "silly.h"
 #include "socket_poll.h"
-#include "silly_message.h"
-#include "silly_server.h"
+#include "silly_worker.h"
 #include "silly_malloc.h"
 
 #include "silly_socket.h"
 
 //STYPE == socket type
 
+#if EAGAIN == EWOULDBLOCK
+#define ETRYAGAIN EAGAIN
+#else
+#define ETRYAGAIN EAGAIN: case EWOULDBLOCK
+#endif
+
 #define ARRAY_SIZE(a)           (sizeof(a) / sizeof(a[0]))
-
-#define EPOLL_EVENT_SIZE        100
-#define MAX_CONN_COUNT          (1 << 16)
+#define EVENT_SIZE              128
+#define MAX_SOCKET_COUNT        (1 << 16)       //65536
 #define MIN_READBUFF_LEN        64
-
-#define HASH(sid)               (sid % MAX_CONN_COUNT)
+#define HASH(sid)               (sid % MAX_SOCKET_COUNT)
 
 enum stype {
         STYPE_RESERVE,
@@ -37,546 +42,96 @@ enum stype {
 };
 
 struct wlist {
-        int size;
-        int offset;
+        size_t offset;
+        size_t size;
         uint8_t *buff;
         struct wlist    *next;
 };
 
-struct conn {
+struct socket {
+        int             sid;     //socket descriptor
         int             fd;
-        int             sid;
         enum stype      type;
-        int             alloc_size;
-        int             workid;
-        struct wlist    wl_head;
-        struct wlist    *wl_tail;
+        int             presize;
+        struct wlist    wlhead;
+        struct wlist    *wltail;
 };
 
 struct silly_socket {
-        int                     sp_fd;
-        
-        sp_event_t                *event_buff;
-        int                     event_index;
-        int                     event_cnt;
-        
-        struct conn             *conn_buff;
-
+        int             spfd;
+        size_t          eventcap;
+        //event
+        sp_event_t      *eventbuff;
+        int             eventindex;
+        int             eventcount;
+        //socket pool
+        struct socket   *socketpool;
         //ctrl pipe, call write can be automatic wen data less then 64k(from APUE)
-        int                     ctrl_send_fd;
-        int                     ctrl_recv_fd;
-        fd_set                  ctrl_fdset;
-        struct conn             *ctrl_conn;
-
+        int             ctrlsendfd;
+        int             ctrlrecvfd;
+        fd_set          ctrlfdset;
         //reserve id(for socket fd remap)
-        int                     reserve_sid;
+        int             reserveid;
 };
 
-struct cmd_packet {      //for reduce the system call, waste some memory
-        int     op;
-        union {
-                struct {
-                        int     sid;
-                        int     size;
-                        uint8_t *buff;
-                } ws;   //write socket  'W'
-                struct {
-                        char    ip[64];
-                        int     port;
-                        int     sid;
-                } os;   //open socket   'O'
-                struct {
-                        int     sid;       
-                } ks;   //kick(close) socket    'K'
-        };
-};
-
-static struct silly_socket *SOCKET;
+static struct silly_socket *SSOCKET;
 
 static void 
-_init_conn_buff(struct silly_socket *s)
+socketpool_init(struct silly_socket *ss)
 {
         int i;
-        struct conn *c = s->conn_buff;
-        for (i = 0; i < MAX_CONN_COUNT; i++) {
-                c->sid = -1;
-                c->fd = -1;
-                c->type = STYPE_RESERVE;
-                c->alloc_size = MIN_READBUFF_LEN;
-                c->workid = -1;
-                c->wl_head.next = NULL;
-                c->wl_tail = &c->wl_head;
-                c++;
+        struct socket *pool = silly_malloc(sizeof(*pool) * MAX_SOCKET_COUNT);
+        ss->socketpool = pool;
+        ss->reserveid = -1;
+        for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+                pool->sid = -1;
+                pool->fd = -1;
+                pool->type = STYPE_RESERVE;
+                pool->presize = MIN_READBUFF_LEN;
+                pool->wlhead.next = NULL;
+                pool->wltail = &pool->wlhead;
+                pool++;
         }
-
         return ;
 }
 
-static struct conn *
-_fetch_conn(struct silly_socket *s, enum stype type)
+static struct socket*
+allocsocket(struct silly_socket *ss, enum stype type)
 {
         int i;
         int id;
-
-        for (i = 0; i < MAX_CONN_COUNT; i++) {
-                id = __sync_add_and_fetch(&s->reserve_sid, 1);
+        for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+                id = __sync_add_and_fetch(&ss->reserveid, 1);
                 if (id < 0) {
                         id = id & 0x7fffffff;
-                        __sync_and_and_fetch(&s->reserve_sid, 0x7fffffff);
+                        __sync_and_and_fetch(&ss->reserveid, 0x7fffffff);
                 }
                 
-                struct conn *c = &s->conn_buff[HASH(id)];
-                if (c->type == STYPE_RESERVE) {
-                        if (__sync_bool_compare_and_swap(&c->type, STYPE_RESERVE, type)) {
-                                assert(c->wl_head.next == NULL);
-                                assert(c->wl_tail == &c->wl_head);
-                                assert(c->fd == -1);
-                                c->alloc_size = MIN_READBUFF_LEN;
-                                c->sid = id;
-                                return c;
+                struct socket *s = &ss->socketpool[HASH(id)];
+                if (s->type == STYPE_RESERVE) {
+                        if (__sync_bool_compare_and_swap(&s->type, STYPE_RESERVE, type)) {
+                                assert(s->wlhead.next == NULL);
+                                assert(s->wltail == &s->wlhead);
+                                s->presize = MIN_READBUFF_LEN;
+                                s->sid = id;
+                                return s;
                         }
                 }
         }
-
+        fprintf(stderr, "allocsocket fail, find no empty entry\n");
         return NULL;
 }
 
-static void
-_wlist_free(struct conn *c)
+static __inline void
+freesocket(struct silly_socket *ss, struct socket *s)
 {
-        struct wlist *w;
-        struct wlist *t;
-        w = c->wl_head.next;
-        while (w) {
-                t = w;
-                w = w->next;
-                assert(t->buff);
-                silly_free(t->buff);
-                silly_free(t);
-        }
-        c->wl_head.next = NULL;
-        c->wl_tail = &c->wl_head;
-
-        return ;
-}
-
-static __inline int
-_wlist_check_empty(struct conn *c)
-{
-        if (c->wl_head.next == NULL)
-                return 1;
-        else
-                return 0;
+        (void)ss;
+        assert(s->wlhead.next == NULL);
+        s->type = STYPE_RESERVE;
 }
 
 static void
-_free_conn(struct conn *c)
-{
-        assert(c->type != STYPE_RESERVE);
-        _wlist_free(c);
-        c->fd = -1;
-        c->type =  STYPE_RESERVE;
-
-        return ;
-}
-
-int silly_socket_init()
-{
-        int err;
-        int sp_fd;
-        int fd[2];
-        struct conn *c = NULL;
-        
-        sp_fd = _sp_create(EPOLL_EVENT_SIZE);
-        if (sp_fd < 1)
-                goto end;
-
-        err = pipe(fd); //use the pipe and not the socketpair because the pipe will be automatic when the data size small than BUFF_SIZE
-        if (err < 0)
-                goto end;
- 
-        c = (struct conn *)silly_malloc(sizeof(struct conn));
-        c->fd = fd[0];
-        c->type = STYPE_CTRL;
-        c->alloc_size = -1;
-        c->workid = -1;
-
-        err = _sp_add(sp_fd, fd[0], c);
-        if (err < 0)
-                goto end;
-
-        struct silly_socket *s = (struct silly_socket *)silly_malloc(sizeof(*s));
-
-        s->reserve_sid = -1;
-        s->sp_fd = sp_fd;
-        s->ctrl_send_fd = fd[1];
-        s->ctrl_recv_fd = fd[0];
-        s->event_index = 0;
-        s->event_cnt = 0;
-        s->event_buff = (sp_event_t *)silly_malloc(sizeof(sp_event_t) * EPOLL_EVENT_SIZE);
-        s->conn_buff = (struct conn *)silly_malloc(sizeof(struct conn) * MAX_CONN_COUNT);
-        s->ctrl_conn = c;
-        _init_conn_buff(s);
-        FD_ZERO(&s->ctrl_fdset);
-
-        SOCKET = s;
-
-        return 0;
-end:
-        if (sp_fd >= 0)
-                close(sp_fd);
-        if (fd[0] >= 0)
-                close(fd[0]);
-        if (fd[1] >= 0)
-                close(fd[0]);
-        if (c)
-                silly_free(c);
-
-        return -1;
-}
-
-void silly_socket_exit()
-{
-        int i;
-        assert(SOCKET);
-        close(SOCKET->sp_fd);
-        close(SOCKET->ctrl_send_fd);
-        close(SOCKET->ctrl_recv_fd);
-
-        for (i = 0; i < MAX_CONN_COUNT; i++) {
-                struct conn *c = &SOCKET->conn_buff[i];
-                if (c->type == STYPE_SOCKET || c->type == STYPE_LISTEN || c->type == STYPE_HALFCLOSE)
-                        close(c->fd);
-        }
-
-        silly_free(SOCKET->event_buff);
-        silly_free(SOCKET->conn_buff);
-        silly_free(SOCKET->ctrl_conn);
-        silly_free(SOCKET);
-
-        return ;
-}       
-
-static int
-_nonblock_it(int fd)
-{
-        int err;
-        int flag;
-        flag = fcntl(fd, F_GETFL, 0);
-        if (flag < 0) {
-                fprintf(stderr, "fcntl get err\n");
-                return flag;
-        }
-
-        flag |= O_NONBLOCK;
-        err = fcntl(fd, F_SETFL, flag);
-        if (err < 0) {
-                fprintf(stderr, "fcntl set err\n");
-                return err;
-        }
-
-        return 0;
-}
-
-static int
-_add_socket(struct silly_socket *s, struct conn *c, int fd, int workid)
-{
-        int err;
-
-        c->fd = fd;
-        c->alloc_size = MIN_READBUFF_LEN;
-        if (c->type == STYPE_LISTEN)               //listen is the special
-                c->workid = workid;
-        else
-                c->workid = silly_server_balance(workid, c->sid);
-
-        err = _sp_add(s->sp_fd, c->fd, c);
-        return err;
-}
-
-static int
-_fetch_and_add(struct silly_socket *s, int fd, enum stype type, int workid)
-{
-        int err;
-        struct conn *c;
-
-        c = _fetch_conn(s, type);
-        if (c == NULL)
-                return -1;
-
-        err = _add_socket(s, c, fd, workid);
-        if (err < 0) {
-                _free_conn(c);
-                return err;
-        }
-
-        return c->sid;
-}
-
-int silly_socket_listen(const char *ip, uint16_t port, int backlog, int workid)
-{
-        int err;
-        int fd;
-        int reuse = 1;
-        struct sockaddr_in addr;
-
-        bzero(&addr, sizeof(addr));
-
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        inet_pton(AF_INET, ip, &addr.sin_addr);
-
-        fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0)
-                return -1;
-
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
-        err = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err < 0)
-                goto end;
-
-        _nonblock_it(fd);
-
-        err = listen(fd, backlog);
-        if (err < 0)
-                goto end;
-       
-        err = _fetch_and_add(SOCKET, fd, STYPE_LISTEN, workid);
-        if (err < 0) {
-                close(fd);
-                goto end;
-        }
-        return err;
-end:
-        perror("listen");
-        close(fd);
-        return -1;
-}
-
-static void
-_report_socket_event(struct silly_socket *s, int sid, enum silly_message_type type, int portid)
-{
-        struct silly_message_socket *sm;
-        struct silly_message *msg;
-       
-        msg =(struct silly_message *)silly_malloc(sizeof(*msg) + sizeof(*sm));
-        msg->type = type;
-
-        sm = (struct silly_message_socket *)(msg + 1);
-        sm->sid = sid;
-        sm->portid = portid;
-        sm->data_size = 0;
-        sm->data = NULL;
-
-        silly_server_push(s->conn_buff[HASH(sid)].workid, msg);
-
-        //mesage handler will free it, so don't free it at here
-        return ;
-}
-
-static void
-_clear_socket_event(struct silly_socket *s)
-{
-        int i;
-        struct conn *c;
-        sp_event_t *e;
- 
-        for (i = s->event_index; i < s->event_cnt; i++) {
-                e = &s->event_buff[i];
-                c = SP_UD(e);
-                //after the _wait be called, this function can be more than once, so the c can be NULL
-                if (c == NULL)
-                        continue;
-                if (c->type == STYPE_RESERVE)
-                        SP_UD(e) = NULL;
-        }
-
-        return ;
-}
-
-static void
-_close(struct silly_socket *s, struct conn *c)
-{
-        close(c->fd);
-        _sp_del(s->sp_fd, c->fd);
-        _free_conn(c);
-        _clear_socket_event(s);
-
-        return ;
-}
-
-//call _force_close only when read or send error
-//because maybe the worker queue has this socket data, so the socket type only be the STYPE_CLOSE
-//when call the silly_socket_close, this socket will be realy free
-static void
-_force_close(struct silly_socket *s, int sid)
-{
-        struct conn *c = &s->conn_buff[HASH(sid)];
-        assert(c->sid == sid);
-        if (c->sid != sid || c->type == STYPE_RESERVE) {
-                fprintf(stderr, "_socket_close, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
-                return ;
-        }
-
-        _wlist_free(c);
-        if (c->type != STYPE_HALFCLOSE)
-                _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
-        _close(s, c);
-
-        return ;
-}
-
-static int
-_block_send_cmd(struct silly_socket *s, const struct cmd_packet *cmd)
-{
-        int err;
-        for (;;) {
-                err = write(s->ctrl_send_fd, cmd, sizeof(*cmd));
-                if (err == sizeof(*cmd)) {
-                        break;
-                } else if (err == -1 && errno == EINTR) {       //will be automatic, so errno can not be EAGAIN
-                        continue;
-                } else {
-                        fprintf(stderr, "silly_socket_send: the pipe fd occurs error\n");
-                        assert(0);
-                        return -1;
-                }
-        }
-
-        return 0;
-}
-
-int silly_socket_connect(const char *addr, int port, int workid)
-{
-        int err;
-        struct cmd_packet cmd;
-        struct conn *c;
-
-        c = _fetch_conn(SOCKET, STYPE_CONNECTING);
-        if (c == NULL)
-                return -1;
-        c->workid = workid;
-        cmd.op = 'O';
-        strncpy(cmd.os.ip, addr, ARRAY_SIZE(cmd.os.ip));
-        cmd.os.port = port;
-        cmd.os.sid = c->sid;
-
-        err = _block_send_cmd(SOCKET, &cmd);
-        if (err < 0) {
-                _free_conn(c);
-                return err;
-        }
-
-        return c->sid;
-}
-
-int silly_socket_close(int sid)
-{
-        int err;
-        struct cmd_packet cmd;
-        struct conn *c = &SOCKET->conn_buff[HASH(sid)];
-        if (c->sid != sid || c->type == STYPE_RESERVE || c->type == STYPE_HALFCLOSE)
-                return -1;
-
-        cmd.op = 'K';
-        cmd.ks.sid = sid;
-
-        err = _block_send_cmd(SOCKET, &cmd);
-
-        return err;
-}
-
-int silly_socket_send(int sid, uint8_t *buff,  int size)
-{
-        int err;
-        assert(sid >= 0);
-        struct conn *c = &SOCKET->conn_buff[HASH(sid)];
-        struct cmd_packet cmd;
-
-        if (c->sid != sid || c->type != STYPE_SOCKET) {
-                silly_free(buff);               
-                return -1;
-        }
-
-        cmd.op = 'W';
-        cmd.ws.sid = sid;
-        cmd.ws.size = size;
-        cmd.ws.buff = buff;
-
-        err = _block_send_cmd(SOCKET, &cmd);
-
-        return err;
-}
-
-int silly_socket_terminate()
-{
-        int err;
-        struct cmd_packet cmd;
-        
-        cmd.op = 'T';
-        err = _block_send_cmd(SOCKET, &cmd);
-
-        return err;
-}
-
-static int
-_forward_msg(struct silly_socket *s, struct conn *c)
-{
-        int err;
-        int len;
-        uint8_t *buff = (uint8_t *)silly_malloc(c->alloc_size);
-        
-        err = 0;
-
-        len = recv(c->fd, buff, c->alloc_size, 0);
-        if (len < 0) {
-                silly_free(buff);
-                switch (errno) {
-                case EINTR:
-                        fprintf(stderr, "_forward_msg, EINTR\n");
-                        break;
-                case EAGAIN:
-                        fprintf(stderr, "_forward_msg, EAGAIN\n");
-                        break;
-                default:
-                        fprintf(stderr, "_forward_msg, %s\n", strerror(errno));
-                        _force_close(s, c->sid);
-                        err = -1;
-                        break;
-                }
-        } else if (len == 0) {
-                silly_free(buff);
-                _force_close(s, c->sid);
-                err = -1;
-        } else {
-                assert(c->workid >= 0);
-                struct silly_message_socket *sm;
-                struct silly_message *msg;
-                
-                msg = (struct silly_message *)silly_malloc(sizeof(*msg) + sizeof(*sm));
-                msg->type = SILLY_SOCKET_DATA;
-                
-                sm = (struct silly_message_socket *)(msg + 1);
-                sm->sid = c->sid;
-                sm->data_size = len;
-                sm->data = buff;
-                
-                silly_server_push(c->workid, msg);         
-
-                //to predict the pakcet size
-                if (len == c->alloc_size)
-                        c->alloc_size *= 2;
-                else if (len < c->alloc_size && c->alloc_size > MIN_READBUFF_LEN)
-                        c->alloc_size = (len / MIN_READBUFF_LEN + 1) * MIN_READBUFF_LEN;
-        
-        }
-
-        return err;
-}
-
-static void
-_wlist_append(struct conn *c, uint8_t *buff, int offset, int size)
+wlist_append(struct socket *s, uint8_t *buff, size_t offset, size_t size)
 {
         struct wlist *w;
         w = (struct wlist *)silly_malloc(sizeof(*w));
@@ -584,281 +139,787 @@ _wlist_append(struct conn *c, uint8_t *buff, int offset, int size)
         w->size = size;
         w->buff = buff;
         w->next = NULL;
-
-        c->wl_tail->next = w;
-        c->wl_tail = w;
-        
+        s->wltail->next = w;
+        s->wltail = w;
         return ;
 }
 
 static void
-_try_connect(struct silly_socket *s, int sid, const char *ip, int port)
+wlist_free(struct socket *s)
+{
+        struct wlist *w;
+        struct wlist *t;
+        w = s->wlhead.next;
+        while (w) {
+                t = w;
+                w = w->next;
+                assert(t->buff);
+                silly_free(t->buff);
+                silly_free(t);
+        }
+        s->wlhead.next = NULL;
+        s->wltail = &s->wlhead;
+        return ;
+}
+static inline int
+wlist_empty(struct socket *s)
+{
+        return s->wlhead.next == NULL ? 1 : 0;
+}
+
+static struct socket *
+newsocket(struct silly_socket *ss, struct socket *s, int fd, enum stype type)
 {
         int err;
-        int fd;
-        struct sockaddr_in      addr;
-        struct conn *c =  &s->conn_buff[HASH(sid)];
-
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        inet_pton(AF_INET, ip, &addr.sin_addr);
-
-        fd = socket(AF_INET, SOCK_STREAM, 0);
-        err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err == 0)
-                err = _add_socket(s, c, fd, c->workid);
-
-        if (err >= 0) {//now the err contain the sid
-                c->type = STYPE_SOCKET;
-                _report_socket_event(s, sid, SILLY_SOCKET_CONNECTED, -1);
-        } else {
-                _report_socket_event(s, sid, SILLY_SOCKET_CLOSE, -1);
+        assert(type == STYPE_SOCKET);
+        if (s == NULL)
+                s = allocsocket(ss, type);
+        if (s == NULL)
+                return NULL;
+        assert(s->type == type || s->type == STYPE_CONNECTING);
+        assert(s->presize == MIN_READBUFF_LEN);
+        s->fd = fd;
+        s->type = type;
+        err = sp_add(ss->spfd, fd, s);
+        if (err < 0) {
+                perror("newsocket");
                 close(fd);
-                _free_conn(c);
-                fprintf(stderr, "_try_connect:ip:%s, errno:%d\n", ip, errno);
+                freesocket(ss, s);
+                return NULL;
         }
-        return ;
+        return s;
 }
 
 static void
-_try_close(struct silly_socket *s, int sid)
+delsocket(struct silly_socket *ss, struct socket *s)
 {
-        struct conn *c = &s->conn_buff[HASH(sid)];
-        if (c->sid != sid || c->type == STYPE_RESERVE) {
-                fprintf(stderr, "_try_close, error sid:%d - %d or error type:%d\n", c->sid, sid, c->type);
+        if (s->type == STYPE_RESERVE) {
+                const char *fmt = "delsocket sid:%d error type:%d\n";
+                fprintf(stderr, fmt, s->sid, s->type);
                 return ;
         }
- 
-        if (_wlist_check_empty(c)) //already send all the data, directly close it
-                _close(s, c);
-        else
-                c->type = STYPE_HALFCLOSE;
-
+        wlist_free(s);
+        sp_del(ss->spfd, s->fd);
+        close(s->fd);
+        freesocket(ss, s);
         return ;
 }
 
 static void
-_try_send(struct silly_socket *s, int sid, uint8_t *buff, int size)
+clear_socket_event(struct silly_socket *ss)
 {
-        struct conn *c = &s->conn_buff[HASH(sid)];
-        struct wlist *w;
+        int i;
+        struct socket *s;
+        sp_event_t *e;
+        for (i = ss->eventindex; i < ss->eventcount; i++) {
+                e = &ss->eventbuff[i];
+                s = SP_UD(e);
+                if (s == NULL)
+                        continue;
+                if (s->type == STYPE_RESERVE)
+                        SP_UD(e) = NULL;
+        }
+        return ;
+}
 
-        if (c->sid != sid || c->type != STYPE_SOCKET) {
-                silly_free(buff);
+static void
+nonblock(int fd)
+{
+        int err;
+        int flag;
+        flag = fcntl(fd, F_GETFL, 0);
+        if (flag < 0) {
+                perror("nonblock F_GETFL");
                 return ;
         }
-        assert(c->type == STYPE_SOCKET);
-        w = c->wl_head.next;
-        if (w == NULL) {        //write list empty, then try send
-                int err = send(c->fd, buff, size, 0);
-                if ((err == -1 && errno != EAGAIN && errno != EINTR) || err == 0) {
-                        silly_free(buff);
-                        _force_close(s, sid);
-                        return ;
-                }
-                if (err == -1)  //EINTR, EAGAIN means send no data
-                        err = 0;
-                if (err == size) {      //send ok
-                        silly_free(buff);
-                        return ;
-                }
-                assert(err >= 0);
-                _wlist_append(c, buff, err, size - err);
-                _sp_write_enable(s->sp_fd, c->fd, c, 1);
-        } else {
-                _wlist_append(c, buff, 0, size);
-        }
 
+        flag |= O_NONBLOCK;
+        err = fcntl(fd, F_SETFL, flag);
+        if (err < 0) {
+                perror("nonblock F_SETFL");
+                return ;
+        }
+        return ;
+}
+
+#define ADDRLEN (64)
+static void
+report_accept(struct silly_socket *ss, struct socket *listen)
+{
+        const char *str;
+        struct socket *s;
+        struct sockaddr_in addr;
+        struct silly_message_socket *sa;
+        char buff[INET_ADDRSTRLEN];
+        socklen_t len = sizeof(struct sockaddr);
+        int fd = accept(listen->fd, (struct sockaddr *)&addr, &len);
+        if (fd < 0)
+                return ;
+        sa = silly_malloc(sizeof(*sa) + ADDRLEN);
+        sa->data = (uint8_t *)(sa + 1);
+        sa->type = SILLY_SACCEPT;
+        str = inet_ntop(addr.sin_family, &addr.sin_addr, buff, sizeof(buff));
+        snprintf((char *)sa->data, ADDRLEN, "%s:%d", str, ntohs(addr.sin_port));
+        nonblock(fd);
+        s = newsocket(ss, NULL, fd, STYPE_SOCKET);
+        if (s == NULL)
+                return;
+        sa->sid = s->sid;
+        sa->ud = listen->sid;
+        silly_worker_push(tocommon(sa));         
         return ;
 }
 
 static void
-_read_pipe_block(int fd, uint8_t *buff, int size)
+report_connected(struct silly_socket *ss, int sid)
 {
-       for (;;) {
-                int err = read(fd, buff, size);
-                if (err == -1) {
-                        if (errno == EINTR)
+        (void)ss;
+        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
+        sc->type = SILLY_SCONNECTED;
+        sc->sid = sid;
+        silly_worker_push(tocommon(sc));
+        return ;
+}
+
+static void
+report_close(struct silly_socket *ss, struct socket *s)
+{
+        (void)ss;
+        if (s->type == STYPE_HALFCLOSE)//don't notify the active close
+                return ;
+        assert(s->type == STYPE_SOCKET || s->type == STYPE_RESERVE);
+        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
+        sc->type = SILLY_SCLOSE;
+        sc->sid = s->sid;
+        sc->ud = 0;
+        silly_worker_push(tocommon(sc));
+        return ;
+}
+
+static void
+report_data(struct silly_socket *ss, struct socket *s, uint8_t *data, size_t sz)
+{
+        (void)ss;
+        assert(s->type == STYPE_SOCKET);
+        struct silly_message_socket *sd = silly_malloc(sizeof(*sd));
+        sd->type = SILLY_SDATA;
+        sd->sid = s->sid;
+        sd->ud = sz;
+        sd->data = data;
+        silly_worker_push(tocommon(sd));
+        return ;
+};
+
+static void
+report_error(struct silly_socket *ss, struct socket *s, int err)
+{
+        (void)ss;
+        int or = s->type == STYPE_LISTEN ? 1 : 0;
+        or += s->type == STYPE_SOCKET ? 1 : 0;
+        or += s->type == STYPE_CONNECTING ? 1 : 0;
+        assert(or > 0);
+        struct silly_message_socket *se = silly_malloc(sizeof(*se));
+        se->type = SILLY_SCLOSE;
+        se->sid = s->sid;
+        se->ud = err;
+        silly_worker_push(tocommon(se));
+        return ;
+}
+
+static ssize_t
+readn(int fd, uint8_t *buff, size_t sz)
+{
+        for (;;) {
+                ssize_t len;
+                len = read(fd, buff, sz);
+                if (len < 0) {
+                        switch(errno) {
+                        case EINTR:
+                                fprintf(stderr, "readn:%d, EINTR\n", fd);
                                 continue;
-                        fprintf(stderr, "_ctrl_cmd:occurs error:%d\n", err);
-                        return ;
+                        case ETRYAGAIN:
+                                fprintf(stderr, "readn:%d, EAGAIN\n", fd);
+                                return 0;
+                        default:
+                                fprintf(stderr, "sendn:%d, %s\n", fd, strerror(errno));
+                                return -1;
+                        }
+                } else if (len == 0) {
+                        return -1;
                 }
-                assert(err == size);
-                return ;
+                return len;
         }
-}
-
-static int _has_cmd(struct silly_socket *s)
-{
-        int ret;
-        struct timeval tv = {0, 0};
-
-        FD_SET(s->ctrl_recv_fd, &s->ctrl_fdset);
-        ret = select(s->ctrl_recv_fd + 1, &s->ctrl_fdset, NULL, NULL, &tv);
-        if (ret == 1)
-                return 1;
-        
+        assert(!"expected return of readn");
         return 0;
 }
 
-/* At first , I worry about always has data come into the ctrl_recv_fd pipe,
- * when _ctrl_cmd processing the last the command,
- * but after days, I don't worry about it.
- * Because when occurs this condition, only one reason, the system overload,
- * we need to adjust the max connection count
- */
-
-static void
-_ctrl_cmd(struct silly_socket *s)
+static ssize_t
+sendn(int fd, const uint8_t *buff, size_t sz)
 {
-        struct cmd_packet cmd;
-        while (_has_cmd(s)) {
-                _read_pipe_block(s->ctrl_recv_fd, (uint8_t *)&cmd, sizeof(cmd));
-                switch (cmd.op) {
-                case 'W':
-                        _try_send(s, cmd.ws.sid, cmd.ws.buff, cmd.ws.size);
-                        break;
-                case 'O':
-                        _try_connect(s, cmd.os.sid, cmd.os.ip, cmd.os.port);
-                        break;
-                case 'K':
-                        _try_close(s, cmd.ks.sid);
-                        break;
-                case 'T':       //just to return from sp_wait
-                        break;
-                default:
-                        fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.op);
-                        assert(!"oh, no!");
-                        break;
-                }
-        }
-
-        return ;
-}
-
-static int
-_send(struct silly_socket *s, struct conn *c, uint8_t *buff, int size)
-{
-        int err;
         for (;;) {
-                err = send(c->fd, buff, size, 0);
-                if (err == 0) {
-                        return -1;
-                } else if (err == -1 && (errno == EINTR || errno == EAGAIN)) {
-                        continue;
-                } else {
-                        assert(err > 0);
-                        return err;
+                ssize_t len;
+                len = write(fd, buff, sz);
+                assert(len != 0);
+                if (len == -1) {
+                        switch (errno) {
+                        case EINTR:
+                                fprintf(stderr, "sendn:%d, EINTR\n", fd);
+                                continue;
+                        case ETRYAGAIN:
+                                fprintf(stderr, "sendn:%d, EAGAIN\n", fd);
+                                return 0;
+                        default:
+                                fprintf(stderr, "sendn:%d, %s\n", fd, strerror(errno));
+                                return -1;
+                        }
                 }
+                return len;
         }
-
         assert(!"never come here");
         return 0;
 }
 
 static int
-_wait(struct silly_socket *s)
+forward_msg(struct silly_socket *ss, struct socket *s)
 {
-        s->event_cnt = _sp_wait(s->sp_fd, s->event_buff, EPOLL_EVENT_SIZE);
-        if (s->event_cnt == -1) {
-                s->event_index = 0;
-                s->event_cnt = 0;
-                fprintf(stderr, "silly_socket:_wait fail:%d\n", errno);
-                return -1;
+        ssize_t sz;
+        uint8_t *buff = (uint8_t *)silly_malloc(s->presize);
+        sz = readn(s->fd, buff, s->presize);
+        //half close socket need no data
+        if (sz > 0 && s->type != STYPE_HALFCLOSE) {
+                report_data(ss, s, buff, sz);
+                //to predict the pakcet size
+                if (sz == s->presize)
+                        s->presize *= 2;
+        } else {
+                silly_free(buff);
+                if (sz < 0) {
+                        report_close(ss, s);
+                        delsocket(ss, s);
+                        return -1;
+                }
+                return 0;
         }
-        s->event_index = 0;
-        _ctrl_cmd(s);
+        return sz;
+}
 
+static void
+send_msg(struct silly_socket *ss, struct socket *s)
+{
+        struct wlist *w;
+        w = s->wlhead.next;
+        assert(w);
+        while (w) {
+                ssize_t sz;
+                sz = sendn(s->fd, w->buff + w->offset, w->size);
+                if (sz < 0) {
+                        report_close(ss, s);
+                        delsocket(ss, s);
+                        return ;
+                }
+                if (sz < w->size) {//send some
+                        w->size -= sz;
+                        w->offset += sz;
+                        return ;
+                }
+                assert(sz == w->size);
+                s->wlhead.next = w->next;
+                silly_free(w->buff);
+                silly_free(w);
+                w = s->wlhead.next;
+                if (w == NULL) {//send ok
+                        s->wltail = &s->wlhead;
+                        sp_write_enable(ss->spfd, s->fd, s, 0);
+                        if (s->type == STYPE_HALFCLOSE)
+                                delsocket(ss, s);
+                }
+        }
+        return ;
+}
+static int 
+hascmd(struct silly_socket *ss)
+{
+        int ret;
+        struct timeval tv = {0, 0};
+        FD_SET(ss->ctrlrecvfd, &ss->ctrlfdset);
+        ret = select(ss->ctrlrecvfd + 1, &ss->ctrlfdset, NULL, NULL, &tv);
+        return ret == 1 ? 1 : 0;
+}
+
+//for read one complete packet once system call, fix the packet length
+struct cmdpacket {
+        int     type;
+        union {
+                char dummy[128];
+                struct {
+                        int sid;
+                } listen;
+                struct {
+                        char ip[64];
+                        int  port;
+                        int sid;
+                } connect;
+                struct {
+                        int sid;
+                } close;
+                struct {
+                        int     sid;
+                        ssize_t size;
+                        uint8_t *data;
+                } send;
+        } u;
+};
+
+static int
+pipe_blockread(int fd, struct cmdpacket *pk)
+{
+        for (;;) {
+                ssize_t err = read(fd, pk, sizeof(*pk));
+                if (err == -1) {
+                        if (errno  == EINTR)
+                                continue;
+                        perror("pip_blockread");
+                        return -1;
+                }
+                assert(err == sizeof(*pk));
+                return 0;
+        }
         return 0;
 }
 
+static int
+pipe_blockwrite(int fd, struct cmdpacket *pk)
+{
+        for (;;) {
+                ssize_t err = write(fd, pk, sizeof(*pk));
+                if (err == -1) {
+                        if (errno == EINTR)
+                                continue;
+                        perror("pipe_blockwrite");
+                        return -1;
+                }
+                assert(err == sizeof(*pk));
+                return 0;
+        }
+        return 0;
+}
 
+static int
+dolisten(const char *ip, uint16_t port, int backlog)
+{
+        int err;
+        int fd;
+        int reuse = 1;
+        struct sockaddr_in addr;
+        bzero(&addr, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, ip, &addr.sin_addr);
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0)
+                return -1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        err = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+        if (err < 0)
+                goto end;
+        nonblock(fd);
+        err = listen(fd, backlog);
+        if (err < 0)
+                goto end;
+        return fd;
+end:
+        perror("dolisten");
+        close(fd);
+        return -1;
 
-int silly_socket_poll()
+}
+
+int 
+silly_socket_listen(const char *ip, uint16_t port, int backlog)
+{
+        int fd;
+        struct socket *s;
+        struct cmdpacket cmd;
+        fd = dolisten(ip, port, backlog);
+        if (fd < 0)
+                return fd;
+        s = allocsocket(SSOCKET, STYPE_LISTEN);
+        if (s == NULL) {
+                fprintf(stderr, "listen %s:%d:%d allocsocket fail\n", ip, port, backlog);
+                close(fd);
+                return -1;
+        }
+
+        s->fd = fd;
+        cmd.type = 'L';
+        cmd.u.listen.sid = s->sid;
+        pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
+        return s->sid;
+}
+
+static int
+trylisten(struct silly_socket *ss, struct cmdpacket *cmd)
+{
+        int sid = cmd->u.listen.sid;
+        struct socket *s = &ss->socketpool[HASH(sid)];
+        assert(s->sid == sid);
+        assert(s->type = STYPE_LISTEN);
+        int err = sp_add(ss->spfd, s->fd, s);
+        if (err < 0) {
+                perror("trylisten");
+                report_error(ss, s, errno);
+                close(s->fd);
+                freesocket(ss, s);
+        }
+        return err;
+}
+
+int 
+silly_socket_connect(const char *addr, int port)
+{
+        size_t sz;
+        struct cmdpacket cmd;
+        struct socket *s;
+        s = allocsocket(SSOCKET, STYPE_CONNECTING);
+        if (s == NULL)
+                return -1;
+        cmd.type = 'C';
+        sz = ARRAY_SIZE(cmd.u.connect.ip) - 1;
+        strncpy(cmd.u.connect.ip, addr, sz);
+        cmd.u.connect.ip[sz] = '\0';
+        cmd.u.connect.port = port;
+        cmd.u.connect.sid = s->sid;
+        pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
+        return s->sid;
+}
+
+static void
+tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
+{
+        int err;
+        int fd;
+        struct sockaddr_in      addr;
+        int sid = cmd->u.connect.sid;
+        int port = cmd->u.connect.port;
+        const char *ip = cmd->u.connect.ip;
+        struct socket *s =  &ss->socketpool[HASH(sid)];
+        assert(s->sid == sid);
+        assert(s->type == STYPE_CONNECTING);
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, ip, &addr.sin_addr);
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        //TODO: nonblock it
+        err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+        if (err < 0) {
+                const char *fmt = "tryconnect:ip:%s:%d,errno:%d\n";
+                fprintf(stderr, fmt, ip, port, errno);
+                report_error(ss, s, errno);
+                freesocket(ss, s);
+                return ;
+        }
+        assert(err == 0);
+        s = newsocket(ss, s, fd, STYPE_SOCKET);
+        if (s == NULL)
+                report_close(ss, s);
+        else 
+                report_connected(ss, s->sid);
+        return ;
+}
+
+static __inline struct socket *
+checksocket(struct silly_socket *ss, int sid)
+{
+        struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+        if (s->sid != sid)
+                return NULL;
+        switch (s->type) {
+        case STYPE_LISTEN:
+        case STYPE_SOCKET:
+                return s;
+        default:
+                return NULL;
+        }
+        return NULL;
+}
+
+int 
+silly_socket_close(int sid)
+{
+        struct cmdpacket cmd;
+        struct socket *s = checksocket(SSOCKET, sid);
+        if (s == NULL)
+                return -1;
+        cmd.type = 'K';
+        cmd.u.close.sid = sid;
+        pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
+        return 0;
+}
+
+static int
+tryclose(struct silly_socket *ss, struct cmdpacket *cmd)
+{
+        struct socket *s = checksocket(ss, cmd->u.close.sid);
+        if (s == NULL)
+                return -1;
+        if (wlist_empty(s)) { //already send all the data, directly close it
+                delsocket(ss, s);
+                return 0;
+        } else {
+                s->type = STYPE_HALFCLOSE;
+                return -1;
+        }
+}
+
+int
+silly_socket_send(int sid, uint8_t *buff,  size_t sz)
+{
+        struct cmdpacket cmd;
+        struct socket *s = checksocket(SSOCKET, sid);
+        if (s == NULL) {
+                silly_free(buff);
+                return -1;
+        }
+        if (sz == 0) {
+                silly_free(buff);
+                return -1;
+        }
+        cmd.type = 'S';
+        cmd.u.send.sid = sid;
+        cmd.u.send.data = buff;
+        cmd.u.send.size = sz;
+        pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
+        return 0;
+}
+
+static int
+trysend(struct silly_socket *ss, struct cmdpacket *cmd)
+{
+        struct socket *s = checksocket(ss, cmd->u.send.sid);
+        uint8_t *data = cmd->u.send.data;
+        size_t sz = cmd->u.send.size;
+        if (s == NULL) {
+                silly_free(cmd->u.send.data);
+                return 0;
+        }
+        if (wlist_empty(s)) {//try send
+                ssize_t n = sendn(s->fd, data, sz);
+                if (n < 0) {
+                        silly_free(data);
+                        report_close(ss, s);
+                        delsocket(ss, s);
+                        return -1;
+                } else if (n < sz) {
+                        wlist_append(s, data, n, sz);
+                } else {
+                        assert(n == sz);
+                        silly_free(data);
+                }
+        } else {
+                wlist_append(s, data, 0, sz);
+        }
+        return 0;
+}
+
+void
+silly_socket_terminate()
+{
+        struct cmdpacket cmd;
+        cmd.type = 'T';
+        cmd.u.dummy[0] = 0;
+        pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
+        return ;
+}
+
+//values of cmdpacket::type
+//'L'   --> listen data
+//'C'   --> connect
+//'K'   --> close(kick)
+//'S'   --> send data
+//'T'   --> terminate(exit poll)
+
+static int
+cmd_process(struct silly_socket *ss)
+{
+        int close = 0;
+        while (hascmd(ss)) {
+                int err;
+                struct cmdpacket cmd;
+                err = pipe_blockread(ss->ctrlrecvfd, &cmd);
+                if (err < 0)
+                        continue;
+                switch (cmd.type) {
+                case 'L':
+                        trylisten(ss, &cmd);
+                        break;
+                case 'C':
+                        tryconnect(ss, &cmd);
+                        break;
+                case 'K':
+                        if (tryclose(ss, &cmd) == 0)
+                                close = 1;
+                        break;
+                case 'S':
+                        if (trysend(ss, &cmd) < 0)
+                                close = 1;
+                        break;
+                case 'T':       //just to return from sp_wait
+                        close = -1;
+                        break;
+                default:
+                        fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.type);
+                        assert(!"oh, no!");
+                        break;
+                }
+        }
+        return close;
+}
+
+static void
+eventwait(struct silly_socket *ss)
+{
+        for (;;) {
+                ss->eventcount = sp_wait(ss->spfd, ss->eventbuff, ss->eventcap);
+                ss->eventindex = 0;
+                if (ss->eventcount < 0) {
+                        fprintf(stderr, "silly_socket:eventwait:%d\n", errno);
+                        continue;
+                }
+                break;
+        }
+        return ;
+}
+
+int
+silly_socket_poll()
 {
         int err;
         sp_event_t *e;
-        struct conn *c;
-        struct silly_socket *s = SOCKET;
-        if (_wait(s) == -1)
-                return 0;
-
-        while (s->event_index < s->event_cnt) {
-                int e_index = s->event_index++;
-                //printf("_process:%d,%d\n", s->event_index, s->event_cnt);
-
-                e = &s->event_buff[e_index];
-                c = (struct conn *)SP_UD(e);
-                if (c == NULL)          //the socket event has be cleared
+        struct socket *s;
+        struct silly_socket *ss = SSOCKET;
+        eventwait(ss);
+        err = cmd_process(ss);
+        if (err < 0)
+                return -1;
+        if (err >= 1)
+                clear_socket_event(ss);
+        while (ss->eventindex < ss->eventcount) {
+                int ei = ss->eventindex++;
+                e = &ss->eventbuff[ei];
+                s = (struct socket *)SP_UD(e);
+                if (s == NULL)                  //the socket event has be cleared
                         continue;
-
-                if (SP_ERR(e)) {
-                        fprintf(stderr, "_process:fd:%d occurs error now\n", c->fd);
-                        _force_close(s, c->sid);
+                switch (s->type) {
+                case STYPE_LISTEN:
+                        assert(SP_READ(e));
+                        report_accept(ss, s);
+                        continue;
+                case STYPE_RESERVE:
+                        fprintf(stderr, "silly_socket_poll reserve socket\n");
+                        continue;
+                case STYPE_HALFCLOSE:
+                case STYPE_SOCKET:
+                        break;
+                case STYPE_CTRL:
+                        continue;
+                default:
+                        fprintf(stderr, "silly_socket_poll:EPOLLIN, unkonw socket type:%d\n", s->type);
                         continue;
                 }
-                if (SP_READ(e)) { 
-                        err = 0;
-                        if (c->type == STYPE_LISTEN) {
-                                int fd = accept(c->fd, NULL, 0);
-                                if (fd >= 0) {
-                                        err = _fetch_and_add(s, fd, STYPE_SOCKET, c->workid);
-                                        if (err < 0) {
-                                                fprintf(stderr, "_process:_add_socket fail:%d\n", errno);
-                                                close(fd);
-                                                err = -1;
-                                        } else {        //now the err is sid(socket id)
-                                                _report_socket_event(s, err, SILLY_SOCKET_ACCEPT, c->sid);
-                                        }
-                                } else {
-                                        err = -1;
-                                }
-                        } else if (c->type == STYPE_SOCKET) {
-                                err = _forward_msg(s, c);
-                        } else if (c->type != STYPE_CTRL) {
-                                err = -1;
-                                fprintf(stderr, "_process:EPOLLIN, unkonw client type:%d\n", c->type);
-                        }
 
-                        if (err < 0)            //this socket have already occurs error, so ignore the write event
+                if (SP_ERR(e)) {
+                        report_close(ss, s);
+                        delsocket(ss, s);
+                        fprintf(stderr, "silly_socket_poll:fd:%d occurs error now\n", s->fd);
+                        continue;
+                }
+                if (SP_READ(e)) {
+                        err = forward_msg(ss, s);
+                        //this socket have already occurs error, so ignore the write event
+                        if (err < 0)
                                 continue;
                 }
                 if (SP_WRITE(e)) {
-                        struct wlist *w;
-                        w = c->wl_head.next;
-                        assert(w);
-                        while (w) {
-                                int err = _send(s, c, w->buff + w->offset, w->size);
-                                if (err == -1) {
-                                        _force_close(s, c->sid);
-                                        break;
-                                }
-                                
-                                if (err < w->size) {    //send some
-                                        w->size -= err;
-                                        w->offset += err;
-                                        break;
-                                }
-
-                                assert(err == w->size); //send one complete
-                                c->wl_head.next = w->next;
-
-                                silly_free(w->buff);
-                                silly_free(w);
-
-                                w = c->wl_head.next;
-                        }
-
-                        if (w == NULL) {
-                                c->wl_tail = &c->wl_head;
-                                _sp_write_enable(s->sp_fd, c->fd, c, 0);
-                        }
-
-                        if (w == NULL && c->type == STYPE_HALFCLOSE)
-                                _close(s, c);
+                        send_msg(ss, s);
                 }
         }
-
         return 0;
+}
+
+static void
+resize_eventbuff(struct silly_socket *ss, size_t sz)
+{
+        ss->eventcap = sz;
+        ss->eventbuff = (sp_event_t *)silly_realloc(ss->eventbuff, sizeof(sp_event_t) * sz);
+        return ;
+}
+
+int
+silly_socket_init()
+{
+        int err;
+        int spfd = -1;
+        int fd[2] = {-1, -1};
+        struct socket *s = NULL;
+        struct silly_socket *ss = silly_malloc(sizeof(*ss));
+        memset(ss, 0, sizeof(*ss));
+        socketpool_init(ss);
+        spfd = sp_create(EVENT_SIZE);
+        if (spfd < 0)
+                goto end;
+        s = allocsocket(ss, STYPE_CTRL);
+        assert(s);
+        err = pipe(fd); //use the pipe and not the socketpair because the pipe will be automatic when the data size small than BUFF_SIZE
+        if (err < 0)
+                goto end;
+        err = sp_add(spfd, fd[0], s);
+        if (err < 0)
+                goto end;
+        ss->spfd = spfd;
+        ss->ctrlsendfd = fd[1];
+        ss->ctrlrecvfd = fd[0];
+        ss->eventindex = 0;
+        ss->eventcount = 0;
+        resize_eventbuff(ss, EVENT_SIZE);
+        FD_ZERO(&ss->ctrlfdset);
+        SSOCKET = ss;
+        return 0;
+end:
+        if (s)
+                freesocket(ss, s);
+        if (spfd >= 0)
+                close(spfd);
+        if (fd[0] >= 0)
+                close(fd[0]);
+        if (fd[1] >= 0)
+                close(fd[0]);
+        if (ss)
+                silly_free(ss);
+
+        return -errno;
+}
+
+void silly_socket_exit()
+{
+        int i;
+        assert(SSOCKET);
+        close(SSOCKET->spfd);
+        close(SSOCKET->ctrlsendfd);
+        close(SSOCKET->ctrlrecvfd);
+
+        struct socket *s = &SSOCKET->socketpool[0];
+        for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+                int isnormal = 0;
+                enum stype type = s->type;
+                isnormal += type == STYPE_SOCKET ? 1 : 0;
+                isnormal += type == STYPE_LISTEN ? 1 : 0;
+                isnormal += type == STYPE_HALFCLOSE ? 1 : 0;
+                if (isnormal > 0)
+                        close(s->fd);
+        }
+        silly_free(SSOCKET->eventbuff);
+        silly_free(SSOCKET->socketpool);
+        silly_free(SSOCKET);
+        return ;
 }
 

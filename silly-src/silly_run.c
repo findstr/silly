@@ -6,170 +6,110 @@
 #include <string.h>
 #include <errno.h>
 
+#include "silly.h"
 #include "silly_config.h"
 #include "silly_env.h"
-#include "silly_message.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
 #include "silly_socket.h"
-#include "silly_server.h"
+#include "silly_worker.h"
 #include "silly_daemon.h"
 
 #include "silly_run.h"
 
-static int run = 1;
+#define CHECKQUIT       \
+        if (silly_worker_checkquit())\
+                break;
 
 static void *
-_socket(void *arg)
+thread_socket(void *arg)
 {
-        while (run) {
-                silly_socket_poll();
+        int err;
+        (void)arg;
+        for (;;) {
+                err = silly_socket_poll();
+                if (err < 0) {
+                        fprintf(stderr, "silly_socket_pool terminated\n");
+                        break;
+                }
         }
-
         return NULL;
 }
 
 static void *
-_timer(void *arg)
+thread_timer(void *arg)
 {
-        while (run) {
-                timer_dispatch();
+        (void)arg;
+        for (;;) {
+                silly_timer_dispatch();
+                CHECKQUIT
                 usleep(1000);
         }
-
+        silly_socket_terminate();
         return NULL;
 }
 
 static void *
-_worker(void *arg)
+thread_worker(void *arg)
 {
-        int workid = *((int *)arg);
-
-        while (run) {
-                silly_server_dispatch(workid);
+        (void)arg;
+        for (;;) {
+                silly_worker_dispatch();
+                CHECKQUIT
                 usleep(1000);
         }
-
-        silly_server_stop(workid);
-
         return NULL;
 }
 
-static void *
-_debug(void *arg)
+static int
+signal_init()
 {
-        char buff[1024];
-        while (run) {
-                int n;
-                struct silly_message *msg;
-                char *sz;
-
-                fgets(buff, 1024, stdin);
-                n = strlen(buff);
-                msg = (struct silly_message *)silly_malloc(sizeof(*msg) + n + 1);
-                sz = (char *)(msg + 1);
-                msg->type = SILLY_DEBUG;
-                strcpy(sz, buff);
-
-                silly_server_push(0, msg);
-        }
-
-        return NULL;
+        signal(SIGPIPE, SIG_IGN);
+        return 0;
 }
 
 static void
-_sig_term(int signum)
+thread_create(pthread_t *tid, void *(*start)(void *), void *arg)
 {
-        run = 0;
-        silly_socket_terminate();
-
+        int err;
+        err = pthread_create(tid, NULL, start, arg);
+        if (err < 0) {
+                fprintf(stderr, "thread create fail:%d\n", err);
+                exit(-1);
+        }
         return ;
 }
 
-int silly_run(struct silly_config *config)
+void
+silly_run(struct silly_config *config)
 {
-        int i, j;
+        int i;
         int err;
-        int tcnt;
-
+        pthread_t pid[3];
         if (config->daemon && silly_daemon(1, 0) == -1) {
                 fprintf(stderr, "daemon error:%d\n", errno);
-                exit(0);
+                exit(-1);
         }
-
-        signal(SIGPIPE, SIG_IGN);
-        signal(SIGHUP, _sig_term);
-        signal(SIGINT, _sig_term);
-        signal(SIGTERM, _sig_term);
-
-        timer_init();
-        silly_socket_init();
-        silly_server_init();
-
-        for (i = 0; i < config->listen_count; i++) {
-                int n;
-                char ip[32];
-                char port[32];
-                char backlog[32];
-                
-                uint16_t        nport;
-                int             nbacklog;
-
-                backlog[0] = '\0';
-                n = sscanf(config->listen[i].addr, "%[0-9.]:%[0-9]:%[0-9]", ip, port, backlog);
-                if (n < 2) {
-                        fprintf(stderr, "Invalid listen of %s\n", config->listen[i].name);
-                        return -1;
-                }
-                nport = (uint16_t)strtoul(port, NULL, 0);
-                nbacklog = (int)strtol(backlog, NULL, 0);
-                if (nbacklog == 0)
-                        nbacklog = 10;
-
-                err = silly_socket_listen(ip, nport, nbacklog, -1);
-                if (err == -1) {
-                        fprintf(stderr, "listen :%s(%s) error\n", config->listen[i].addr, config->listen[i].name);
-                        return -1;
-                }
-
-                snprintf(port, sizeof(port) / sizeof(port[0]), "%d", err);
-                silly_env_set(config->listen[i].name, port);
+        signal_init();
+        silly_timer_init();
+        err = silly_socket_init();
+        if (err < 0) {
+                fprintf(stderr, "silly socket init fail:%d\n", err);
+                exit(-1);
         }
-        
+        silly_worker_init(config);
         srand(time(NULL));
-
-        //start
-        int     workid[config->worker_count];
-        for (i = 0; i < config->worker_count; i++) {
-                workid[i] = silly_server_open();
-                silly_server_start(workid[i], config);
-        }
- 
-        tcnt = 2;
-        if (config->debug > 0)
-                ++tcnt;
-        tcnt += config->worker_count;
-        pthread_t pid[tcnt];
-        
-        i = 0;
-        pthread_create(&pid[i++], NULL, _socket, NULL);
-        pthread_create(&pid[i++], NULL, _timer, NULL);
-        if (config->debug > 0)
-                pthread_create(&pid[i++], NULL, _debug, NULL);
-
-        for (j = 0; j < config->worker_count; i++, j++)
-                pthread_create(&pid[i], NULL, _worker, &workid[j]);
-
-        fprintf(stderr, "Silly is running...\n");
-
-        for (i = 0; i < tcnt; i++)
+        thread_create(&pid[0], thread_socket, NULL);
+        thread_create(&pid[1], thread_timer, NULL);
+        thread_create(&pid[2], thread_worker, NULL);
+        fprintf(stdout, "silly is running ...\n");
+        for (i = 0; i < 3; i++)
                 pthread_join(pid[i], NULL);
 
-        silly_server_exit();
-        silly_socket_exit();
-        timer_exit();
+        silly_worker_exit();
+        silly_timer_exit();
 
-        fprintf(stderr, "silly has already exit...\n");
-
-        return 0;
+        fprintf(stdout, "silly has already exit...\n");
+        return ;
 }
+

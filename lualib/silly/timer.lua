@@ -1,4 +1,5 @@
 local silly = require "silly"
+local core = require "silly.core"
 
 local timer = {}
 
@@ -28,15 +29,6 @@ function timer.add(ms, handler, param)
 
         silly.timeradd(ms, session)
 end
-
-local function timer_handler(session)
-        assert(session_function[session])(session_param[session])
-        session_function[session] = nil
-        session_param[session] = nil
-end
-
-
-silly.timerentry(timer_handler)
 
 
 return timer

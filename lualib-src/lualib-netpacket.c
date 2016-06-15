@@ -6,9 +6,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "silly.h"
 #include "silly_malloc.h"
-#include "silly_message.h"
-
 
 #define DEFAULT_QUEUE_SIZE      2048
 #define INCOMPLETE_HASH_SIZE    2024
@@ -301,25 +300,21 @@ lclear(lua_State *L)
 static int
 lmessage(lua_State *L)
 {
-        struct silly_message *msg = lua_touserdata(L, 2);
-        struct silly_message_socket *sm = (struct silly_message_socket *)(msg + 1);
-        enum silly_message_type mt = msg->type;
-
+        struct silly_message_socket *sm= tosocket(lua_touserdata(L, 2));
         lua_settop(L, 1);
-
-        switch (mt) {
-        case SILLY_SOCKET_DATA:
-                push(L, sm->sid, sm->data, sm->data_size);
+        switch (sm->type) {
+        case SILLY_SDATA:
+                push(L, sm->sid, sm->data, sm->ud);
                 return 1;
-        case SILLY_SOCKET_CLOSE:
+        case SILLY_SCLOSE:
                 clear_incomplete(L, sm->sid);
                 return 1;
-        case SILLY_SOCKET_ACCEPT:
-        case SILLY_SOCKET_CONNECTED:
+        case SILLY_SACCEPT:
+        case SILLY_SCONNECTED:
                 return 1;
         default:
                 assert(!"never come here");
-                fprintf(stderr, "lmessage unspport:%d\n", mt);
+                fprintf(stderr, "lmessage unspport:%d\n", sm->type);
                 return 1;
         }
 }

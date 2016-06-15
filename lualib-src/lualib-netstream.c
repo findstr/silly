@@ -5,8 +5,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "silly.h"
 #include "silly_malloc.h"
-#include "silly_message.h"
 
 #define min(a, b)       ((a) < (b) ? (a) : (b))
 
@@ -404,19 +404,16 @@ lpack(struct lua_State *L)
 static int
 lpush(lua_State *L)
 {
-        struct silly_message *msg = lua_touserdata(L, 3);
-        struct silly_message_socket *sm = (struct silly_message_socket *)(msg + 1);
-        enum silly_message_type mt = msg->type;
-
-        switch (mt) {
-        case SILLY_SOCKET_DATA:
-                return push(L, sm->sid, (char *)sm->data, sm->data_size);
-        case SILLY_SOCKET_ACCEPT:
-        case SILLY_SOCKET_CLOSE:
-        case SILLY_SOCKET_CONNECTED:
+        struct silly_message_socket *msg = tosocket(lua_touserdata(L, 3));
+        switch (msg->type) {
+        case SILLY_SDATA:
+                return push(L, msg->sid, (char *)msg->data, msg->ud);
+        case SILLY_SACCEPT:
+        case SILLY_SCLOSE:
+        case SILLY_SCONNECTED:
         default:
                 assert(!"never come here");
-                fprintf(stderr, "lmessage unspport:%d\n", mt);
+                fprintf(stderr, "lmessage unspport:%d\n", msg->type);
                 return 1;
         }
 }
