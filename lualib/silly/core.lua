@@ -26,7 +26,7 @@ local function cocreate(f)
                         end
                         local ok, err = pcall(func, coroutine.yield())
                         if ok == false then
-                                print(err)
+                                print("cocall", err)
                                 print(debug.traceback())
                         end
                 end
@@ -54,7 +54,16 @@ local sleep_session_co = {}
 
 local dispatch_wakeup
 
-local function waitfor(co, ret, typ, ...)
+local function waitresume(co, typ, ...)
+        assert(typ == "WAKEUP", typ)
+        assert(wakeup_co_status[co] == nil)
+        assert(wait_co_status[co]== nil)
+        assert(sleep_co_session[co] == nil)
+        return ...
+end
+
+
+local function waityield(co, ret, typ, ...)
         if ret == false then
                 return
         end
@@ -76,7 +85,7 @@ local function waitfor(co, ret, typ, ...)
                         table.insert(copool, co)
                 end
         else
-                print("silly.core waitfor unkonw return type", typ)
+                print("silly.core waityield unkonw return type", typ)
                 print(debug.traceback())
         end
         dispatch_wakeup()
@@ -96,7 +105,7 @@ function dispatch_wakeup()
         if not param then
                 param = {}
         end
-        waitfor(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
+        waityield(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
 end
 
 function core.fork(func)
@@ -113,7 +122,7 @@ function core.wait()
         assert(sleep_co_session[co] == nil)
         assert(wait_co_status[co] == nil)
         wait_co_status[co] = "WAIT"
-        return waitfor(co, true, coroutine.yield("WAIT"))
+        return waitresume(co, coroutine.yield("WAIT"))
 end
 
 function core.wakeup(co, ...)
@@ -129,12 +138,12 @@ function core.sleep(ms)
         local session = silly.timeout(ms)
         sleep_session_co[session] = co
         sleep_co_session[co] = session
-        waitfor(co, true, coroutine.yield("SLEEP"))
+        waitresume(co, coroutine.yield("SLEEP"))
 end
 
 function core.start(func, ...)
         local co = cocreate(func)
-        waitfor(co, coroutine.resume(co, ...))
+        waityield(co, coroutine.resume(co, ...))
 end
 
 
@@ -264,7 +273,7 @@ local function dispatch(type, fd, message, ...)
                 core.drop(message)
         else
                 local co = cocreate(dispatch)
-                waitfor(co, coroutine.resume(co, type, fd, message, ...))
+                waityield(co, coroutine.resume(co, type, fd, message, ...))
         end
         dispatch_wakeup()
 end
