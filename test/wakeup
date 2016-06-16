@@ -1,0 +1,5 @@
+daemon = 0
+bootstrap = "test/wakeup.lua"
+lualib_path = "test/?.lua;lualib/?.lua"
+lualib_cpath = "luaclib/?.so"
+

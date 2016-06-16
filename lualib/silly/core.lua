@@ -20,7 +20,7 @@ local function cocreate(f)
                 while true do
                         local ret, func = coroutine.yield("EXIT")
                         if ret ~= "STARTUP" then
-                                print(ret)
+                                print("create coroutine fail", ret)
                                 print(debug.traceback())
                                 return
                         end
@@ -52,6 +52,8 @@ local wait_co_status = {}
 local sleep_co_session = {}
 local sleep_session_co = {}
 
+local dispatch_wakeup
+
 local function waitfor(co, ret, typ, ...)
         if ret == false then
                 return
@@ -68,7 +70,6 @@ local function waitfor(co, ret, typ, ...)
                 assert(wakeup_co_status[co] == nil)
                 assert(wait_co_status[co]== nil)
                 assert(sleep_co_session[co] == nil)
-                return ...
         elseif typ == "EXIT" then
                 if #copool <= 100 then
                         assert(co)
@@ -78,31 +79,32 @@ local function waitfor(co, ret, typ, ...)
                 print("silly.core waitfor unkonw return type", typ)
                 print(debug.traceback())
         end
-
+        dispatch_wakeup()
+        return ...
 end
 
-local function dispatch_wakeup()
+function dispatch_wakeup()
         local k, v
-        while true do
-                k, v = next(wakeup_co_status, k)
-                if not k then
-                        break
-                end
-                local co = k
-                local param = wakeup_co_param[co]
-                wakeup_co_status[co] = nil
-                wakeup_co_param[co] = nil
-                if not param then
-                        param = {}
-                end
-                waitfor(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
+        k, v = next(wakeup_co_status, k)
+        if not k then
+                return
         end
+        local co = k
+        local param = wakeup_co_param[co]
+        wakeup_co_status[co] = nil
+        wakeup_co_param[co] = nil
+        if not param then
+                param = {}
+        end
+        waitfor(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
 end
 
 function core.fork(func)
         local co = cocreate(func)
         assert(co)
+        assert(wakeup_co_status[co] == nil)
         wakeup_co_status[co] = "FORK"
+        return co
 end
 
 function core.wait()
