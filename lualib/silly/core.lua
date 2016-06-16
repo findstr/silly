@@ -7,19 +7,23 @@ local tinsert = table.insert
 local tremove = table.remove
 
 --coroutine pool
-local cocap = 0
 local copool = {}
 
 local function cocreate(f)
         local co = table.remove(copool)
         if co then
-                coroutine.resume(co, f)
+                coroutine.resume(co, "STARTUP", f)
                 return co
         end
 
         local function cocall()
                 while true do
-                        local func = coroutine.yield("EXIT")
+                        local ret, func = coroutine.yield("EXIT")
+                        if ret ~= "STARTUP" then
+                                print(ret)
+                                print(debug.traceback())
+                                return
+                        end
                         local ok, err = pcall(func, coroutine.yield())
                         if ok == false then
                                 print(err)
@@ -30,8 +34,10 @@ local function cocreate(f)
 
         co = coroutine.create(cocall)
         coroutine.resume(co)    --wakeup the new coroutine
-        coroutine.resume(co, f)       --pass the function handler
-        cocap = cocap + 1
+        coroutine.resume(co, "STARTUP", f)       --pass the function handler
+        if #copool > 100 then
+                print("coroutine pool large than 100", #copool)
+        end
         return co
 end
 
@@ -64,7 +70,7 @@ local function waitfor(co, ret, typ, ...)
                 assert(sleep_co_session[co] == nil)
                 return ...
         elseif typ == "EXIT" then
-                if cocap <= 100 then
+                if #copool <= 100 then
                         assert(co)
                         table.insert(copool, co)
                 end

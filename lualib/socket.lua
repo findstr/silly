@@ -16,7 +16,8 @@ local function new_socket(fd)
                 suspend = false,
                 co = false,
         }
-
+        assert(socket_pool[fd] == nil, 
+                "new_socket incorrect" .. fd .. "not be closed")
         socket_pool[fd] = s
 end
 
