@@ -151,29 +151,25 @@ lsocket_close(lua_State *L)
 {
         int err;
         int sid;
-
         sid = luaL_checkinteger(L, 1);
-
         err = silly_socket_close(sid);
-
-        lua_pushinteger(L, err);
-
+        lua_pushboolean(L, err < 0 ? 0 : 1);
         return 1;
 }
 
 static int
 lsocket_send(lua_State *L)
 {
+        int err;
         int sid;
         uint8_t *buff;
         int size;
- 
         sid = luaL_checkinteger(L, 1);
         buff = lua_touserdata(L, 2);
         size = luaL_checkinteger(L, 3);
-        silly_socket_send(sid, buff, size);
-
-        return 0;
+        err = silly_socket_send(sid, buff, size);
+        lua_pushboolean(L, err < 0 ? 0 : 1);
+        return 1;
 }
 
 static int

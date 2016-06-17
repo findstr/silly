@@ -3,13 +3,19 @@ local core = require "silly.core"
 local closure = {}
 
 local last = nil
-
+local more = core.fork(function()
+                        core.wait()
+                        print("extra")
+                end)
 local function wrap(str, last)
         return function()
                 core.wait()
                 if last then
                         print("#", last)
                         core.wakeup(last)
+                        if str == "test3" then
+                                core.wakeup(more)
+                        end
                 end
                 print(str, "exit")
         end

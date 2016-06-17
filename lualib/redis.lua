@@ -1,4 +1,4 @@
-local fifo = require "socketfifo"
+local fifo = require "socketdispatch"
 
 local tinsert = table.insert
 local tunpack = table.unpack
@@ -51,8 +51,6 @@ local function read_response(sfifo)
                 res = string.sub(res, 1, #res - 2)
                 func = response_header.data
         end
-
-
         return func(sfifo, res)
 end
 
@@ -92,23 +90,16 @@ local function pack_cmd(cmd, param)
                 assert(type(param) == "table")
                 pn = pn + #param;
         end
-
         local lines = {string.format("*%d", pn), }
-
         pack_param(lines, cmd)
-        
         for _, v in ipairs (param) do
                 pack_param(lines, v)
         end
-        
         local sz = tconcat(lines, "\r\n")
-
-
         return sz .. "\r\n"
-
 end
 
-function redis:create(config)
+function redis:connect(config)
         local t = {
                 ip = config.ip,
                 port = config.port,
@@ -117,23 +108,15 @@ function redis:create(config)
                 sfifo = fifo:create {
                                 ip = config.ip,
                                 port = config.port
-                        },
+                },
         }
-
         setmetatable(t, {__index = self})
-
-        return t
-end
-
-function redis:connect()
-        if self.sfifo:closed() then
-                self.sfifo = fifo:create {
-                                        ip = self.ip,
-                                        port = self.port
-                                }
+        local ret, err = t.sfifo:connect()
+        if ret then
+                return t
+        else
+                return nil, err
         end
-
-        return self.sfifo:connect()
 end
 
 setmetatable(redis, {__index = function (self, k)

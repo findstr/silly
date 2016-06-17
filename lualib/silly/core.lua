@@ -7,8 +7,12 @@ local tinsert = table.insert
 local tremove = table.remove
 
 --coroutine pool
+--sometimes, the coroutine will never execute the end
+--so use the weaktable
 local copool = {}
+local wakemt = {__mode="kv"}
 
+setmetatable(copool, wakemt)
 local function cocreate(f)
         local co = table.remove(copool)
         if co then
@@ -46,6 +50,12 @@ core.quit = silly.quit
 core.write = silly.socketsend
 core.drop = silly.dropmessage
 
+function core.error(errmsg)
+        print(errmsg)
+        print(debug.traceback())
+end
+
+
 local wakeup_co_status = {}
 local wakeup_co_param = {}
 local wait_co_status = {}
@@ -80,10 +90,8 @@ local function waityield(co, ret, typ, ...)
                 assert(wait_co_status[co]== nil)
                 assert(sleep_co_session[co] == nil)
         elseif typ == "EXIT" then
-                if #copool <= 100 then
-                        assert(co)
-                        table.insert(copool, co)
-                end
+                assert(co)
+                table.insert(copool, co)
         else
                 print("silly.core waityield unkonw return type", typ)
                 print(debug.traceback())
@@ -205,7 +213,8 @@ function core.close(fd)
         end
         socket_dispatch[fd] = nil
         assert(socket_connect[fd] == nil)
-        return silly.socketclose(fd)
+        local ret = silly.socketclose(fd)
+        return ret
 end
 
 --the message handler can't be yield

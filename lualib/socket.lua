@@ -100,22 +100,13 @@ end
 
 function socket.close(fd)
         local s = socket_pool[fd]
-        assert(s)
+        if s == nil then
+                return
+        end
         assert(not s.co)
-
         ns.clear(nb_pool, s.sbuffer)
         socket_pool[fd] = nil
-
         core.close(fd)
-end
-
-function socket.closed(fd)
-        local s = socket_pool[fd]
-        if s then
-                return true
-        else
-                return false
-        end
 end
 
 local function suspend(s)
@@ -166,7 +157,7 @@ end
 
 function socket.write(fd, str)
         local p, sz = ns.pack(str)
-        core.write(fd, p, sz)
+        return core.write(fd, p, sz)
 end
 
 return socket
