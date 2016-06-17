@@ -10,6 +10,7 @@ local function dprint(cmd, success, value)
         else
                 print(value)
         end
+        collectgarbage("collect")
 end
 
 local db = nil

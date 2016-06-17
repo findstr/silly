@@ -6,13 +6,12 @@ local core = {}
 local tinsert = table.insert
 local tremove = table.remove
 
---coroutine pool
---sometimes, the coroutine will never execute the end
+--coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
-local wakemt = {__mode="kv"}
+local weakmt = {__mode="kv"}
 
-setmetatable(copool, wakemt)
+setmetatable(copool, weakmt)
 local function cocreate(f)
         local co = table.remove(copool)
         if co then
@@ -61,6 +60,11 @@ local wakeup_co_param = {}
 local wait_co_status = {}
 local sleep_co_session = {}
 local sleep_session_co = {}
+
+--the wait_co_status won't hold the coroutine
+--this table just to be check some incorrect call of core.wakeup
+--the coroutine in wait_co_status should be hold by the wakeuper
+setmetatable(wait_co_status, weakmt)
 
 local dispatch_wakeup
 
