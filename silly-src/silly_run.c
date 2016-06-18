@@ -7,7 +7,6 @@
 #include <errno.h>
 
 #include "silly.h"
-#include "silly_config.h"
 #include "silly_env.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
@@ -108,7 +107,7 @@ silly_run(struct silly_config *config)
 
         silly_worker_exit();
         silly_timer_exit();
-
+        silly_socket_exit();
         fprintf(stdout, "silly has already exit...\n");
         return ;
 }

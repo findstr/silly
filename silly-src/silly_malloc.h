@@ -3,9 +3,10 @@
 
 #include <stdlib.h>
 
-#define silly_malloc(a) malloc(a)
-#define silly_realloc(a, size) realloc(a, size)
-#define silly_free(a) free(a)
+void *silly_malloc(size_t sz);
+void *silly_realloc(void *ptr, size_t sz);
+void silly_free(void *ptr);
+size_t silly_memstatus();
 
 #endif
 

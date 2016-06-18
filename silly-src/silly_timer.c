@@ -71,7 +71,7 @@ newchunk(struct silly_timer *timer)
         nt->next = timer->nodefree;
         timer->nodefree = nh;
         ck->next = timer->nodepool;
-        timer->nodepool = ck->next;
+        timer->nodepool = ck;
         return ;
 }
 

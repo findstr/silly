@@ -10,6 +10,8 @@ gate.listen {
 
         close = function(fd, errno)
                 print("close", fd, errno)
+                core.sleep(5000)
+                core.quit()
         end,
 
         data = function(fd, msg)

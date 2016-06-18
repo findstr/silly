@@ -7,6 +7,7 @@
 #include <lauxlib.h>
 #include <string.h>
 #include "silly.h"
+#include "silly_malloc.h"
 #include "silly_env.h"
 #include "silly_run.h"
 
@@ -158,6 +159,7 @@ int main(int argc, char *argv[])
         lua_close(L);
         silly_run(&config);
         silly_env_exit();
-
+        printf("%s exit, leak memory size:%zu\n",
+                        argv[0], silly_memstatus());
         return 0;
 }

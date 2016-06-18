@@ -9,6 +9,10 @@ test 0xff {
 }
 ]]
 
+local function quit()
+        core.sleep(10000)
+        core.quit()
+end
 
 gate.listen {
         port = "@9999",
@@ -26,7 +30,7 @@ gate.listen {
                 print("rpc recive", msg.name, msg.age)
                 gate.rpcret(fd, cookie, "test", msg)
                 print("port1 data finish")
-
+                core.fork(quit)
         end
 }
 

@@ -46,9 +46,9 @@ SRC = \
       silly-src/silly_worker.c\
       silly-src/silly_timer.c\
       silly-src/silly_run.c\
-      silly-src/silly_debug.c\
       silly-src/silly_daemon.c\
       silly-src/silly_env.c\
+      silly-src/silly_malloc.c\
 
 OBJS = $(patsubst %.c,%.o,$(SRC))
 

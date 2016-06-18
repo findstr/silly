@@ -39,7 +39,7 @@ core.start(function ()
         dprint("TYPE bar", db:type("bar"))
         dprint("STRLEN bar", db:strlen("foo"))
         print("test finish")
-
+        core.quit()
 end)
 
 core.start(function ()

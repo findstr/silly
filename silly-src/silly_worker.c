@@ -5,10 +5,9 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#include "silly_config.h"
+#include "silly.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
-#include "silly_debug.h"
 #include "silly_worker.h"
 
 #define max(a, b)       ((a) > (b) ? (a) : (b))
@@ -20,6 +19,7 @@ struct silly_worker {
         void                            (*callback)(lua_State *L, struct silly_message *msg);
         uint32_t                        id;
         int                             quit;
+        size_t                          maxmsg;
 };
 
 struct silly_worker *W;
@@ -28,7 +28,13 @@ struct silly_worker *W;
 void 
 silly_worker_push(struct silly_message *msg)
 {
+        size_t sz;
         silly_queue_push(W->queue, msg);
+        sz = silly_queue_size(W->queue);
+        if (sz > W->maxmsg) {
+                W->maxmsg *= 2;
+                fprintf(stderr, "may overload, now message size is:%zu\n", sz);
+        }
 }
 
 void
@@ -39,7 +45,7 @@ silly_worker_dispatch()
         while (msg) {
                 assert(W->callback);
                 W->callback(W->L, msg);
-                silly_free(msg);
+                silly_message_free(msg);
                 msg = silly_queue_pop(W->queue);
         }
         return ;
@@ -49,6 +55,12 @@ uint32_t
 silly_worker_genid()
 {
         return W->id++;
+}
+
+size_t
+silly_worker_msgsz()
+{
+        return silly_queue_size(W->queue);
 }
 
 void 
@@ -130,6 +142,7 @@ silly_worker_init(struct silly_config *config)
 {
         W = (struct silly_worker *)silly_malloc(sizeof(*W));
         memset(W, 0, sizeof(*W));
+        W->maxmsg = 128;
         W->queue = silly_queue_create();
         initlua(config);
         return ;

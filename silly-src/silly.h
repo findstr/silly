@@ -1,7 +1,8 @@
 #ifndef _SILLY_H
 #define _SILLY_H
-
+#include <assert.h>
 #include <stdint.h>
+#include "silly_malloc.h"
 
 struct silly_listen {
         char name[64];
@@ -55,6 +56,13 @@ struct silly_message_socket {  //socket accept
 #define sclose(msg)     (assert((msg)->type == SILLY_SCLOSE), ((struct silly_message_socket *)(msg)))
 #define sconnected(msg) (assert((msg)->type == SILLY_SCONNECTED), ((struct silly_message_socket *)(msg)))
 #define sdata(msg)      (assert((msg)->type == SILLY_SDATA), ((struct silly_message_socket *)(msg)))
+
+static void __inline silly_message_free(struct silly_message *msg)
+{
+        if (msg->type == SILLY_SDATA)
+                silly_free(sdata(msg)->data);
+        silly_free(msg);
+}
 
 #endif
 

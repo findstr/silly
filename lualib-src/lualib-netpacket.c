@@ -210,8 +210,6 @@ push(lua_State *L, int sid, uint8_t *data, int data_size)
                 d += n;
         } while (left);
 
-        silly_free(data);
-
         return ;
 }
 

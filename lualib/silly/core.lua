@@ -284,9 +284,7 @@ local function dispatch(type, fd, message, ...)
         --may run other coroutine here(like connected)
         local dispatch = assert(MSG[type], type)(fd, message, ...)
         --check if the socket has closed
-        if dispatch == nil then     --have ready close
-                core.drop(message)
-        else
+        if dispatch then     --have ready close
                 local co = cocreate(dispatch)
                 waityield(co, coroutine.resume(co, type, fd, message, ...))
         end

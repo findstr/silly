@@ -404,10 +404,15 @@ lpack(struct lua_State *L)
 static int
 lpush(lua_State *L)
 {
+        char *str;
         struct silly_message_socket *msg = tosocket(lua_touserdata(L, 3));
         switch (msg->type) {
         case SILLY_SDATA:
-                return push(L, msg->sid, (char *)msg->data, msg->ud);
+                str = (char *)msg->data;
+                //prevent silly_work free the msg->data
+                //it will be exist until it be read out
+                msg->data = NULL;
+                return push(L, msg->sid, str, msg->ud);
         case SILLY_SACCEPT:
         case SILLY_SCLOSE:
         case SILLY_SCONNECTED:
