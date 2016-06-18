@@ -6,8 +6,8 @@ local cachemt = {__mode = "kv"}
 local indexmt = {
         __index = zproto,
         __gc = function(table)
-                if t.proto then
-                        engine.free(t.proto)
+                if table.proto then
+                        engine.free(table.proto)
                 end
         end
 }
