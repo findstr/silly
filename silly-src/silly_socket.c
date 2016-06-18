@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 
@@ -232,7 +234,6 @@ nonblock(int fd)
                 perror("nonblock F_GETFL");
                 return ;
         }
-
         flag |= O_NONBLOCK;
         err = fcntl(fd, F_SETFL, flag);
         if (err < 0) {
@@ -240,6 +241,26 @@ nonblock(int fd)
                 return ;
         }
         return ;
+}
+
+static void
+nodelay(int fd)
+{
+        int err;
+        int on = 1;
+        err = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+        if (err < 0)
+                perror("nodelay fail");
+}
+
+static void
+keepalive(int fd)
+{
+        int err;
+        int on = 1;
+        err = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+        if (err < 0)
+                perror("keepalive fail");
 }
 
 #define ADDRLEN (64)
@@ -261,6 +282,8 @@ report_accept(struct silly_socket *ss, struct socket *listen)
         str = inet_ntop(addr.sin_family, &addr.sin_addr, buff, sizeof(buff));
         snprintf((char *)sa->data, ADDRLEN, "%s:%d", str, ntohs(addr.sin_port));
         nonblock(fd);
+        keepalive(fd);
+        nodelay(fd);
         s = newsocket(ss, NULL, fd, STYPE_SOCKET);
         if (s == NULL)
                 return;
@@ -618,6 +641,8 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
                 freesocket(ss, s);
                 return ;
         }
+        keepalive(fd);
+        nodelay(fd);
         assert(err == 0);
         s = newsocket(ss, s, fd, STYPE_SOCKET);
         if (s == NULL)

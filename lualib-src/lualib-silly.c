@@ -173,7 +173,7 @@ lsocket_send(lua_State *L)
 }
 
 static int
-ldrop(lua_State *L)
+ldropmsg(lua_State *L)
 {
         struct silly_message *m = (struct silly_message *)lua_touserdata(L, 1);
         if (m->type == SILLY_SDATA) {
@@ -182,6 +182,26 @@ ldrop(lua_State *L)
         }
         return 0;
 }
+
+static int
+ltostring(lua_State *L)
+{
+        char *buff;
+        int size;
+        buff = lua_touserdata(L, 1);
+        size = luaL_checkinteger(L, 2);
+        lua_pushlstring(L, buff, size);
+        return 1;
+}
+
+static int
+lgenid(lua_State *L)
+{
+        uint32_t id = silly_worker_genid();
+        lua_pushinteger(L, id);
+        return 1;
+}
+
 
 int 
 luaopen_silly(lua_State *L)
@@ -199,7 +219,10 @@ luaopen_silly(lua_State *L)
                 {"socketconnect",       lsocket_connect},
                 {"socketclose",         lsocket_close},
                 {"socketsend",          lsocket_send},
-                {"dropmessage",         ldrop},
+                //
+                {"dropmessage",         ldropmsg},
+                {"tostring",            ltostring},
+                {"genid",               lgenid},
                 //end
                 {NULL, NULL},
         };

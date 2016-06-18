@@ -19,7 +19,16 @@ struct pool_chunk {
         struct pool_chunk *next;
 };
 
+struct zproto_field {
+        int                     tag;
+        int                     type;
+        const char              *name;
+        struct zproto_record    *seminfo;
+        struct zproto_field     *next;
+};
+
 struct zproto_record {
+        uint32_t                tag;
         const char              *name;
         int                     fieldnr;
         struct zproto_record    *next;
@@ -54,6 +63,7 @@ pool_alloc(struct zproto *z, size_t sz)
 {
         struct pool_chunk *c = z->now;
         assert(c->next == NULL);
+        sz = (sz + 7) & (~7);   //align to 8 for performance
         if (c->last < sz) {
                 void *p;
                 struct pool_chunk *new;
@@ -220,7 +230,9 @@ strtotype(struct zproto *z, struct zproto_record *proto, const char *type, struc
                 sz -= 2;
         }
 
-        if (strncmp(type, "integer", sz) == 0) {
+        if (strncmp(type, "boolean", sz) == 0) {
+                ztype |= ZPROTO_BOOLEAN;
+        } else if (strncmp(type, "integer", sz) == 0) {
                 ztype |= ZPROTO_INTEGER;
         } else if (strncmp(type, "string", sz) == 0) {
                 ztype |= ZPROTO_STRING;
@@ -302,24 +314,34 @@ field(struct zproto *z, struct zproto_record *proto)
 }
 
 static void
-record(struct zproto *z, struct zproto_record *proto)
+record(struct zproto *z, struct zproto_record *proto, int protocol)
 {
         int err;
+        int tag;
         char name[64];
         struct zproto_record *new = (struct zproto_record *)pool_alloc(z, sizeof(*new));
         memset(new, 0, sizeof(*new));
         new->next = proto->child;
         new->parent = proto;
-
         skip_space(z);
-        err = sscanf(z->data, "%64s", name);
-        if (err != 1) {
-                fprintf(stderr, "line:%d syntax error: expect record name\n", z->linenr);
+        if (protocol == 0) {
+                err = sscanf(z->data, "%64s", name);
+        } else {
+                char buff[64];
+                buff[0] = 0;
+                err = sscanf(z->data, "%64s %32[0-9A-Za-zxX]", name, buff);
+                tag = strtoul(buff, NULL, 0);
+        }
+        if (err < 1) {
+                fprintf(stderr, "line:%d syntax error: expect 'record name' [tag]\n", z->linenr);
                 THROW(z);
         }
         unique_record(z, proto, name);
         new->name = pool_dupstr(z, name);
+        new->tag = tag;
         next_token(z);
+        if (err == 2)
+                next_token(z);
 
         if (*z->data != '{') {
                 fprintf(stderr, "line:%d syntax error: expect '{', but found:%s\n", z->linenr, z->data);
@@ -329,7 +351,7 @@ record(struct zproto *z, struct zproto_record *proto)
         next_token(z);
         
         while (*z->data != '.' && *z->data != '}') {       //child record
-                record(z, new);
+                record(z, new, 0);
                 skip_space(z);
         }
 
@@ -355,7 +377,7 @@ zproto_parse(struct zproto *z, const char *data)
         z->data = data;
         TRY(z) {
                 do {
-                        record(z, &z->record);
+                        record(z, &z->record, 1);
                 } while (eos(z) == 0);
 
                 return 0;
@@ -405,7 +427,6 @@ struct zproto_record *
 zproto_query(struct zproto *z, const char *name)
 {
         struct zproto_record *r;
-        
         for (r = z->record.child; r; r = r->next) {
                 if (strcmp(r->name, name) == 0)
                         return r;
@@ -414,11 +435,60 @@ zproto_query(struct zproto *z, const char *name)
         return NULL;
 }
 
-struct zproto_field *
-zproto_field(struct zproto *z, struct zproto_record *proto)
+struct zproto_record *zproto_querytag(struct zproto *z, uint32_t tag)
 {
-        assert(z);
-        return proto->field;
+        struct zproto_record *r;
+        for (r = z->record.child; r; r = r->next) {
+                if (r->tag == tag)
+                        return r;
+        }
+        return NULL;
+}
+
+
+uint32_t zproto_tag(struct zproto_record *proto)
+{
+        assert(proto);
+        return proto->tag;
+}
+
+int
+zproto_field_type(struct zproto_field *field)
+{
+        return field->type;
+}
+
+const char *
+zproto_field_name(struct zproto_field *field)
+{
+        return field->name;
+}
+
+struct zproto_record *
+zproto_field_seminfo(struct zproto_field *field)
+{
+        return field->seminfo;
+}
+
+void
+zproto_field_begin(struct zproto_record *proto, struct zproto_field_iter *iter)
+{
+        iter->p = proto->field;
+        iter->reserve = NULL;
+        return ;
+}
+
+void 
+zproto_field_next(struct zproto_field_iter *iter)
+{
+        iter->p = iter->p->next;
+        return ;
+}
+
+int 
+zproto_field_end(struct zproto_field_iter *iter)
+{
+        return iter->p == NULL;
 }
 
 struct zproto *
@@ -445,14 +515,6 @@ zproto_free(struct zproto *z)
         return ;
 }
 //////////encode/decode
-void
-zproto_buffer_fill(struct zproto_buffer *zb, size_t pos, int32_t val)
-{
-        assert(pos < zb->cap);
-        *(int32_t *)&zb->p[pos] = val;
-        return ;
-}
-
 static void
 buffer_check(struct zproto_buffer *zb, size_t sz, size_t pack)
 {
@@ -473,13 +535,10 @@ buffer_check(struct zproto_buffer *zb, size_t sz, size_t pack)
 }
 
 struct zproto_buffer *
-zproto_encode_begin(struct zproto *z, int32_t protocol)
+zproto_encode_begin(struct zproto *z)
 {
         struct zproto_buffer *zb = &z->ebuffer;
-        buffer_check(zb, sizeof(int32_t), 0);
         zb->start = 0;
-        *(int32_t *)(zb->p) = protocol;
-        zb->start += sizeof(int32_t);
         return zb;
 }
 
@@ -501,10 +560,22 @@ zproto_encode_record(struct zproto_buffer *zb)
 }
 
 void
-zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zproto_field *field, int32_t count)
+zproto_encode_recordnr(struct zproto_buffer *zb, size_t pos, int32_t val)
 {
+        assert(pos < zb->cap);
+        *(int32_t *)&zb->p[pos] = val;
+        return ;
+}
+
+static void
+encode_tag(struct zproto_buffer *zb, struct zproto_field_iter *iter)
+{
+        struct zproto_field *last = iter->reserve;
+        struct zproto_field *field = iter->p;
         int lasttag = last ? last->tag : 0;
         int skip;
+        
+        iter->reserve = iter->p;
 
         buffer_check(zb, sizeof(int32_t), 0);
         skip = field->tag - lasttag - 1;
@@ -512,10 +583,14 @@ zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zp
 
         *(int32_t *)&zb->p[zb->start] = skip;
         zb->start += sizeof(int32_t);
+        return ;
+}
 
-        if ((field->type & ZPROTO_ARRAY) == 0)
-                return ;
-
+void
+zproto_encode_array(struct zproto_buffer *zb, struct zproto_field_iter *iter, int32_t count)
+{
+        encode_tag(zb, iter);
+        assert(iter->p->type & ZPROTO_ARRAY);
         //tag of array need count
         buffer_check(zb, sizeof(int32_t), 0);
         int32_t *nr = (int32_t *)&zb->p[zb->start];
@@ -524,24 +599,40 @@ zproto_encode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zp
         return ;
 }
 
-void 
-zproto_encode(struct zproto_buffer *zb, struct zproto_field *last, struct zproto_field *field, const char *data, int32_t sz)
+void
+zproto_encode(struct zproto_buffer *zb, struct zproto_field_iter *iter, const char *data, int32_t sz)
 {
-        if ((field->type & ZPROTO_ARRAY) == 0) {
-                zproto_encode_tag(zb, last, field, 0);
-        }
+        struct zproto_field *field = iter->p;
 
-        if ((field->type & ZPROTO_TYPE) == ZPROTO_INTEGER) {
+        if ((field->type & ZPROTO_ARRAY) == 0)
+                encode_tag(zb, iter);
+        
+        if ((field->type & ZPROTO_TYPE) == ZPROTO_RECORD)
+                return ;
+
+        switch (field->type & ZPROTO_TYPE) { 
+        case ZPROTO_BOOLEAN:
+                buffer_check(zb, sizeof(int8_t), 0);
+                assert(sz == sizeof(int8_t));
+                *(int8_t *)&zb->p[zb->start] = *(int8_t *)data;
+                zb->start += sizeof(int8_t);
+                break;
+        case ZPROTO_INTEGER:
                 buffer_check(zb, sizeof(int32_t), 0);
                 assert(sz == sizeof(int32_t));
                 *(int32_t *)&zb->p[zb->start] = *(int32_t *)data;
                 zb->start += sizeof(int32_t);
-        } else if ((field->type & ZPROTO_TYPE) == ZPROTO_STRING) {
+                break;
+        case ZPROTO_STRING:
                 buffer_check(zb, sizeof(int32_t) + sz, 0);
                 *(int32_t *)&zb->p[zb->start] = sz;
                 zb->start += sizeof(int32_t);
                 memcpy(&zb->p[zb->start], data, sz);
                 zb->start += sz;
+                break;
+        default:
+                fprintf(stderr, "zproto_encode, unexpected field->type:%d\n", field->type);
+                break;
         }
 
         return ;
@@ -561,69 +652,90 @@ zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz)
         zb->start = 0;
         zb->p = (uint8_t *)buff;
         zb->cap = sz;
-        zb->start += sizeof(int32_t);   //skip protocol field
         return zb;
 }
 
-void
+size_t
 zproto_decode_end(struct zproto_buffer *zb)
 {
         zb->p = NULL;
-        return ;
+        return zb->start;
 }
 
 int32_t
-zproto_decode_record(struct zproto_buffer *zb)
+zproto_decode_record(struct zproto_buffer *zb, struct zproto_field_iter *iter)
 {
         int32_t nr;
         if (zb->start + sizeof(int32_t) >= zb->cap)
                 return 0;
         nr = *(int32_t *)&zb->p[zb->start];
         zb->start += sizeof(int32_t);
+        iter->p = NULL;
+        iter->reserve = NULL;
         return nr;
 }
 
-struct zproto_field *
-zproto_decode_tag(struct zproto_buffer *zb, struct zproto_field *last, struct zproto_record *proto, int32_t *sz)
+#define decode_check(zb, sz, err)       \
+        if (zb->start + (sz) > zb->cap)   \
+                return err;
+
+int 
+zproto_decode_field(struct zproto_buffer *zb, struct zproto_record *proto, struct zproto_field_iter *iter, int32_t *sz)
 {
         struct zproto_field *field;
+        struct zproto_field *last = iter->p;
         int32_t ltag = last ? last->tag : 0;
+
+        decode_check(zb, sizeof(int32_t), -1)
+
         int32_t skip = *(int32_t *)&zb->p[zb->start];
         zb->start += sizeof(int32_t);
         ltag += skip + 1;
         if (ltag >= proto->fieldnr)
-                return NULL;
+                return -1;
 
         field = proto->fieldarray[ltag];
-
         if (field->type & ZPROTO_ARRAY) {
+                decode_check(zb, sizeof(int32_t), -1)
                 *sz = *(int32_t *)&zb->p[zb->start];
                 zb->start += sizeof(int32_t);
         } else {
                 *sz = 0;
         }
 
-        return field;
+        iter->p = field;
+        return 0;
 }
 
 int
-zproto_decode(struct zproto_buffer *zb, struct zproto_field *field, uint8_t **data, int32_t *sz)
+zproto_decode(struct zproto_buffer *zb, struct zproto_field_iter *iter, uint8_t **data, int32_t *sz)
 {
-        if (zb->start + sizeof(int32_t) > zb->cap)
-                return -1;
-
-        if ((field->type & ZPROTO_TYPE) == ZPROTO_INTEGER) {
+        struct zproto_field *field = iter->p;
+        
+        switch (field->type & ZPROTO_TYPE) {
+        case ZPROTO_INTEGER:
+                decode_check(zb, sizeof(int32_t), -1)
                 *sz = sizeof(int32_t);
                 *data = &zb->p[zb->start];
                 zb->start += sizeof(int32_t);
-        } else if ((field->type & ZPROTO_TYPE) == ZPROTO_STRING) {
+                break;
+        case ZPROTO_STRING:
+                decode_check(zb, sizeof(int32_t), -1)
                 *sz = *(int32_t *)&zb->p[zb->start];
                 zb->start += sizeof(int32_t);
-                if (zb->start + sizeof(int32_t) > zb->cap)
-                        return -1;
-
+                decode_check(zb, *sz, -1)
                 *data = &zb->p[zb->start];
                 zb->start += *sz;
+                break;
+        case ZPROTO_BOOLEAN:
+                decode_check(zb, sizeof(int8_t), -1)
+                *sz = sizeof(int8_t);
+                *data = &zb->p[zb->start];
+                zb->start += sizeof(int8_t);
+                break;
+        default:
+                fprintf(stderr, "zproto_decode, unexpedted field->type:%d\n", field->type);
+                break;
         }
 
         return 0;

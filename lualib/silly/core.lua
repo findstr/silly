@@ -48,6 +48,8 @@ core.running = coroutine.running
 core.quit = silly.quit
 core.write = silly.socketsend
 core.drop = silly.dropmessage
+core.tostring = silly.tostring
+core.genid = silly.genid
 
 function core.error(errmsg)
         print(errmsg)
