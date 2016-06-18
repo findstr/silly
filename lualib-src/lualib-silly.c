@@ -101,6 +101,15 @@ lquit(lua_State *L)
         silly_worker_quit();
         return 0;
 }
+ 
+static int
+lmemstatus(lua_State *L)
+{
+        size_t sz;
+        sz = silly_memstatus();
+        lua_pushinteger(L, sz);
+        return 1;
+}
 
 static int
 ltimeout(lua_State *L)
@@ -212,6 +221,7 @@ luaopen_silly(lua_State *L)
                 {"getenv",      lgetenv},
                 {"setenv",      lsetenv},
                 {"quit",        lquit},
+                {"memstatus",   lmemstatus},
                 //timer
                 {"timeout",     ltimeout},
                 //socket

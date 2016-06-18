@@ -50,6 +50,7 @@ core.write = silly.socketsend
 core.drop = silly.dropmessage
 core.tostring = silly.tostring
 core.genid = silly.genid
+core.memstatus = silly.memstatus
 
 function core.error(errmsg)
         print(errmsg)
