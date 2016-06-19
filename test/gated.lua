@@ -4,6 +4,9 @@ local np = require "netpacket"
 
 gate.listen {
         port = "@9999",
+        unpack = function(data, sz)
+                return core.tostring(data, sz)
+        end,
         accept = function(fd, addr)
                 print("accept", fd, addr)
         end,

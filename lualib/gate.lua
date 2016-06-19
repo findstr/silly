@@ -62,12 +62,21 @@ local function rpcunpack(fd, str, sc)
 end
 
 local function dispatch_socket(fd)
+        local sc = socket_config[fd]
         local empty = #socket_queue[fd] == 0
         local f, d, s = np.pop(queue)
         --push it into socket queue, when process may yield
         while f do
                 assert(f == fd)
-                push_message(f, np.tostring(d, s))
+                local cooked
+                if sc.unpack then
+                        cooked = sc.unpack(d, s)
+                        print("type", type(d))
+                        np.drop(d)
+                else
+                        cooked = np.tostring(d, s)
+                end
+                push_message(f, cooked)
                 f, d, s = np.pop(queue)
         end
 
@@ -75,9 +84,7 @@ local function dispatch_socket(fd)
         if empty == false or (not socket_config[fd]) then
                 return
         end
-        local unpack = nil
         local data = pop_message(fd)
-        local sc = socket_config[fd]
         if sc.mode == "rpc" then
                 while data do
                         rpcunpack(fd, data, sc)
@@ -89,14 +96,8 @@ local function dispatch_socket(fd)
                 end
         else
                 while data do
-                        local trans
-                        if sc.unpack then
-                                trans = sc.unpack(data)
-                        else
-                                trans = data
-                        end
                         --it will be yield at this
-                        sc.data(fd, trans)       
+                        sc.data(fd, data)       
                         if socket_queue[fd] == nil then         --already closed
                                 return ;
                         end
@@ -151,7 +152,6 @@ local function gate_dispatch(type, fd, message, ...)
         --have already closed
         if type ~= "accept" and socket_config[fd] == nil then                  
                 assert(socket_queue[fd] == nil)
-                core.drop(message)
                 return ;
         end
 
@@ -165,8 +165,6 @@ function gate.connect(config)
         end
         if config.mode == "rpc" then
                 assert(config.proto)
-                assert(config.pack == nil)
-                assert(config.unpack == nil)
                 assert(config.data == nil,
                 "rpc mode need no 'data' func, result will be ret by rpccall")
                 assert(config.rpc, "the callback of rpc is 'rpc', not 'data'")

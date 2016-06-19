@@ -322,7 +322,7 @@ ldrop(lua_State *L)
 {
         int type;
         type = lua_type(L, 1);
-        if (type == LUA_TUSERDATA) {
+        if (type == LUA_TLIGHTUSERDATA) {
                 void *p = lua_touserdata(L, 1);
                 silly_free(p);
         } else {
