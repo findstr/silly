@@ -15,6 +15,7 @@ local function new_socket(fd)
                 delim = false,
                 suspend = false,
                 co = false,
+                limit = 8192,
         }
         assert(socket_pool[fd] == nil, 
                 "new_socket incorrect" .. fd .. "not be closed")
@@ -98,6 +99,14 @@ function socket.connect(ip, port)
         return fd
 end
 
+function socket.limit(fd, limit)
+        local s = socket_pool[fd]
+        if s == nil then
+                return false
+        end
+        s.limit = limit
+end
+
 function socket.close(fd)
         local s = socket_pool[fd]
         if s == nil then
@@ -118,18 +127,21 @@ end
 
 function socket.read(fd, n)
         local s = socket_pool[fd]
-        assert(s)
+        if not s then
+                return nil
+        end
+        if n <= 0 then
+                return ""
+        end
         local r = ns.read(nb_pool, s.sbuffer, n)
         if r then
                 return r
         end
-        
         s.delim = n
         local ok = suspend(s)
         if ok == false then     --occurs error
                 return nil
         end
-
         local r = ns.read(nb_pool, s.sbuffer, n)
         assert(r)
         return r;
@@ -138,7 +150,9 @@ end
 function socket.readline(fd, delim)
         delim = delim or "\n"
         local s = socket_pool[fd]
-        assert(s)
+        if not s then
+                return nil
+        end
         local r = ns.readline(nb_pool, s.sbuffer, delim)
         if r then
                 return r
@@ -156,6 +170,13 @@ function socket.readline(fd, delim)
 end
 
 function socket.write(fd, str)
+        local s = socket_pool[fd]
+        if not s then
+                return false
+        end
+        if #str > s.limit then
+                return false, "socket send size is limited:" .. s.limit
+        end
         local p, sz = ns.pack(str)
         return core.write(fd, p, sz)
 end

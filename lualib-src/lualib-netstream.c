@@ -180,6 +180,7 @@ push(struct lua_State *L, int sid, char *data, int sz)
 static int
 pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 {
+        assert(sz > 0);
         struct node *n = nb->head;
         if (n->size >= sz) {
                 char *s = &n->buff[n->start];
@@ -385,19 +386,14 @@ lreadline(struct lua_State *L)
 static int
 lpack(struct lua_State *L)
 {
+        char *p;
         const char *str;
         size_t size;
-        char *p;
-
         str = luaL_checklstring(L, 1, &size);
-        assert(size < (unsigned short)-1);
-
         p = silly_malloc(size);
         memcpy(p, str, size);
-
         lua_pushlightuserdata(L, p);
         lua_pushinteger(L, size);
-        
         return 2;
 }
 

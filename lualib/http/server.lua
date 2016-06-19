@@ -74,6 +74,7 @@ local http_err_msg = {
 }
 
 local function httpd(fd, handler)
+        socket.limit(fd, 1024 * 512)
         local readl = function()
                 return readline(fd, "\r\n")
         end
