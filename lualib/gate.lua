@@ -240,7 +240,13 @@ local function rpcsend(fd, sc, session, typ, dat)
         local buff = core.tostring(data, sz)
         data, sz = sc.proto:encode(typ, dat)
         buff = buff .. core.tostring(data, sz)
-        local err = core.write(fd, np.pack(buff))
+        local d
+        if sc.pack then
+                d = sc.pack(buff)
+        else
+                d = buff
+        end
+        local err = core.write(fd, np.pack(d))
         if not err then
                 return false, "send error"
         end

@@ -130,7 +130,7 @@ aes_do(lua_State *L, aes_func_t func)
                 uint8_t *recv = (uint8_t *)lua_newuserdata(L, data_sz);
                 func(key, data, recv, data_sz);
                 lua_pushlstring(L, (char *)recv, data_sz);
-        } else if (data_type == LUA_TUSERDATA) {
+        } else if (data_type == LUA_TLIGHTUSERDATA) {
                 uint8_t *data = (uint8_t *)lua_touserdata(L, 2);
                 size_t data_sz = luaL_checkinteger(L, 3);
                 func(key, data, data, data_sz);

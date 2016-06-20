@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local gate = require "gate"
+local crypt = require "crypt"
 local np = require "netpacket"
 
 core.start(function()
@@ -7,6 +8,14 @@ core.start(function()
         local fd = gate.connect {
                 ip = "127.0.0.1",
                 port = 9999,
+                pack = function(data)
+                        return crypt.aesencode("hello", data)
+                end,
+                unpack = function(data, sz)
+                        crypt.aesdecode("hello", data, sz)
+                        return core.tostring(data, sz)
+                end,
+
                 close = function(fd, errno)
                         print("close", fd, errno)
                 end,

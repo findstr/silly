@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local gate = require "gate"
+local crypt = require "crypt"
 local zproto = require "zproto"
 
 local logic = zproto:parse [[
@@ -18,6 +19,13 @@ gate.listen {
         port = "@9999",
         mode = "rpc",
         proto = logic,
+        pack = function(data)
+                return crypt.aesencode("hello", data)
+        end,
+        unpack = function(data, sz)
+                crypt.aesdecode("hello", data, sz)
+                return core.tostring(data, sz)
+        end,
         accept = function(fd, addr)
                 print("accept", fd, addr)
         end,

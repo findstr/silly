@@ -1,6 +1,7 @@
 local core = require "silly.core"
 local gate = require "gate"
 local zproto = require "zproto"
+local crypt = require "crypt"
 
 local logic = zproto:parse [[
 test 0xff {
@@ -31,6 +32,13 @@ core.start(function()
                 port = 9999,
                 mode = "rpc",
                 proto = logic,
+                pack = function(data)
+                        return crypt.aesencode("hello", data)
+                end,
+                unpack = function(data, sz)
+                        crypt.aesdecode("hello", data, sz)
+                        return core.tostring(data, sz)
+                end,
                 close = function(fd, errno)
                         print("close", fd, errno)
                 end,

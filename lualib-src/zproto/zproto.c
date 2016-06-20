@@ -684,7 +684,7 @@ zproto_decode_field(struct zproto_buffer *zb, struct zproto_record *proto, struc
 {
         struct zproto_field *field;
         struct zproto_field *last = iter->p;
-        int32_t ltag = last ? last->tag : 0;
+        uint32_t ltag = last ? last->tag : 0;
 
         decode_check(zb, sizeof(int32_t), -1)
 
