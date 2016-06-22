@@ -90,10 +90,6 @@ function zproto:decode(typ, data, sz)
         return engine.decode(self.proto, record, data, sz)
 end
 
-function zproto:tostring(data, sz)
-        return engine.tostring(self.proto, data, sz)
-end
-
 function zproto:pack(data, sz)
         return engine.pack(self.proto, data, sz)
 end

@@ -123,6 +123,14 @@ ltimeout(lua_State *L)
 }
 
 static int
+ltimenow(lua_State *L)
+{
+        uint32_t now = silly_timer_now();
+        lua_pushinteger(L, now);
+        return 1;
+}
+
+static int
 ldispatch(lua_State *L)
 {
         lua_pushlightuserdata(L, dispatch);
@@ -224,6 +232,7 @@ luaopen_silly(lua_State *L)
                 {"memstatus",   lmemstatus},
                 //timer
                 {"timeout",     ltimeout},
+                {"timenow",     ltimenow},
                 //socket
                 {"socketlisten",        lsocket_listen},
                 {"socketconnect",       lsocket_connect},

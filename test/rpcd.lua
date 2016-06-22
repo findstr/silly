@@ -7,6 +7,7 @@ local logic = zproto:parse [[
 test 0xff {
         .name:string 1
         .age:integer 2
+        .rand:string 3
 }
 ]]
 
@@ -22,9 +23,8 @@ gate.listen {
         pack = function(data)
                 return crypt.aesencode("hello", data)
         end,
-        unpack = function(data, sz)
-                crypt.aesdecode("hello", data, sz)
-                return core.tostring(data, sz)
+        unpack = function(data)
+                return crypt.aesdecode("hello", data)
         end,
         accept = function(fd, addr)
                 print("accept", fd, addr)
@@ -35,7 +35,7 @@ gate.listen {
         end,
 
         rpc = function(fd, cookie, msg)
-                print("rpc recive", msg.name, msg.age)
+                print("rpc recive", msg.name, msg.age, msg.rand)
                 gate.rpcret(fd, cookie, "test", msg)
                 print("port1 data finish")
                 core.fork(quit)

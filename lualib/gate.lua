@@ -34,7 +34,11 @@ local function pop_message(fd)
         return d
 end
 
-local function rpcunpack(fd, str, sc)
+local function rpcunpack(fd, sc, data)
+        if sc.unpack then
+                data = sc.unpack(data)
+        end
+        local str = proto:unpack(data)
         local rpc, takes = proto:decode("rpc", str)
         if not rpc then
                 print("rpcunpack parse the header fail")
@@ -47,62 +51,90 @@ local function rpcunpack(fd, str, sc)
                 gate.close(fd)
                 return
         end
-        local co = socket_rpc[fd][rpc.session]
+        res.__rpc = rpc
+        return res
+end
+
+local function rpcdispatch(fd, sc)
         if sc.type == "client" then
-                if not co then
-                        print("rpc unpack try a nonexit session")
-                        return
+                local data = pop_message(fd)
+                while data do
+                        local rpc = data.__rpc;
+                        local co = socket_rpc[fd][rpc.session]
+                        if not co then
+                                print("rpc unpack try a nonexit session", rpc.session)
+                                return
+                        end
+                        socket_rpc[fd][rpc.session] = nil
+                        core.wakeup(co, data)
+                        data = pop_message(fd)
                 end
-                socket_rpc[fd][rpc.session] = nil
-                core.wakeup(co, res)
         else
-                assert(not co)
-                sc.rpc(fd, rpc, res)
+                local data = pop_message(fd)
+                while data do
+                        --it maybe yield at this
+                        sc.rpc(fd, data.__rpc, data)
+                        if socket_queue[fd] == nil then
+                                return ;
+                        end
+                        data = pop_message(fd)
+                end
+        end
+end
+
+local function dataunpack(_, sc, data)
+        local cooked
+        if sc.unpack then
+                cooked = sc.unpack(data)
+        else
+                cooked = data
+        end
+        return cooked
+end
+
+local function datadispatch(fd, sc)
+        local data = pop_message(fd)
+        while data do
+                --it maybe yield at this
+                sc.data(fd, data)       
+                if socket_queue[fd] == nil then         --already closed
+                        return ;
+                end
+                data = pop_message(fd)
         end
 end
 
 local function dispatch_socket(fd)
         local sc = socket_config[fd]
         local empty = #socket_queue[fd] == 0
-        local f, d, s = np.pop(queue)
+        local f, data = np.pop(queue)
         --push it into socket queue, when process may yield
         while f do
                 assert(f == fd)
                 local cooked
-                if sc.unpack then
-                        cooked = sc.unpack(d, s)
-                        print("type", type(d))
-                        np.drop(d)
+                if sc.mode == "rpc" then
+                        cooked = rpcunpack(fd, sc, data)
                 else
-                        cooked = np.tostring(d, s)
+                        cooked = dataunpack(fd, sc, data);
                 end
+                assert(cooked)
                 push_message(f, cooked)
-                f, d, s = np.pop(queue)
+                f, data = np.pop(queue)
         end
 
-        --if socket_queue[fd] is not empty, it blocked by last message process, directly return
-        if empty == false or (not socket_config[fd]) then
+        --if socket_queue[fd] is not empty
+        --it blocked by last message process
+        --directly return
+        assert(socket_config[fd])
+        if empty == false  then
                 return
         end
-        local data = pop_message(fd)
+
+        --dispatch message
         if sc.mode == "rpc" then
-                while data do
-                        rpcunpack(fd, data, sc)
-                        --already closed
-                        if socket_queue[fd] == nil then
-                                return ;
-                        end
-                        data = pop_message(fd)
-                end
+                rpcdispatch(fd, sc)
         else
-                while data do
-                        --it will be yield at this
-                        sc.data(fd, data)       
-                        if socket_queue[fd] == nil then         --already closed
-                                return ;
-                        end
-                        data = pop_message(fd)
-                end
+                datadispatch(fd, sc)
         end
 end
 
@@ -150,7 +182,7 @@ end
 
 local function gate_dispatch(type, fd, message, ...)
         --have already closed
-        if type ~= "accept" and socket_config[fd] == nil then                  
+        if type ~= "accept" and socket_config[fd] == nil then
                 assert(socket_queue[fd] == nil)
                 return ;
         end
@@ -236,17 +268,14 @@ local function rpcsend(fd, sc, session, typ, dat)
                 session = session;
                 command = cmd,
         }
-        local data, sz = proto:encode("rpc", rpc)
-        local buff = core.tostring(data, sz)
-        data, sz = sc.proto:encode(typ, dat)
-        buff = buff .. core.tostring(data, sz)
-        local d
+        local head = proto:encode("rpc", rpc)
+        local body = sc.proto:encode(typ, dat)
+        head = head .. body
+        head = proto:pack(head)
         if sc.pack then
-                d = sc.pack(buff)
-        else
-                d = buff
+                head = sc.pack(head)
         end
-        local err = core.write(fd, np.pack(d))
+        local err = core.write(fd, np.pack(head))
         if not err then
                 return false, "send error"
         end

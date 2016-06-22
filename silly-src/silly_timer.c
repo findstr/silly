@@ -101,12 +101,7 @@ freenode(struct silly_timer *timer, struct node *n)
 uint32_t
 silly_timer_now()
 {
-        uint32_t ms;
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        ms = tv.tv_sec * 1000;
-        ms += tv.tv_usec / 1000;
-        return ms;
+        return getms();
 }
 
 uint32_t

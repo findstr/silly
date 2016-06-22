@@ -9,9 +9,8 @@ gate.listen {
         pack = function(data)
                 return crypt.aesencode("hello", data)
         end,
-        unpack = function(data, sz)
-                crypt.aesdecode("hello", data, sz)
-                return core.tostring(data, sz)
+        unpack = function(data)
+                return crypt.aesdecode("hello", data, sz)
         end,
         accept = function(fd, addr)
                 print("accept", fd, addr)

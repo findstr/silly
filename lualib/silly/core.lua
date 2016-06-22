@@ -51,6 +51,7 @@ core.drop = silly.dropmessage
 core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus
+core.now = silly.timenow
 
 function core.error(errmsg)
         print(errmsg)

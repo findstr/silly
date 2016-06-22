@@ -12,8 +12,7 @@ core.start(function()
                         return crypt.aesencode("hello", data)
                 end,
                 unpack = function(data, sz)
-                        crypt.aesdecode("hello", data, sz)
-                        return core.tostring(data, sz)
+                        return crypt.aesdecode("hello", data, sz)
                 end,
 
                 close = function(fd, errno)

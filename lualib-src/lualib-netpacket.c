@@ -238,17 +238,15 @@ lpop(lua_State *L)
         if (p->tail == p->head) {       //empty
                 lua_pushnil(L);
                 lua_pushnil(L);
-                lua_pushnil(L);
         } else {
                 t = p->tail;
                 p->tail = (p->tail + 1) % p->cap;
                 pk = &p->queue[t];
                 lua_pushinteger(L, pk->fd);
-                lua_pushlightuserdata(L, pk->buff);
-                lua_pushinteger(L, pk->size);
+                lua_pushlstring(L, pk->buff, pk->size);
+                silly_free(pk->buff);
         }
-
-        return 3;
+        return 2;
 }
 
 static int
@@ -269,16 +267,6 @@ lpack(lua_State *L)
         lua_pushinteger(L, size + 2);
 
         return 2;
-}
-
-static int
-ltostring(lua_State *L)
-{
-        char *data = lua_touserdata(L, 1);
-        lua_Integer n = luaL_checkinteger(L, 2);
-        lua_pushlstring(L, data, n);
-        silly_free(data);
-        return 1;
 }
 
 static int
@@ -317,31 +305,14 @@ lmessage(lua_State *L)
         }
 }
 
-static int
-ldrop(lua_State *L)
-{
-        int type;
-        type = lua_type(L, 1);
-        if (type == LUA_TLIGHTUSERDATA) {
-                void *p = lua_touserdata(L, 1);
-                silly_free(p);
-        } else {
-                luaL_error(L, "invalid data");
-        }
-
-        return 0;
-}
-
 int luaopen_netpacket(lua_State *L)
 {
         luaL_Reg tbl[] = {
                 {"create",      lcreate},
                 {"pop",         lpop},
                 {"pack",        lpack},
-                {"tostring",    ltostring},
                 {"clear",       lclear},
                 {"message",     lmessage},
-                {"drop",        ldrop},
                 {NULL, NULL},
         };
  

@@ -215,16 +215,12 @@ lencode(lua_State *L)
         } else {
                 data = zproto_encode_end(zb, &sz);
         }
-
         if (data) {
-                lua_pushlightuserdata(L, (char *)data);
-                lua_pushinteger(L, sz);
+                lua_pushlstring(L, (char *)data, sz);
         } else {
                 lua_pushnil(L);
-                lua_pushnil(L);
         }
-
-        return 2;
+        return 1;
 }
 static int decode_table(lua_State *L, struct zproto_record *proto, struct zproto_buffer *zb, int deep);
 
@@ -345,7 +341,6 @@ ldecode(lua_State *L)
         struct zproto_record *proto = lua_touserdata(L, 2);
         lua_checkstack(L, MAX_RECURSIVE * 2 + 8);
         ud = (uint8_t *)get_buffer(L, 3, &sz);
-
         struct zproto_buffer *zb = zproto_decode_begin(z, ud, sz);
         lua_newtable(L);
         err = decode_table(L, proto, zb, 0);
@@ -371,10 +366,11 @@ ltostring(lua_State *L)
 static int
 lpack(lua_State *L)
 {
-        const uint8_t *pack;
         int osz;
-        const uint8_t *ud = (uint8_t *)lua_touserdata(L, 2);
-        int sz = (int) luaL_checkinteger(L, 3);
+        size_t sz;
+        const uint8_t *ud;
+        const uint8_t *pack;
+        ud = get_buffer(L, 2, &sz);
         pack = zproto_pack(zproto(L), ud, sz, &osz);
         if (pack)
                 lua_pushlstring(L, (char *)pack, osz);
@@ -394,14 +390,11 @@ lunpack(lua_State *L)
         ud = get_buffer(L, 2, &sz);
         unpack = zproto_unpack(zproto(L), ud, sz, &osz);
         if (unpack) {
-                lua_pushlightuserdata(L, (uint8_t *)unpack);
-                lua_pushinteger(L, osz);
+                lua_pushlstring(L, (char *)unpack, osz);
         } else {
                 lua_pushnil(L);
-                lua_pushnil(L);
         }
-
-        return 2;
+        return 1;
 }
 
 int
