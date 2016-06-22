@@ -79,7 +79,7 @@ silly_worker_quit()
 
 int silly_worker_checkquit()
 {
-        return W->quit;
+        return W ? W->quit : 0;
 }
 
 static int

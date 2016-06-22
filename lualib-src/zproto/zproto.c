@@ -317,7 +317,7 @@ static void
 record(struct zproto *z, struct zproto_record *proto, int protocol)
 {
         int err;
-        int tag;
+        int tag = 0;
         char name[64];
         struct zproto_record *new = (struct zproto_record *)pool_alloc(z, sizeof(*new));
         memset(new, 0, sizeof(*new));
