@@ -89,7 +89,11 @@ new_node(struct lua_State *L)
         } else {
                 free = (struct node *)lua_touserdata(L, -1);
         }
-        lua_pushlightuserdata(L, free->next);
+        lua_pop(L, 1);
+        if (free->next)
+                lua_pushlightuserdata(L, free->next);
+        else
+                lua_pushnil(L);
         lua_rawseti(L, POOL, 1);
         return free;
 }
@@ -129,6 +133,7 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
         lua_rawgeti(L, POOL, 1);
         struct node *free = lua_touserdata(L, -1);
         if (free == NULL) {
+                n->next = NULL;
                 lua_pushlightuserdata(L, n);
                 lua_rawseti(L, POOL, 1);
         } else {
@@ -189,9 +194,6 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
                 n->size -= sz; 
                 if (n->size == 0)
                         remove_node(L, nb, n);
-
-
-
         } else {
                 char *buff = (char *)silly_malloc(sz);
                 char *p = buff;
@@ -201,15 +203,13 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 
                         memcpy(p, &n->buff[n->start], tmp);
                         p += tmp;
+                        sz -= tmp;
                         n->start += tmp;
                         n->size -= tmp;
-
                         if (n->size == 0) {
                                 remove_node(L, nb, n);
                                 n = nb->head;
                         }
-                        
-                        sz -= tmp;
                 }
                 assert(sz == 0);
                 lua_pushlstring(L, buff, p - buff);
