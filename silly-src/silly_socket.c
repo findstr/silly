@@ -36,6 +36,7 @@
 
 enum stype {
         STYPE_RESERVE,
+        STYPE_ALLOCED,
         STYPE_LISTEN,           //listen fd
         STYPE_SOCKET,           //socket normal status
         STYPE_HALFCLOSE,        //socket is closed
@@ -173,12 +174,13 @@ static struct socket *
 newsocket(struct silly_socket *ss, struct socket *s, int fd, enum stype type)
 {
         int err;
-        assert(type == STYPE_SOCKET);
         if (s == NULL)
                 s = allocsocket(ss, type);
-        if (s == NULL)
+        if (s == NULL) {
+                close(fd);
                 return NULL;
-        assert(s->type == type || s->type == STYPE_CONNECTING);
+        }
+        assert(s->type == type || s->type == STYPE_ALLOCED);
         assert(s->presize == MIN_READBUFF_LEN);
         s->fd = fd;
         s->type = type;
@@ -272,6 +274,7 @@ report_accept(struct silly_socket *ss, struct socket *listen)
         struct sockaddr_in addr;
         struct silly_message_socket *sa;
         char buff[INET_ADDRSTRLEN];
+        assert(ADDRLEN >= INET_ADDRSTRLEN + 8);
         socklen_t len = sizeof(struct sockaddr);
         int fd = accept(listen->fd, (struct sockaddr *)&addr, &len);
         if (fd < 0)
@@ -290,17 +293,6 @@ report_accept(struct silly_socket *ss, struct socket *listen)
         sa->sid = s->sid;
         sa->ud = listen->sid;
         silly_worker_push(tocommon(sa));         
-        return ;
-}
-
-static void
-report_connected(struct silly_socket *ss, int sid)
-{
-        (void)ss;
-        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
-        sc->type = SILLY_SCONNECTED;
-        sc->sid = sid;
-        silly_worker_push(tocommon(sc));
         return ;
 }
 
@@ -349,6 +341,44 @@ report_error(struct silly_socket *ss, struct socket *s, int err)
         return ;
 }
 
+static __inline int
+checkconnected(int fd)
+{
+        int ret;
+        int err;
+        socklen_t errlen = sizeof(err);
+        ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+        if (ret < 0) {
+                perror("checkconnected");
+                return ret;
+        }
+        if (err != 0) {
+                errno = err;
+                fprintf(stderr, "checkconnected:%d\n", err);
+                return -1;
+        }
+        return 0;
+}
+
+static void
+report_connected(struct silly_socket *ss, struct socket *s)
+{
+        int err;
+        err = checkconnected(s->fd);
+        if (err < 0) {  //check ok
+                report_error(ss, s, errno);
+                delsocket(ss, s);
+                return ;
+        }
+        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
+        sc->type = SILLY_SCONNECTED;
+        sc->sid = s->sid;
+        if (wlist_empty(s))
+                sp_write_enable(ss->spfd, s->fd, s, 0);
+        silly_worker_push(tocommon(sc));
+        return ;
+}
+
 static ssize_t
 readn(int fd, uint8_t *buff, size_t sz)
 {
@@ -364,7 +394,7 @@ readn(int fd, uint8_t *buff, size_t sz)
                                 fprintf(stderr, "readn:%d, EAGAIN\n", fd);
                                 return 0;
                         default:
-                                fprintf(stderr, "sendn:%d, %s\n", fd, strerror(errno));
+                                fprintf(stderr, "readn:%d, %s\n", fd, strerror(errno));
                                 return -1;
                         }
                 } else if (len == 0) {
@@ -566,7 +596,7 @@ silly_socket_listen(const char *ip, uint16_t port, int backlog)
         fd = dolisten(ip, port, backlog);
         if (fd < 0)
                 return fd;
-        s = allocsocket(SSOCKET, STYPE_LISTEN);
+        s = allocsocket(SSOCKET, STYPE_ALLOCED);
         if (s == NULL) {
                 fprintf(stderr, "listen %s:%d:%d allocsocket fail\n", ip, port, backlog);
                 close(fd);
@@ -586,7 +616,7 @@ trylisten(struct silly_socket *ss, struct cmdpacket *cmd)
         int sid = cmd->u.listen.sid;
         struct socket *s = &ss->socketpool[HASH(sid)];
         assert(s->sid == sid);
-        assert(s->type = STYPE_LISTEN);
+        assert(s->type == STYPE_ALLOCED);
         int err = sp_add(ss->spfd, s->fd, s);
         if (err < 0) {
                 perror("trylisten");
@@ -594,6 +624,7 @@ trylisten(struct silly_socket *ss, struct cmdpacket *cmd)
                 close(s->fd);
                 freesocket(ss, s);
         }
+        s->type = STYPE_LISTEN;
         return err;
 }
 
@@ -603,7 +634,7 @@ silly_socket_connect(const char *addr, int port)
         size_t sz;
         struct cmdpacket cmd;
         struct socket *s;
-        s = allocsocket(SSOCKET, STYPE_CONNECTING);
+        s = allocsocket(SSOCKET, STYPE_ALLOCED);
         if (s == NULL)
                 return -1;
         cmd.type = 'C';
@@ -627,29 +658,36 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
         const char *ip = cmd->u.connect.ip;
         struct socket *s =  &ss->socketpool[HASH(sid)];
         assert(s->sid == sid);
-        assert(s->type == STYPE_CONNECTING);
+        assert(s->type == STYPE_ALLOCED);
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         inet_pton(AF_INET, ip, &addr.sin_addr);
         fd = socket(AF_INET, SOCK_STREAM, 0);
-        //TODO: nonblock it
+        assert(fd >= 0);
+        nonblock(fd);
+        keepalive(fd);
+        nodelay(fd);
         err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err < 0) {
+        if (err == -1 && errno != EINPROGRESS) {        //error
                 const char *fmt = "tryconnect:ip:%s:%d,errno:%d\n";
                 fprintf(stderr, fmt, ip, port, errno);
                 report_error(ss, s, errno);
                 freesocket(ss, s);
                 return ;
+        } else if (err == 0) {  //connect
+                s = newsocket(ss, s, fd, STYPE_SOCKET);
+                if (s == NULL)
+                        report_close(ss, s);
+                else 
+                        report_connected(ss, s);
+                return ;
+        } else {        //block
+                s = newsocket(ss, s, fd, STYPE_CONNECTING);
+                if (s == NULL)
+                        report_close(ss, s);
+                else
+                        sp_write_enable(ss->spfd, s->fd, s, 1);
         }
-        keepalive(fd);
-        nodelay(fd);
-        assert(err == 0);
-        s = newsocket(ss, s, fd, STYPE_SOCKET);
-        if (s == NULL)
-                report_close(ss, s);
-        else 
-                report_connected(ss, s->sid);
-        return ;
 }
 
 static __inline struct socket *
@@ -736,6 +774,7 @@ trysend(struct silly_socket *ss, struct cmdpacket *cmd)
                         return -1;
                 } else if (n < sz) {
                         wlist_append(s, data, n, sz);
+                        sp_write_enable(ss->spfd, s->fd, s, 1);
                 } else {
                         assert(n == sz);
                         silly_free(data);
@@ -838,6 +877,10 @@ silly_socket_poll()
                 case STYPE_LISTEN:
                         assert(SP_READ(e));
                         report_accept(ss, s);
+                        continue;
+                case STYPE_CONNECTING:
+                        s->type = STYPE_SOCKET;
+                        report_connected(ss, s);
                         continue;
                 case STYPE_RESERVE:
                         fprintf(stderr, "silly_socket_poll reserve socket\n");
