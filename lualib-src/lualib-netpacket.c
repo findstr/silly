@@ -231,11 +231,10 @@ lpop(lua_State *L)
         struct packet *pk;
         struct netpacket *p;
         p = luaL_checkudata(L, 1, "netpacket");
-
         assert(p->head < p->cap);
         assert(p->tail < p->cap);
- 
         if (p->tail == p->head) {       //empty
+                lua_pushnil(L);
                 lua_pushnil(L);
                 lua_pushnil(L);
         } else {
@@ -243,10 +242,23 @@ lpop(lua_State *L)
                 p->tail = (p->tail + 1) % p->cap;
                 pk = &p->queue[t];
                 lua_pushinteger(L, pk->fd);
-                lua_pushlstring(L, pk->buff, pk->size);
-                silly_free(pk->buff);
+                lua_pushlightuserdata(L, pk->buff);
+                lua_pushinteger(L, pk->size);
         }
-        return 2;
+        return 3;
+}
+
+static const char *
+getbuffer(lua_State *L, int n, size_t *sz)
+{
+        if (lua_type(L, n) == LUA_TSTRING) {
+                return luaL_checklstring(L, n, sz);
+        } else {
+                *sz = luaL_checkinteger(L, n + 1);
+                return lua_touserdata(L, n);
+        }
+
+        return NULL;
 }
 
 static int
@@ -255,8 +267,7 @@ lpack(lua_State *L)
         const char *str;
         size_t size;
         char *p;
-
-        str = luaL_checklstring(L, 1, &size);
+        str = getbuffer(L, 1, &size);
         assert(size < (unsigned short)-1);
 
         p = silly_malloc(size + 2);
@@ -276,6 +287,17 @@ lclear(lua_State *L)
         assert(sid >= 0);
         clear_incomplete(L, sid);
 
+        return 0;
+}
+
+static int
+ldrop(lua_State *L)
+{
+        int type = lua_type(L, 1);
+        if (type != LUA_TLIGHTUSERDATA)
+                return luaL_error(L, "netpacket.drop can only drop lightuserdata");
+        void *p = lua_touserdata(L, 1);
+        silly_free(p);
         return 0;
 }
 
@@ -312,6 +334,7 @@ int luaopen_netpacket(lua_State *L)
                 {"pop",         lpop},
                 {"pack",        lpack},
                 {"clear",       lclear},
+                {"drop",        ldrop},
                 {"message",     lmessage},
                 {NULL, NULL},
         };

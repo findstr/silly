@@ -23,8 +23,8 @@ gate.listen {
         pack = function(data)
                 return crypt.aesencode("hello", data)
         end,
-        unpack = function(data)
-                return crypt.aesdecode("hello", data)
+        unpack = function(data, sz)
+                return crypt.aesdecode("hello", data, sz)
         end,
         accept = function(fd, addr)
                 print("accept", fd, addr)
@@ -34,7 +34,7 @@ gate.listen {
                 print("close", fd, errno)
         end,
 
-        rpc = function(fd, cookie, msg)
+        data = function(fd, msg, cookie)
                 print("rpc recive", msg.name, msg.age, msg.rand)
                 gate.rpcret(fd, cookie, "test", msg)
                 print("port1 data finish")

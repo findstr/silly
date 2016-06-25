@@ -130,16 +130,15 @@ aes_do(lua_State *L, aes_func_t func)
                 uint8_t *recv = (uint8_t *)lua_newuserdata(L, data_sz);
                 func(key, data, recv, data_sz);
                 lua_pushlstring(L, (char *)recv, data_sz);
+                return 1;
         } else if (data_type == LUA_TLIGHTUSERDATA) {
                 uint8_t *data = (uint8_t *)lua_touserdata(L, 2);
                 size_t data_sz = luaL_checkinteger(L, 3);
                 func(key, data, data, data_sz);
-                lua_pushnil(L);
+                return 2;
         } else {
-                luaL_error(L, "Invalid content");
+                return luaL_error(L, "Invalid content");
         }
-
-        return 1;
 }
 
 static int

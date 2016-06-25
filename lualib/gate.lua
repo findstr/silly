@@ -3,6 +3,110 @@ local env = require "silly.env"
 local np = require "netpacket"
 local zproto = require "zproto"
 
+--[[
+gate can work on two mode
+
+1. normal mode
+gate.listen {
+        port = ip@port:backlog 
+        pack = function(...)
+                @...
+                        is the all param
+                        which passed to gate.send
+                        exclude fd
+                @return 
+                        return string or (lightuserdata, size)
+        end,
+        unpack = function(data, sz)
+                @data 
+                        lightuserdata
+                        need not free the data
+                        it will be freed by gate.lua
+                @sz 
+                        size of lightuserdata
+                @return
+                        return string or table
+        end,
+        accept = function(fd, addr)
+                @fd 
+                        new socket fd come int
+                @addr 
+                        ip:port of new socket 
+                @return
+                        no return
+        end,
+        close = function(fd, errno)
+                @fd 
+                        the fd which closed by client
+                        or occurs errors
+                @errno 
+                        close errno, if normal is 0
+                @return 
+                        no return
+        end,
+        data = function(fd, data)
+                @fd 
+                        socket fd
+                @data 
+                        a complete packetdata(string or table)
+                        if define 'pack' function
+                        the 'data' is the value which 'pack' return
+                @return
+                        no return
+        end
+
+2. rpc mode
+gate.listen {
+        port = ip@port:backlog 
+        mode = "rpc",
+        proto = the proto instance
+        pack = function(data)
+                @data 
+                        binary string
+                @return 
+                        return string or (lightuserdata, size)
+        end,
+        unpack = function(data, sz)
+                @data 
+                        lightuserdata
+                        need not free the data
+                        it will be freed by gate.lua
+                @sz 
+                        size of lightuserdata
+                @return
+                        return string or lightuserdata
+        end,
+        accept = function(fd, addr)
+                @fd 
+                        new socket fd come int
+                @addr 
+                        ip:port of new socket 
+                @return
+                        no return
+        end,
+        close = function(fd, errno)
+                @fd 
+                        the fd which closed by client
+                        or occurs errors
+                @errno 
+                        close errno, if normal is 0
+                @return 
+                        no return
+        end,
+        data = function(fd, data, rpc)
+                @fd 
+                        socket fd
+                @data 
+                        a table parsed from zproto
+                @rpc
+                        rpc header defined in gate.lua
+                        
+                @return
+                        no return
+        end
+
+]]--
+
 local proto = zproto:parse [[
 rpc {
         .session:integer 1
@@ -34,21 +138,21 @@ local function pop_message(fd)
         return d
 end
 
-local function rpcunpack(fd, sc, data)
+local function rpcunpack(fd, sc, data, sz)
         if sc.unpack then
-                data = sc.unpack(data)
+                data, sz = sc.unpack(data, sz)
         end
-        local str = proto:unpack(data)
+        local str = proto:unpack(data, sz)
         local rpc, takes = proto:decode("rpc", str)
         if not rpc then
                 print("rpcunpack parse the header fail")
-                gate.close(fd)
+                gate.forceclose(fd)
                 return
         end
         local res = sc.proto:decode(rpc.command, str:sub(takes + 1))
         if not res then
                 print("rpc unpack fail", rpc.session, rpc.command)
-                gate.close(fd)
+                gate.forceclose(fd)
                 return
         end
         res.__rpc = rpc
@@ -56,7 +160,7 @@ local function rpcunpack(fd, sc, data)
 end
 
 local function rpcdispatch(fd, sc)
-        if sc.type == "client" then
+        if sc.__type == "client" then
                 local data = pop_message(fd)
                 while data do
                         local rpc = data.__rpc;
@@ -73,7 +177,7 @@ local function rpcdispatch(fd, sc)
                 local data = pop_message(fd)
                 while data do
                         --it maybe yield at this
-                        sc.rpc(fd, data.__rpc, data)
+                        sc.data(fd, data, data.__rpc)
                         if socket_queue[fd] == nil then
                                 return ;
                         end
@@ -82,12 +186,12 @@ local function rpcdispatch(fd, sc)
         end
 end
 
-local function dataunpack(_, sc, data)
+local function dataunpack(_, sc, data, sz)
         local cooked
         if sc.unpack then
-                cooked = sc.unpack(data)
+                cooked = sc.unpack(data, sz)
         else
-                cooked = data
+                cooked = core.tostring(data, sz)
         end
         return cooked
 end
@@ -107,19 +211,25 @@ end
 local function dispatch_socket(fd)
         local sc = socket_config[fd]
         local empty = #socket_queue[fd] == 0
-        local f, data = np.pop(queue)
+        local f, d, sz = np.pop(queue)
         --push it into socket queue, when process may yield
         while f do
                 assert(f == fd)
-                local cooked
+                local ok, cooked
                 if sc.mode == "rpc" then
-                        cooked = rpcunpack(fd, sc, data)
+                        ok, cooked = pcall(rpcunpack, fd, sc, d, sz)
                 else
-                        cooked = dataunpack(fd, sc, data);
+                        ok, cooked = pcall(dataunpack, fd, sc, d, sz);
+                end
+                np.drop(d)
+                if not ok then
+                        print("unpack crash", cooked)
+                        gate.forceclose(fd)
+                        return
                 end
                 assert(cooked)
                 push_message(f, cooked)
-                f, data = np.pop(queue)
+                f, d, sz= np.pop(queue)
         end
 
         --if socket_queue[fd] is not empty
@@ -161,13 +271,14 @@ function EVENT.close(fd, errno)
         socket_queue[fd] = nil
         socket_rpc[fd] = nil
         pcall(assert(sc).close, fd, errno)
+
 end
 
 function EVENT.data(fd)
         local ok, err = pcall(dispatch_socket, fd)
         if not ok then
                 print("gate dispatch socket error:", err)
-                gate.close(fd)
+                gate.forceclose(fd)
         end
 end
 
@@ -199,9 +310,8 @@ function gate.connect(config)
                 assert(config.proto)
                 assert(config.data == nil,
                 "rpc mode need no 'data' func, result will be ret by rpccall")
-                assert(config.rpc, "the callback of rpc is 'rpc', not 'data'")
         end
-        config.type = "client"
+        config.__type = "client"
         -- now all the socket event can be process it in the socket coroutine
         socket_config[fd] = config
         socket_queue[fd] = {}
@@ -215,12 +325,23 @@ function gate.listen(config)
         if not portid then
                 return false
         end
-        if config.mode == "rpc" then
-                assert(config.data == nil, "the callback of rpc is 'rpc', not 'data'")
-        end
-        config.type = "server"
+        config.__type = "server"
         socket_config[portid] = config
         return true
+end
+
+function gate.forceclose(fd)
+        local sc = socket_config[fd]
+        if sc == nil then       --have already closed
+                return ;
+        end
+        close_wakeup(fd)
+        socket_config[fd] = nil
+        socket_queue[fd] = nil
+        socket_rpc[fd] = nil
+        np.clear(queue, fd)
+        core.close(fd)
+        pcall(assert(sc).close, fd, errno)
 end
 
 function gate.close(fd)
@@ -243,14 +364,14 @@ function gate.send(fd, ...)
                 return false
         end
         if sc.pack then
-                d = sc.pack(...)
+                d, sz = sc.pack(...)
         else
-                d = ... 
+                d, sz = ... 
         end
         if not d then
                 return false
         end
-        return core.write(fd, np.pack(d))
+        return core.write(fd, np.pack(d, sz))
 end
 
 local function rpcsend(fd, sc, session, typ, dat)
@@ -287,7 +408,7 @@ function gate.rpccall(fd, typ, dat, timeout)
         if sc == nil then
                 return false, "socket error"
         end
-        assert(sc.type == "client", "only client can call rpcret")
+        assert(sc.__type == "client", "only client can call rpcret")
         local session = core.genid();
         local ok, err = rpcsend(fd, sc, session, typ, dat)
         if not ok then
@@ -303,7 +424,7 @@ function gate.rpcret(fd, cookie, typ, dat)
         if sc == nil then
                 return false, "socket error"
         end
-        assert(sc.type == "server", "only server can call rpcret")
+        assert(sc.__type == "server", "only server can call rpcret")
         return rpcsend(fd, sc, cookie.session, typ, dat)
 end
 
