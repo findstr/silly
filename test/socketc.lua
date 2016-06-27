@@ -3,7 +3,7 @@ local socket = require "socket"
 
 core.start(function()
         print("connect 8989 start")
-        local fd = socket.connect("127.0.0.1", 9999)
+        local fd = socket.connect("127.0.0.1@9999")
         if fd == -1 then
                 print("connect fail:", fd)
                 return ;

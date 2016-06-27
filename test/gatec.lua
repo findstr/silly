@@ -6,8 +6,7 @@ local np = require "netpacket"
 core.start(function()
         print("connect 8989 start")
         local fd = gate.connect {
-                ip = "127.0.0.1",
-                port = 9999,
+                addr = "127.0.0.1@9999",
                 pack = function(data)
                         return crypt.aesencode("hello", data)
                 end,
@@ -26,7 +25,9 @@ core.start(function()
                         print("port1 data finish")
                 end,
         }
-        gate.send(fd, "connect 8989")
+        gate.send(fd, "connect 8989 1")
+        gate.send(fd, "connect 8989 2")
+        gate.send(fd, "connect 8989 3")
         core.sleep(100);
         print("connect 8989 finish")
         gate.close(fd)
@@ -35,8 +36,7 @@ end)
 core.start(function()
         print("connect 8988 start")
         local fd = gate.connect {
-                ip = "127.0.0.1",
-                port = 9998,
+                addr = "127.0.0.1@9999",
                 close = function(fd, errno)
                         print("close", fd, errno)
                 end,
@@ -47,7 +47,9 @@ core.start(function()
                         print("port1 data finish")
                 end,
         }
-        gate.send(fd, "connect 8988")
+        gate.send(fd, "connect 8988 1")
+        gate.send(fd, "connect 8988 2")
+        gate.send(fd, "connect 8988 3")
         print("connect 8988 finish")
         core.sleep(100);
         gate.close(fd)

@@ -1,5 +1,5 @@
 local core = require "silly.core"
-local gate = require "gate"
+local rpc = require "rpc"
 local crypt = require "crypt"
 local zproto = require "zproto"
 
@@ -16,9 +16,8 @@ local function quit()
         core.quit()
 end
 
-gate.listen {
-        port = "@9999",
-        mode = "rpc",
+rpc.listen {
+        addr = "@9999",
         proto = logic,
         pack = function(data)
                 return crypt.aesencode("hello", data)
@@ -34,9 +33,9 @@ gate.listen {
                 print("close", fd, errno)
         end,
 
-        data = function(fd, msg, cookie)
+        data = function(fd, cookie, msg)
                 print("rpc recive", msg.name, msg.age, msg.rand)
-                gate.rpcret(fd, cookie, "test", msg)
+                rpc.ret(fd, cookie, "test", msg)
                 print("port1 data finish")
                 core.fork(quit)
         end

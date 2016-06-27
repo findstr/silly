@@ -121,7 +121,7 @@ allocsocket(struct silly_socket *ss, enum stype type)
                         }
                 }
         }
-        fprintf(stderr, "allocsocket fail, find no empty entry\n");
+        fprintf(stderr, "[silly.socket] allocsocket fail, find no empty entry\n");
         return NULL;
 }
 
@@ -198,7 +198,7 @@ static void
 delsocket(struct silly_socket *ss, struct socket *s)
 {
         if (s->type == STYPE_RESERVE) {
-                const char *fmt = "delsocket sid:%d error type:%d\n";
+                const char *fmt = "[silly.socket] delsocket sid:%d error type:%d\n";
                 fprintf(stderr, fmt, s->sid, s->type);
                 return ;
         }
@@ -354,7 +354,7 @@ checkconnected(int fd)
         }
         if (err != 0) {
                 errno = err;
-                fprintf(stderr, "checkconnected:%d\n", err);
+                fprintf(stderr, "[silly.socket] checkconnected:%d\n", err);
                 return -1;
         }
         return 0;
@@ -388,13 +388,10 @@ readn(int fd, uint8_t *buff, size_t sz)
                 if (len < 0) {
                         switch(errno) {
                         case EINTR:
-                                fprintf(stderr, "readn:%d, EINTR\n", fd);
                                 continue;
                         case ETRYAGAIN:
-                                fprintf(stderr, "readn:%d, EAGAIN\n", fd);
                                 return 0;
                         default:
-                                fprintf(stderr, "readn:%d, %s\n", fd, strerror(errno));
                                 return -1;
                         }
                 } else if (len == 0) {
@@ -416,13 +413,10 @@ sendn(int fd, const uint8_t *buff, size_t sz)
                 if (len == -1) {
                         switch (errno) {
                         case EINTR:
-                                fprintf(stderr, "sendn:%d, EINTR\n", fd);
                                 continue;
                         case ETRYAGAIN:
-                                fprintf(stderr, "sendn:%d, EAGAIN\n", fd);
                                 return 0;
                         default:
-                                fprintf(stderr, "sendn:%d, %s\n", fd, strerror(errno));
                                 return -1;
                         }
                 }
@@ -598,7 +592,7 @@ silly_socket_listen(const char *ip, uint16_t port, int backlog)
                 return fd;
         s = allocsocket(SSOCKET, STYPE_ALLOCED);
         if (s == NULL) {
-                fprintf(stderr, "listen %s:%d:%d allocsocket fail\n", ip, port, backlog);
+                fprintf(stderr, "[silly.socket] listen %s:%d:%d allocsocket fail\n", ip, port, backlog);
                 close(fd);
                 return -1;
         }
@@ -669,7 +663,7 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
         nodelay(fd);
         err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
         if (err == -1 && errno != EINPROGRESS) {        //error
-                const char *fmt = "tryconnect:ip:%s:%d,errno:%d\n";
+                const char *fmt = "[silly.socket] tryconnect %s:%d,errno:%d\n";
                 fprintf(stderr, fmt, ip, port, errno);
                 report_error(ss, s, errno);
                 freesocket(ss, s);
@@ -831,7 +825,7 @@ cmd_process(struct silly_socket *ss)
                         close = -1;
                         break;
                 default:
-                        fprintf(stderr, "_ctrl_cmd:unkonw operation:%d\n", cmd.type);
+                        fprintf(stderr, "[silly.socket] cmd_process:unkonw operation:%d\n", cmd.type);
                         assert(!"oh, no!");
                         break;
                 }
@@ -846,7 +840,7 @@ eventwait(struct silly_socket *ss)
                 ss->eventcount = sp_wait(ss->spfd, ss->eventbuff, ss->eventcap);
                 ss->eventindex = 0;
                 if (ss->eventcount < 0) {
-                        fprintf(stderr, "silly_socket:eventwait:%d\n", errno);
+                        fprintf(stderr, "[silly.socket] eventwait:%d\n", errno);
                         continue;
                 }
                 break;
@@ -883,7 +877,7 @@ silly_socket_poll()
                         report_connected(ss, s);
                         continue;
                 case STYPE_RESERVE:
-                        fprintf(stderr, "silly_socket_poll reserve socket\n");
+                        fprintf(stderr, "[silly.socket] poll reserve socket\n");
                         continue;
                 case STYPE_HALFCLOSE:
                 case STYPE_SOCKET:
@@ -891,14 +885,13 @@ silly_socket_poll()
                 case STYPE_CTRL:
                         continue;
                 default:
-                        fprintf(stderr, "silly_socket_poll:EPOLLIN, unkonw socket type:%d\n", s->type);
+                        fprintf(stderr, "[silly.socket] poll: unkonw socket type:%d\n", s->type);
                         continue;
                 }
 
                 if (SP_ERR(e)) {
                         report_close(ss, s);
                         delsocket(ss, s);
-                        fprintf(stderr, "silly_socket_poll:fd:%d occurs error now\n", s->fd);
                         continue;
                 }
                 if (SP_READ(e)) {

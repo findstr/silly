@@ -1,5 +1,5 @@
 local core = require "silly.core"
-local gate = require "gate"
+local rpc = require "rpc"
 local zproto = require "zproto"
 local crypt = require "crypt"
 
@@ -18,21 +18,20 @@ local function request(fd, index)
                         age = index,
                         rand = crypt.randomkey(),
                 }
-                local res = gate.rpccall(fd, "test", test)
+                local res = rpc.call(fd, "test", test)
                 if not res then
                         print("rpc call fail", res)
                         return
                 end
+                assert(test.rand == res.rand)
                 print("rpc call", index, "ret:", res.name, res.age)
         end
 end
 
 core.start(function()
         print("connect 8989 start")
-        local fd = gate.connect {
-                ip = "127.0.0.1",
-                port = 9999,
-                mode = "rpc",
+        local fd = rpc.connect {
+                addr = "127.0.0.1@9999",
                 proto = logic,
                 pack = function(data)
                         return crypt.aesencode("hello", data)
@@ -43,16 +42,13 @@ core.start(function()
                 close = function(fd, errno)
                         print("close", fd, errno)
                 end,
-                rpc = function(fd, cookie, msg)
-
-                end
         }
 
         for i = 1, 5 do
                 core.fork(request(fd, i))
         end
         core.sleep(10000)
-        gate.close(fd)
+        rpc.close(fd)
         core.quit()
 end)
 

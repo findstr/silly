@@ -194,11 +194,11 @@ function core.listen(port, dispatch)
         return id
 end
 
-function core.connect(ip, port, dispatch)
+function core.connect(ip, dispatch)
         assert(ip)
-        assert(port)
         assert(dispatch)
-
+        local ip, port = ip:match("([0-9%.]*)@([0-9]+)")
+        assert(ip and port)
         local fd = silly.socketconnect(ip, port)
         if fd < 0 then
                 return -1

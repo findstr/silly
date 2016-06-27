@@ -4,7 +4,7 @@ local crypt = require "crypt"
 local np = require "netpacket"
 
 gate.listen {
-        port = "@9999",
+        addr= "@9999",
         pack = function(data)
                 return crypt.aesencode("hello", data)
         end,
@@ -17,13 +17,13 @@ gate.listen {
         end,
 
         close = function(fd, errno)
-                print("close", fd, errno)
+                print("closed", fd, errno)
                 core.sleep(5000)
                 core.quit()
         end,
 
         data = function(fd, msg)
-                print("data", fd, msg)
+                print("recv data", fd, msg)
                 gate.send(fd, msg)
                 core.sleep(1000)
                 gate.send(fd, msg .. "t\n")
@@ -32,7 +32,7 @@ gate.listen {
 }
 
 gate.listen {
-        port = "@9998",
+        addr = "@9998",
         accept = function(fd, addr)
                 print("accept", fd, addr)
         end,
