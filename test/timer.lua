@@ -1,29 +1,22 @@
-local timer = require "silly.timer"
 local core = require "silly.core"
 
 local closure = {}
-
 local function gen_closure(n)
         return function ()
                 print("clouser", n)
         end
 end
 
-function tm(c)
-        c()
-end
-
 for i = 1, 30 do
         closure[i] = gen_closure(i)
-        timer.add(10, tm, closure[i])
+        core.timeout(1000, closure[i])
 end
 
 core.start(function()
         print("hello")
-        print("current begin", timer.now())
+        print("current begin", core.now())
         core.sleep(5000)
-        print("current end", timer.now())
+        print("current end", core.now())
         print("world")
 end)
-
 

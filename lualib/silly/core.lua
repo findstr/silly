@@ -157,6 +157,13 @@ function core.sleep(ms)
         waitresume(co, coroutine.yield("SLEEP"))
 end
 
+function core.timeout(ms, func)
+        local co = cocreate(func)
+        local session = silly.timeout(ms)
+        sleep_session_co[session] = co
+        sleep_co_session[co] = session
+end
+
 function core.start(func, ...)
         local co = cocreate(func)
         waityield(co, coroutine.resume(co, ...))
