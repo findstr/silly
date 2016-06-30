@@ -744,11 +744,13 @@ zproto_decode(struct zproto_buffer *zb, struct zproto_field_iter *iter, uint8_t 
 
 //////////pack
 static int
-pack_seg(const uint8_t *src, int sn, uint8_t *dst, int dn)
+packseg(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
         int i;
         int pack_sz = 0;
         uint8_t *hdr = dst++;
+        --dn;
+        assert(dn >= 0);
         *hdr = 0;
         sn = sn < 8 ? sn : 8;
         for (i = 0; i < sn; i++) {
@@ -759,37 +761,34 @@ pack_seg(const uint8_t *src, int sn, uint8_t *dst, int dn)
                         --dn;
                 }
         }
-
         assert(dn >= 0);
         return pack_sz;
 }
 
 static int
-pack_ff(const uint8_t *src, int sn, uint8_t *dst, int dn)
+packff(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
         int i;
-        int pack_sz = 0;
-
+        int packsz = 0;
         sn = sn < 8 ? sn : 8;
         for (i = 0; i < sn; i++) {
-                if (*src)
-                        ++pack_sz;
+                if (src[i])
+                        ++packsz;
         }
-        
-        if (pack_sz >= 6)       //6, 7, 8
+        if (packsz >= 6) {       //6, 7, 8
                 memcpy(dst, src, sn);
-        
-        return pack_sz;
-
+                packsz = sn;
+        }
+        return packsz;
 }
 
 
 static int
 pack(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
-        int pack_sz;
-        uint8_t *ff_n = NULL;
-        uint8_t *dst_start = dst;
+        int packsz;
+        uint8_t *ffn = NULL;
+        uint8_t *dstart = dst;
         int needn = ((sn + 2047) / 2048) * 2 + sn;
         if (sn % 8 != 0)
                 ++needn;
@@ -797,65 +796,62 @@ pack(const uint8_t *src, int sn, uint8_t *dst, int dn)
         if (needn > dn)
                 return -1;
         
-        pack_sz = -1;
+        packsz = -1;
         while (sn > 0) {
-                if (pack_sz != 8) {  //pack segment
-                        pack_sz = pack_seg(src, sn, dst, dn);
+                if (packsz != 8) {  //pack segment
+                        packsz = packseg(src, sn, dst, dn);
                         src += 8;
                         sn -= 8;
-                        dst += pack_sz + 1;             //skip the data+header
-                        dn -= pack_sz + 1;
-                        if (pack_sz == 8 && sn > 0) {   //it's 0xff
-                                ff_n = dst;
+                        dst += packsz + 1;             //skip the data+header
+                        dn -= packsz + 1;
+                        if (packsz == 8 && sn > 0) {   //it's 0xff
+                                ffn = dst;
                                 ++dst;
                                 --dn;
                         } else {
-                                ff_n = NULL;
+                                ffn = NULL;
                         }
-                } else if (pack_sz == 8) {
-                        *ff_n = 0;
+                } else if (packsz == 8) {
+                        *ffn = 0;
                         for (;;) {
-                                pack_sz = pack_ff(src, sn, dst, dn);
-                                if (pack_sz == 6 || pack_sz == 7 || pack_sz == 8) {
+                                packsz = packff(src, sn, dst, dn);
+                                if (packsz == 6 || packsz == 7 || packsz == 8) {
                                         src += 8;
                                         sn -= 8;
-                                        dst += pack_sz;
-                                        dn -= pack_sz;
-                                        ++(*ff_n);
+                                        dst += packsz;
+                                        dn -= packsz;
+                                        ++(*ffn);
                                 } else {
                                         break;
                                 }
                         }
                 }
         }
-
-        return dst - dst_start;
+        return dst - dstart;
 }
 
 static int
-unpack_seg(const uint8_t *src, int sn, uint8_t *dst, int dn)
+unpackseg(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
         int i;
         uint8_t hdr;
-        int unpack_sz = 0;
+        int unpacksz = 0;
         if (dn < 8)
                 return -1;
-        
         hdr = *src++;
         for (i = 0; i < 8; i++) {
                 if (hdr & (1 << i)) {
                         *dst++ = *src++;
-                        ++unpack_sz;
+                        ++unpacksz;
                 } else {
                         *dst++ = 0x0;
                 }
         }
-
-        return unpack_sz;
+        return unpacksz;
 }
 
 static int
-unpack_ff(const uint8_t *src, int sn, uint8_t *dst, int dn)
+unpackff(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
         if (dn < 8)
                 return -1;
@@ -868,43 +864,40 @@ unpack_ff(const uint8_t *src, int sn, uint8_t *dst, int dn)
 static int
 unpack(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
-        int unpack_sz = -1;
-        int ff_n = -1;
-        uint8_t *dst_start = dst;
+        int unpacksz = -1;
+        int ffn = -1;
+        uint8_t *dstart = dst;
         while (sn > 0) {
-                if (unpack_sz != 8) {
-                        unpack_sz = unpack_seg(src, sn, dst, dn);
-                        if (unpack_sz < 0)      //not enough storage space
+                if (unpacksz != 8) {
+                        unpacksz = unpackseg(src, sn, dst, dn);
+                        if (unpacksz < 0)      //not enough storage space
                                 return -1;
 
-                        src += unpack_sz + 1;
-                        sn -= unpack_sz + 1;
+                        src += unpacksz + 1;
+                        sn -= unpacksz + 1;
                         dst += 8;
                         dn -= 8;
-
-                        if (unpack_sz == 8 && sn > 0) {
-                                ff_n = *src;
+                        if (unpacksz == 8 && sn > 0) {
+                                ffn = *src;
                                 ++src;
                                 --sn;
                         }
-                } else if (unpack_sz == 8) {
+                } else if (unpacksz == 8) {
                         int i;
                         int n;
-                        for (i = 0; i < ff_n; i++) {
-                                n = unpack_ff(src, sn, dst, dn);
+                        for (i = 0; i < ffn; i++) {
+                                n = unpackff(src, sn, dst, dn);
                                 if (n < 0)
                                         return -1;
-
                                 src += n;
                                 sn -= n;
                                 dst += 8;
                                 dn -= 8;
                         }
-                        unpack_sz = -1; //restart unpack
+                        unpacksz = -1; //restart unpack
                 }
         }
-
-        return dst - dst_start;
+        return dst - dstart;
 }
 
 const uint8_t *
