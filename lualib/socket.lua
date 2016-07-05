@@ -25,7 +25,7 @@ end
 function EVENT.accept(fd, _, portid, addr)
         local lc = socket_pool[portid];
         new_socket(fd)
-        local ok, err = pcall(lc, fd, addr)
+        local ok, err = core.pcall(lc, fd, addr)
         if not ok then
                 print(err)
                 socket.close(fd)

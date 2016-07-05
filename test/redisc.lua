@@ -18,9 +18,8 @@ local db = nil
 core.start(function ()
         local err
         db, err= redis:connect{
-                        ip = "127.0.0.1",
-                        port = 6379,
-                }
+                        addr = "127.0.0.1@6379",
+        }
         print("Connect",  db, err)
         dprint("PING", db:ping())
         dprint("SET bar hello", db:set("bar", "hello"))

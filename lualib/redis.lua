@@ -101,13 +101,11 @@ end
 
 function redis:connect(config)
         local t = {
-                ip = config.ip,
-                port = config.port,
+                addr = config.addr,
                 user = config.user,
                 passwd = config.passwd,
                 sfifo = fifo:create {
-                                ip = config.ip,
-                                port = config.port
+                        addr = config.addr,
                 },
         }
         setmetatable(t, {__index = self})

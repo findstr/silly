@@ -70,7 +70,7 @@ local EVENT = {}
 
 local function unpack(sc, d, sz)
         if sc.unpack then
-                local ok, cooked = pcall(sc.unpack, d, sz)
+                local ok, cooked = core.pcall(sc.unpack, d, sz)
                 if not ok then
                         print("[gate] unpack", cooked)
                         return nil
@@ -132,7 +132,7 @@ end
 function EVENT.accept(fd, portid, addr)
         local lc = socket_config[portid];
         newsocket(fd, lc)
-        local ok, err = pcall(lc.accept, fd, addr)
+        local ok, err = core.pcall(lc.accept, fd, addr)
         if not ok then
                 print("[gate] EVENT.accept", err)
                 gate.close(fd)
@@ -149,14 +149,14 @@ function EVENT.close(fd, errno)
                 return
         end
         delsocket(fd)
-        local ok, err = pcall(assert(sc).close, fd, errno)
+        local ok, err = core.pcall(assert(sc).close, fd, errno)
         if not ok then
                 print("[gate] EVENT.close", err)
         end
 end
 
 function EVENT.data(fd)
-        local ok, err = pcall(dispatch_socket, fd)
+        local ok, err = core.pcall(dispatch_socket, fd)
         if not ok then
                 print("[gate] dispatch socket", err)
                 gate.forceclose(fd)
@@ -209,7 +209,7 @@ function gate.forceclose(fd)
         end
         delsocket(fd)
         core.close(fd)
-        local ok, err = pcall(assert(sc).close, fd, errno)
+        local ok, err = core.pcall(assert(sc).close, fd, errno)
         if not ok then
                 print("[gate] forceclose", err)
         end

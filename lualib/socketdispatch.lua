@@ -69,7 +69,7 @@ local function dispatch_response(self)
                         local co = tremove(self.waitqueue)
                         local func = tremove(self.funcqueue)
                         if func and co then
-                                local res = {pcall(func, self)}
+                                local res = {core.pcall(func, self)}
                                 if res[1] and res[2] then
                                         wakeup(co, tunpack(res))
                                 else    --disconnected
@@ -121,7 +121,7 @@ local function tryconnect(self)
         local res
         if self.status == CLOSE then
                 self.status = CONNECTING;
-                self.sock = socket.connect(self.config.ip, self.config.port)
+                self.sock = socket.connect(self.config.addr)
                 if self.sock < 0 then
                         res = false
                         self.status = CLOSE

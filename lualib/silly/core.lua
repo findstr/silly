@@ -27,7 +27,7 @@ local function cocreate(f)
                                 print(debug.traceback())
                                 return
                         end
-                        local ok, err = pcall(func, coroutine.yield())
+                        local ok, err = core.pcall(func, coroutine.yield())
                         if ok == false then
                                 print("cocall", err)
                                 print(debug.traceback())
@@ -52,6 +52,12 @@ core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus
 core.now = silly.timenow
+core.pcall = function(f, ...)
+        local function errmsg(msg)
+                return debug.traceback(msg, 1)
+        end
+        return xpcall(f, errmsg, ...)
+end
 
 function core.error(errmsg)
         print(errmsg)
