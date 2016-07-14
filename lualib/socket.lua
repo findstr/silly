@@ -58,7 +58,7 @@ function EVENT.data(fd, message)
                 
         if type(s.delim) == "number" then
                 assert(s.co)
-                if ns.check(s.sbuffer, s.delim) then
+                if ns.check(s.sbuffer) >= s.delim then
                         local co = s.co
                         s.co = false
                         s.delim = false
@@ -141,6 +141,20 @@ function socket.read(fd, n)
         local ok = suspend(s)
         if ok == false then     --occurs error
                 return nil
+        end
+        local r = ns.read(nb_pool, s.sbuffer, n)
+        assert(r)
+        return r;
+end
+
+function socket.readall(fd)
+        local s = socket_pool[fd]
+        if not s then
+                return nil
+        end
+        local n = ns.check(s.sbuffer);
+        if n == 0 then
+                return ""
         end
         local r = ns.read(nb_pool, s.sbuffer, n)
         assert(r)

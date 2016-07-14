@@ -304,11 +304,9 @@ lcheck(struct lua_State *L)
                 lua_pushboolean(L, 0);
                 return 1;
         }
-
         struct node_buffer *nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
         assert(nb);
-        int readn = luaL_checkinteger(L, 2);
-        lua_pushboolean(L, readn <= nb->size);
+        lua_pushinteger(L, nb->size);
         return 1;
 }
 
@@ -377,9 +375,7 @@ lreadline(struct lua_State *L)
                 lua_pushnil(L);
                 return 1;
         }
-
         nb->size -= readn;
-
         return pushstring(L, nb, readn);
 }
 
