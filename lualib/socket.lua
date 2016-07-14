@@ -90,8 +90,8 @@ function socket.listen(port, config)
         return true
 end
 
-function socket.connect(ip)
-        local fd = core.connect(ip, socket_dispatch)
+function socket.connect(ip, bind)
+        local fd = core.connect(ip, socket_dispatch, bind)
         if fd < 0 then
                 return fd
         end

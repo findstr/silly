@@ -142,12 +142,16 @@ ldispatch(lua_State *L)
 static int
 lsocket_connect(lua_State *L)
 {
-        const char *ip;
-        int port;
         int err;
+        int port;
+        int bport;
+        const char *ip;
+        const char *bip;
         ip = luaL_checkstring(L, 1);
         port = luaL_checkinteger(L, 2);
-        err = silly_socket_connect(ip, port);
+        bip = luaL_checkstring(L, 3);
+        bport = luaL_checkinteger(L, 4);
+        err = silly_socket_connect(ip, port, bip, bport);
         lua_pushinteger(L, err);
         return 1;
 }

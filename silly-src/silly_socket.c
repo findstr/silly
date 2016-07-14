@@ -297,17 +297,24 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 }
 
 static void
+report_close_sid(struct silly_socket *ss, int sid)
+{
+        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
+        sc->type = SILLY_SCLOSE;
+        sc->sid = sid;
+        sc->ud = 0;
+        silly_worker_push(tocommon(sc));
+        return ;
+}
+
+static void
 report_close(struct silly_socket *ss, struct socket *s)
 {
         (void)ss;
         if (s->type == STYPE_HALFCLOSE)//don't notify the active close
                 return ;
         assert(s->type == STYPE_SOCKET || s->type == STYPE_RESERVE);
-        struct silly_message_socket *sc = silly_malloc(sizeof(*sc));
-        sc->type = SILLY_SCLOSE;
-        sc->sid = s->sid;
-        sc->ud = 0;
-        silly_worker_push(tocommon(sc));
+        report_close_sid(ss, s->sid);
         return ;
 }
 
@@ -332,6 +339,7 @@ report_error(struct silly_socket *ss, struct socket *s, int err)
         int or = s->type == STYPE_LISTEN ? 1 : 0;
         or += s->type == STYPE_SOCKET ? 1 : 0;
         or += s->type == STYPE_CONNECTING ? 1 : 0;
+        or += s->type == STYPE_ALLOCED ? 1 : 0;
         assert(or > 0);
         struct silly_message_socket *se = silly_malloc(sizeof(*se));
         se->type = SILLY_SCLOSE;
@@ -504,6 +512,8 @@ struct cmdpacket {
                 struct {
                         char ip[64];
                         int  port;
+                        char bip[64];
+                        int  bport;
                         int sid;
                 } connect;
                 struct {
@@ -551,22 +561,34 @@ pipe_blockwrite(int fd, struct cmdpacket *pk)
         return 0;
 }
 
+static int 
+bindfd(int fd, const char *ip, int port)
+{
+        int err;
+        struct sockaddr_in addr;
+        if (ip[0] == '\0' && port == 0)
+                return 0;
+        bzero(&addr, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, ip, &addr.sin_addr);
+        err = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+        return err;
+}
+
+
+
 static int
 dolisten(const char *ip, uint16_t port, int backlog)
 {
         int err;
         int fd;
         int reuse = 1;
-        struct sockaddr_in addr;
-        bzero(&addr, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        inet_pton(AF_INET, ip, &addr.sin_addr);
         fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
                 return -1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-        err = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+        err = bindfd(fd, ip, port);
         if (err < 0)
                 goto end;
         nonblock(fd);
@@ -623,7 +645,7 @@ trylisten(struct silly_socket *ss, struct cmdpacket *cmd)
 }
 
 int 
-silly_socket_connect(const char *addr, int port)
+silly_socket_connect(const char *addr, int port, const char *bindip, int bindport)
 {
         size_t sz;
         struct cmdpacket cmd;
@@ -631,11 +653,17 @@ silly_socket_connect(const char *addr, int port)
         s = allocsocket(SSOCKET, STYPE_ALLOCED);
         if (s == NULL)
                 return -1;
+        assert(addr);
+        assert(bindip);
         cmd.type = 'C';
         sz = ARRAY_SIZE(cmd.u.connect.ip) - 1;
         strncpy(cmd.u.connect.ip, addr, sz);
         cmd.u.connect.ip[sz] = '\0';
+        sz = ARRAY_SIZE(cmd.u.connect.bip) - 1;
+        strncpy(cmd.u.connect.bip, bindip, sz);
+        cmd.u.connect.bip[sz] = '\0';
         cmd.u.connect.port = port;
+        cmd.u.connect.bport = bindport;
         cmd.u.connect.sid = s->sid;
         pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
         return s->sid;
@@ -649,7 +677,9 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
         struct sockaddr_in      addr;
         int sid = cmd->u.connect.sid;
         int port = cmd->u.connect.port;
+        int bport = cmd->u.connect.bport;
         const char *ip = cmd->u.connect.ip;
+        const char *bip = cmd->u.connect.bip;
         struct socket *s =  &ss->socketpool[HASH(sid)];
         assert(s->sid == sid);
         assert(s->type == STYPE_ALLOCED);
@@ -658,6 +688,14 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
         inet_pton(AF_INET, ip, &addr.sin_addr);
         fd = socket(AF_INET, SOCK_STREAM, 0);
         assert(fd >= 0);
+        err = bindfd(fd, bip, bport);
+        if (err < 0) {
+                const char *fmt = "[silly.socket] bind %s:%d, errno:%d\n";
+                fprintf(stderr, fmt, bip, bport, errno);
+                report_error(ss, s, errno);
+                freesocket(ss, s);
+                return ;
+        }
         nonblock(fd);
         keepalive(fd);
         nodelay(fd);
@@ -671,14 +709,14 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
         } else if (err == 0) {  //connect
                 s = newsocket(ss, s, fd, STYPE_SOCKET);
                 if (s == NULL)
-                        report_close(ss, s);
+                        report_close_sid(ss, sid);
                 else 
                         report_connected(ss, s);
                 return ;
         } else {        //block
                 s = newsocket(ss, s, fd, STYPE_CONNECTING);
                 if (s == NULL)
-                        report_close(ss, s);
+                        report_close_sid(ss, sid);
                 else
                         sp_write_enable(ss->spfd, s->fd, s, 1);
         }
