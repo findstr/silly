@@ -40,7 +40,7 @@ thread_timer(void *arg)
 {
         (void)arg;
         for (;;) {
-                silly_timer_dispatch();
+                silly_timer_update();
                 CHECKQUIT
                 usleep(1000);
         }

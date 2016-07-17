@@ -115,7 +115,7 @@ static int
 ltimeout(lua_State *L)
 {
         uint32_t expire;
-        uint64_t session;
+        uint32_t session;
         expire = luaL_checkinteger(L, 1);
         session = silly_timer_timeout(expire);
         lua_pushinteger(L, session);
@@ -125,7 +125,7 @@ ltimeout(lua_State *L)
 static int
 ltimenow(lua_State *L)
 {
-        uint32_t now = silly_timer_now();
+        uint64_t now = silly_timer_now();
         lua_pushinteger(L, now);
         return 1;
 }

@@ -168,6 +168,7 @@ function core.timeout(ms, func)
         local session = silly.timeout(ms)
         sleep_session_co[session] = co
         sleep_co_session[co] = session
+        return session
 end
 
 function core.start(func, ...)
