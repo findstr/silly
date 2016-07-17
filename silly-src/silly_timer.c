@@ -121,14 +121,14 @@ add_node(struct silly_timer *timer, struct node *n)
 uint32_t
 silly_timer_timeout(uint32_t expire)
 {
-        struct node *n = newnode(T, expire);
+        struct node *n = newnode();
         if (n == NULL) {
                 fprintf(stderr, "silly timer alloc node failed\n");
                 return -1;
         }
+        lock(T);
         n->expire = expire + T->time;
         assert((int32_t)(n->expire - T->expire) >= 0);
-        lock(T);
         add_node(T, n);
         unlock(T);
         return n->session;
@@ -170,17 +170,20 @@ static void
 expire_timer(struct silly_timer *timer)
 {
         int idx = timer->expire & SR_MASK;
-        struct node *n = timer->root.slot[idx];
-        timer->root.slot[idx] = NULL;
-        unlock(timer);
-        while (n) {
-                struct node *tmp = n;
-                n = n->next;
-                assert((int32_t)(tmp->expire - timer->expire) <= 0);
-                timeout(timer, tmp->session);
-                freenode(tmp);   
+        while (timer->root.slot[idx]) {
+                struct node *n = timer->root.slot[idx];
+                timer->root.slot[idx] = NULL;
+                unlock(timer);
+                while (n) {
+                        struct node *tmp = n;
+                        n = n->next;
+                        assert((int32_t)(tmp->expire - timer->expire) <= 0);
+                        timeout(timer, tmp->session);
+                        freenode(tmp);   
+                }
+                lock(timer);
         }
-        lock(timer);
+        return ;
 }
 
 static int
