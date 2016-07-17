@@ -94,11 +94,11 @@ add_node(struct silly_timer *timer, struct node *n)
 {
         int     i;
         int32_t idx = n->expire - timer->expire;
-        if (idx < SR_SIZE) {
-                i = n->expire & SR_MASK;
-                linklist(&timer->root.slot[i], n);
-        } else if (idx < 0) {   //timeout
+        if (idx < 0) {  //timeout
                 i = timer->expire & SR_MASK;
+                linklist(&timer->root.slot[i], n);
+        } else if (idx < SR_SIZE) {
+                i = n->expire & SR_MASK;
                 linklist(&timer->root.slot[i], n);
         } else {
                 for (i = 0; i < 3; i++) {
@@ -195,6 +195,8 @@ cascade_timer(struct silly_timer *timer, int level)
         while (n) {
                 struct node *tmp = n;
                 n = n->next;
+                assert(tmp->expire >> (level * SL_BITS + SR_BITS) ==
+                        timer->expire >> (level * SL_BITS + SR_BITS));
                 add_node(timer, tmp);
         }
         return idx;
