@@ -7,11 +7,16 @@
 #include <setjmp.h>
 #include "zproto.h"
 
+#define ZPROTO_TYPE     (0xffff)
+#define ZPROTO_ARRAY    (1 << 16)
+
 #define CHUNK_SIZE      (512)
 #define ZBUFFER_SIZE    (512)
 #define TRY(z)          if (setjmp(z->exception) == 0)
 #define THROW(z)        longjmp(z->exception, 1)
 
+typedef uint16_t        hdr_t;
+typedef uint32_t        len_t;
 
 struct pool_chunk {
         size_t start;
@@ -23,38 +28,31 @@ struct zproto_field {
         int                     tag;
         int                     type;
         const char              *name;
-        struct zproto_record    *seminfo;
+        struct zproto_struct    *seminfo;
+        struct zproto_field     *mapkey;
         struct zproto_field     *next;
 };
 
-struct zproto_record {
-        uint32_t                tag;
+struct zproto_struct {
+        int                     tag;
+        int                     basetag;
+        int                     maxtag;
         const char              *name;
         int                     fieldnr;
-        struct zproto_record    *next;
-        struct zproto_record    *parent;
-        struct zproto_record    *child;
+        struct zproto_struct    *next;
+        struct zproto_struct    *parent;
+        struct zproto_struct    *child;
         struct zproto_field     *field;
         struct zproto_field     **fieldarray;
-};
-
-struct zproto_buffer {
-        size_t  cap;
-        int     start;
-        uint8_t *p;
-        size_t  pack_cap;
-        uint8_t *pack_p;
 };
 
 struct zproto {
         int                     linenr;
         const char              *data;
         jmp_buf                 exception;
-        struct zproto_record    record;
+        struct zproto_struct    record;
         struct pool_chunk       *now;
         struct pool_chunk       chunk;
-        struct zproto_buffer    ebuffer;
-        struct zproto_buffer    dbuffer;
 };
 
 
@@ -165,10 +163,10 @@ next_token(struct zproto *z)
         return ;
 }
 
-static struct zproto_record *
-find_record(struct zproto *z, struct zproto_record *proto, const char *name)
+static struct zproto_struct *
+find_record(struct zproto *z, struct zproto_struct *proto, const char *name)
 {
-        struct zproto_record *tmp;
+        struct zproto_struct *tmp;
         if (proto == NULL)
                 return NULL;
         
@@ -180,10 +178,22 @@ find_record(struct zproto *z, struct zproto_record *proto, const char *name)
         return find_record(z, proto->parent, name);
 }
 
-static void
-unique_record(struct zproto *z, struct zproto_record *proto, const char *name)
+static struct zproto_field *
+find_field(struct zproto *z, struct zproto_struct *proto, const char *name)
 {
-        struct zproto_record *tmp;
+        struct zproto_field *tmp;
+        (void)z;
+        for (tmp = proto->field; tmp; tmp = tmp->next) {
+                if (strcmp(tmp->name, name) == 0)
+                        return tmp;
+        }
+        return NULL;
+}
+
+static void
+unique_record(struct zproto *z, struct zproto_struct *proto, const char *name)
+{
+        struct zproto_struct *tmp;
         for (tmp = proto->child; tmp; tmp = tmp->next) {
                 if (strcmp(tmp->name, name) == 0) {
                         fprintf(stderr, "line:%d syntax error:has already define a record named:%s\n", z->linenr, name);
@@ -195,15 +205,17 @@ unique_record(struct zproto *z, struct zproto_record *proto, const char *name)
 }
 
 static void
-unique_field(struct zproto *z, struct zproto_record *proto, const char *name, int tag)
+unique_field(struct zproto *z, struct zproto_struct *proto, const char *name, int tag)
 {
         struct zproto_field *tmp;
-
         if (tag <= 0) {
                 fprintf(stderr, "line:%d syntax error: tag must great then 0\n", z->linenr);
                 THROW(z);
         }
-
+        if (tag > 65535) {
+                fprintf(stderr, "line:%d syntax error: tag must less then 655535\n", z->linenr);
+                THROW(z);
+        }
         for (tmp = proto->field; tmp; tmp = tmp->next) {
                 if (strcmp(tmp->name, name) == 0) {
                         fprintf(stderr, "line:%d syntax error:has already define a field named:%s\n", z->linenr, name);
@@ -220,16 +232,32 @@ unique_field(struct zproto *z, struct zproto_record *proto, const char *name, in
 }
 
 static int
-strtotype(struct zproto *z, struct zproto_record *proto, const char *type, struct zproto_record **seminfo)
+strtotype(struct zproto *z, struct zproto_struct *proto, const char *type, struct zproto_struct **seminfo, char mapkey[64])
 {
         int ztype = 0;
         int sz = strlen(type);
+        int mapidx = -1;
         *seminfo = NULL;
-        if (strcmp(&type[sz - 2], "[]") == 0) {
+        mapkey[0] = 0;
+        if (type[sz-1] == ']') {//array
+                int i;
+                int len;
+                for (i = sz - 2; i >= 0; i--) {
+                        if (type[i] == '[') {
+                                mapidx = i + 1;
+                                break;
+                        }
+                }
+                if (i < 0) {
+                        fprintf(stderr, "line:%d syntax error:match none '['\n", z->linenr);
+                        THROW(z);
+                }
                 ztype |= ZPROTO_ARRAY;
-                sz -= 2;
+                len = sz - 1 - mapidx;
+                sz = i;
+                assert(len < 63 && len >= 0);
+                strncpy(mapkey, &type[mapidx], len);
         }
-
         if (strncmp(type, "boolean", sz) == 0) {
                 ztype |= ZPROTO_BOOLEAN;
         } else if (strncmp(type, "integer", sz) == 0) {
@@ -245,37 +273,44 @@ strtotype(struct zproto *z, struct zproto_record *proto, const char *type, struc
                         fprintf(stderr, "line:%d syntax error:find no record name:%s\n", z->linenr, type);
                         THROW(z);
                 }
-                ztype |= ZPROTO_RECORD;
+                ztype |= ZPROTO_STRUCT;
         }
-
         return ztype;
 }
 
 static void
-merge_field(struct zproto *z, struct zproto_record *proto)
+merge_field(struct zproto *z, struct zproto_struct *proto)
 {
-        struct zproto_field *f = proto->field;
-        if (proto->fieldnr == 0)
+        int i;
+        struct zproto_field *f;
+        proto->fieldnr = 0;
+        if (proto->maxtag == 0)
                 return ;
-
-        ++proto->fieldnr;
-        proto->fieldarray = (struct zproto_field **)pool_alloc(z, proto->fieldnr * sizeof(*f));
-        memset(proto->fieldarray, 0, sizeof(*f) * proto->fieldnr);
+        f = proto->field;
+        proto->basetag = f->tag;
         while (f) {
-                assert(proto->fieldnr > f->tag);
-                proto->fieldarray[f->tag] = f;
+                assert(proto->maxtag >= f->tag);
+                assert(f->tag >= proto->basetag);
+                proto->fieldnr++;
                 f = f->next;
         }
-
+        proto->fieldarray = (struct zproto_field **)pool_alloc(z, proto->fieldnr * sizeof(*f));
+        memset(proto->fieldarray, 0, sizeof(*f) * proto->fieldnr);
+        i = 0;
+        f = proto->field;
+        while (f) {
+                assert(i < proto->fieldnr);
+                proto->fieldarray[i++] = f;
+                f = f->next;
+        }
         return ;
 }
 
 static void
-reverse_field(struct zproto *z, struct zproto_record *proto)
+reverse_field(struct zproto *z, struct zproto_struct *proto)
 {
         struct zproto_field *f = proto->field;
         proto->field = NULL;
- 
         while (f) {
                 struct zproto_field *tmp = f;
                 f = f->next;
@@ -287,39 +322,74 @@ reverse_field(struct zproto *z, struct zproto_record *proto)
 }
 
 static void
-field(struct zproto *z, struct zproto_record *proto)
+field(struct zproto *z, struct zproto_struct *proto)
 {
         int tag;
         int n;
         char field[64];
         char type[64];
+        char mapkey[64];
+        struct zproto_field *f;
+        struct zproto_field *key;
         skip_space(z);
-        n = sscanf(z->data, ".%64[a-zA-Z0-9_]:%64[]a-zA-Z0-9\[]%*[' '|'\t']%d", field, type, &tag);
+        const char *fmt = ".%64[a-zA-Z0-9_]:%64[]a-zA-Z0-9\[]%*[' '|'\t']%d";
+        n = sscanf(z->data, fmt, field, type, &tag);
         if (n != 3) {
-                fprintf(stderr, "line:%d synax error: expect field definition, but found:%s\n", z->linenr, z->data);
+                fmt = "line:%d synax error: expect field definition, but found:%s\n";
+                fprintf(stderr, fmt, z->linenr, z->data);
                 THROW(z);
         }
-
         unique_field(z, proto, field, tag);
-        if (tag > proto->fieldnr)
-                proto->fieldnr = tag;
-
-        struct zproto_field *f = (struct zproto_field *)pool_alloc(z, sizeof(*f));
+        if (proto->field && tag <= proto->field->tag) {
+                fmt = "line:%d synax error: tag value must be defined ascending\n";
+                fprintf(stderr, fmt, z->linenr);
+                THROW(z);
+        }
+        proto->maxtag = tag;
+        f = (struct zproto_field *)pool_alloc(z, sizeof(*f));
+        f->mapkey = NULL;
         f->next = proto->field;
         proto->field = f;
         f->tag = tag;
         f->name = pool_dupstr(z, field);
-        f->type = strtotype(z, proto, type, &f->seminfo);
+        f->type = strtotype(z, proto, type, &f->seminfo, mapkey);
+        if (mapkey[0] == '\0')
+                return;
+        //map index can only be struct array
+        assert(f->type & ZPROTO_ARRAY);
+        if ((f->type & ZPROTO_TYPE) != ZPROTO_STRUCT) {
+                fmt = "line:%d synax error: only struct array can be specify map index\n";
+                fprintf(stderr, fmt, z->linenr);
+                THROW(z);
+        }
+        key = find_field(z, f->seminfo, mapkey);
+        if (key == NULL) {
+                fmt = "line:%d synax error: struct %s has no field:%s\n";
+                fprintf(stderr, fmt, z->linenr, f->seminfo->name, mapkey);
+                THROW(z);
+        }
+        if (key->seminfo) {
+                fmt = "line:%d synax error: struct type field '%s' can't be mapkey\n";
+                fprintf(stderr, fmt, z->linenr, key->name);
+                THROW(z);
+        }
+        if (key->type & ZPROTO_ARRAY) {
+                fmt = "line:%d synax error: array field '%s' can't be mapkey\n";
+                fprintf(stderr, fmt, z->linenr, f->name);
+                THROW(z);
+        }
+        f->mapkey = key;
         return ;
 }
 
 static void
-record(struct zproto *z, struct zproto_record *proto, int protocol)
+record(struct zproto *z, struct zproto_struct *proto, int protocol)
 {
         int err;
         int tag = 0;
         char name[64];
-        struct zproto_record *new = (struct zproto_record *)pool_alloc(z, sizeof(*new));
+        const char *fmt;
+        struct zproto_struct *new = (struct zproto_struct *)pool_alloc(z, sizeof(*new));
         memset(new, 0, sizeof(*new));
         new->next = proto->child;
         new->parent = proto;
@@ -333,7 +403,8 @@ record(struct zproto *z, struct zproto_record *proto, int protocol)
                 tag = strtoul(buff, NULL, 0);
         }
         if (err < 1) {
-                fprintf(stderr, "line:%d syntax error: expect 'record name' [tag]\n", z->linenr);
+                fmt = "line:%d syntax error: expect 'record name' [tag]\n";
+                fprintf(stderr, fmt, z->linenr);
                 THROW(z);
         }
         unique_record(z, proto, name);
@@ -344,7 +415,8 @@ record(struct zproto *z, struct zproto_record *proto, int protocol)
                 next_token(z);
 
         if (*z->data != '{') {
-                fprintf(stderr, "line:%d syntax error: expect '{', but found:%s\n", z->linenr, z->data);
+                fmt = "line:%d syntax error: expect '{', but found:%s\n";
+                fprintf(stderr, fmt, z->linenr, z->data);
                 THROW(z);
         }
 
@@ -360,7 +432,8 @@ record(struct zproto *z, struct zproto_record *proto, int protocol)
                 next_line(z);
         }
         if (*z->data != '}') {
-                fprintf(stderr, "line:%d syntax error: expect '}', but found:%s\n", z->linenr, z->data);
+                fmt = "line:%d syntax error: expect '}', but found:%s\n";
+                fprintf(stderr, fmt, z->linenr, z->data);
                 THROW(z);
         }
         next_token(z);
@@ -423,10 +496,10 @@ end:
 
 }
 
-struct zproto_record *
+struct zproto_struct *
 zproto_query(struct zproto *z, const char *name)
 {
-        struct zproto_record *r;
+        struct zproto_struct *r;
         for (r = z->record.child; r; r = r->next) {
                 if (strcmp(r->name, name) == 0)
                         return r;
@@ -435,313 +508,355 @@ zproto_query(struct zproto *z, const char *name)
         return NULL;
 }
 
-struct zproto_record *zproto_querytag(struct zproto *z, uint32_t tag)
+struct zproto_struct *
+zproto_querytag(struct zproto *z, uint32_t tag)
 {
-        struct zproto_record *r;
+        struct zproto_struct *r;
         for (r = z->record.child; r; r = r->next) {
                 if (r->tag == tag)
                         return r;
         }
         return NULL;
 }
-
-
-uint32_t zproto_tag(struct zproto_record *proto)
+uint32_t
+zproto_tag(struct zproto_struct *st)
 {
-        assert(proto);
-        return proto->tag;
-}
-
-int
-zproto_field_type(struct zproto_field *field)
-{
-        return field->type;
+        return st->tag;
 }
 
 const char *
-zproto_field_name(struct zproto_field *field)
+zproto_name(struct zproto_struct *st)
 {
-        return field->name;
-}
-
-struct zproto_record *
-zproto_field_seminfo(struct zproto_field *field)
-{
-        return field->seminfo;
-}
-
-void
-zproto_field_begin(struct zproto_record *proto, struct zproto_field_iter *iter)
-{
-        iter->p = proto->field;
-        iter->reserve = NULL;
-        return ;
-}
-
-void 
-zproto_field_next(struct zproto_field_iter *iter)
-{
-        iter->p = iter->p->next;
-        return ;
-}
-
-int 
-zproto_field_end(struct zproto_field_iter *iter)
-{
-        return iter->p == NULL;
-}
-
-struct zproto *
-zproto_create()
-{
-        struct zproto *z = (struct zproto *)malloc(sizeof(*z));
-        memset(z, 0, sizeof(*z));
-        z->now = &z->chunk;
-
-        return z;
-}
-
-void
-zproto_free(struct zproto *z)
-{
-        pool_free(z);
-        if (z->ebuffer.p)
-                free(z->ebuffer.p);
-        if (z->ebuffer.pack_p)
-                free(z->ebuffer.pack_p);
-
-        assert(z->dbuffer.p == NULL);
-        free(z);
-        return ;
-}
-//////////encode/decode
-static void
-buffer_check(struct zproto_buffer *zb, size_t sz, size_t pack)
-{
-        if (zb->cap < (sz + zb->start)) {
-                zb->cap = zb->cap + ((sz + ZBUFFER_SIZE - 1) / ZBUFFER_SIZE) * ZBUFFER_SIZE;
-                zb->p = realloc(zb->p, zb->cap);
-                assert(zb->cap >= sz);
-        }
-
-        if (zb->pack_cap < pack) {
-                zb->pack_cap = 
-                        zb->pack_cap + ((pack + ZBUFFER_SIZE - 1) / ZBUFFER_SIZE) * ZBUFFER_SIZE;
-                zb->pack_p = realloc(zb->pack_p, zb->pack_cap);
-                assert(zb->pack_cap >= pack);
-        }
-
-        return ;
-}
-
-struct zproto_buffer *
-zproto_encode_begin(struct zproto *z)
-{
-        struct zproto_buffer *zb = &z->ebuffer;
-        zb->start = 0;
-        return zb;
-}
-
-const uint8_t *
-zproto_encode_end(struct zproto_buffer *zb, int *sz)
-{
-        *sz = zb->start;
-        return zb->p;
+        return st->name;
 }
 
 
-size_t
-zproto_encode_record(struct zproto_buffer *zb)
+struct zproto_struct *
+zproto_next(struct zproto *z, struct zproto_struct *st)
 {
-        buffer_check(zb, sizeof(int32_t), 0);
-        size_t nr = zb->start;
-        zb->start += sizeof(int32_t);
-        return nr;
+        if (st == NULL)
+                st = z->record.child;
+        else
+                st = st->next;
+        return st;
 }
 
-void
-zproto_encode_recordnr(struct zproto_buffer *zb, size_t pos, int32_t val)
+static void inline 
+fill_args(struct zproto_args *args, struct zproto_field *f, void *ud)
 {
-        assert(pos < zb->cap);
-        *(int32_t *)&zb->p[pos] = val;
-        return ;
-}
-
-static void
-encode_tag(struct zproto_buffer *zb, struct zproto_field_iter *iter)
-{
-        struct zproto_field *last = iter->reserve;
-        struct zproto_field *field = iter->p;
-        int lasttag = last ? last->tag : 0;
-        int skip;
-        
-        iter->reserve = iter->p;
-
-        buffer_check(zb, sizeof(int32_t), 0);
-        skip = field->tag - lasttag - 1;
-        assert(skip >= 0);
-
-        *(int32_t *)&zb->p[zb->start] = skip;
-        zb->start += sizeof(int32_t);
-        return ;
-}
-
-void
-zproto_encode_array(struct zproto_buffer *zb, struct zproto_field_iter *iter, int32_t count)
-{
-        encode_tag(zb, iter);
-        assert(iter->p->type & ZPROTO_ARRAY);
-        //tag of array need count
-        buffer_check(zb, sizeof(int32_t), 0);
-        int32_t *nr = (int32_t *)&zb->p[zb->start];
-        zb->start += sizeof(int32_t);
-        *nr = count;
-        return ;
-}
-
-void
-zproto_encode(struct zproto_buffer *zb, struct zproto_field_iter *iter, const char *data, int32_t sz)
-{
-        struct zproto_field *field = iter->p;
-
-        if ((field->type & ZPROTO_ARRAY) == 0)
-                encode_tag(zb, iter);
-        
-        if ((field->type & ZPROTO_TYPE) == ZPROTO_RECORD)
-                return ;
-
-        switch (field->type & ZPROTO_TYPE) { 
-        case ZPROTO_BOOLEAN:
-                buffer_check(zb, sizeof(int8_t), 0);
-                assert(sz == sizeof(int8_t));
-                *(int8_t *)&zb->p[zb->start] = *(int8_t *)data;
-                zb->start += sizeof(int8_t);
-                break;
-        case ZPROTO_INTEGER:
-                buffer_check(zb, sizeof(int32_t), 0);
-                assert(sz == sizeof(int32_t));
-                *(int32_t *)&zb->p[zb->start] = *(int32_t *)data;
-                zb->start += sizeof(int32_t);
-                break;
-        case ZPROTO_STRING:
-                buffer_check(zb, sizeof(int32_t) + sz, 0);
-                *(int32_t *)&zb->p[zb->start] = sz;
-                zb->start += sizeof(int32_t);
-                memcpy(&zb->p[zb->start], data, sz);
-                zb->start += sz;
-                break;
-        default:
-                fprintf(stderr, "zproto_encode, unexpected field->type:%d\n", field->type);
-                break;
-        }
-
-        return ;
-}
-
-int32_t zproto_decode_protocol(uint8_t *buff, size_t sz)
-{
-        if (sz < sizeof(int32_t))
-                return -1;
-        return *(int32_t *)buff;
-}
-
-struct zproto_buffer *
-zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz)
-{
-        struct zproto_buffer *zb = &z->dbuffer;
-        zb->start = 0;
-        zb->p = (uint8_t *)buff;
-        zb->cap = sz;
-        return zb;
-}
-
-size_t
-zproto_decode_end(struct zproto_buffer *zb)
-{
-        zb->p = NULL;
-        return zb->start;
-}
-
-int32_t
-zproto_decode_record(struct zproto_buffer *zb, struct zproto_field_iter *iter)
-{
-        int32_t nr;
-        if (zb->start + sizeof(int32_t) >= zb->cap)
-                return 0;
-        nr = *(int32_t *)&zb->p[zb->start];
-        zb->start += sizeof(int32_t);
-        iter->p = NULL;
-        iter->reserve = NULL;
-        return nr;
-}
-
-#define decode_check(zb, sz, err)       \
-        if (zb->start + (sz) > zb->cap)   \
-                return err;
-
-int 
-zproto_decode_field(struct zproto_buffer *zb, struct zproto_record *proto, struct zproto_field_iter *iter, int32_t *sz)
-{
-        struct zproto_field *field;
-        struct zproto_field *last = iter->p;
-        uint32_t ltag = last ? last->tag : 0;
-
-        decode_check(zb, sizeof(int32_t), -1)
-
-        int32_t skip = *(int32_t *)&zb->p[zb->start];
-        zb->start += sizeof(int32_t);
-        ltag += skip + 1;
-        if (ltag >= proto->fieldnr)
-                return -1;
-
-        field = proto->fieldarray[ltag];
-        if (field->type & ZPROTO_ARRAY) {
-                decode_check(zb, sizeof(int32_t), -1)
-                *sz = *(int32_t *)&zb->p[zb->start];
-                zb->start += sizeof(int32_t);
+        args->tag = f->tag;
+        args->name = f->name;
+        args->type = f->type & ZPROTO_TYPE;
+        args->sttype = f->seminfo;
+        args->idx = -1;
+        args->len = -1;
+        args->ud = ud;
+        if (f->mapkey) {
+                args->maptag = f->mapkey->tag;
+                args->mapname = f->mapkey->name;
         } else {
-                *sz = 0;
+                args->maptag = 0;
+                args->mapname = NULL;
         }
+        return;
+}
 
-        iter->p = field;
-        return 0;
+void
+zproto_travel(struct zproto_struct *st, zproto_cb_t cb, void *ud)
+{
+        int i;
+        for (i = 0; i < st->fieldnr; i++) {
+                struct zproto_field  *f;
+                struct zproto_args args;
+                f = st->fieldarray[i];
+                fill_args(&args, f, ud);
+                if (f->type & ZPROTO_ARRAY)
+                        args.idx = 0;
+                cb(&args);
+        }
+}
+
+static struct zproto_field *
+queryfield(struct zproto_struct *st, int tag)
+{
+        int start = 0;
+        int end = st->fieldnr;
+        if (tag < st->basetag || tag > st->maxtag)
+                return NULL;
+        if ((st->maxtag - st->basetag + 1) == st->fieldnr) {
+                int i = tag - st->basetag;
+                assert(st->fieldarray[i]->tag == tag);
+                return st->fieldarray[i];
+        }
+        while (start < end) {
+                int mid = (start + end) / 2;
+                if (tag == st->fieldarray[mid]->tag)
+                        return st->fieldarray[mid];
+                if (tag < st->fieldarray[mid]->tag)
+                        end = mid;
+                else
+                        start = mid + 1;
+        }
+        return NULL;
+}
+
+#define CHECK_OOM(sz, need)    \
+        if (sz < (need))\
+                return ZPROTO_OOM;
+
+static int
+encode_field(struct zproto_args *args, zproto_cb_t cb)
+{
+        int sz;
+        len_t *len;
+        switch (args->type) {
+        case ZPROTO_BOOLEAN:
+                CHECK_OOM(args->buffsz, sizeof(uint8_t))
+                return cb(args);
+        case ZPROTO_INTEGER:
+                CHECK_OOM(args->buffsz, sizeof(uint32_t))
+                return cb(args);
+        case ZPROTO_STRING:
+                CHECK_OOM(args->buffsz, sizeof(len_t))
+                len = (len_t *)args->buff;
+                args->buff += sizeof(len_t);
+                args->buffsz -= sizeof(len_t);
+                sz = cb(args);
+                if (sz < 0)
+                        return sz;
+                *len = sz;
+                sz += sizeof(len_t);
+                return sz;
+        case ZPROTO_STRUCT:
+                CHECK_OOM(args->buffsz, sizeof(hdr_t))
+                return cb(args);
+        default:
+                assert(!"unkown field type");
+                break;
+        }
+        return ZPROTO_ERROR;
+}
+
+static int
+encode_array(struct zproto_args *args, zproto_cb_t cb)
+{
+        int err;
+        len_t *len;
+        int buffsz = args->buffsz;
+        uint8_t *buff = args->buff;
+        uint8_t *start = buff;
+
+        CHECK_OOM(buffsz, sizeof(len_t))
+        len = (len_t *)buff;
+        buff += sizeof(len_t);
+        buffsz -= sizeof(len_t);
+        args->idx = 0;
+        for (;;) {
+                args->buffsz = buffsz;
+                args->buff = buff;
+                err = encode_field(args, cb);
+                if (err < 0)
+                        break;
+                buff += err;
+                buffsz -= err;
+                args->idx++;
+        }
+        if (err == ZPROTO_OOM)
+                return err;
+        if (args->len == -1)    //if len is negtive, the array field nonexist
+                return ZPROTO_NOFIELD;
+        *len = args->idx;
+        return buff - start;
+}
+
+
+int 
+zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, void *ud)
+{
+        int i;
+        int err;
+        len_t   *total;
+        hdr_t   *len;
+        hdr_t   *tag;
+        uint8_t *body;
+        int last = st->basetag - 1; //tag now
+        int fcnt = st->fieldnr; //field count
+        size_t hdrsz= (fcnt + 1) * sizeof(hdr_t) + sizeof(len_t);
+        
+        CHECK_OOM(sz, hdrsz);
+        total = (len_t *)buff;
+        len = (hdr_t *)(total + 1);
+        tag = len + 1;
+        buff += hdrsz;
+        sz -= hdrsz;
+        body = buff;
+        for (i = 0; i < fcnt; i++) {
+                struct zproto_field *f;
+                struct zproto_args args;
+                f = st->fieldarray[i];
+                fill_args(&args, f, ud);
+                args.buff = buff;
+                args.buffsz = sz;
+                if (f->type & ZPROTO_ARRAY)
+                        err = encode_array(&args, cb);
+                else
+                        err = encode_field(&args, cb);
+                switch (err) {
+                case ZPROTO_OOM:
+                        return err;
+                case ZPROTO_NOFIELD:
+                        continue;
+                default:
+                        assert(err > 0);
+                        break;
+                }
+                assert(sz >= err);
+                buff += err;
+                sz -= err;
+                *tag = (f->tag - last - 1);
+                assert(*tag >= 0);
+                tag++;
+                last = f->tag;
+        }
+        *len = (tag - len) - 1; //length used one byte
+        if ((uintptr_t)tag != (uintptr_t)body)
+                memmove(tag, body, buff - body);
+        *total = (buff - body) + ((uint8_t *)tag - (uint8_t *)len);
+        return sizeof(len_t) + *total;
+}
+
+
+
+#define CHECK_VALID(sz, need)    \
+        if (sz < (need))\
+                return ZPROTO_ERROR;
+
+static int
+decode_field(struct zproto_args *args, zproto_cb_t cb)
+{
+        int sz;
+        len_t len;
+        switch (args->type) {
+        case ZPROTO_BOOLEAN:
+                CHECK_VALID(args->buffsz, sizeof(uint8_t))
+                args->buffsz = sizeof(uint8_t);
+                return cb(args);
+        case ZPROTO_INTEGER:
+                CHECK_VALID(args->buffsz, sizeof(uint32_t))
+                args->buffsz = sizeof(uint32_t);
+                return cb(args);
+        case ZPROTO_STRING:
+                CHECK_VALID(args->buffsz, sizeof(len_t))
+                len = *(len_t *)args->buff;
+                args->buff += sizeof(len_t);
+                args->buffsz -= sizeof(len_t);
+                CHECK_VALID(args->buffsz, len)
+                args->buffsz = len;
+                sz = cb(args);
+                if (sz < 0)
+                        return sz;
+                sz += sizeof(len_t);
+                return sz;
+        case ZPROTO_STRUCT:
+                CHECK_VALID(args->buffsz, sizeof(hdr_t))
+                return cb(args);
+        default:
+                assert(!"unkown field type");
+                break;
+        }
+        return ZPROTO_ERROR;
+}
+
+static int
+decode_array(struct zproto_args *args, zproto_cb_t cb)
+{
+        int i;
+        int err;
+        int len;
+        uint8_t *buff;
+        uint8_t *start;
+        int buffsz;
+        CHECK_VALID(args->buffsz, sizeof(len_t))
+        start = args->buff;
+        len = *(len_t *)args->buff;
+        buff = args->buff + sizeof(len_t);
+        buffsz = args->buffsz - sizeof(len_t);
+        args->idx = 0;
+        args->len = len;
+        if (len == 0) { //empty array
+                args->buff = NULL;
+                err = cb(args);
+                if (err < 0)
+                        return err;
+        } else {
+                for (i = 0; i < len; i++) {
+                        args->buff = buff;
+                        args->buffsz = buffsz;
+                        err = decode_field(args, cb);
+                        if (err < 0)
+                                return err;
+                        assert(err > 0);
+                        buff += err;
+                        buffsz += err;
+                        args->idx++;
+                }
+        }
+        return buff - start;
 }
 
 int
-zproto_decode(struct zproto_buffer *zb, struct zproto_field_iter *iter, uint8_t **data, int32_t *sz)
+zproto_decode(struct zproto_struct *st, const uint8_t *buff, int sz, zproto_cb_t cb, void *ud)
 {
-        struct zproto_field *field = iter->p;
+        int i;
+        int err;
+        int last;
+        len_t   total;
+        hdr_t   len;
+        hdr_t   *tag;
+        int     hdrsz;
         
-        switch (field->type & ZPROTO_TYPE) {
-        case ZPROTO_INTEGER:
-                decode_check(zb, sizeof(int32_t), -1)
-                *sz = sizeof(int32_t);
-                *data = &zb->p[zb->start];
-                zb->start += sizeof(int32_t);
-                break;
-        case ZPROTO_STRING:
-                decode_check(zb, sizeof(int32_t), -1)
-                *sz = *(int32_t *)&zb->p[zb->start];
-                zb->start += sizeof(int32_t);
-                decode_check(zb, *sz, -1)
-                *data = &zb->p[zb->start];
-                zb->start += *sz;
-                break;
-        case ZPROTO_BOOLEAN:
-                decode_check(zb, sizeof(int8_t), -1)
-                *sz = sizeof(int8_t);
-                *data = &zb->p[zb->start];
-                zb->start += sizeof(int8_t);
-                break;
-        default:
-                fprintf(stderr, "zproto_decode, unexpedted field->type:%d\n", field->type);
-                break;
-        }
+        CHECK_VALID(sz, sizeof(hdr_t) + sizeof(len_t))    //header size
+        last = st->basetag - 1; //tag now
+        total = *(len_t *)buff;
+        buff += sizeof(len_t);
+        sz -= sizeof(len_t);
+        CHECK_VALID(sz, total)
+        sz = total;
+        len = *(hdr_t *)buff;
+        buff += sizeof(hdr_t);
+        sz -=  sizeof(hdr_t);
+        hdrsz = len * sizeof(hdr_t);
+        CHECK_VALID(sz, hdrsz)
+        tag = (hdr_t *)buff;
+        buff += hdrsz;
+        sz -= hdrsz;
 
-        return 0;
+        for (i = 0; i < len; i++) {
+                struct zproto_field *f;
+                struct zproto_args args;
+                int t = *tag + last + 1;
+                f = queryfield(st, t);
+                if (f == NULL)
+                        break;
+                fill_args(&args, f, ud);
+                args.buff = (uint8_t *)buff;
+                args.buffsz = sz;
+                if (f->type & ZPROTO_ARRAY)
+                        err = decode_array(&args, cb);
+                else
+                        err = decode_field(&args, cb);
+                if (err < 0)
+                        return err;
+                assert(err > 0);
+                buff += err;
+                sz -= err;
+                tag++;
+                last = t;
+        }
+        return total + sizeof(len_t);
 }
 
-
+//////////encode/decode
 //////////pack
 static int
 packseg(const uint8_t *src, int sn, uint8_t *dst, int dn)
@@ -821,6 +936,11 @@ pack(const uint8_t *src, int sn, uint8_t *dst, int dn)
                                         dst += packsz;
                                         dn -= packsz;
                                         ++(*ffn);
+                                        if (*ffn == 255) {
+                                                ffn = NULL;
+                                                packsz = -1;
+                                                break;
+                                        }
                                 } else {
                                         break;
                                 }
@@ -833,18 +953,26 @@ pack(const uint8_t *src, int sn, uint8_t *dst, int dn)
 static int
 unpackseg(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
-        int i;
         uint8_t hdr;
+        const uint8_t *end;
         int unpacksz = 0;
+        sn = sn < 9 ? sn : 9;//header + data
         if (dn < 8)
-                return -1;
+                return ZPROTO_OOM;
+        end = src + sn;
         hdr = *src++;
-        for (i = 0; i < 8; i++) {
-                if (hdr & (1 << i)) {
-                        *dst++ = *src++;
-                        ++unpacksz;
-                } else {
-                        *dst++ = 0x0;
+        if (hdr == 0) {
+                memset(dst, 0, 8);
+        } else {
+                int i;
+                for (i = 0; i < 8; i++) {
+                        if (hdr & 0x01 && src != end) { //defend invalid data
+                                *dst++ = *src++;
+                                unpacksz++;
+                        } else {
+                                *dst++ = 0;
+                        }
+                        hdr >>= 1;
                 }
         }
         return unpacksz;
@@ -854,7 +982,7 @@ static int
 unpackff(const uint8_t *src, int sn, uint8_t *dst, int dn)
 {
         if (dn < 8)
-                return -1;
+                return -ZPROTO_OOM;
         sn = sn < 8 ? sn : 8;
         memcpy(dst, src, sn);
         memset(&dst[sn], 0, 8 - sn);
@@ -871,7 +999,7 @@ unpack(const uint8_t *src, int sn, uint8_t *dst, int dn)
                 if (unpacksz != 8) {
                         unpacksz = unpackseg(src, sn, dst, dn);
                         if (unpacksz < 0)      //not enough storage space
-                                return -1;
+                                return unpacksz;
 
                         src += unpacksz + 1;
                         sn -= unpacksz + 1;
@@ -885,10 +1013,13 @@ unpack(const uint8_t *src, int sn, uint8_t *dst, int dn)
                 } else if (unpacksz == 8) {
                         int i;
                         int n;
+                        //ffn - 1, because the last ff pack size may 6, 7, 8
+                        if ((ffn - 1) * 8 > sn)
+                                return ZPROTO_ERROR;
                         for (i = 0; i < ffn; i++) {
                                 n = unpackff(src, sn, dst, dn);
                                 if (n < 0)
-                                        return -1;
+                                        return n;
                                 src += n;
                                 sn -= n;
                                 dst += 8;
@@ -900,43 +1031,50 @@ unpack(const uint8_t *src, int sn, uint8_t *dst, int dn)
         return dst - dstart;
 }
 
-const uint8_t *
-zproto_pack(struct zproto *z, const uint8_t *src, int sz, int *osz)
+int
+zproto_pack(const uint8_t *src, int srcsz, uint8_t *dst, int dstsz)
 {
         int n;
-        int needn = ((sz + 2047) / 2048) * 2 + sz;
-        if (sz % 8 != 0)
+        int needn = ((srcsz + 2047) / 2048) * 2 + srcsz;
+        if (srcsz % 8 != 0)
                 ++needn;
-
-        buffer_check(&z->ebuffer, 0, needn);
-        
-        n = pack(src, sz, z->ebuffer.pack_p, needn);
+        if (dstsz < needn)
+                return ZPROTO_OOM;
+        n = pack(src, srcsz, dst, dstsz);
         assert(n > 0);
-        *osz = n;
-        return z->ebuffer.pack_p;
+        return n;
 }
 
-const uint8_t *
-zproto_unpack(struct zproto *z, const uint8_t *src, int sz, int *osz)
+int
+zproto_unpack(const uint8_t *src, int srcsz, uint8_t *dst, int dstsz)
 {
-        for (;;) {
-                int n;
-                n = unpack(src, sz, z->ebuffer.pack_p, z->ebuffer.pack_cap);
-                if (n < 0) {
-                        buffer_check(&z->ebuffer, 0, z->ebuffer.pack_cap * 2 + ZBUFFER_SIZE);
-                } else {
-                        *osz = n;
-                        return z->ebuffer.pack_p;
-                }
-        }
+        return unpack(src, srcsz, dst, dstsz);
+}
+
+struct zproto *
+zproto_create()
+{
+        struct zproto *z = (struct zproto *)malloc(sizeof(*z));
+        memset(z, 0, sizeof(*z));
+        z->now = &z->chunk;
+
+        return z;
+}
+
+void
+zproto_free(struct zproto *z)
+{
+        pool_free(z);
+        free(z);
+        return ;
 }
 
 //for debug
 
 static void
-dump_record(struct zproto_record *proto)
+dump_record(struct zproto_struct *proto)
 {
-        struct zproto_record *tr;
+        struct zproto_struct *tr;
         struct zproto_field *tf;
         if (proto == NULL)
                 return ;
@@ -946,7 +1084,7 @@ dump_record(struct zproto_record *proto)
         for (tf = proto->field; tf; tf = tf->next) {
                 if (tf->type & ZPROTO_ARRAY)
                         printf("array:");
-                if ((tf->type & ZPROTO_TYPE) == ZPROTO_RECORD)
+                if ((tf->type & ZPROTO_TYPE) == ZPROTO_STRUCT)
                         printf("%s:%s-%d\n", tf->name, tf->seminfo->name, tf->tag);
                 else
                         printf("%s:%d-%d\n", tf->name, tf->type & ZPROTO_TYPE, tf->tag);
@@ -968,7 +1106,7 @@ dump_record(struct zproto_record *proto)
 void
 zproto_dump(struct zproto *z)
 {
-        struct zproto_record *r = z->record.child;
+        struct zproto_struct *r = z->record.child;
         dump_record(r);
 }
 

@@ -6,19 +6,34 @@
 #define ZPROTO_BOOLEAN  1
 #define ZPROTO_INTEGER  2
 #define ZPROTO_STRING   3
-#define ZPROTO_RECORD   4
-#define ZPROTO_TYPE     (0xffff)
-#define ZPROTO_ARRAY    (1 << 16)
+#define ZPROTO_STRUCT   4
+
+#define ZPROTO_OOM      (-1)
+#define ZPROTO_NOFIELD  (-2)
+#define ZPROTO_ERROR    (-3)
 
 struct zproto;
-struct zproto_record;
-struct zproto_field;
-struct zproto_buffer;
+struct zproto_struct;
 
-struct zproto_field_iter {
-        struct zproto_field *p;
-        struct zproto_field *reserve;
+//ENCODE: if 'len' is -1, the array nonexist
+//      otherwise 'len' is length of array
+//DECODE: the len is the length of array, 
+//it may be 0 when the array is empty
+struct zproto_args {
+        int tag;
+        int type;
+        int idx;        //array index
+        int len;        //array length
+        void *ud;
+        int maptag;
+        const char *name;
+        const char *mapname; //for map
+        uint8_t *buff;
+        size_t  buffsz;
+        struct zproto_struct *sttype;
 };
+
+typedef int (*zproto_cb_t)(struct zproto_args *args);
 
 struct zproto *zproto_create();
 void zproto_free(struct zproto *z);
@@ -26,45 +41,24 @@ void zproto_free(struct zproto *z);
 int zproto_load(struct zproto *z, const char *path);
 int zproto_parse(struct zproto *z, const char *data);
 
-struct zproto_record *zproto_query(struct zproto *z, const char *name);
-struct zproto_record *zproto_querytag(struct zproto *z, uint32_t tag);
+struct zproto_struct *zproto_query(struct zproto *z, const char *name);
+struct zproto_struct *zproto_querytag(struct zproto *z, uint32_t tag);
+uint32_t zproto_tag(struct zproto_struct *st);
+const char *zproto_name(struct zproto_struct *st);
 
-//record
-uint32_t zproto_tag(struct zproto_record *proto);
+//travel
+struct zproto_struct *zproto_next(struct zproto *z, struct zproto_struct *st);
 
-//field
-int zproto_field_type(struct zproto_field *field);
-const char *zproto_field_name(struct zproto_field *field);
-struct zproto_record *zproto_field_seminfo(struct zproto_field *field);
+void zproto_travel(struct zproto_struct *st, zproto_cb_t cb, void *ud);
 
-//iterator
-void zproto_field_begin(struct zproto_record *proto, struct zproto_field_iter *iter);
-void zproto_field_next(struct zproto_field_iter *iter);
-int zproto_field_end(struct zproto_field_iter *iter);
-
-//encode
-struct zproto_buffer *zproto_encode_begin(struct zproto *z);
-const uint8_t *zproto_encode_end(struct zproto_buffer *zb, int *sz);
-
-size_t zproto_encode_record(struct zproto_buffer *zb);
-void zproto_encode_recordnr(struct zproto_buffer *zb, size_t pos, int32_t val);
-
-void zproto_encode_array(struct zproto_buffer *zb, struct zproto_field_iter *iter, int32_t count);
-void zproto_encode(struct zproto_buffer *zb, struct zproto_field_iter *iter, const char *data, int32_t sz);
-
-//decode
-struct zproto_buffer *zproto_decode_begin(struct zproto *z, const uint8_t *buff, int sz);
-size_t zproto_decode_end(struct zproto_buffer *zb);
-
-int32_t zproto_decode_record(struct zproto_buffer *zb, struct zproto_field_iter *iter);
-
-int zproto_decode_field(struct zproto_buffer *zb, struct zproto_record *proto, struct zproto_field_iter *iter, int32_t *sz);
-int zproto_decode(struct zproto_buffer *zb, struct zproto_field_iter *iter, uint8_t **data, int32_t *sz);
+int zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, void *ud);
+int zproto_decode(struct zproto_struct *st, const uint8_t *buff, int sz, zproto_cb_t cb, void *ud);
 
 //pack
-const uint8_t *zproto_pack(struct zproto *z, const uint8_t *src, int sz, int *osz);
-const uint8_t *zproto_unpack(struct zproto *z, const uint8_t *src, int sz, int *osz);
+int zproto_pack(const uint8_t *src, int srcsz, uint8_t *dst, int dstsz);
+int zproto_unpack(const uint8_t *src, int srcsz, uint8_t *dst, int dstsz);
 
+//for debug
 void zproto_dump(struct zproto *z);
 
 #endif

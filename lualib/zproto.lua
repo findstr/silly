@@ -71,7 +71,7 @@ function zproto:encode(typ, packet)
         assert(record)
         assert(typ)
         assert(packet)
-        return engine.encode(self.proto, record, packet)
+        return engine.encode(record, packet)
 end
 
 function zproto:querytag(typ)
@@ -87,15 +87,15 @@ end
 
 function zproto:decode(typ, data, sz)
         local record = query(self, typ)
-        return engine.decode(self.proto, record, data, sz)
+        return engine.decode(record, data, sz)
 end
 
 function zproto:pack(data, sz)
-        return engine.pack(self.proto, data, sz)
+        return engine.pack(data, sz)
 end
 
 function zproto:unpack(data, sz)
-        return engine.unpack(self.proto, data, sz);
+        return engine.unpack(data, sz);
 end
 
 return zproto
