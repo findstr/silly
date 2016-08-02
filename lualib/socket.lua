@@ -112,7 +112,9 @@ function socket.close(fd)
         if s == nil then
                 return
         end
-        assert(not s.co)
+        if s.so then
+                core.wakeup(s.so, false)
+        end
         ns.clear(nb_pool, s.sbuffer)
         socket_pool[fd] = nil
         core.close(fd)
