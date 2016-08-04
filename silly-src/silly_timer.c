@@ -77,9 +77,20 @@ unlock(struct silly_timer *timer)
 }
 
 uint64_t
-silly_timer_now()
+silly_timer_current()
 {
         return T->time;
+}
+
+uint64_t 
+silly_timer_now()
+{
+        uint64_t ms;
+        struct timeval t;
+        gettimeofday(&t, NULL);
+        ms = t.tv_sec * 1000;
+        ms += t.tv_sec / 1000;
+        return ms;
 }
 
 static inline void

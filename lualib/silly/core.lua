@@ -52,6 +52,7 @@ core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus
 core.now = silly.timenow
+core.current = silly.timecurrent
 core.pcall = function(f, ...)
         local function errmsg(msg)
                 return debug.traceback(msg, 1)
