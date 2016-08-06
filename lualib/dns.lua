@@ -205,6 +205,10 @@ function dns.query(domain, timeout)
         timeout = timeout or 1000
         local s, r = build_request(domain)
         local fd = checkconnect()
+        local res = query(domain)
+        if res then
+                return res
+        end
         local i = 1
         assert(fd > 0)
         while true do 
