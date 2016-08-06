@@ -8,6 +8,7 @@ void silly_timer_exit();
 void silly_timer_update();
 uint32_t silly_timer_timeout(uint32_t expire);
 uint64_t silly_timer_now();
+uint64_t silly_timer_current();
 
 #endif
 

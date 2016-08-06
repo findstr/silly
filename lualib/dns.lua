@@ -12,7 +12,7 @@ local session = 0
 setmetatable(domain_cache, weakmt)
 
 local function timenow()
-        return math.floor(core.now() / 1000)
+        return math.floor(core.current() / 1000)
 end
 
 --[[
@@ -93,7 +93,7 @@ end
 
 local function parsename(init, dat, pos, ptr)
         if ptr and ptr > 0xc000 then --ptr
-                pos = ptr & 0x3f
+                pos = ptr & 0x3fff
                 return parsename(init, dat, pos + 1, nil)
         else    --normal
                 local i = pos

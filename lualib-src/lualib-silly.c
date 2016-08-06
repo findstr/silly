@@ -144,7 +144,7 @@ ltimenow(lua_State *L)
 static int
 ltimecurrent(lua_State *L)
 {
-        uint64_t current = silly_timer_now();
+        uint64_t current = silly_timer_current();
         lua_pushinteger(L, current);
         return 1;
 }
