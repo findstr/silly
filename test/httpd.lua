@@ -23,7 +23,6 @@ dispatch["/"] = function(reqeust, body, write)
         ]]
         local head = {
                 "Content-Type: text/html",
-                string.format("Content-Length:%d", #body),
                 }
 
         write(200, head, body)

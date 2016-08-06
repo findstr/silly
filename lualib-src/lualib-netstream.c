@@ -416,6 +416,29 @@ lpush(lua_State *L)
 }
 
 static int
+ltodata(lua_State *L)
+{
+        uint8_t *data;
+        size_t datasz;
+        struct silly_message *sm = (struct silly_message *)lua_touserdata(L, 1);
+        switch (sm->type) {
+        case SILLY_SDATA:
+                data = sdata(sm)->data;
+                datasz = sdata(sm)->ud;
+                break;
+        case SILLY_SUDP:
+                data = sudp(sm)->data;
+                datasz = sudp(sm)->ud;
+                break;
+        default:
+                luaL_error(L, "tomsgstring unsupport message type");
+                return 0;
+        }
+        lua_pushlstring(L, (char *)data, datasz);
+        return 1;
+}
+
+static int
 tpush(lua_State *L)
 {
         int fd = luaL_checkinteger(L, 3);
@@ -434,6 +457,7 @@ int luaopen_netstream(lua_State *L)
                 {"readline",    lreadline},
                 {"check",       lcheck},
                 {"checkline",   lcheckline},
+                {"todata",      ltodata},
                 {"pack",        lpack},
                 {NULL, NULL},
         };

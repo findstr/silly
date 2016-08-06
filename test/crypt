@@ -1,12 +1,5 @@
 daemon = 0
-debug = 0
-
---ip:port:backlog
-listen = {
-}
-
-worker_count = 1
-bootstrap = true 
+bootstrap = "test/crypt.lua"
 lualib_path = "test/?.lua;lualib/?.lua"
 lualib_cpath = "luaclib/?.so"
 

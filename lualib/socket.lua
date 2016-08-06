@@ -37,6 +37,7 @@ function EVENT.close(fd, _, errno)
         if s == nil then
                 return
         end
+        assert(s.callback == nil)
         if s.sbuffer then
                 ns.clear(nb_pool, s.sbuffer)
         end
@@ -50,6 +51,7 @@ end
 
 function EVENT.data(fd, message)
         local s = socket_pool[fd]
+        assert(s.callback == nil)
         s.sbuffer = ns.push(nb_pool, s.sbuffer, message)
         if not s.delim then     --non suspend read
                 assert(not s.co)
@@ -83,19 +85,18 @@ function socket.listen(port, config)
         assert(port)
         assert(config)
         local portid = core.listen(port, socket_dispatch)
-        if not portid then
-                return false
+        if portid then
+                socket_pool[portid] = config
         end
-        socket_pool[portid] = config
-        return true
+        return portid
 end
 
 function socket.connect(ip, bind)
         local fd = core.connect(ip, socket_dispatch, bind)
-        if fd < 0 then
-                return fd
+        if fd then
+                assert(fd >= 0)
+                new_socket(fd)
         end
-        new_socket(fd)
         return fd
 end
 
@@ -197,6 +198,53 @@ function socket.write(fd, str)
         return core.write(fd, p, sz)
 end
 
-return socket
+---------udp
+local function new_udp(fd, callback)
+        local s = {
+                fd = fd,
+                callback = callback,
+        }
+        assert(socket_pool[fd] == nil, 
+                "new_socket incorrect" .. fd .. "not be closed")
+        socket_pool[fd] = s
+end
 
+--udp client can be closed(because it use connect)
+local function udp_dispatch(type, fd, message, _, addr)
+        local data
+        assert(type == "udp" or type == "close")
+        local cb = assert(socket_pool[fd]).callback
+        if type == "udp" then
+                data = ns.todata(message)
+        elseif type == "close" then
+                socket_pool[fd] = nil
+        end
+        assert(socket_pool[fd]).callback(data, addr)
+end
+
+function socket.bind(addr, callback)
+        local fd = core.bind(addr, udp_dispatch)
+        if fd  then
+                new_udp(fd, callback)
+        end
+        return fd
+end
+        
+function socket.udp(addr, callback, bindip)
+        local fd = core.udp(addr, udp_dispatch, bindip)
+        if fd  then
+                new_udp(fd, callback)
+        end
+        return fd
+end
+
+function socket.udpwrite(fd, str, addr)
+        if not socket_pool[fd] then
+                return false
+        end
+        local p, sz = ns.pack(str)
+        return core.udpwrite(fd, p, sz, addr)
+end
+
+return socket
 

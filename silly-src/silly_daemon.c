@@ -18,8 +18,12 @@ int silly_daemon()
                 exit(0);
         }
         fd = open("/tmp/silly.log", O_CREAT | O_RDWR | O_TRUNC, 00666);
-        if (fd >= 0)
+        if (fd >= 0) {
+                dup2(fd, 1);
                 dup2(fd, 2);
+                close(1);
+                close(2);
+        }
 
         return 0;
 }

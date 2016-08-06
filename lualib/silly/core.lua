@@ -44,10 +44,14 @@ local function cocreate(f)
         return co
 end
 
+core.write = function(fd, p, sz)
+        return silly.send(fd, p, sz) == 0
+end
+core.udpwrite = function(fd, p, sz, addr)
+        return silly.udpsend(fd, p, sz, addr) == 0
+end
 core.running = coroutine.running
 core.quit = silly.quit
-core.write = silly.socketsend
-core.drop = silly.dropmessage
 core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus
@@ -200,7 +204,7 @@ function core.listen(port, dispatch)
                 print("listen invaild port", port)
                 return nil
         end
-        local id = silly.socketlisten(ip, port, backlog);
+        local id = silly.listen(ip, port, backlog);
         if id < 0 then
                 print("listen", port, "error",  id)
                 return nil
@@ -209,7 +213,29 @@ function core.listen(port, dispatch)
         return id
 end
 
-function core.connect(ip, dispatch, bind)
+function core.bind(port, dispatch)
+        assert(port)
+        assert(dispatch)
+        local ip, port = port:match("([0-9%.]*)@([0-9]+)")
+        if ip == "" then
+                ip = "0.0.0.0"
+        end
+        port = tonumber(port)
+        if port == 0 then
+                print("listen invaild port", port)
+                return nil
+        end
+        local id = silly.bind(ip, port);
+        if id < 0 then
+                print("udpbind", port, "error",  id)
+                return nil
+        end
+        socket_dispatch[id] = dispatch 
+        return id
+
+end
+
+local function doconnect(ip, dispatch, bind, dofunc)
         assert(ip)
         assert(dispatch)
         local ip, port = ip:match("([0-9%.]*)@([0-9]+)")
@@ -217,19 +243,29 @@ function core.connect(ip, dispatch, bind)
         bind = bind or "@0"
         local bip, bport = bind:match("([0-9%.]*)@([0-9]+)")
         assert(bip and bport)
-        local fd = silly.socketconnect(ip, port, bip, bport)
+        local fd = dofunc(ip, port, bip, bport)
         if fd < 0 then
-                return -1
+                return nil
         end
         assert(socket_connect[fd] == nil)
         socket_connect[fd] = coroutine.running()
         local ok = core.wait()
         socket_connect[fd] = nil
         if ok ~= true then
-                return -1
+                return nil
         end
         socket_dispatch[fd] = assert(dispatch)
         return fd
+
+end
+
+function core.connect(ip, dispatch, bind)
+
+        return doconnect(ip, dispatch, bind, silly.connect)
+end
+
+function core.udp(ip, dispatch, bind)
+        return doconnect(ip, dispatch, bind, silly.udp)
 end
 
 function core.close(fd)
@@ -239,8 +275,7 @@ function core.close(fd)
         end
         socket_dispatch[fd] = nil
         assert(socket_connect[fd] == nil)
-        local ret = silly.socketclose(fd)
-        return ret
+        silly.close(fd)
 end
 
 --the message handler can't be yield
@@ -250,6 +285,7 @@ local messagetype = {
         [3] = "close",          --SILLY_SCLOSE          = 3
         [4] = "connected",      --SILLY_SCONNECTED      = 4
         [5] = "data",           --SILLY_SDATA           = 5
+        [6] = "udp",            --SILLY_UDP             = 6
 }
 
 local MSG = {}
@@ -269,7 +305,7 @@ function MSG.accept(fd, _, portid, addr)
         return socket_dispatch[fd]
 end
 
-function MSG.close(fd, _, _)
+function MSG.close(fd)
         local co = socket_connect[fd]
         if co then      --connect fail
                 core.wakeup(co, false)
@@ -284,7 +320,7 @@ function MSG.close(fd, _, _)
         return d
 end
 
-function MSG.connected(fd, _, _)
+function MSG.connected(fd)
         local co = socket_connect[fd]
         if co == nil then       --have already closed
                 assert(socket_dispatch[fd] == nil)
@@ -294,11 +330,17 @@ function MSG.connected(fd, _, _)
         return nil
 end
 
-function MSG.data(fd, _, _)
+function MSG.data(fd)
         --do nothing
         return socket_dispatch[fd]
 end
 
+function MSG.udp(fd)
+        --do nothing
+        return socket_dispatch[fd]
+end
+
+--fd, message, portid/errno, addr
 local function dispatch(type, fd, message, ...)
         local type = messagetype[type]
         --may run other coroutine here(like connected)

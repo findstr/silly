@@ -19,6 +19,8 @@ dispatch(lua_State *L, struct silly_message *sm)
         int type;
         int err;
         int args = 1;
+        const char *addr;
+        size_t addrlen;
         lua_pushlightuserdata(L, dispatch);
         lua_gettable(L, LUA_REGISTRYINDEX);
         type = lua_type(L, -1);
@@ -49,6 +51,15 @@ dispatch(lua_State *L, struct silly_message *sm)
                 lua_pushinteger(L, sdata(sm)->sid);
                 lua_pushlightuserdata(L, sm);
                 args += 2;
+                break;
+        case SILLY_SUDP:
+                addr = (const char *)sudp(sm)->data + sudp(sm)->ud;
+                addr = silly_socket_udpaddress(addr, &addrlen);
+                lua_pushinteger(L, sudp(sm)->sid);
+                lua_pushlightuserdata(L, sm);
+                lua_pushinteger(L, sudp(sm)->ud);
+                lua_pushlstring(L, addr, addrlen);
+                args += 4;
                 break;
         case SILLY_SCLOSE:
                 lua_pushinteger(L, sclose(sm)->sid);
@@ -148,7 +159,7 @@ ldispatch(lua_State *L)
 }
 
 static int
-lsocket_connect(lua_State *L)
+socketconnect(lua_State *L, int (*connect)(const char *ip, int port, const char *bindip, int bindport))
 {
         int err;
         int port;
@@ -159,13 +170,19 @@ lsocket_connect(lua_State *L)
         port = luaL_checkinteger(L, 2);
         bip = luaL_checkstring(L, 3);
         bport = luaL_checkinteger(L, 4);
-        err = silly_socket_connect(ip, port, bip, bport);
+        err = connect(ip, port, bip, bport);
         lua_pushinteger(L, err);
         return 1;
 }
 
 static int
-lsocket_listen(lua_State *L)
+ltcpconnect(lua_State *L)
+{
+        return socketconnect(L, silly_socket_connect);
+}
+
+static int
+ltcplisten(lua_State *L)
 {
         const char *ip = luaL_checkstring(L, 1);
         int port = luaL_checkinteger(L, 2);
@@ -176,18 +193,7 @@ lsocket_listen(lua_State *L)
 }
 
 static int
-lsocket_close(lua_State *L)
-{
-        int err;
-        int sid;
-        sid = luaL_checkinteger(L, 1);
-        err = silly_socket_close(sid);
-        lua_pushboolean(L, err < 0 ? 0 : 1);
-        return 1;
-}
-
-static int
-lsocket_send(lua_State *L)
+ltcpsend(lua_State *L)
 {
         int err;
         int sid;
@@ -202,14 +208,50 @@ lsocket_send(lua_State *L)
 }
 
 static int
-ldropmsg(lua_State *L)
+ludpconnect(lua_State *L)
 {
-        struct silly_message *m = (struct silly_message *)lua_touserdata(L, 1);
-        if (m->type == SILLY_SDATA) {
-                assert(tosocket(m)->data);
-                silly_free(tosocket(m)->data);
-        }
-        return 0;
+        return socketconnect(L, silly_socket_udpconnect);
+}
+
+static int
+ludpbind(lua_State *L)
+{
+        const char *ip = luaL_checkstring(L, 1);
+        int port = luaL_checkinteger(L, 2);
+        int err = silly_socket_udpbind(ip, port);
+        lua_pushinteger(L, err);
+        return 1;
+}
+
+static int
+ludpsend(lua_State *L)
+{
+        int err;
+        int sid;
+        size_t sz;
+        uint8_t *buff;
+        const char *addr = NULL;
+        size_t addrlen = 0;
+
+        sid = luaL_checkinteger(L, 1);
+        buff = lua_touserdata(L, 2);
+        sz = luaL_checkinteger(L, 3);
+        if (lua_type(L, 4) != LUA_TNIL)
+                addr = luaL_checklstring(L, 4, &addrlen);
+        err = silly_socket_udpsend(sid, buff, sz, addr, addrlen);
+        lua_pushinteger(L, err);
+        return 1;
+}
+
+static int
+lclose(lua_State *L)
+{
+        int err;
+        int sid;
+        sid = luaL_checkinteger(L, 1);
+        err = silly_socket_close(sid);
+        lua_pushboolean(L, err < 0 ? 0 : 1);
+        return 1;
 }
 
 static int
@@ -247,12 +289,14 @@ luaopen_silly(lua_State *L)
                 {"timenow",     ltimenow},
                 {"timecurrent", ltimecurrent},
                 //socket
-                {"socketlisten",        lsocket_listen},
-                {"socketconnect",       lsocket_connect},
-                {"socketclose",         lsocket_close},
-                {"socketsend",          lsocket_send},
+                {"connect",     ltcpconnect},
+                {"listen",      ltcplisten},
+                {"send",        ltcpsend},
+                {"bind",        ludpbind},
+                {"udp",         ludpconnect},
+                {"udpsend",     ludpsend},
+                {"close",       lclose},
                 //
-                {"dropmessage",         ldropmsg},
                 {"tostring",            ltostring},
                 {"genid",               lgenid},
                 //end

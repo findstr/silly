@@ -184,22 +184,20 @@ end
 
 function gate.connect(config)
         local fd = core.connect(config.addr, gate_dispatch)
-        if fd < 0 then
-                return -1
+        if fd then
+                -- now all the socket event can be process it in the socket coroutine
+                newsocket(fd, config)
         end
-        -- now all the socket event can be process it in the socket coroutine
-        newsocket(fd, config)
         return fd
 end
 
 function gate.listen(config)
         assert(config)
         local portid = core.listen(config.addr, gate_dispatch)
-        if not portid then
-                return false
+        if portid then
+                socket_config[portid] = config
         end
-        socket_config[portid] = config
-        return true
+        return portid
 end
 
 function gate.forceclose(fd)

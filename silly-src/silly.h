@@ -17,17 +17,27 @@ struct silly_config {
         char lualib_cpath[256];
 };
 
+#define MSGCOMMONFIELD       \
+        enum silly_message_type type;\
+        struct silly_message    *next;
+
+#define tocommon(msg)   ((struct silly_message *)(msg))
+#define tosocket(msg)   ((struct silly_message_socket *)(msg))
+#define texpire(msg)    (assert((msg)->type == SILLY_TEXPIRE), ((struct silly_message_texpire *)(msg)))
+#define saccept(msg)    (assert((msg)->type == SILLY_SACCEPT), ((struct silly_message_socket *)(msg)))
+#define sclose(msg)     (assert((msg)->type == SILLY_SCLOSE), ((struct silly_message_socket *)(msg)))
+#define sconnected(msg) (assert((msg)->type == SILLY_SCONNECTED), ((struct silly_message_socket *)(msg)))
+#define sdata(msg)      (assert((msg)->type == SILLY_SDATA), ((struct silly_message_socket *)(msg)))
+#define sudp(msg)       (assert((msg)->type == SILLY_SUDP), ((struct silly_message_socket *)(msg)))
+
 enum silly_message_type {
         SILLY_TEXPIRE           = 1,
         SILLY_SACCEPT           = 2,    //new connetiong
         SILLY_SCLOSE,                   //close from client
         SILLY_SCONNECTED,               //async connect result
         SILLY_SDATA,                    //data packet(raw) from client
+        SILLY_SUDP,                     //data packet(raw) from client(udp)
 };
-
-#define MSGCOMMONFIELD       \
-        enum silly_message_type type;\
-        struct silly_message    *next;
 
 
 struct silly_message {
@@ -44,20 +54,13 @@ struct silly_message_socket {  //socket accept
         int sid;
         //SACCEPT, it used as portid,
         //SCLOSE used as errorcode
-        //SDATA  used by length
+        //SDATA/SUDP  used by length
         int ud;
         uint8_t *data;          
 };
 
-#define tocommon(msg)     ((struct silly_message *)(msg))
-#define tosocket(msg)    ((struct silly_message_socket *)(msg))
-#define texpire(msg)     (assert((msg)->type == SILLY_TEXPIRE), ((struct silly_message_texpire *)(msg)))
-#define saccept(msg)    (assert((msg)->type == SILLY_SACCEPT), ((struct silly_message_socket *)(msg)))
-#define sclose(msg)     (assert((msg)->type == SILLY_SCLOSE), ((struct silly_message_socket *)(msg)))
-#define sconnected(msg) (assert((msg)->type == SILLY_SCONNECTED), ((struct silly_message_socket *)(msg)))
-#define sdata(msg)      (assert((msg)->type == SILLY_SDATA), ((struct silly_message_socket *)(msg)))
-
-static void __inline silly_message_free(struct silly_message *msg)
+static void __inline
+silly_message_free(struct silly_message *msg)
 {
         if (msg->type == SILLY_SDATA)
                 silly_free(sdata(msg)->data);
