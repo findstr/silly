@@ -145,10 +145,10 @@ function server.listen(port, handler)
 end
 
 function server.send(fd, status, header, body)
-        local tmp = string.format("HTTP/1.1 %d %s\r\n", status, http_err_msg[status])
-        tmp = tmp .. table.concat(header, "\r\n")
-        tmp = tmp .. string.format("Content-Length: %d\r\n", #body)
-        tmp = tmp .. "\r\n"
+        table.insert(header, 1, string.format("HTTP/1.1 %d %s", status, http_err_msg[status]))
+        table.insert(header, string.format("Content-Length: %d", #body))
+        local tmp = table.concat(header, "\r\n")
+        tmp = tmp .. "\r\n\r\n"
         tmp = tmp .. body
         write(fd, tmp)
 end
