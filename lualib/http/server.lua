@@ -73,6 +73,21 @@ local http_err_msg = {
         [599] = "Network Connect Timeout Error",
 }
 
+local function parse_uri(str)
+        local form = {}
+        local start = string.find(str, "?", 1, true)
+        if not start then
+                return str, form
+        end
+        assert(start > 1)
+        local uri = string.sub(str, 1, start - 1)
+        local f = string.sub(str, start + 1)
+        for k, v in string.gmatch(f, "(%w+)=(%w+)") do
+                form[k] = v
+        end
+        return uri, form
+end
+
 local function httpd(fd, handler)
         socket.limit(fd, 1024 * 512)
         local readl = function()
@@ -102,15 +117,21 @@ local function httpd(fd, handler)
                 local method, uri, ver = first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
                 assert(method and uri and ver)
                 header.method = method
-                header.URI = uri
                 header.version = ver
+                header.uri, header.form = parse_uri(uri)
 
                 if tonumber(ver) > 1.1 then
                         write(505, {}, "")
                         socket.close(fd)
                         return 
                 end
-
+                
+                if header["Content-Type"] == "application/x-www-form-urlencoded" then
+                        for k, v in string.gmatch(body, "(%w+)=(%w+)") do
+                                header.form[k] = v
+                        end
+                        body = ""
+                end
                 handler(header, body, write)
         end
 end
@@ -125,9 +146,7 @@ end
 
 function server.send(fd, status, header, body)
         local tmp = string.format("HTTP/1.1 %d %s\r\n", status, http_err_msg[status])
-        for _, v in pairs(header) do
-                tmp = tmp .. v .. "\r\n"
-        end
+        tmp = tmp .. table.concat(header, "\r\n")
         tmp = tmp .. string.format("Content-Length: %d\r\n", #body)
         tmp = tmp .. "\r\n"
         tmp = tmp .. body

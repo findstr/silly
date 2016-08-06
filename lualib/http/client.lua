@@ -22,7 +22,8 @@ local function send_request(fd, method, host, abs, header, body)
         table.insert(header, 1, string.format("%s %s HTTP/1.1", method, abs))
         table.insert(header, string.format("Host: %s", host))
         table.insert(header, string.format("Content-Length: %d", #body))
-        table.insert(header, string.format("User-Agent: Silly/0.2"))
+        table.insert(header, "User-Agent: Silly/0.2")
+        table.insert(header, "Connection: keep-alive")
         tmp = tmp .. table.concat(header, "\r\n")
         tmp = tmp .. "\r\n\r\n"
         tmp = tmp .. body
@@ -45,7 +46,7 @@ local function recv_response(fd)
                 return status
         end
         local ver, status= first:match("HTTP/([%d|.]+)%s+(%d+)")
-        return status, header, body, ver
+        return tonumber(status), header, body, ver
 end
 
 local function process(uri, header, body)

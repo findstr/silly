@@ -21,11 +21,20 @@ function stream.recv_request(readl, readn)
                         return nil
                 end
         end
-
-        if header["Transfer-Encoding"] then
-                return 501
+        local encoding = header["Transfer-Encoding"]
+        if encoding then
+                if encoding ~= "chunked" then
+                        return 501
+                end
+                while true do
+                        local n = readl()
+                        local sz = tonumber(n, 16)
+                        if not sz or sz == 0 then
+                                break
+                        end
+                        body = body .. readn(sz)
+                end
         end
-
         if header["Content-Length"] then
                 local len = tonumber(header["Content-Length"])
                 if len > 4096 then
