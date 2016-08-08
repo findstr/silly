@@ -6,6 +6,13 @@ local core = {}
 local tinsert = table.insert
 local tremove = table.remove
 
+local corunning = coroutine.running
+local coyield = coroutine.yield
+local coresume = coroutine.resume
+coroutine.running = nil
+coroutine.yield = nil
+coroutine.resume = nil
+
 --coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
@@ -15,19 +22,19 @@ setmetatable(copool, weakmt)
 local function cocreate(f)
         local co = table.remove(copool)
         if co then
-                coroutine.resume(co, "STARTUP", f)
+                coresume(co, "STARTUP", f)
                 return co
         end
 
         local function cocall()
                 while true do
-                        local ret, func = coroutine.yield("EXIT")
+                        local ret, func = coyield("EXIT")
                         if ret ~= "STARTUP" then
                                 print("create coroutine fail", ret)
                                 print(debug.traceback())
                                 return
                         end
-                        local ok, err = core.pcall(func, coroutine.yield())
+                        local ok, err = core.pcall(func, coyield())
                         if ok == false then
                                 print("cocall", err)
                                 print(debug.traceback())
@@ -36,8 +43,8 @@ local function cocreate(f)
         end
 
         co = coroutine.create(cocall)
-        coroutine.resume(co)    --wakeup the new coroutine
-        coroutine.resume(co, "STARTUP", f)       --pass the function handler
+        coresume(co)    --wakeup the new coroutine
+        coresume(co, "STARTUP", f)       --pass the function handler
         if #copool > 100 then
                 print("coroutine pool large than 100", #copool)
         end
@@ -50,7 +57,7 @@ end
 core.udpwrite = function(fd, p, sz, addr)
         return silly.udpsend(fd, p, sz, addr) == 0
 end
-core.running = coroutine.running
+core.running = corunning
 core.quit = silly.quit
 core.tostring = silly.tostring
 core.genid = silly.genid
@@ -132,7 +139,7 @@ function dispatch_wakeup()
         if not param then
                 param = {}
         end
-        waityield(co, coroutine.resume(co, "WAKEUP", table.unpack(param)))
+        waityield(co, coresume(co, "WAKEUP", table.unpack(param)))
 end
 
 function core.fork(func)
@@ -144,12 +151,12 @@ function core.fork(func)
 end
 
 function core.wait()
-        local co = coroutine.running()
+        local co = corunning()
         assert(wakeup_co_status[co] == nil)
         assert(sleep_co_session[co] == nil)
         assert(wait_co_status[co] == nil)
         wait_co_status[co] = "WAIT"
-        return waitresume(co, coroutine.yield("WAIT"))
+        return waitresume(co, coyield("WAIT"))
 end
 
 function core.wakeup(co, ...)
@@ -161,11 +168,11 @@ function core.wakeup(co, ...)
 end
 
 function core.sleep(ms)
-        local co = coroutine.running()
+        local co = corunning()
         local session = silly.timeout(ms)
         sleep_session_co[session] = co
         sleep_co_session[co] = session
-        waitresume(co, coroutine.yield("SLEEP"))
+        waitresume(co, coyield("SLEEP"))
 end
 
 function core.timeout(ms, func)
@@ -178,7 +185,7 @@ end
 
 function core.start(func, ...)
         local co = cocreate(func)
-        waityield(co, coroutine.resume(co, ...))
+        waityield(co, coresume(co, ...))
 end
 
 
@@ -248,7 +255,7 @@ local function doconnect(ip, dispatch, bind, dofunc)
                 return nil
         end
         assert(socket_connect[fd] == nil)
-        socket_connect[fd] = coroutine.running()
+        socket_connect[fd] = corunning()
         local ok = core.wait()
         socket_connect[fd] = nil
         if ok ~= true then
@@ -260,7 +267,6 @@ local function doconnect(ip, dispatch, bind, dofunc)
 end
 
 function core.connect(ip, dispatch, bind)
-
         return doconnect(ip, dispatch, bind, silly.connect)
 end
 
@@ -348,7 +354,7 @@ local function dispatch(type, fd, message, ...)
         --check if the socket has closed
         if dispatch then     --have ready close
                 local co = cocreate(dispatch)
-                waityield(co, coroutine.resume(co, type, fd, message, ...))
+                waityield(co, coresume(co, type, fd, message, ...))
         end
         dispatch_wakeup()
 end
