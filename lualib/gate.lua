@@ -228,6 +228,9 @@ function gate.send(fd, ...)
         if sc == nil then
                 return false
         end
+        if sc.__close then
+                return false
+        end
         if sc.pack then
                 d, sz = sc.pack(...)
         else

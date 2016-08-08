@@ -122,7 +122,7 @@ local function tryconnect(self)
         if self.status == CLOSE then
                 self.status = CONNECTING;
                 self.sock = socket.connect(self.config.addr)
-                if self.sock < 0 then
+                if not self.sock then
                         res = false
                         self.status = CLOSE
                 else

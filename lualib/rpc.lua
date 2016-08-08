@@ -182,8 +182,8 @@ end
 
 function rpc.connect(config)
         local fd = core.connect(config.addr, rpc_dispatch)
-        if fd < 0 then
-                return -1
+        if not fd then
+                return fd
         end
         assert(config.proto)
         assert(config.data == nil,
