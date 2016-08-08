@@ -50,11 +50,11 @@ end
 
 
 server.listen("@8080", function(request, body, write)
-        local c = dispatch[request.URI]
+        local c = dispatch[request.uri]
         if c then 
                 c(request, body, write)
         else
-                print("Unsupport URI", request.URI)
+                print("Unsupport uri", request.uri)
                 write(404, {"Content-Type: text/plain"}, "404 Page Not Found")
         end
 end)
