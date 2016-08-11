@@ -70,7 +70,7 @@ struct socket {
 };
 
 struct silly_socket {
-        int             spfd;
+        sp_t       spfd;
         size_t          eventcap;
         //event
         sp_event_t      *eventbuff;
@@ -1275,14 +1275,14 @@ int
 silly_socket_init()
 {
         int err;
-        int spfd = -1;
+        sp_t spfd = SP_INVALID;
         int fd[2] = {-1, -1};
         struct socket *s = NULL;
         struct silly_socket *ss = silly_malloc(sizeof(*ss));
         memset(ss, 0, sizeof(*ss));
         socketpool_init(ss);
         spfd = sp_create(EVENT_SIZE);
-        if (spfd < 0)
+        if (spfd == SP_INVALID)
                 goto end;
         s = allocsocket(ss, STYPE_CTRL, PROTOCOL_PIPE);
         assert(s);
@@ -1304,8 +1304,8 @@ silly_socket_init()
 end:
         if (s)
                 freesocket(ss, s);
-        if (spfd >= 0)
-                close(spfd);
+        if (spfd != SP_INVALID)
+                sp_free(spfd);
         if (fd[0] >= 0)
                 close(fd[0]);
         if (fd[1] >= 0)
@@ -1320,7 +1320,7 @@ void silly_socket_exit()
 {
         int i;
         assert(SSOCKET);
-        close(SSOCKET->spfd);
+        sp_free(SSOCKET->spfd);
         close(SSOCKET->ctrlsendfd);
         close(SSOCKET->ctrlrecvfd);
 

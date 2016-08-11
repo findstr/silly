@@ -7,6 +7,8 @@
 #define SP_ERR(e)    (e->events & (EPOLLERR | EPOLLHUP))
 #define SP_UD(e)     (e->data.ptr)
 
+#define SP_INVALID   (-1)
+typedef int sp_t;
 typedef struct epoll_event sp_event_t;
 
 static inline int
@@ -15,8 +17,14 @@ sp_create(int nr)
         return epoll_create(nr);
 }
 
+static inline void
+sp_free(sp_t fd)
+{
+        close(fd);
+}
+
 static inline int
-sp_wait(int sp, sp_event_t *event_buff, int cnt)
+sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 {
         int ret;
         ret = epoll_wait(sp, event_buff, cnt, -1);
@@ -24,7 +32,7 @@ sp_wait(int sp, sp_event_t *event_buff, int cnt)
 }
 
 static inline int
-sp_add(int sp, int fd, void *ud)
+sp_add(sp_t sp, int fd, void *ud)
 {
         struct epoll_event      event;
         event.data.ptr = ud;
@@ -33,13 +41,13 @@ sp_add(int sp, int fd, void *ud)
 }
 
 static inline int
-sp_del(int sp, int fd)
+sp_del(sp_t sp, int fd)
 {
         return epoll_ctl(sp, EPOLL_CTL_DEL, fd, NULL);
 }
 
 static inline int
-sp_write_enable(int sp, int fd, void *ud, int enable)
+sp_write_enable(sp_t sp, int fd, void *ud, int enable)
 {
         struct epoll_event      event;
         event.data.ptr = ud;

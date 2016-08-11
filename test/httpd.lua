@@ -2,13 +2,6 @@ local server = require "http.server"
 
 local dispatch = {}
 
-local function dump(reqeust, body)
-        for k, v in pairs(request) do
-                print(k, v)
-        end
-        print(#body, body)
-end
-
 dispatch["/"] = function(reqeust, body, write)
         local body = [[
                 <html>
@@ -35,9 +28,8 @@ dispatch["/download"] = function(request, body, write)
 end
 
 dispatch["/upload"] = function(request, body, write)
-        local val = body:match(".-=(.+)&")
-        if val then
-                content = val
+        if request.form.Hello then
+                content = request.form.Hello
         end
         local body = "Upload"
         local head = {

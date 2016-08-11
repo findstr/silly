@@ -8,6 +8,8 @@
 #define SP_ERR(e)    ((e->filter != EVFILT_READ) && (e->filter != EVFILT_WRITE))
 #define SP_UD(e)     (e->udata)
 
+#define SP_INVALID   (-1)
+typedef int           sp_t;
 typedef struct kevent sp_event_t;
 
 static inline int
@@ -17,8 +19,14 @@ sp_create(int nr)
         return kqueue();
 }
 
+static inline void
+sp_free(sp_t fd)
+{
+        close(fd);
+}
+
 static inline int
-sp_wait(int sp, sp_event_t *event_buff, int cnt)
+sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 {
         int ret;
         ret = kevent(sp, NULL, 0, event_buff, cnt, NULL);
@@ -26,7 +34,7 @@ sp_wait(int sp, sp_event_t *event_buff, int cnt)
 }
 
 static inline int
-sp_del(int sp, int fd)
+sp_del(sp_t sp, int fd)
 {
         struct kevent event[1];
         EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
@@ -38,7 +46,7 @@ sp_del(int sp, int fd)
 }
 
 static inline int
-sp_write_enable(int sp, int fd, void *ud, int enable)
+sp_write_enable(sp_t sp, int fd, void *ud, int enable)
 {
         struct kevent event[1];
         int ctrl = enable ? EV_ENABLE : EV_DISABLE;
@@ -49,7 +57,7 @@ sp_write_enable(int sp, int fd, void *ud, int enable)
 }
 
 static inline int
-sp_add(int sp, int fd, void *ud)
+sp_add(sp_t sp, int fd, void *ud)
 {
         int ret;
         struct kevent event[1];
