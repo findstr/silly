@@ -62,6 +62,7 @@ core.quit = silly.quit
 core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus
+core.msgstatus = silly.msgstatus
 core.now = silly.timenow
 core.current = silly.timecurrent
 core.pcall = function(f, ...)

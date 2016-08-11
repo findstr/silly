@@ -123,6 +123,15 @@ lmemstatus(lua_State *L)
 }
 
 static int
+lmsgstatus(lua_State *L)
+{
+        size_t sz;
+        sz = silly_worker_msgsz();
+        lua_pushinteger(L, sz);
+        return 1;
+}
+
+static int
 ltimeout(lua_State *L)
 {
         uint32_t expire;
@@ -284,6 +293,7 @@ luaopen_silly(lua_State *L)
                 {"setenv",      lsetenv},
                 {"quit",        lquit},
                 {"memstatus",   lmemstatus},
+                {"msgstatus",   lmsgstatus},
                 //timer
                 {"timeout",     ltimeout},
                 {"timenow",     ltimenow},

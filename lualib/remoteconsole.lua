@@ -11,6 +11,10 @@ function CMD.memstatus(fd, line)
         socket.write(fd, "Memory Used:" .. sz .. "\n")
 end
 
+function CMD.msgstatus(fd, line)
+        local sz = core.msgstatus();
+        socket.write(fd, "Unprocessed Message Count:" .. sz .. "\n")
+end
 
 socket.listen("127.0.0.1@2323", function(fd, addr)
         print(fd, "from", addr)
