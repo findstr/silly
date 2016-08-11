@@ -24,6 +24,8 @@ int silly_daemon()
                 dup2(fd, 1);
                 dup2(fd, 2);
                 close(fd);
+                setvbuf(stdout, NULL, _IOLBF, 0);
+                setvbuf(stderr, NULL, _IOLBF, 0);
         }
         return 0;
 }
