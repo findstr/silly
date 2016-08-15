@@ -115,7 +115,7 @@ local clientmt = {__index = client}
 local function clienttimer(self)
         local wheel
         wheel = function()
-                core.timeout(10, wheel)
+                core.timeout(100, wheel)
                 local idx = self.nowwheel + 1
                 idx = idx % self.totalwheel
                 self.nowwheel = idx
@@ -133,7 +133,7 @@ local function clienttimer(self)
                         wk[k] = nil
                 end
         end
-        core.timeout(10, wheel)
+        core.timeout(100, wheel)
 end
 
 
@@ -258,7 +258,7 @@ function rpc.createclient(config)
         obj.timeout = {}
         obj.waitpool = {}
         obj.nowwheel = 0
-        obj.totalwheel = math.floor((config.timeout + 9) / 10)
+        obj.totalwheel = math.floor((config.timeout + 99) / 100)
         obj.timeoutwheel = obj.totalwheel - 1
         obj.config = config
         setmetatable(obj, clientmt)
