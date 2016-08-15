@@ -10,7 +10,7 @@
 #include "silly_malloc.h"
 
 #define DEFAULT_QUEUE_SIZE      2048
-#define INCOMPLETE_HASH_SIZE    2024
+#define INCOMPLETE_HASH_SIZE    2048
 #define INCOMPLETE_HASH(a)      (a % INCOMPLETE_HASH_SIZE)
 
 #define min(a, b)               ((a) > (b) ? (b) : (a))
@@ -327,6 +327,21 @@ lmessage(lua_State *L)
         }
 }
 
+static int
+packet_gc(lua_State *L)
+{
+        int i;
+        struct netpacket *pk = get_netpacket(L);
+        for (i = 0; i < INCOMPLETE_HASH_SIZE; i++) {
+                struct incomplete *ic = pk->incomplete_hash[i];
+                while (ic) {
+                        silly_free(ic->buff);
+                        ic = ic->next;
+                }
+        }
+        return 0;
+}
+
 int luaopen_netpacket(lua_State *L)
 {
         luaL_Reg tbl[] = {
@@ -342,6 +357,9 @@ int luaopen_netpacket(lua_State *L)
         luaL_checkversion(L);
 
         luaL_newmetatable(L, "netpacket");
+        lua_pushliteral(L, "__gc");
+        lua_pushcfunction(L, packet_gc);
+        lua_settable(L, -3);
         luaL_newlibtable(L, tbl);
         luaL_setfuncs(L, tbl, 0);
         
