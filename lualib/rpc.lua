@@ -1,5 +1,4 @@
 local core = require "silly.core"
-local env = require "silly.env"
 local np = require "netpacket"
 local zproto = require "zproto"
 
@@ -7,22 +6,6 @@ local zproto = require "zproto"
 rpc.listen {
         addr = ip@port:backlog 
         proto = the proto instance
-        pack = function(data)
-                @data 
-                        binary string
-                @return 
-                        return string or (lightuserdata, size)
-        end,
-        unpack = function(data, sz)
-                @data 
-                        lightuserdata
-                        need not free the data
-                        it will be freed by rpc.lua
-                @sz 
-                        size of lightuserdata
-                @return
-                        return string or lightuserdata
-        end,
         accept = function(fd, addr)
                 @fd 
                         new socket fd come int
@@ -40,18 +23,17 @@ rpc.listen {
                 @return 
                         no return
         end,
-        data = function(fd, rpc, data)
+        call = function(fd, cmd, data)
                 @fd 
                         socket fd
+                @cmd
+                        data type
                 @data 
                         a table parsed from zproto
-                @rpc
-                        rpc header defined in rpc.lua
-                        
                 @return
-                        no return
+                        cmd, result table
         end
-
+}
 ]]--
 
 local proto = zproto:parse [[
@@ -62,211 +44,234 @@ rpc {
 ]]
 
 local rpc = {}
-local queue = np.create()
-local socket_config = {}
-local socket_rpc = {}
 
-local function close_wakeup(fd)
-        local rpc = socket_rpc[fd]
-        for k, v in pairs(rpc) do
-                core.wakeup(v, nil)
-                rpc[k] = nil
-        end
-end
+-----------server
+local server = {}
+local servermt = {__index = server}
 
-local function forceclose(fd)
-        local sc = socket_config[fd]
-        if sc == nil then       --have already closed
-                return ;
-        end
-        rpc.close(fd)
-        local ok, err = core.pcall(assert(sc).close, fd, errno)
-        if not ok then
-                print("[rpc] forceclose", err)
-        end
-end
-
-local function dispatchclient(fd, sc, rpc, body)
-        local co = socket_rpc[fd][rpc.session]
-        if not co then
-                print("[rpc] try to wakeup a nonexit session", rpc.session)
-                return
-        end
-        socket_rpc[fd][rpc.session] = nil
-        core.wakeup(co, body)
-end
-
-local function dispatchserver(fd, sc, rpc, body)
-        sc.data(fd, rpc, body)
-end
-
-local function dispatch_socket(fd)
-        local sc = socket_config[fd]
-        local f, d, s = np.pop(queue)
-        while f do
-                if sc.unpack then
-                        ok, data, sz = core.pcall(sc.unpack, d, s)
-                        if not ok then
-                                print("[rpc] call socketconfig.unpack fail", data)
-                                np.drop(d, s)
-                                forceclose(fd)
-                                return 
-                        end
+function server.listen(self)
+        local EVENT = {}
+        function EVENT.accept(fd, portid, addr)
+                local ok, err = core.pcall(self.config.accept, fd, addr)
+                if not ok then
+                        print("[rpc.server] EVENT.accept", err)
+                        np.clear(self.queue, fd)
+                        core.close(fd)
                 end
-                local str = proto:unpack(data, sz)
-                np.drop(d, s)
+        end
+
+        function EVENT.close(fd, errno)
+                local ok, err = core.pcall(assert(self.config).close, fd, errno)
+                if not ok then
+                        print("[rpc.server] EVENT.close", err)
+                end
+                np.clear(self.queue, fd)
+        end
+
+        function EVENT.data()
+                local fd, d, sz = np.pop(self.queue)
+                if not fd then
+                        return
+                end
+                core.fork(EVENT.data)
+                --parse
+                local str = proto:unpack(d, sz)
+                np.drop(d, sz)
                 local rpc, takes = proto:decode("rpc", str)
                 if not rpc then
-                        print("[rpc] parse the header fail")
-                        forceclose(fd)
+                        print("[rpc.server] parse the header fail")
                         return
                 end
-                local body = sc.proto:decode(rpc.command, str:sub(takes + 1))
+                local body = self.config.proto:decode(rpc.command, str:sub(takes + 1))
                 if not body then
-                        print("[rpc] parse body fail", rpc.session, rpc.command)
-                        forceclose(fd)
+                        print("[rpc.server] parse body fail", rpc.session, rpc.command)
                         return
                 end
-                assert(sc.__dispatch)(fd, sc, rpc, body)
-                f, d, s= np.pop(queue)
+                local ok, cmd, res = core.pcall(assert(self.config).call, fd, rpc.command, body)
+                if not ok or not cmd then
+                        print("[rpc.server] dispatch socket", cmd)
+                        return 
+                end
+                --ack
+                local hdr = {session = rpc.session, command = cmd}
+                local hdrdat = proto:encode("rpc", hdr)
+                local bodydat = self.config.proto:encode(cmd, res)
+                local full = proto:pack(hdrdat .. bodydat)
+                core.write(fd, np.pack(full))
         end
+
+        local callback = function(type, fd, message, ...)
+                self.queue = np.message(self.queue, message)
+                assert(EVENT[type])(fd, ...)
+        end
+        return core.listen(self.config.addr, callback)
 end
 
-local EVENT = {}
 
-function EVENT.accept(fd, portid, addr)
-        local lc = socket_config[portid];
-        socket_config[fd] = lc
-        socket_rpc[fd] = {}
-        local ok = core.pcall(lc.accept, fd, addr)
-        if not ok then
-                forceclose(fd)
+-------client
+local client = {}
+local clientmt = {__index = client}
+
+local function clienttimer(self)
+        local wheel
+        wheel = function()
+                core.timeout(10, wheel)
+                local idx = self.nowwheel + 1
+                idx = idx % self.totalwheel
+                self.nowwheel = idx
+                local wk = self.timeout[idx]
+                if not wk then
+                        return
+                end
+                for k, v in pairs(wk) do
+                        local co = self.waitpool[v]
+                        if co then
+                                print("[rpc.client] timeout session", v)
+                                core.wakeup(co)
+                                self.waitpool[v] = nil
+                        end
+                        wk[k] = nil
+                end
         end
+        core.timeout(10, wheel)
 end
 
-function EVENT.close(fd, errno)
-        local sc = socket_config[fd]
-        if sc == nil then       --have already closed
-                return ;
+
+local function wakeupall(self, res)
+        for _, v in pairs(self.connectqueue) do
+                core.wakeup(v, res)
         end
-        close_wakeup(fd)
-        socket_config[fd] = nil
-        socket_rpc[fd] = nil
-        local ok, err = core.pcall(assert(sc).close, fd, errno)
-        if not ok then
-                print("[rpc] EVENT.close", ok)
-        end
+        self.connectqueue = {}
 end
 
-function EVENT.data(fd)
-        local ok, err = core.pcall(dispatch_socket, fd)
-        if not ok then
-                print("[rpc] dispatch socket error:", err)
-                forceclose(fd)
+local function doconnect(self)
+        local EVENT = {}
+        function EVENT.close(fd, errno)
+                local ok, err = core.pcall(assert(self.config).close, fd, errno)
+                if not ok then
+                        print("[rpc.client] EVENT.close", err)
+                end
+                np.clear(self.queue, fd)
         end
-end
 
-local function dispatch_message(q, type, ...)
-        queue = q
-        assert(EVENT[type])(...)
-end
-
-local function rpc_dispatch(type, fd, message, ...)
-        --have already closed
-        if type ~= "accept" and socket_config[fd] == nil then
-                assert(socket_queue[fd] == nil)
-                return ;
+        function EVENT.data()
+                local fd, d, sz = np.pop(self.queue)
+                if not fd then
+                        return
+                end
+                core.fork(EVENT.data)
+                --parse
+                local str = proto:unpack(d, sz)
+                np.drop(d, sz)
+                local rpc, takes = proto:decode("rpc", str)
+                if not rpc then
+                        print("[rpc.client] parse the header fail")
+                        return
+                end
+                local body = self.config.proto:decode(rpc.command, str:sub(takes + 1))
+                if not body then
+                        print("[rpc.client] parse body fail", rpc.session, rpc.command)
+                        return
+                end
+                --ack
+                local co = self.waitpool[rpc.session]
+                if not co then --timeout
+                        return
+                end
+                self.waitpool[rpc.session] = nil
+                core.wakeup(co, rpc.command, body)
         end
-        dispatch_message(np.message(queue, message), type, fd, ...)
-end
 
-function rpc.connect(config)
-        local fd = core.connect(config.addr, rpc_dispatch)
-        if not fd then
-                return fd
+        local callback = function(type, fd, message, ...)
+                self.queue = np.message(self.queue, message)
+                assert(EVENT[type])(fd, ...)
         end
-        assert(config.proto)
-        assert(config.data == nil,
-                "rpc client need no 'data' func, result will be ret by rpccall")
-        config.__dispatch = dispatchclient
-        -- now all the socket event can be process it in the socket coroutine
-        socket_config[fd] = config
-        socket_rpc[fd] = {}
-        return fd
+        return core.connect(self.config.addr, callback)
 end
 
-function rpc.listen(config)
-        assert(config)
-        local portid = core.listen(config.addr, rpc_dispatch)
-        if not portid then
-                return false
+--return true/false
+local function checkconnect(self)
+       if self.fd and self.fd >= 0 then
+                return true
         end
-        config.__dispatch = dispatchserver
-        socket_config[portid] = config
-        return true
-end
-
-function rpc.close(fd)
-        local sc = socket_config[fd]
-        if sc == nil then
-                return false
-        end
-        close_wakeup(fd)
-        socket_config[fd] = nil
-        socket_rpc[fd] = nil
-        np.clear(queue, fd)
-        core.close(fd)
-end
-
-local function rpcsend(fd, sc, session, typ, dat)
-        local cmd
-        assert(type(dat) == "table")
-        assert(sc.proto)
-        if type(typ) == "string" then
-                cmd = sc.proto:querytag(typ)
+        if not self.fd then     --disconnected
+                self.fd = -1
+                local ok
+                local fd = doconnect(self)
+                if not fd then
+                        self.fd = false
+                        ok = false
+                else
+                        self.fd = fd
+                        ok = true
+                end
+                wakeupall(self, ok)
+                return ok
         else
-                assert(type(typ) == "integer")
-                cmd = typ
+                table.insert(self.connectqueue, core.running())
+                core.wait()
         end
-        local rpc = {
-                session = session;
-                command = cmd,
-        }
-        local head = proto:encode("rpc", rpc)
-        local body = sc.proto:encode(typ, dat)
-        head = head .. body
-        head = proto:pack(head)
-        if sc.pack then
-                head = sc.pack(head)
-        end
-        local err = core.write(fd, np.pack(head))
-        if not err then
-                return false, "send error"
-        end
-        return true
 end
 
-function rpc.call(fd, typ, dat)
-        local sc = socket_config[fd]
-        if sc == nil then
-                return false, "socket error"
+function client.connect(self)
+        return checkconnect(self)
+end
+
+local function waitfor(self, session)
+        local co = core.running()
+        local expire = self.timeoutwheel + self.nowwheel
+        expire = expire % self.totalwheel
+        if not self.timeout[expire] then
+                self.timeout[expire] = {}
         end
-        local session = core.genid();
-        local ok, err = rpcsend(fd, sc, session, typ, dat)
-        if not ok then
-                return ok, err
-        end
-        assert(socket_rpc[fd][session] == nil)
-        socket_rpc[fd][session] = core.running()
+        table.insert(self.timeout[expire], session)
+        self.waitpool[session] = co
         return core.wait()
 end
 
-function rpc.ret(fd, cookie, typ, dat)
-        local sc = socket_config[fd]
-        if sc == nil then
-                return false, "socket error"
+function client.call(self, cmd, body)
+        local ok = checkconnect(self)
+        if not ok then
+                return ok
         end
-        return rpcsend(fd, sc, cookie.session, typ, dat)
+        local cmd = self.config.proto:querytag(cmd)
+        local hdr = {session = core.genid(), command = cmd}
+        local hdrdat = proto:encode("rpc", hdr)
+        local bodydat = self.config.proto:encode(cmd, body)
+        local full = proto:pack(hdrdat .. bodydat)
+        core.write(self.fd, np.pack(full))
+        return waitfor(self, hdr.session)
+end
+
+function client.close(self)
+        if self.fd >= 0 then
+                core.close(self.fd)
+        end
+end
+
+-----rpc
+function rpc.createclient(config)
+        local obj = {}
+        obj.fd = false  --false disconnected, -1 conncting, >=0 conncted
+        obj.connectqueue = {}
+        obj.queue = np.create()
+        obj.timeout = {}
+        obj.waitpool = {}
+        obj.nowwheel = 0
+        obj.totalwheel = math.floor((config.timeout + 9) / 10)
+        obj.timeoutwheel = obj.totalwheel - 1
+        obj.config = config
+        setmetatable(obj, clientmt)
+        clienttimer(obj)
+        return obj
+end
+
+function rpc.createserver(config)
+        local obj = {}
+        obj.queue = np.create()
+        obj.config = config
+        setmetatable(obj, servermt)
+        return obj 
 end
 
 return rpc

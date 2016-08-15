@@ -1,6 +1,5 @@
 local core = require "silly.core"
 local rpc = require "rpc"
-local crypt = require "crypt"
 local zproto = require "zproto"
 
 local logic = zproto:parse [[
@@ -11,20 +10,15 @@ test 0xff {
 }
 ]]
 
+
 local function quit()
         core.sleep(10000)
         core.quit()
 end
 
-rpc.listen {
+local server = rpc.createserver {
         addr = "@9999",
         proto = logic,
-        pack = function(data)
-                return crypt.aesencode("hello", data)
-        end,
-        unpack = function(data, sz)
-                return crypt.aesdecode("hello", data, sz)
-        end,
         accept = function(fd, addr)
                 print("accept", fd, addr)
         end,
@@ -33,11 +27,12 @@ rpc.listen {
                 print("close", fd, errno)
         end,
 
-        data = function(fd, cookie, msg)
-                print("rpc recive", msg.name, msg.age, msg.rand)
-                rpc.ret(fd, cookie, "test", msg)
-                print("port1 data finish")
+        call = function(fd, cmd, msg)
+                print("rpc recive", fd, cmd, msg.name, msg.age, msg.rand)
                 core.fork(quit)
+                return cmd, msg
         end
 }
+
+server:listen()
 

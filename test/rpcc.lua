@@ -11,28 +11,10 @@ test 0xff {
 }
 ]]
 
-local function request(fd, index)
-        return function()
-                local test = {
-                        name = "hello",
-                        age = index,
-                        rand = crypt.randomkey(),
-                }
-                local res = rpc.call(fd, "test", test)
-                if not res then
-                        print("rpc call fail", res)
-                        return
-                end
-                assert(test.rand == res.rand)
-                print("rpc call", index, "ret:", res.name, res.age)
-        end
-end
-
-core.start(function()
-        print("connect 8989 start")
-        local fd = rpc.connect {
+local client = rpc.createclient {
                 addr = "127.0.0.1@9999",
                 proto = logic,
+                timeout = 1000,
                 pack = function(data)
                         return crypt.aesencode("hello", data)
                 end,
@@ -43,12 +25,33 @@ core.start(function()
                         print("close", fd, errno)
                 end,
         }
+ 
 
+local function request(fd, index)
+        return function()
+                local test = {
+                        name = "hello",
+                        age = index,
+                        rand = crypt.randomkey(),
+                }
+                local ack, body = client:call("test", test)
+                if not ack then
+                        print("rpc call fail", res)
+                        return
+                end
+                assert(test.rand == body.rand)
+                print("rpc call", index, "ret:", body.name, body.age)
+        end
+end
+
+core.start(function()
+        print("connect 9999 start")
+        client:connect()
         for i = 1, 5 do
-                core.fork(request(fd, i))
+                core.fork(request(client, i))
         end
         core.sleep(10000)
-        rpc.close(fd)
+        client:close(fd)
         core.quit()
 end)
 
