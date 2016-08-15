@@ -31,14 +31,14 @@ linux: PLAT := linux
 macosx: PLAT := macosx
 
 #-----------library
-LUASTATICLIB=lua53/liblua.a
+LUASTATICLIB=lua/liblua.a
 
 $(LUASTATICLIB):
-	make -C lua53/ $(PLAT)
+	make -C lua/ $(PLAT)
 
 #-----------project
 LUACLIB_PATH ?= luaclib
-INCLUDE = -I lua53/ -I silly-src/
+INCLUDE = -I lua/ -I silly-src/
 SRC = \
       silly-src/main.c\
       silly-src/silly_socket.c\
@@ -103,5 +103,5 @@ clean:
 	-rm -rf $(LUACLIB_PATH)
 
 cleanall: clean
-	make -C lua53/ clean
+	make -C lua/ clean
 
