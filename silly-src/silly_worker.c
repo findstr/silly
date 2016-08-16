@@ -116,10 +116,23 @@ setlibpath(lua_State *L, const char *libpath, const char *clibpath)
         return 0;
 }
 
+static void *
+lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
+{
+        (void) ud;
+        (void) osize;
+        if (nsize == 0) {
+                silly_free(ptr);
+                return NULL;
+        } else {
+                return silly_realloc(ptr, nsize);
+        }
+}
+
 static void
 initlua(struct silly_config *config)
 {
-        lua_State *L = luaL_newstate();
+        lua_State *L = lua_newstate(lua_alloc, NULL);
         luaL_openlibs(L);
 
         if (setlibpath(L, config->lualib_path, config->lualib_cpath) != 0) {
