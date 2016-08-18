@@ -257,6 +257,7 @@ strtotype(struct zproto *z, struct zproto_struct *proto, const char *type, struc
                 sz = i;
                 assert(len < 63 && len >= 0);
                 strncpy(mapkey, &type[mapidx], len);
+                mapkey[len] = 0;
         }
         if (strncmp(type, "boolean", sz) == 0) {
                 ztype |= ZPROTO_BOOLEAN;
