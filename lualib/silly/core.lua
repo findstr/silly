@@ -57,7 +57,10 @@ end
 core.udpwrite = function(fd, p, sz, addr)
         return silly.udpsend(fd, p, sz, addr) == 0
 end
-core.running = corunning
+function core.running()
+        local co = corunning()
+        return co
+end
 core.quit = silly.quit
 core.tostring = silly.tostring
 core.genid = silly.genid
