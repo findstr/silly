@@ -151,6 +151,7 @@ local function doconnect(self)
                 if not ok then
                         print("[rpc.client] EVENT.close", err)
                 end
+                self.fd = nil
                 np.clear(self.queue, fd)
         end
 
@@ -179,7 +180,7 @@ local function doconnect(self)
                         return
                 end
                 self.waitpool[rpc.session] = nil
-                core.wakeup(co, rpc.command, body)
+                core.wakeup(co, body, rpc.command)
         end
 
         local callback = function(type, fd, message, ...)
@@ -209,7 +210,7 @@ local function checkconnect(self)
                 return ok
         else
                 table.insert(self.connectqueue, core.running())
-                core.wait()
+                return core.wait()
         end
 end
 
