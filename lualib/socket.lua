@@ -189,7 +189,7 @@ end
 function socket.write(fd, str)
         local s = socket_pool[fd]
         if not s then
-                return false
+                return false, "already closed"
         end
         if #str > s.limit then
                 return false, "socket send size is limited:" .. s.limit

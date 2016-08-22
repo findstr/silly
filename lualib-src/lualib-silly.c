@@ -248,7 +248,7 @@ ludpsend(lua_State *L)
         if (lua_type(L, 4) != LUA_TNIL)
                 addr = luaL_checklstring(L, 4, &addrlen);
         err = silly_socket_udpsend(sid, buff, sz, addr, addrlen);
-        lua_pushinteger(L, err);
+        lua_pushboolean(L, err < 0 ? 0 : 1);
         return 1;
 }
 

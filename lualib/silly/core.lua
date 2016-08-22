@@ -51,12 +51,8 @@ local function cocreate(f)
         return co
 end
 
-core.write = function(fd, p, sz)
-        return silly.send(fd, p, sz) == 0
-end
-core.udpwrite = function(fd, p, sz, addr)
-        return silly.udpsend(fd, p, sz, addr) == 0
-end
+core.write = silly.send
+core.udpwrite = silly.udpsend
 function core.running()
         local co = corunning()
         return co
