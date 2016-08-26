@@ -3,6 +3,7 @@
 
 struct silly_config;
 void silly_run(struct silly_config *config);
+void silly_quit();
 
 
 #endif

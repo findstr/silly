@@ -16,24 +16,13 @@
 
 #include "silly_run.h"
 
-#define CHECKQUIT       \
-        if (silly_worker_checkquit())\
-                break;
+struct {
+        int quit;
+        int run;
+        pthread_mutex_t mutex;
+        pthread_cond_t cond;
+} R;
 
-static void *
-thread_socket(void *arg)
-{
-        int err;
-        (void)arg;
-        for (;;) {
-                err = silly_socket_poll();
-                if (err < 0) {
-                        fprintf(stderr, "silly_socket_pool terminated\n");
-                        break;
-                }
-        }
-        return NULL;
-}
 
 static void *
 thread_timer(void *arg)
@@ -41,10 +30,31 @@ thread_timer(void *arg)
         (void)arg;
         for (;;) {
                 silly_timer_update();
-                CHECKQUIT
-                usleep(1000);
+                if (R.quit)
+                        break;
+                usleep(5000);
+                if (silly_worker_msgsz() > 0)
+                        pthread_cond_signal(&R.cond);
         }
         silly_socket_terminate();
+        return NULL;
+}
+
+
+static void *
+thread_socket(void *arg)
+{
+        (void)arg;
+        for (;;) {
+                int err = silly_socket_poll();
+                if (err < 0)
+                        break;
+                pthread_cond_signal(&R.cond);
+        }
+        pthread_mutex_lock(&R.mutex);
+        R.run = 0;
+        pthread_cond_signal(&R.cond);
+        pthread_mutex_unlock(&R.mutex);
         return NULL;
 }
 
@@ -54,10 +64,15 @@ thread_worker(void *arg)
         struct silly_config *c;
         c = (struct silly_config *)arg;
         silly_worker_init(c);
-        for (;;) {
+        while (R.run) {
                 silly_worker_dispatch();
-                CHECKQUIT
-                usleep(1000);
+                if (!R.run)
+                        break;
+                //allow spurious wakeup, it's harmless
+                pthread_mutex_lock(&R.mutex);
+                if (R.run)
+                        pthread_cond_wait(&R.cond, &R.mutex);
+                pthread_mutex_unlock(&R.mutex);
         }
         return NULL;
 }
@@ -87,6 +102,10 @@ silly_run(struct silly_config *config)
         int i;
         int err;
         pthread_t pid[3];
+        R.run = 1;
+        R.quit = 0;
+        pthread_mutex_init(&R.mutex, NULL); 
+        pthread_cond_init(&R.cond, NULL);
         if (config->daemon && silly_daemon(1, 0) == -1) {
                 fprintf(stderr, "daemon error:%d\n", errno);
                 exit(-1);
@@ -105,11 +124,18 @@ silly_run(struct silly_config *config)
         fprintf(stdout, "silly is running ...\n");
         for (i = 0; i < 3; i++)
                 pthread_join(pid[i], NULL);
-
+        pthread_mutex_destroy(&R.mutex);
+        pthread_cond_destroy(&R.cond);
         silly_worker_exit();
         silly_timer_exit();
         silly_socket_exit();
         fprintf(stdout, "silly has already exit...\n");
         return ;
+}
+
+void 
+silly_quit()
+{
+        R.quit = 1;
 }
 

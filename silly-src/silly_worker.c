@@ -18,7 +18,6 @@ struct silly_worker {
         lua_State                       *L;
         void                            (*callback)(lua_State *L, struct silly_message *msg);
         uint32_t                        id;
-        int                             quit;
         size_t                          maxmsg;
 };
 
@@ -69,17 +68,6 @@ silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message
         assert(callback);
         W->callback = callback;
         return ;
-}
-
-void
-silly_worker_quit()
-{
-        W->quit = 1;
-}
-
-int silly_worker_checkquit()
-{
-        return W ? W->quit : 0;
 }
 
 static int

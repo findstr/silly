@@ -8,6 +8,7 @@
 
 #include "silly.h"
 #include "silly_env.h"
+#include "silly_run.h"
 #include "silly_worker.h"
 #include "silly_socket.h"
 #include "silly_malloc.h"
@@ -109,7 +110,7 @@ lsetenv(lua_State *L)
 static int
 lquit(lua_State *L)
 {
-        silly_worker_quit();
+        silly_quit();
         return 0;
 }
  
