@@ -89,7 +89,7 @@ silly_timer_now()
         struct timeval t;
         gettimeofday(&t, NULL);
         ms = t.tv_sec * 1000;
-        ms += t.tv_sec / 1000;
+        ms += t.tv_usec / 1000;
         return ms;
 }
 
