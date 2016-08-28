@@ -6,7 +6,6 @@ LD := gcc
 
 #---------
 
-BUILD_PATH ?= .
 TARGET ?= silly
 
 #-----------platform
@@ -56,7 +55,7 @@ linux macosx: all
 
 all: \
 	$(LUACLIB_PATH)	\
-	$(BUILD_PATH)/$(TARGET) \
+	$(TARGET) \
 	$(LUACLIB_PATH)/silly.so \
 	$(LUACLIB_PATH)/lprofiler.so \
 	$(LUACLIB_PATH)/log.so \
@@ -66,7 +65,7 @@ all: \
 	$(LUACLIB_PATH)/zproto.so \
 
 
-$(BUILD_PATH)/$(TARGET):$(OBJS) $(LUASTATICLIB)
+$(TARGET):$(OBJS) $(LUASTATICLIB)
 	$(LD) -o $@ $^ $(LDFLAG)
 
 $(LUACLIB_PATH):
@@ -99,7 +98,7 @@ $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
 
 clean:
-	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so silly
+	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
 
 cleanall: clean
