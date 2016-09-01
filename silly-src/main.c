@@ -121,26 +121,24 @@ parseconfig(lua_State *L, struct silly_config *config)
 }
 
 static const char *load_config = "\
-                                local config_file = ...\
-                                local f = assert(io.open(config_file, 'r'))\
-                                local code = assert(f:read('a'), 'read config file error')\
-                                f:close()\
-                                local config = {}\
-                                assert(load(code, '=(load)', 't', config))()\
-                                return config\
-                                ";
+        local config_file = ...\
+        local f = assert(io.open(config_file, 'r'))\
+        local code = assert(f:read('a'), 'read config file error')\
+        f:close()\
+        local config = {}\
+        assert(load(code, '=(load)', 't', config))()\
+        return config\
+        ";
 
 int main(int argc, char *argv[])
 {
         int err;
         lua_State *L;
         struct silly_config config;
-        
         if (argc != 2) {
-                fprintf(stderr, "USAGE:silly <config file>\n");
+                fprintf(stderr, "USAGE:%s <config file>\n", argv[0]);
                 return -1;
         }
-
         silly_env_init();
         L = luaL_newstate();
         luaL_openlibs(L);
@@ -149,7 +147,8 @@ int main(int argc, char *argv[])
         assert(err == LUA_OK);
         err = lua_pcall(L, 1, 1, 0);
         if (err != LUA_OK) {
-                fprintf(stderr, "parse config file:%s fail,%s\n", argv[1], lua_tostring(L, -1));
+                fprintf(stderr, "%s parse config file:%s fail,%s\n",
+                                argv[0], argv[1], lua_tostring(L, -1));
                 lua_close(L);
                 return -1;
         }
