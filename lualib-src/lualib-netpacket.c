@@ -220,6 +220,7 @@ clear_incomplete(lua_State *L, int sid)
         struct incomplete *ic = get_incomplete(p, sid);
         if (ic == NULL)
                 return ;
+        silly_free(ic->buff);
         silly_free(ic);
         return ;
 }
