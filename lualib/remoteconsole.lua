@@ -3,9 +3,6 @@ local socket = require "socket"
 
 local CMD = {}
 
-function CMD.exit(fd, line)
-end
-
 function CMD.ping(fd, line)
         socket.write(fd, "pong\n")
 end
