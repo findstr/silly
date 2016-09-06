@@ -64,10 +64,12 @@ core.memstatus = silly.memstatus
 core.msgstatus = silly.msgstatus
 core.now = silly.timenow
 core.current = silly.timecurrent
+
+local function errmsg(msg)
+        return debug.traceback(msg, 1)
+end
+
 core.pcall = function(f, ...)
-        local function errmsg(msg)
-                return debug.traceback(msg, 1)
-        end
         return xpcall(f, errmsg, ...)
 end
 
@@ -99,7 +101,7 @@ local function waitresume(co, typ, ...)
 end
 
 
-local function waityield(co, ret, typ, ...)
+local function waityield(co, ret, typ)
         if ret == false then
                 return
         end
@@ -111,10 +113,6 @@ local function waityield(co, ret, typ, ...)
                 assert(wakeup_co_status[co] == nil)
                 assert(wait_co_status[co] == nil)
                 assert(sleep_co_session[co])
-        elseif typ == "WAKEUP" then
-                assert(wakeup_co_status[co] == nil)
-                assert(wait_co_status[co]== nil)
-                assert(sleep_co_session[co] == nil)
         elseif typ == "EXIT" then
                 assert(co)
                 table.insert(copool, co)
@@ -123,7 +121,6 @@ local function waityield(co, ret, typ, ...)
                 print(debug.traceback())
         end
         dispatch_wakeup()
-        return ...
 end
 
 function dispatch_wakeup()
