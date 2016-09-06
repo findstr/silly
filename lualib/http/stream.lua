@@ -5,7 +5,7 @@ function stream.recv_request(readl, readn)
         local header = {}
         local body = ""
         local first = readl()
-        tmp = readl()
+        local tmp = readl()
         if not tmp then
                 return nil
         end
