@@ -336,8 +336,10 @@ packet_gc(lua_State *L)
         for (i = 0; i < INCOMPLETE_HASH_SIZE; i++) {
                 struct incomplete *ic = pk->incomplete_hash[i];
                 while (ic) {
-                        silly_free(ic->buff);
+                        struct incomplete *t = ic;
                         ic = ic->next;
+                        silly_free(t->buff);
+                        silly_free(t);
                 }
         }
         return 0;
