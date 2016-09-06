@@ -12,7 +12,7 @@ test 0xff {
 ]]
 
 local client = rpc.createclient {
-                addr = "192.155.83.65@6599",
+                addr = "127.0.0.1@9999",
                 proto = logic,
                 timeout = 5000,
                 close = function(fd, errno)
