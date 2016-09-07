@@ -108,9 +108,9 @@ lsetenv(lua_State *L)
 }
 
 static int
-lquit(lua_State *L)
+lexit(lua_State *L)
 {
-        silly_quit();
+        silly_exit();
         return 0;
 }
  
@@ -292,7 +292,7 @@ luaopen_silly(lua_State *L)
                 {"dispatch",    ldispatch},
                 {"getenv",      lgetenv},
                 {"setenv",      lsetenv},
-                {"quit",        lquit},
+                {"exit",        lexit},
                 {"memstatus",   lmemstatus},
                 {"msgstatus",   lmsgstatus},
                 //timer

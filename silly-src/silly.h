@@ -10,6 +10,7 @@ struct silly_listen {
 };
 
 struct silly_config {
+        const char *selfname;
         int daemon;
         //please forgive my shortsighted, i think listen max to 16 ports is very many
         char bootstrap[128];

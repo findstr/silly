@@ -17,7 +17,7 @@
 #include "silly_run.h"
 
 struct {
-        int quit;
+        int exit;
         int run;
         pthread_mutex_t mutex;
         pthread_cond_t cond;
@@ -30,7 +30,7 @@ thread_timer(void *arg)
         (void)arg;
         for (;;) {
                 silly_timer_update();
-                if (R.quit)
+                if (R.exit)
                         break;
                 usleep(5000);
                 if (silly_worker_msgsz() > 0)
@@ -103,13 +103,11 @@ silly_run(struct silly_config *config)
         int err;
         pthread_t pid[3];
         R.run = 1;
-        R.quit = 0;
+        R.exit = 0;
         pthread_mutex_init(&R.mutex, NULL); 
         pthread_cond_init(&R.cond, NULL);
-        if (config->daemon && silly_daemon(1, 0) == -1) {
-                fprintf(stderr, "daemon error:%d\n", errno);
-                exit(-1);
-        }
+        if (config->daemon)
+                silly_daemon(config);
         signal_init();
         silly_timer_init();
         err = silly_socket_init();
@@ -134,8 +132,8 @@ silly_run(struct silly_config *config)
 }
 
 void 
-silly_quit()
+silly_exit()
 {
-        R.quit = 1;
+        R.exit = 1;
 }
 

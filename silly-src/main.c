@@ -152,8 +152,8 @@ int main(int argc, char *argv[])
                 lua_close(L);
                 return -1;
         }
-        
         initenv(L);
+        config.selfname = argv[0];
         parseconfig(L, &config);
         lua_close(L);
         silly_run(&config);

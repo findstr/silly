@@ -57,7 +57,7 @@ function core.running()
         local co = corunning()
         return co
 end
-core.quit = silly.quit
+core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
 core.memstatus = silly.memstatus

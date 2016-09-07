@@ -4,11 +4,12 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include "silly.h"
 #include "silly_daemon.h"
 
 extern int daemon(int, int);
 
-int silly_daemon()
+int silly_daemon(struct silly_config *config)
 {
         int fd;
         int err;
@@ -18,7 +19,7 @@ int silly_daemon()
                 perror("DAEMON");
                 exit(0);
         }
-        snprintf(path, 128, "/tmp/silly-%d.log", getpid());
+        snprintf(path, 128, "/tmp/%s-%d.log", config->selfname, getpid());
         fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 00666);
         if (fd >= 0) {
                 dup2(fd, 1);
