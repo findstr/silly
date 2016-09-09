@@ -13,40 +13,55 @@
 
 #define ARRAY_SIZE(a)   (sizeof(a) / sizeof(a[0]))
 
-static void
+static int
 checktype(lua_State *L, const char *key, int skt, int type)
 {
-        if (lua_type(L, skt) != type) {
+        int t = lua_type(L, skt);
+        if (t == LUA_TNIL)
+                return -1;
+        if (t != type && t != LUA_TNIL) {
                 const char *expect = lua_typename(L, type);
                 const char *got = lua_typename(L, lua_type(L, skt));
-                const char *fmt = "%s expected %s but got %s\n";
+                const char *fmt = "[checktype] %s expecte %s but got %s\n";
                 fprintf(stderr, fmt, key, expect, got);
                 exit(-1);
         }
-
+        return 0;
 }
 
 static int
-getint(lua_State *L, const char *key)
+optint(lua_State *L, const char *key, int v)
 {
         int n;
+        int nil;
         lua_getfield(L, -1, key);
-        checktype(L, key, -1, LUA_TNUMBER);
-        n = lua_tonumber(L, -1);
+        nil = checktype(L, key, -1, LUA_TNUMBER);
+        if (nil < 0)
+                n = v;
+        else
+                n = lua_tonumber(L, -1);
         lua_pop(L, 1);
         return n;
 }
 
 static const char *
-getstr(lua_State *L, const char *key, size_t *sz)
+optstr(lua_State *L, const char *key, size_t *sz, const char *v)
 {
+        int nil;
         const char *str;
         lua_getfield(L, -1, key);
-        checktype(L, key, -1, LUA_TSTRING);
-        str = lua_tolstring(L, -1, sz);
+        nil = checktype(L, key, -1, LUA_TSTRING);
+        if (nil < 0) {
+                str = v;
+                *sz = strlen(str);
+        } else {
+                str = lua_tolstring(L, -1, sz);
+        }
         lua_pop(L, 1);
         return str;
 }
+
+
 
 static void
 enveach(lua_State *L, char *curr, char *end)
@@ -92,29 +107,52 @@ initenv(lua_State *L)
 static void
 parseconfig(lua_State *L, struct silly_config *config)
 {
-        const char *str;
         size_t sz;
-        config->daemon = getint(L, "daemon");
-        str = getstr(L, "bootstrap", &sz);
+        int slash;
+        const char *str;
+        config->daemon = optint(L, "daemon", 0);
+        str = optstr(L, "bootstrap", &sz, "");
         if (sz >= ARRAY_SIZE(config->bootstrap)) {
-                fprintf(stderr, "[parseconfig] bootstrap is too long\n");
+                fprintf(stderr, "[silly.config] bootstrap is too long\n");
                 exit(-1);
         }
+        if (sz == 0) {
+                fprintf(stderr, "[silly.config] bootstrap can't be empty\n");
+                exit(-1);
+        }
+
         memcpy(config->bootstrap, str, sz + 1);
-        str = getstr(L, "lualib_path", &sz);
+        str = optstr(L, "lualib_path", &sz, "");
         if (sz >= ARRAY_SIZE(config->lualib_path)) {
-                fprintf(stderr, "[parseconfig] lualib_path is too long\n");
+                fprintf(stderr, "[silly.config] lualib_path is too long\n");
                 exit(-1);
         }
         memcpy(config->lualib_path, str, sz + 1);
-        str = getstr(L, "lualib_cpath", &sz);
+        str = optstr(L, "lualib_cpath", &sz, "");
+        if (sz >= ARRAY_SIZE(config->lualib_cpath)) {
+                fprintf(stderr, "[silly.config] lualib_cpath is too long\n");
+                exit(-1);
+        }
         memcpy(config->lualib_cpath, str, sz + 1);
- 
+        str = optstr(L, "logpath", &sz, "");
+        if ((sz + 1) >= ARRAY_SIZE(config->logpath)) { //reserve one byte for /
+                fprintf(stderr, "[silly.config] logpath is too long\n");
+                exit(-1);
+        }
+        memcpy(config->logpath, str, sz + 1);
+        //add slash
+        slash = '/';
+        if (sz > 0)
+                slash = config->logpath[sz - 1];
+        if (slash != '/') {
+                config->logpath[sz] = '/';
+                config->logpath[sz + 1] = 0;
+        }
 #if 0
-        printf("config->worker_count:%d\n", config->worker_count);
         printf("config->bootstrap:%s\n", config->bootstrap);
         printf("config->lualib_path:%s\n", config->lualib_path);
         printf("config->lualib_cpath:%s\n", config->lualib_cpath);
+        printf("config->logpath:%s\n", config->logpath);
 #endif
 
         return;

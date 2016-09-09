@@ -19,7 +19,7 @@ int silly_daemon(struct silly_config *config)
                 perror("DAEMON");
                 exit(0);
         }
-        snprintf(path, 128, "/tmp/%s-%d.log", config->selfname, getpid());
+        snprintf(path, 128, "%s%s-%d.log", config->logpath, config->selfname, getpid());
         fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 00666);
         if (fd >= 0) {
                 dup2(fd, 1);

@@ -16,6 +16,7 @@ struct silly_config {
         char bootstrap[128];
         char lualib_path[256];
         char lualib_cpath[256];
+        char logpath[256];
 };
 
 #define MSGCOMMONFIELD       \
