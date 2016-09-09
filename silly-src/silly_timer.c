@@ -22,6 +22,8 @@
 #define SR_MASK         (SR_SIZE - 1)
 #define SL_MASK         (SL_SIZE - 1)
 
+#define RESOLUTION      (10)
+
 struct node {
         uint32_t        expire;
         uint32_t        session;
@@ -38,8 +40,9 @@ struct slot_level {
 
 struct silly_timer {
         int                     lock;
-        uint64_t                time;
         uint32_t                expire;
+        uint64_t                ticktime;
+        uint64_t                clocktime;
         struct slot_root        root;
         struct slot_level       level[4];
 };
@@ -79,18 +82,13 @@ unlock(struct silly_timer *timer)
 uint64_t
 silly_timer_current()
 {
-        return T->time;
+        return T->ticktime * RESOLUTION;
 }
 
 uint64_t 
 silly_timer_now()
 {
-        uint64_t ms;
-        struct timeval t;
-        gettimeofday(&t, NULL);
-        ms = t.tv_sec * 1000;
-        ms += t.tv_usec / 1000;
-        return ms;
+        return T->clocktime * RESOLUTION;
 }
 
 static inline void
@@ -138,7 +136,7 @@ silly_timer_timeout(uint32_t expire)
                 return -1;
         }
         lock(T);
-        n->expire = expire + T->time;
+        n->expire = expire / RESOLUTION + T->ticktime;
         assert((int32_t)(n->expire - T->expire) >= 0);
         add_node(T, n);
         unlock(T);
@@ -157,7 +155,7 @@ timeout(struct silly_timer *t, uint32_t session)
 }
 
 static uint64_t
-getms()
+ticktime()
 {
         uint64_t ms;
 #ifdef __macosx__
@@ -166,15 +164,27 @@ getms()
         host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
         clock_get_time(cclock, &mts);
         mach_port_deallocate(mach_task_self(), cclock);
-        ms = (uint64_t)mts.tv_sec * 1000;
-        ms += mts.tv_nsec / 1000000;
+        ms = (uint64_t)mts.tv_sec * 1000 / RESOLUTION;
+        ms += mts.tv_nsec / 1000000 / RESOLUTION;
 #else
         struct timespec tp;
         clock_gettime(CLOCK_MONOTONIC, &tp);
-        ms = (uint64_t)tp.tv_sec * 1000;
-        ms += tp.tv_nsec / 1000000;
+        ms = (uint64_t)tp.tv_sec * 1000 / RESOLUTION;
+        ms += tp.tv_nsec / 1000000 / RESOLUTION;
 #endif
         return ms;
+}
+
+static uint64_t
+clocktime()
+{
+        uint64_t ms;
+        struct timeval t;
+        gettimeofday(&t, NULL);
+        ms = t.tv_sec * 1000 / RESOLUTION;
+        ms += t.tv_usec / 1000 / RESOLUTION;
+        return ms;
+
 }
 
 static void
@@ -242,21 +252,22 @@ silly_timer_update()
 {
         int     i;
         int     delta;
-        uint64_t time = getms();
-        if (T->time == time)
+        uint64_t time = ticktime();
+        if (T->ticktime == time)
                 return;
-        if (T->time > time) {
+        if (T->ticktime > time) {
                 const char *fmt =
                 "[silly.timer] time rewind change from %lld to %lld\n";
-                fprintf(stderr, fmt, T->time, time);
+                fprintf(stderr, fmt, T->ticktime, time);
         }
-        delta = time - T->time;
+        delta = time - T->ticktime;
         assert(delta > 0);
         //uint64_t on x86 platform, can't assign as a automatic
-        __sync_lock_test_and_set(&T->time, time);
+        __sync_lock_test_and_set(&T->ticktime, time);
+        __sync_fetch_and_add(&T->clocktime, delta);
         for (i = 0; i < delta; i++)
                 update_timer(T);
-        assert((uint32_t)T->time == T->expire);
+        assert((uint32_t)T->ticktime == T->expire);
         return ;
 }
 
@@ -265,8 +276,9 @@ silly_timer_init()
 {
         T = silly_malloc(sizeof(*T));
         memset(T, 0, sizeof(*T));
-        T->time = getms();
-        T->expire = T->time;
+        T->clocktime = clocktime();
+        T->ticktime = ticktime();
+        T->expire = T->ticktime;
         return ;
 }
 
