@@ -18,7 +18,7 @@ core.start(function()
         p = socket.readline(fd)
         print("read line ", p)
         core.close(fd)
-        core.quit()
+        core.exit()
 end)
 
 

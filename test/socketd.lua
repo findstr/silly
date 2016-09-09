@@ -12,6 +12,6 @@ socket.listen("@9999", function(fd, addr)
                 end
                 socket.write(fd, n)
         end
-        core.quit()
+        core.exit()
 end)
 

@@ -11,9 +11,9 @@ test 0xff {
 ]]
 
 
-local function quit()
+local function exit()
         core.sleep(10000)
-        core.quit()
+        core.exit()
 end
 
 local server = rpc.createserver {
@@ -29,7 +29,7 @@ local server = rpc.createserver {
 
         call = function(fd, cmd, msg)
                 print("rpc recive", fd, cmd, msg.name, msg.age, msg.rand)
-                core.fork(quit)
+                core.fork(exit)
                 return cmd, msg
         end
 }

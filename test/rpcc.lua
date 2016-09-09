@@ -43,7 +43,7 @@ local function test()
         n = n + 1
         core.timeout(100, test)
         if n > 1000 then
-                core.quit()
+                core.exit()
                 return 
         end
         for i = 1, 10 do
