@@ -36,8 +36,7 @@ local function cocreate(f)
                         end
                         local ok, err = core.pcall(func, coyield())
                         if ok == false then
-                                print("cocall", err)
-                                print(debug.traceback())
+                                print("call", err)
                         end
                 end
         end
@@ -66,7 +65,7 @@ core.now = silly.timenow
 core.current = silly.timecurrent
 
 local function errmsg(msg)
-        return debug.traceback(msg, 1)
+        return debug.traceback("error: " .. msg, 1)
 end
 
 core.pcall = function(f, ...)

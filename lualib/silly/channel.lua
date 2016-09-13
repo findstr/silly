@@ -9,12 +9,18 @@ local function start(self, func)
                 while true do
                         if #self.queue == 0 then
                                 self.co = core.running()
-                                core.pcall(func, core.wait())
+                                local ok, err = core.pcall(func, core.wait())
                                 assert(not self.co)
+                                if not ok then
+                                        print("channel", err)
+                                end
                         end
                         while #self.queue > 0 do
                                 local t = table.remove(self.queue, 1)
-                                core.pcall(func, table.unpack(t))
+                                local ok, err = core.pcall(func, table.unpack(t))
+                                if not ok then
+                                        print("channel", err)
+                                end
                         end
                 end
 

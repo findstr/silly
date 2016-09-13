@@ -257,7 +257,7 @@ silly_timer_update()
                 return;
         if (T->ticktime > time) {
                 const char *fmt =
-                "[silly.timer] time rewind change from %lld to %lld\n";
+                "[timer] time rewind change from %lld to %lld\n";
                 fprintf(stderr, fmt, T->ticktime, time);
         }
         delta = time - T->ticktime;

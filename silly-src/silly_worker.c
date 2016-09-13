@@ -117,8 +117,8 @@ lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
         }
 }
 
-static void
-initlua(struct silly_config *config)
+void
+silly_worker_start(struct silly_config *config)
 {
         lua_State *L = lua_newstate(lua_alloc, NULL);
         luaL_openlibs(L);
@@ -139,13 +139,12 @@ initlua(struct silly_config *config)
 }
 
 void 
-silly_worker_init(struct silly_config *config)
+silly_worker_init()
 {
         W = (struct silly_worker *)silly_malloc(sizeof(*W));
         memset(W, 0, sizeof(*W));
         W->maxmsg = 128;
         W->queue = silly_queue_create();
-        initlua(config);
         return ;
 }
 

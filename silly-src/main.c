@@ -113,30 +113,30 @@ parseconfig(lua_State *L, struct silly_config *config)
         config->daemon = optint(L, "daemon", 0);
         str = optstr(L, "bootstrap", &sz, "");
         if (sz >= ARRAY_SIZE(config->bootstrap)) {
-                fprintf(stderr, "[silly.config] bootstrap is too long\n");
+                fprintf(stderr, "[config] bootstrap is too long\n");
                 exit(-1);
         }
         if (sz == 0) {
-                fprintf(stderr, "[silly.config] bootstrap can't be empty\n");
+                fprintf(stderr, "[config] bootstrap can't be empty\n");
                 exit(-1);
         }
 
         memcpy(config->bootstrap, str, sz + 1);
         str = optstr(L, "lualib_path", &sz, "");
         if (sz >= ARRAY_SIZE(config->lualib_path)) {
-                fprintf(stderr, "[silly.config] lualib_path is too long\n");
+                fprintf(stderr, "[config] lualib_path is too long\n");
                 exit(-1);
         }
         memcpy(config->lualib_path, str, sz + 1);
         str = optstr(L, "lualib_cpath", &sz, "");
         if (sz >= ARRAY_SIZE(config->lualib_cpath)) {
-                fprintf(stderr, "[silly.config] lualib_cpath is too long\n");
+                fprintf(stderr, "[config] lualib_cpath is too long\n");
                 exit(-1);
         }
         memcpy(config->lualib_cpath, str, sz + 1);
         str = optstr(L, "logpath", &sz, "");
         if ((sz + 1) >= ARRAY_SIZE(config->logpath)) { //reserve one byte for /
-                fprintf(stderr, "[silly.config] logpath is too long\n");
+                fprintf(stderr, "[config] logpath is too long\n");
                 exit(-1);
         }
         memcpy(config->logpath, str, sz + 1);

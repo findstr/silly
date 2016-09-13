@@ -63,7 +63,7 @@ thread_worker(void *arg)
 {
         struct silly_config *c;
         c = (struct silly_config *)arg;
-        silly_worker_init(c);
+        silly_worker_start(c);
         while (R.run) {
                 silly_worker_dispatch();
                 if (!R.run)
@@ -112,14 +112,15 @@ silly_run(struct silly_config *config)
         silly_timer_init();
         err = silly_socket_init();
         if (err < 0) {
-                fprintf(stderr, "silly socket init fail:%d\n", err);
+                fprintf(stderr, "%s socket init fail:%d\n", config->selfname, err);
                 exit(-1);
         }
+        silly_worker_init();
         srand(time(NULL));
         thread_create(&pid[0], thread_socket, NULL);
         thread_create(&pid[1], thread_timer, NULL);
         thread_create(&pid[2], thread_worker, config);
-        fprintf(stdout, "silly is running ...\n");
+        fprintf(stdout, "%s is running ...\n", config->selfname);
         for (i = 0; i < 3; i++)
                 pthread_join(pid[i], NULL);
         pthread_mutex_destroy(&R.mutex);
@@ -127,7 +128,7 @@ silly_run(struct silly_config *config)
         silly_worker_exit();
         silly_timer_exit();
         silly_socket_exit();
-        fprintf(stdout, "silly has already exit...\n");
+        fprintf(stdout, "%s has already exit...\n", config->selfname);
         return ;
 }
 
