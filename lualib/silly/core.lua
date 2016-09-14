@@ -5,6 +5,7 @@ local core = {}
 
 local tinsert = table.insert
 local tremove = table.remove
+local tunpack = table.unpack
 
 local corunning = coroutine.running
 local coyield = coroutine.yield
@@ -35,7 +36,7 @@ local function cocall()
 end
 
 local function cocreate(f)
-        local co = table.remove(copool)
+        local co = tremove(copool)
         if co then
                 coresume(co, "STARTUP", f)
                 return co
@@ -111,7 +112,7 @@ local function waityield(co, ret, typ)
                 assert(sleep_co_session[co])
         elseif typ == "EXIT" then
                 assert(co)
-                table.insert(copool, co)
+                tinsert(copool, co)
         else
                 print("silly.core waityield unkonw return type", typ)
                 print(debug.traceback())
@@ -132,7 +133,7 @@ function dispatch_wakeup()
         if not param then
                 param = {}
         end
-        waityield(co, coresume(co, "WAKEUP", table.unpack(param)))
+        waityield(co, coresume(co, "WAKEUP", tunpack(param)))
 end
 
 function core.fork(func)
@@ -156,7 +157,7 @@ function core.wakeup(co, ...)
         assert(wait_co_status[co] or sleep_co_session[co])
         assert(wakeup_co_status[co] == nil)
         wakeup_co_status[co] = "WAKEUP"
-        wakeup_co_param[co] = table.pack(...)
+        wakeup_co_param[co] = {...}
         wait_co_status[co] = nil
 end
 
