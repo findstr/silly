@@ -17,8 +17,23 @@ coroutine.resume = nil
 --so use the weaktable
 local copool = {}
 local weakmt = {__mode="kv"}
-
 setmetatable(copool, weakmt)
+
+local function cocall()
+        while true do
+                local ret, func = coyield("EXIT")
+                if ret ~= "STARTUP" then
+                        print("create coroutine fail", ret)
+                        print(debug.traceback())
+                        return
+                end
+                local ok, err = core.pcall(func, coyield())
+                if ok == false then
+                        print("call", err)
+                end
+        end
+end
+
 local function cocreate(f)
         local co = table.remove(copool)
         if co then
@@ -26,27 +41,9 @@ local function cocreate(f)
                 return co
         end
 
-        local function cocall()
-                while true do
-                        local ret, func = coyield("EXIT")
-                        if ret ~= "STARTUP" then
-                                print("create coroutine fail", ret)
-                                print(debug.traceback())
-                                return
-                        end
-                        local ok, err = core.pcall(func, coyield())
-                        if ok == false then
-                                print("call", err)
-                        end
-                end
-        end
-
         co = coroutine.create(cocall)
         coresume(co)    --wakeup the new coroutine
         coresume(co, "STARTUP", f)       --pass the function handler
-        if #copool > 100 then
-                print("coroutine pool large than 100", #copool)
-        end
         return co
 end
 
