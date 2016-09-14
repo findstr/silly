@@ -62,7 +62,7 @@ core.now = silly.timenow
 core.current = silly.timecurrent
 
 local function errmsg(msg)
-        return debug.traceback("error: " .. msg, 1)
+        return debug.traceback("error: " .. msg, 2)
 end
 
 core.pcall = function(f, ...)
