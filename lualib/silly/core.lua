@@ -133,7 +133,7 @@ function dispatch_wakeup()
         if not param then
                 param = {}
         end
-        waityield(co, coresume(co, "WAKEUP", tunpack(param)))
+        waityield(co, coresume(co, "WAKEUP", tunpack(param, 1, param.n)))
 end
 
 function core.fork(func)
@@ -157,7 +157,7 @@ function core.wakeup(co, ...)
         assert(wait_co_status[co] or sleep_co_session[co])
         assert(wakeup_co_status[co] == nil)
         wakeup_co_status[co] = "WAKEUP"
-        wakeup_co_param[co] = {...}
+        wakeup_co_param[co] = table.pack(...)
         wait_co_status[co] = nil
 end
 
@@ -280,7 +280,7 @@ end
 
 --the message handler can't be yield
 local messagetype = {
-        [1] = "expire",         --SILLY_TEXPIRE         =1
+        [1] = "expire",         --SILLY_TEXPIRE         = 1
         [2] = "accept",         --SILLY_SACCEPT         = 2
         [3] = "close",          --SILLY_SCLOSE          = 3
         [4] = "connected",      --SILLY_SCONNECTED      = 4

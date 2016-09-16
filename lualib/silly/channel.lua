@@ -2,6 +2,7 @@ local core = require "silly.core"
 
 local tremove = table.remove
 local tinsert = table.insert
+local tpack = table.pack
 local tunpack = table.unpack
 
 
@@ -22,7 +23,7 @@ local function start(self, func)
                         end
                         while #self.queue > 0 do
                                 local t = tremove(self.queue, 1)
-                                local ok, err = core.pcall(func, tunpack(t))
+                                local ok, err = core.pcall(func, tunpack(t, 1, t.n))
                                 if not ok then
                                         print("channel", err)
                                 end
@@ -48,7 +49,7 @@ function channel.push(self, ...)
                 self.co = false
                 core.wakeup(co, ...)
         else
-                tinsert(self.queue, {...})
+                tinsert(self.queue, table.pack(...))
         end
 end
 
