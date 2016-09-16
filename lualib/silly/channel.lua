@@ -49,7 +49,7 @@ function channel.push(self, ...)
                 self.co = false
                 core.wakeup(co, ...)
         else
-                tinsert(self.queue, table.pack(...))
+                tinsert(self.queue, tpack(...))
         end
 end
 

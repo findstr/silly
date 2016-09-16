@@ -5,6 +5,7 @@ local core = {}
 
 local tinsert = table.insert
 local tremove = table.remove
+local tpack = table.pack
 local tunpack = table.unpack
 
 local corunning = coroutine.running
@@ -131,9 +132,10 @@ function dispatch_wakeup()
         wakeup_co_status[co] = nil
         wakeup_co_param[co] = nil
         if not param then
-                param = {}
+                waityield(co, coresume(co, "WAKEUP"))
+        else
+                waityield(co, coresume(co, "WAKEUP", tunpack(param, 1, param.n)))
         end
-        waityield(co, coresume(co, "WAKEUP", tunpack(param, 1, param.n)))
 end
 
 function core.fork(func)
@@ -156,8 +158,11 @@ end
 function core.wakeup(co, ...)
         assert(wait_co_status[co] or sleep_co_session[co])
         assert(wakeup_co_status[co] == nil)
+        assert(wakeup_co_param[co] == nil)
         wakeup_co_status[co] = "WAKEUP"
-        wakeup_co_param[co] = table.pack(...)
+        if select("#", ...) ~= 0 then
+                wakeup_co_param[co] = tpack(...)
+        end
         wait_co_status[co] = nil
 end
 
