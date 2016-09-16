@@ -10,12 +10,6 @@ test 0xff {
 }
 ]]
 
-
-local function exit()
-        core.sleep(10000)
-        core.exit()
-end
-
 local server = rpc.createserver {
         addr = "@9999",
         proto = logic,
@@ -25,11 +19,12 @@ local server = rpc.createserver {
 
         close = function(fd, errno)
                 print("close", fd, errno)
+                core.exit()
         end,
 
         call = function(fd, cmd, msg)
                 print("rpc recive", fd, cmd, msg.name, msg.age, msg.rand)
-                core.fork(exit)
+                core.sleep(100)
                 return cmd, msg
         end
 }

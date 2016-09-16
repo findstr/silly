@@ -15,7 +15,7 @@ local function start(self, func)
                 while true do
                         if #self.queue == 0 then
                                 self.co = core.running()
-                                local ok, err = core.pcall(func, core.wait())
+                                local ok, err = core.pcall(func, core.wait2())
                                 assert(not self.co)
                                 if not ok then
                                         print("channel", err)
@@ -47,7 +47,7 @@ function channel.push(self, ...)
         if self.co then
                 local co = self.co
                 self.co = false
-                core.wakeup(co, ...)
+                core.wakeup2(co, ...)
         else
                 tinsert(self.queue, tpack(...))
         end

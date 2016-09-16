@@ -115,7 +115,7 @@ local clientmt = {__index = client}
 local function clienttimer(self)
         local wheel
         wheel = function()
-                core.timeout(100, wheel)
+                core.timeout(1000, wheel)
                 local idx = self.nowwheel + 1
                 idx = idx % self.totalwheel
                 self.nowwheel = idx
@@ -127,19 +127,20 @@ local function clienttimer(self)
                         local co = self.waitpool[v]
                         if co then
                                 print("[rpc.client] timeout session", v)
+                                self.ackcmd[v] = "timeout"
                                 core.wakeup(co)
                                 self.waitpool[v] = nil
                         end
                         wk[k] = nil
                 end
         end
-        core.timeout(100, wheel)
+        core.timeout(1000, wheel)
 end
 
 
-local function wakeupall(self, res)
+local function wakeupall(self)
         for _, v in pairs(self.connectqueue) do
-                core.wakeup(v, res)
+                core.wakeup(v)
         end
         self.connectqueue = {}
 end
@@ -180,7 +181,8 @@ local function doconnect(self)
                         return
                 end
                 self.waitpool[rpc.session] = nil
-                core.wakeup(co, body, rpc.command)
+                self.ackcmd[rpc.session] = rpc.command
+                core.wakeup(co, body)
         end
 
         local callback = function(type, fd, message, ...)
@@ -206,11 +208,12 @@ local function checkconnect(self)
                         self.fd = fd
                         ok = true
                 end
-                wakeupall(self, ok)
+                wakeupall(self)
                 return ok
         else
                 table.insert(self.connectqueue, core.running())
-                return core.wait()
+                core.wait()
+                return self.fd and self.fd > 0
         end
 end
 
@@ -227,7 +230,10 @@ local function waitfor(self, session)
         end
         table.insert(self.timeout[expire], session)
         self.waitpool[session] = co
-        return core.wait()
+        local body = core.wait()
+        local cmd = self.ackcmd[session]
+        self.ackcmd[session] = nil
+        return body, cmd
 end
 
 function client.call(self, cmd, body)
@@ -258,8 +264,9 @@ function rpc.createclient(config)
         obj.queue = np.create()
         obj.timeout = {}
         obj.waitpool = {}
+        obj.ackcmd = {}
         obj.nowwheel = 0
-        obj.totalwheel = math.floor((config.timeout + 99) / 100)
+        obj.totalwheel = math.floor((config.timeout + 999) / 1000)
         obj.timeoutwheel = obj.totalwheel - 1
         obj.config = config
         setmetatable(obj, clientmt)

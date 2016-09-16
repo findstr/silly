@@ -1,7 +1,6 @@
 local socket = require "socket"
 local core = require "silly.core"
 
-local tunpack = table.unpack
 local tinsert = table.insert
 local tremove = table.remove
 
@@ -29,21 +28,17 @@ function dispatch:create(config)
         d.connectqueue = {}
         d.waitqueue = {}
         d.funcqueue = {}        --process response, return
+        d.result_data = {}
         setmetatable(d, mt)
         return d 
-end
-
-local function wakeup(co, callret, success, ...)
-        assert(callret == true)
-        assert(success == true)
-        core.wakeup(co, ...)
 end
 
 local function wakeup_all(self, ret, err)
         local co = tremove(self.waitqueue)
         tremove(self.funcqueue)
         while co do
-                core.wakeup(co, ret, err)
+                self.result_data[co] = err
+                core.wakeup(co, ret)
                 co = tremove(self.waitqueue)
                 tremove(self.funcqueue)
         end
@@ -58,7 +53,7 @@ local function doclose(self)
         self.sock = false
         self.dispatchco = false
         self.status = CLOSE;
-        wakeup_all(self, nil, "diconnected")
+        wakeup_all(self, false, "disconnected")
 end
 
 
@@ -69,12 +64,19 @@ local function dispatch_response(self)
                         local co = tremove(self.waitqueue)
                         local func = tremove(self.funcqueue)
                         if func and co then
-                                local res = {core.pcall(func, self)}
-                                if res[1] and res[2] then
-                                        wakeup(co, tunpack(res))
-                                else    --disconnected
-                                        print("dispatch_response disconnected")
-                                        core.wakeup(co, nil, "disconnected") 
+                                local ok, do_ok, status, data  = core.pcall(func, self)
+                                if ok and do_ok then
+                                        self.result_data[co] = data
+                                        core.wakeup(co, status)
+                                else
+                                        local err
+                                        if not ok then
+                                                err = do_ok
+                                        else
+                                                err = "disconnected"
+                                        end
+                                        self.result_data[co] = err
+                                        core.wakeup(co, false)
                                         doclose(self)
                                         return 
                                 end
@@ -95,18 +97,25 @@ local function waitfor_response(self, response)
                 self.dispatchco = nil
                 core.wakeup(co)
         end
-        return core.wait()
+        local status = core.wait()
+        local data = self.result_data[co]
+        self.result_data[co] = nil
+        return status, data
 end
 
 local function waitfor_connect(self)
         local co = core.running()
         tinsert(self.connectqueue, 1, co)
-        return core.wait()
+        local status = core.wait()
+        local data = self.result_data[co]
+        self.result_data[co] = nil
+        return status, data
 end
 
-local function wakeup_conn(self, ...)
+local function wakeup_conn(self, success, err)
         for k, v in pairs(self.connectqueue) do
-                core.wakeup(v, ...)
+                self.result_data[v] = err
+                core.wakeup(v, success) 
                 self.connectqueue[k] = nil
         end
 end
@@ -116,36 +125,36 @@ local function tryconnect(self)
                 return true;
         end
         if self.status == FINAL then
-                return false
+                return false, "already closed"
         end
         local res
         if self.status == CLOSE then
+                local err
                 self.status = CONNECTING;
                 self.sock = socket.connect(self.config.addr)
                 if not self.sock then
                         res = false
                         self.status = CLOSE
+                        err = "socketdispatch connect fail"
                 else
                         res = true
                         self.status = CONNECTED;
                 end
-                local ret
-                ret = {res}
                 if res then
                         assert(self.dispatchco == false)
                         core.fork(dispatch_response(self))
                         if self.config.auth then
-                                ret = {waitfor_response(self, self.config.auth)}
+                                res = waitfor_response(self, self.config.auth)
                         end
                         assert(#self.funcqueue == 0)
                         assert(#self.waitqueue == 0)
-                        if not ret[1] then
+                        if not res then
                                 doclose(self)
-                                print("socketdispatch auth fail", table.unpack(ret))
+                                err = "socketdispatch auth fail"
                         end
                 end
-                wakeup_conn(self, table.unpack(ret))
-                return table.unpack(ret)
+                wakeup_conn(self, res, err)
+                return res, err
         elseif self.status == CONNECTING then
                 return waitfor_connect(self)
         else
@@ -175,11 +184,10 @@ function dispatch:request(cmd, response)
                 doclose(self)
                 return nil
         end
-        if response then
-                return waitfor_response(self, response)
-        else
-                return nil
+        if not response then
+                return
         end
+        return waitfor_response(self, response)
 end
 
 local function read_write_wrapper(func)

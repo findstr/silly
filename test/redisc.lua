@@ -18,7 +18,7 @@ local db = nil
 core.start(function ()
         local err
         db, err= redis:connect{
-                        addr = "127.0.0.1@6379",
+                addr = "127.0.0.1@6379",
         }
         print("Connect",  db, err)
         dprint("PING", db:ping())

@@ -21,40 +21,36 @@ local client = rpc.createclient {
         }
  
 
+local n = 1 
 local function request(fd, index)
         return function()
-                local test = {
-                        name = "hello",
-                        age = index,
-                        rand = crypt.randomkey(),
-                }
-                local body, ack = client:call("test", test)
-                if not body then
-                        print("rpc call fail", body)
-                        return
+                for i = 1, 50 do
+                        local test = {
+                                name = "hello",
+                                age = index,
+                                rand = crypt.randomkey(),
+                        }
+                        local body, ack = client:call("test", test)
+                        if not body then
+                                print("rpc call fail", body)
+                                return
+                        end
+                        assert(test.rand == body.rand)
+                        print("rpc call", index, "ret:", body.name, body.age)
                 end
-                assert(test.rand == body.rand)
-                print("rpc call", index, "ret:", body.name, body.age)
-        end
-end
-
-local n = 1 
-local function test()
-        n = n + 1
-        core.timeout(100, test)
-        if n > 1000 then
-                core.exit()
-                return 
-        end
-        for i = 1, 10 do
-                core.fork(request(client, i))
+                n = n + 1
+                if n > 10 then
+                        core.exit()
+                end
         end
 end
 
 core.start(function()
         print("connect 9999 start")
         client:connect()
-        core.timeout(1, test)
+        for i = 1, 20 do
+                core.fork(request(client, i))
+        end
 end)
 
 

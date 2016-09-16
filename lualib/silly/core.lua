@@ -131,11 +131,7 @@ function dispatch_wakeup()
         local param = wakeup_co_param[co]
         wakeup_co_status[co] = nil
         wakeup_co_param[co] = nil
-        if not param then
-                waityield(co, coresume(co, "WAKEUP"))
-        else
-                waityield(co, coresume(co, "WAKEUP", tunpack(param, 1, param.n)))
-        end
+        waityield(co, coresume(co, "WAKEUP", param))
 end
 
 function core.fork(func)
@@ -155,15 +151,25 @@ function core.wait()
         return waitresume(co, coyield("WAIT"))
 end
 
-function core.wakeup(co, ...)
+function core.wait2()
+        local res = core.wait()
+        if not res then
+                return
+        end
+        return tunpack(res, 1, res.n)
+end
+
+function core.wakeup(co, res)
         assert(wait_co_status[co] or sleep_co_session[co])
         assert(wakeup_co_status[co] == nil)
         assert(wakeup_co_param[co] == nil)
         wakeup_co_status[co] = "WAKEUP"
-        if select("#", ...) ~= 0 then
-                wakeup_co_param[co] = tpack(...)
-        end
+        wakeup_co_param[co] = res
         wait_co_status[co] = nil
+end
+
+function core.wakeup2(co, ...)
+        core.wakeup(co, tpack(...))
 end
 
 function core.sleep(ms)
