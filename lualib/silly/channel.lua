@@ -5,54 +5,44 @@ local tinsert = table.insert
 local tpack = table.pack
 local tunpack = table.unpack
 
-
 local channel = {}
 
 local mt = {__index = channel}
 
-local function start(self, func)
-        core.fork(function()
-                while true do
-                        if #self.queue == 0 then
-                                self.co = core.running()
-                                local ok, err = core.pcall(func, core.wait2())
-                                assert(not self.co)
-                                if not ok then
-                                        print("channel", err)
-                                end
-                        end
-                        while #self.queue > 0 do
-                                local t = tremove(self.queue, 1)
-                                local ok, err = core.pcall(func, tunpack(t, 1, t.n))
-                                if not ok then
-                                        print("channel", err)
-                                end
-                        end
-                end
-
-        end)
+function channel.channel()
+        local obj = {}
+        obj.queue = {}
+        obj.co = false
+        setmetatable(obj, mt)
+        return obj
 end
 
-
-function channel.run(func)
-        local self = {}
-        self.queue = {}
-        self.co = false
-        setmetatable(self, mt)
-        start(self, func)
-        return self
-end
-
-function channel.push(self, ...)
+function channel.push(self, dat)
+        tinsert(self.queue, dat)
         if self.co then
                 local co = self.co
                 self.co = false
-                core.wakeup2(co, ...)
-        else
-                tinsert(self.queue, tpack(...))
+                core.wakeup(co)
         end
 end
 
+function channel.pop(self)
+        if #self.queue == 0 then
+                assert(not self.co)
+                self.co = core.running()
+                core.wait()
+        end
+        return tremove(self.queue, 1)
+end
+
+function channel.push2(self, ...)
+        channel.push(self, tpack(...))
+end
+
+function channel.pop2(self)
+        local dat = channel.pop(self)
+        return tunpack(dat, 1, dat.n)
+end
 
 return channel
 
