@@ -1,7 +1,6 @@
 local socket = require "socket"
 local core = require "silly.core"
 
-local tinsert = table.insert
 local tremove = table.remove
 
 local CONNECTING   = 1
@@ -34,13 +33,13 @@ function dispatch:create(config)
 end
 
 local function wakeup_all(self, ret, err)
-        local co = tremove(self.waitqueue)
-        tremove(self.funcqueue)
+        local co = tremove(self.waitqueue, 1)
+        tremove(self.funcqueue, 1)
         while co do
                 self.result_data[co] = err
                 core.wakeup(co, ret)
-                co = tremove(self.waitqueue)
-                tremove(self.funcqueue)
+                co = tremove(self.waitqueue, 1)
+                tremove(self.funcqueue, 1)
         end
 end
 
@@ -61,8 +60,8 @@ end
 local function dispatch_response(self)
         return function ()
                 while true do
-                        local co = tremove(self.waitqueue)
-                        local func = tremove(self.funcqueue)
+                        local co = tremove(self.waitqueue, 1)
+                        local func = tremove(self.funcqueue, 1)
                         if func and co then
                                 local ok, do_ok, status, data  = core.pcall(func, self)
                                 if ok and do_ok then
@@ -90,8 +89,8 @@ end
 
 local function waitfor_response(self, response)
         local co = core.running()
-        tinsert(self.waitqueue, 1, co)
-        tinsert(self.funcqueue, 1, response)
+        self.waitqueue[#self.waitqueue + 1] = co
+        self.funcqueue[#self.funcqueue + 1] = response
         if self.dispatchco then     --the first request
                 local co = self.dispatchco
                 self.dispatchco = nil
@@ -105,7 +104,7 @@ end
 
 local function waitfor_connect(self)
         local co = core.running()
-        tinsert(self.connectqueue, 1, co)
+        self.connectqueue[#self.connectqueue + 1] = co
         local status = core.wait()
         local data = self.result_data[co]
         self.result_data[co] = nil

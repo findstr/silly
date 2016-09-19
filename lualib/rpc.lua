@@ -211,7 +211,8 @@ local function checkconnect(self)
                 wakeupall(self)
                 return ok
         else
-                table.insert(self.connectqueue, core.running())
+                local co = core.running()
+                table.insert(self.connectqueue, co)
                 core.wait()
                 return self.fd and self.fd > 0
         end

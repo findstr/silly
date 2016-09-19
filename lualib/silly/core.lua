@@ -3,7 +3,6 @@ local env = require "silly.env"
 
 local core = {}
 
-local tinsert = table.insert
 local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack
@@ -113,7 +112,7 @@ local function waityield(co, ret, typ)
                 assert(sleep_co_session[co])
         elseif typ == "EXIT" then
                 assert(co)
-                tinsert(copool, co)
+                copool[#copool + 1] = co
         else
                 print("silly.core waityield unkonw return type", typ)
                 print(debug.traceback())
@@ -122,12 +121,10 @@ local function waityield(co, ret, typ)
 end
 
 function dispatch_wakeup()
-        local k, v
-        k, v = next(wakeup_co_status, k)
-        if not k then
+        local co = next(wakeup_co_status)
+        if not co then
                 return
         end
-        local co = k
         local param = wakeup_co_param[co]
         wakeup_co_status[co] = nil
         wakeup_co_param[co] = nil

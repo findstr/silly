@@ -1,7 +1,6 @@
 local core = require "silly.core"
 
 local tremove = table.remove
-local tinsert = table.insert
 local tpack = table.pack
 local tunpack = table.unpack
 
@@ -18,7 +17,7 @@ function channel.channel()
 end
 
 function channel.push(self, dat)
-        tinsert(self.queue, dat)
+        self.queue[#self.queue + 1] = dat
         if self.co then
                 local co = self.co
                 self.co = false
