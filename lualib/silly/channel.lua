@@ -12,12 +12,16 @@ function channel.channel()
         local obj = {}
         obj.queue = {}
         obj.co = false
+        obj.popi = 1
+        obj.pushi = 1
         setmetatable(obj, mt)
         return obj
 end
 
 function channel.push(self, dat)
-        self.queue[#self.queue + 1] = dat
+        self.queue[self.pushi] = dat
+        self.pushi = self.pushi + 1
+        assert(self.pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
         if self.co then
                 local co = self.co
                 self.co = false
@@ -26,12 +30,19 @@ function channel.push(self, dat)
 end
 
 function channel.pop(self)
-        if #self.queue == 0 then
+        if self.popi == self.pushi then
+                self.popi = 1
+                self.pushi = 1
                 assert(not self.co)
                 self.co = core.running()
                 core.wait()
         end
-        return tremove(self.queue, 1)
+        assert(self.popi - self.pushi < 0)
+        local i = self.popi
+        self.popi= i + 1
+        local d = self.queue[i]
+        self.queue[i] = nil
+        return d
 end
 
 function channel.push2(self, ...)
