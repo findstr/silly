@@ -488,14 +488,21 @@ static int
 forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
         ssize_t sz;
-        uint8_t *buff = (uint8_t *)silly_malloc(s->presize);
-        sz = readn(s->fd, buff, s->presize);
+        ssize_t presize = s->presize;
+        uint8_t *buff = (uint8_t *)silly_malloc(presize);
+        sz = readn(s->fd, buff, presize);
         //half close socket need no data
         if (sz > 0 && s->type != STYPE_HALFCLOSE) {
                 report_data(ss, s, SILLY_SDATA, buff, sz);
                 //to predict the pakcet size
-                if (sz == s->presize)
+                if (sz == presize) {
                         s->presize *= 2;
+                } else if (presize > MIN_READBUFF_LEN) {
+                        //s->presize at leatest is 2 * MIN_READBUFF_LEN
+                        int half = presize / 2;
+                        if (sz < half)
+                                s->presize = half;
+                }
         } else {
                 silly_free(buff);
                 if (sz < 0) {
