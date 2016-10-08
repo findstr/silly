@@ -1,6 +1,5 @@
 local core = require "silly.core"
 local ns = require "netstream"
-local env = require "silly.env"
 
 local nb_pool = {}
 local socket_pool = {}
@@ -13,7 +12,6 @@ local function new_socket(fd)
         local s = {
                 fd = fd,
                 delim = false,
-                suspend = false,
                 co = false,
                 limit = 8192,
         }
@@ -51,6 +49,9 @@ end
 
 function EVENT.data(fd, message)
         local s = socket_pool[fd]
+        if not s then
+                return
+        end
         assert(s.callback == nil)
         s.sbuffer = ns.push(nb_pool, s.sbuffer, message)
         if not s.delim then     --non suspend read

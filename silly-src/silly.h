@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include "silly_malloc.h"
+#include "silly_socket.h"
 
 struct silly_listen {
         char name[64];
