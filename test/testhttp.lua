@@ -1,4 +1,6 @@
 local server = require "http.server"
+local client = require "http.client"
+local P = require "print"
 
 local dispatch = {}
 
@@ -50,4 +52,16 @@ server.listen("@8080", function(request, body, write)
                 write(404, {"Content-Type: text/plain"}, "404 Page Not Found")
         end
 end)
+
+
+--client part
+
+return function()
+        local status, head, body = client.POST("http://127.0.0.1:8080/upload",
+                                {"Content-Type: application/x-www-form-urlencoded"},
+                                "Hello=findstr&")
+        local status, head, body = client.GET("http://127.0.0.1:8080/download")
+        assert(body == "findstr")
+        print("status", status, body)
+end
 

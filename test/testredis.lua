@@ -14,8 +14,8 @@ local function dprint(cmd, success, value)
 end
 
 local db = nil
-
-core.start(function ()
+local F = 0
+local function test1()
         local err
         db, err= redis:connect{
                 addr = "127.0.0.1@6379",
@@ -38,15 +38,28 @@ core.start(function ()
         dprint("TYPE bar", db:type("bar"))
         dprint("STRLEN bar", db:strlen("foo"))
         print("test finish")
-        core.exit()
-end)
+        F = F + 1
+end
 
-core.start(function ()
+local function test2()
         core.sleep(5000)
         print("test begin2")
         dprint("PING", db:ping())
         dprint("SET bar hello", db:set("bar", "hello"))
         dprint("GET bar", db:get("bar"))
         print("test finish2")
-end)
+        F = F + 1
+end
+
+
+return function()
+        core.fork(test1)
+        core.fork(test2)
+        while true do
+                if F >= 2 then
+                        break
+                end
+                core.sleep(100)
+        end
+end
 

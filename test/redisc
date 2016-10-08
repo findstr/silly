@@ -1,4 +1,0 @@
-daemon = 0
-bootstrap = "test/redisc.lua"
-lualib_path = "test/?.lua;lualib/?.lua"
-lualib_cpath = "luaclib/?.so"

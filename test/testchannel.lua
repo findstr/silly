@@ -13,7 +13,7 @@ end
 
 core.fork(test)
 
-core.start(function()
+return function()
         core.sleep(10)
         for i = 1, 3 do
                 c1:push2("hello" .. i, nil, "world" .. i, nil)
@@ -23,6 +23,5 @@ core.start(function()
                 c1:push2("hello" .. i, nil, "world" .. i, nil)
                 core.sleep(1)
         end
-end)
-
+end
 

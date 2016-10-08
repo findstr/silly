@@ -3,10 +3,12 @@ local core = require "silly.core"
 local closure = {}
 
 local last = nil
+
 local more = core.fork(function()
-                        core.wait()
-                        print("extra")
-                end)
+        core.wait()
+        print("extra")
+end)
+
 local function wrap(str, last)
         return function()
                 core.wait()
@@ -30,16 +32,17 @@ local function create(str)
         last = tmp
 end
 
-
-core.start(function()
-for i = 1, 5 do
-        create("test" .. i)
+return function()
+        for i = 1, 5 do
+                create("test" .. i)
+        end
+        core.sleep(100)
+        print("--------------")
+        core.fork(function ()
+                print("-", last)
+                core.wakeup(last)
+        end)
+        core.sleep(100)
+        print("testwakeup ok")
 end
-core.sleep(100)
-print("--------------")
-core.fork(function ()
-        print("-", last)
-        core.wakeup(last)
-end)
-end)
 
