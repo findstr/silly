@@ -65,8 +65,9 @@ struct silly_message_socket {  //socket accept
 static void __inline
 silly_message_free(struct silly_message *msg)
 {
-        if (msg->type == SILLY_SDATA)
-                silly_free(sdata(msg)->data);
+        int type = msg->type;
+        if (type == SILLY_SDATA || type == SILLY_SUDP)
+                silly_free(tosocket(msg)->data);
         silly_free(msg);
 }
 
