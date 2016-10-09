@@ -1,21 +1,29 @@
-# silly([blog](http://blog.gotocoding.com/?p=446))
+# silly
 --------
-##depend
+## Depend
 
 - sudo apt-get install libreadline-dev(debain)
 - yum install readline-devel(centos)
 
-##build
+## Build
 
 - make linux
 - make macosx
 
-##run
+## Run
     ./silly <configfile>
 
-##field of configfile
+## Config
 
 - daemon, 1 --> run as daemon, 0 --> normal
-- bootstrap, lua entry
+- bootstrap, lua entry file
 - lualib_path, will append the package.path (in luaVM)
 - lualib_cpath, will append the package.cpath (int luaVM)
+
+## Test
+
+- all the test code will be included into ./test folder
+- run ./silly test/test will auto test all module
+
+## Blog
+http://blog.gotocoding.com/?p=446
