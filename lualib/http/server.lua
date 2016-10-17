@@ -82,7 +82,7 @@ local function parse_uri(str)
         assert(start > 1)
         local uri = string.sub(str, 1, start - 1)
         local f = string.sub(str, start + 1)
-        for k, v in string.gmatch(f, "(%w+)=(%w+)") do
+        for k, v in string.gmatch(f, "([^=&]+)=([^&]+)") do
                 form[k] = v
         end
         return uri, form

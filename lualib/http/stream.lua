@@ -33,6 +33,7 @@ function stream.recv_request(readl, readn)
                                 break
                         end
                         body = body .. readn(sz)
+                        readl()
                 end
         end
         if header["Content-Length"] then

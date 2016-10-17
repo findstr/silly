@@ -61,7 +61,7 @@ return function()
                                 {"Content-Type: application/x-www-form-urlencoded"},
                                 "Hello=findstr&")
         local status, head, body = client.GET("http://127.0.0.1:8080/download")
-        assert(body == "findstr")
+        assert(body == "findstr", body)
         print("status", status, body)
 end
 

@@ -10,7 +10,7 @@ local read = socket.read
 local write = socket.write
 
 local function parsehost(url)
-        local host, port, abs = string.match(url, "http://([^:/]+):?(%d*)([%w-_/]*)")
+        local host, port, abs = string.match(url, "http://([^:/]+):?(%d*)([%w-%._/]*)")
         if abs == "" then
                 abs = "/"
         end
@@ -42,14 +42,13 @@ local function recv_response(fd)
                 return nil
         end
         if status ~= 200 then
-                socket.close(fd)
                 return status
         end
         local ver, status= first:match("HTTP/([%d|.]+)%s+(%d+)")
         return tonumber(status), header, body, ver
 end
 
-local function process(uri, header, body)
+local function process(uri, method, header, body)
         header = header or {}
         body = body or ""
         local ip
@@ -71,18 +70,18 @@ local function process(uri, header, body)
         if port ~= "" then
                 host = host .. ":" .. port
         end
-        send_request(fd, "GET", host, abs, header, body)
+        send_request(fd, method, host, abs, header, body)
         local status, header, body, ver = recv_response(fd)
         socket.close(fd)
         return status, header, body, ver
 end
 
 function client.GET(uri, header)
-        return process(uri, header)
+        return process(uri, "GET", header)
 end
 
 function client.POST(uri, header, body)
-        return process(uri, header, body)
+        return process(uri, "POST", header, body)
 end
 
 return client
