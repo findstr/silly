@@ -19,6 +19,7 @@
 - bootstrap, lua entry file
 - lualib_path, will append the package.path (in luaVM)
 - lualib_cpath, will append the package.cpath (int luaVM)
+- logpath, when run as daemon, all the print will come into [logpath]/silly-[pid].log file
 
 ## Test
 
