@@ -59,7 +59,7 @@ converters[0xf6] = tonumber  -- newdecimal
 
 
 local function _get_byte2(data, i)
-            return strunpack("<I2", data, i)
+	return strunpack("<I2", data, i)
 end
 
 
@@ -160,7 +160,7 @@ local function _compose_packet(self, req, size)
         print("sending packet: ", _dump(packet))
 
         print("sending packet... of size " .. #packet)
-        
+
         return packet
 
 end
@@ -539,7 +539,7 @@ local function _mysql_login(self, opts)
                         return false, false, "failed to do ssl handshake: " .. (err or "")
                     end
                 end
-                
+
                 local user = opts.user or ""
                 local password = opts.password or ""
                 local database = opts.database or ""
@@ -600,7 +600,7 @@ function _M.create(opts)
                 auth = nil,
                 sock = nil,
         }
-        
+
         self.auth = _mysql_login(self, opts)
         self.sock = sfifo:create {
                 addr = opts.host,
