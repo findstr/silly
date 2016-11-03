@@ -3,34 +3,34 @@
 
 #include <stdint.h>
 
-#define ZPROTO_BOOLEAN  1
-#define ZPROTO_INTEGER  2
-#define ZPROTO_STRING   3
-#define ZPROTO_STRUCT   4
+#define ZPROTO_BOOLEAN (1)
+#define ZPROTO_INTEGER (2)
+#define ZPROTO_STRING (3)
+#define ZPROTO_STRUCT (4)
 
-#define ZPROTO_OOM      (-1)
-#define ZPROTO_NOFIELD  (-2)
-#define ZPROTO_ERROR    (-3)
+#define ZPROTO_OOM (-1)
+#define ZPROTO_NOFIELD (-2)
+#define ZPROTO_ERROR (-3)
 
 struct zproto;
 struct zproto_struct;
 
 //ENCODE: if 'len' is -1, the array nonexist
-//      otherwise 'len' is length of array
-//DECODE: the len is the length of array, 
+//	otherwise 'len' is length of array
+//DECODE: the len is the length of array,
 //it may be 0 when the array is empty
 struct zproto_args {
-        int tag;
-        int type;
-        int idx;        //array index
-        int len;        //array length
-        void *ud;
-        int maptag;
-        const char *name;
-        const char *mapname; //for map
-        uint8_t *buff;
-        size_t  buffsz;
-        struct zproto_struct *sttype;
+	int tag;
+	int type;
+	int idx; //array index
+	int len; //array length
+	void *ud;
+	int maptag;
+	const char *name;
+	const char *mapname; //for map
+	uint8_t *buff;
+	size_t buffsz;
+	struct zproto_struct *sttype;
 };
 
 typedef int (*zproto_cb_t)(struct zproto_args *args);
