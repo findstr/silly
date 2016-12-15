@@ -89,7 +89,7 @@ struct silly_socket {
 
 static struct silly_socket *SSOCKET;
 
-static void 
+static void
 socketpool_init(struct silly_socket *ss)
 {
 	int i;
@@ -124,7 +124,7 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 			id = id & 0x7fffffff;
 			__sync_and_and_fetch(&ss->reserveid, 0x7fffffff);
 		}
-		
+
 		struct socket *s = &ss->socketpool[HASH(id)];
 		if (s->type == STYPE_RESERVE) {
 			if (__sync_bool_compare_and_swap(&s->type, STYPE_RESERVE, type)) {
@@ -315,7 +315,7 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 		return;
 	sa->sid = s->sid;
 	sa->ud = listen->sid;
-	silly_worker_push(tocommon(sa));	 
+	silly_worker_push(tocommon(sa));
 	return ;
 }
 
@@ -600,7 +600,7 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 	return ;
 }
 
-static int 
+static int
 hascmd(struct silly_socket *ss)
 {
 	int ret;
@@ -691,14 +691,14 @@ tosockaddr(struct sockaddr *addr, const char *ip, int port)
 }
 
 
-static int 
+static int
 bindfd(int fd, const char *ip, int port)
 {
 	int err;
 	struct sockaddr addr;
 	if (ip[0] == '\0' && port == 0)
 		return 0;
-	tosockaddr(&addr, ip, port);	   
+	tosockaddr(&addr, ip, port);
 	err = bind(fd, &addr, sizeof(addr));
 	return err;
 }
@@ -728,7 +728,7 @@ end:
 
 }
 
-int 
+int
 silly_socket_listen(const char *ip, uint16_t port, int backlog)
 {
 	int fd;
@@ -838,7 +838,7 @@ fill_connectaddr(struct cmdpacket *cmd, const char *addr, int port, const char *
 	return ;
 }
 
-int 
+int
 silly_socket_connect(const char *addr, int port, const char *bindip, int bindport)
 {
 	struct cmdpacket cmd;
@@ -973,7 +973,7 @@ checksocket(struct silly_socket *ss, int sid)
 	case STYPE_UDPBIND:
 		return s;
 	default:
-		fprintf(stderr, 
+		fprintf(stderr,
 			"[socket] checksocket sid:%d unsupport type:%d\n",
 			s->sid, s->type);
 		return NULL;
@@ -981,7 +981,7 @@ checksocket(struct silly_socket *ss, int sid)
 	return NULL;
 }
 
-int 
+int
 silly_socket_close(int sid)
 {
 	struct cmdpacket cmd;
@@ -1076,7 +1076,7 @@ trysend(struct silly_socket *ss, struct cmdpacket *cmd)
 			delsocket(ss, s);
 			return -1;
 		} else if (n < sz) {
-			wlist_append(s, data, n, sz, NULL);
+			wlist_append(s, data, n, sz - n, NULL);
 			sp_write_enable(ss->spfd, s->fd, s, 1);
 		} else {
 			assert(n == sz);
@@ -1108,7 +1108,7 @@ tryudpsend(struct silly_socket *ss, struct cmdpacket *cmd)
 			silly_free(data);
 			return 0;
 		}
-		assert(n == -2);	//EAGAIN 
+		assert(n == -2);	//EAGAIN
 		wlist_append(s, data, 0, sz, addr);
 	} else {
 		wlist_append(s, data, 0, sz, addr);
