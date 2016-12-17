@@ -15,36 +15,36 @@
 #include "silly_malloc.h"
 #include "silly_timer.h"
 
-#define SR_BITS         (8)     //root slot
-#define SL_BITS         (6)     //level slot
-#define SR_SIZE         (1 << SR_BITS)
-#define SL_SIZE         (1 << SL_BITS)
-#define SR_MASK         (SR_SIZE - 1)
-#define SL_MASK         (SL_SIZE - 1)
+#define SR_BITS		(8)	//root slot
+#define SL_BITS		(6)	//level slot
+#define SR_SIZE		(1 << SR_BITS)
+#define SL_SIZE		(1 << SL_BITS)
+#define SR_MASK		(SR_SIZE - 1)
+#define SL_MASK		(SL_SIZE - 1)
 
-#define RESOLUTION      (10)
+#define RESOLUTION	(10)
 
 struct node {
-        uint32_t        expire;
-        uint32_t        session;
-        struct node     *next;
+	uint32_t expire;
+	uint32_t session;
+	struct node *next;
 };
 
 struct slot_root {
-        struct node *slot[SR_SIZE];
+	struct node *slot[SR_SIZE];
 };
 
 struct slot_level {
-        struct node *slot[SL_SIZE];
+	struct node *slot[SL_SIZE];
 };
 
 struct silly_timer {
-        int                     lock;
-        uint32_t                expire;
-        uint64_t                ticktime;
-        uint64_t                clocktime;
-        struct slot_root        root;
-        struct slot_level       level[4];
+	int lock;
+	uint32_t expire;
+	uint64_t ticktime;
+	uint64_t clocktime;
+	struct slot_root root;
+	struct slot_level level[4];
 };
 
 static struct silly_timer *T;
@@ -52,258 +52,258 @@ static struct silly_timer *T;
 static inline struct node *
 newnode()
 {
-        struct node *n = silly_malloc(sizeof(*n));
-        uint32_t session = silly_worker_genid();
-        n->session = session;
-        return n;
+	struct node *n = silly_malloc(sizeof(*n));
+	uint32_t session = silly_worker_genid();
+	n->session = session;
+	return n;
 }
 
 static inline void
 freenode(struct node *n)
 {
-        silly_free(n);
-        return ;
+	silly_free(n);
+	return ;
 }
 
 static inline void
 lock(struct silly_timer *timer)
 {
-        while (__sync_lock_test_and_set(&timer->lock, 1))
-                ;
+	while (__sync_lock_test_and_set(&timer->lock, 1))
+		;
 
 }
 
 static inline void
 unlock(struct silly_timer *timer)
 {
-        __sync_lock_release(&timer->lock);
+	__sync_lock_release(&timer->lock);
 }
 
 uint64_t
 silly_timer_current()
 {
-        return T->ticktime * RESOLUTION;
+	return T->ticktime * RESOLUTION;
 }
 
 uint64_t 
 silly_timer_now()
 {
-        return T->clocktime * RESOLUTION;
+	return T->clocktime * RESOLUTION;
 }
 
 static inline void
 linklist(struct node **list, struct node *n)
 {
-        n->next = *list;
-        *list = n;
+	n->next = *list;
+	*list = n;
 }
 
 static void
 add_node(struct silly_timer *timer, struct node *n)
 {
-        int     i;
-        int32_t idx = n->expire - timer->expire;
-        if (idx < 0) {  //timeout
-                i = timer->expire & SR_MASK;
-                linklist(&timer->root.slot[i], n);
-        } else if (idx < SR_SIZE) {
-                i = n->expire & SR_MASK;
-                linklist(&timer->root.slot[i], n);
-        } else {
-                for (i = 0; i < 3; i++) {
-                        if (idx < 1 << ((i + 1) * SL_BITS + SR_BITS)) {
-                                idx = n->expire >> (i * SL_BITS + SR_BITS);
-                                idx &= SL_MASK;
-                                linklist(&timer->level[i].slot[idx], n);
-                                break;
-                        }
-                }
-                if (i == 3) {//the last level
-                        idx = n->expire >> (i * SL_BITS + SR_BITS);
-                        idx &= SL_MASK;
-                        linklist(&timer->level[i].slot[idx], n);
-                }
-        }
-        return ;
+	int	i;
+	int32_t idx = n->expire - timer->expire;
+	if (idx < 0) {	//timeout
+		i = timer->expire & SR_MASK;
+		linklist(&timer->root.slot[i], n);
+	} else if (idx < SR_SIZE) {
+		i = n->expire & SR_MASK;
+		linklist(&timer->root.slot[i], n);
+	} else {
+		for (i = 0; i < 3; i++) {
+			if (idx < 1 << ((i + 1) * SL_BITS + SR_BITS)) {
+				idx = n->expire >> (i * SL_BITS + SR_BITS);
+				idx &= SL_MASK;
+				linklist(&timer->level[i].slot[idx], n);
+				break;
+			}
+		}
+		if (i == 3) {//the last level
+			idx = n->expire >> (i * SL_BITS + SR_BITS);
+			idx &= SL_MASK;
+			linklist(&timer->level[i].slot[idx], n);
+		}
+	}
+	return ;
 }
 
 uint32_t
 silly_timer_timeout(uint32_t expire)
 {
-        struct node *n = newnode();
-        if (n == NULL) {
-                fprintf(stderr, "silly timer alloc node failed\n");
-                return -1;
-        }
-        lock(T);
-        n->expire = expire / RESOLUTION + T->ticktime;
-        assert((int32_t)(n->expire - T->expire) >= 0);
-        add_node(T, n);
-        unlock(T);
-        return n->session;
+	struct node *n = newnode();
+	if (n == NULL) {
+		fprintf(stderr, "silly timer alloc node failed\n");
+		return -1;
+	}
+	lock(T);
+	n->expire = expire / RESOLUTION + T->ticktime;
+	assert((int32_t)(n->expire - T->expire) >= 0);
+	add_node(T, n);
+	unlock(T);
+	return n->session;
 }
 
 static void
 timeout(struct silly_timer *t, uint32_t session)
 {
-        struct silly_message_texpire *te;
-        te = silly_malloc(sizeof(*te));
-        te->type = SILLY_TEXPIRE;
-        te->session = session;
-        silly_worker_push(tocommon(te));
-        return ;
+	struct silly_message_texpire *te;
+	te = silly_malloc(sizeof(*te));
+	te->type = SILLY_TEXPIRE;
+	te->session = session;
+	silly_worker_push(tocommon(te));
+	return ;
 }
 
 static uint64_t
 ticktime()
 {
-        uint64_t ms;
+	uint64_t ms;
 #ifdef __macosx__
-        clock_serv_t cclock;
-        mach_timespec_t mts;
-        host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
-        clock_get_time(cclock, &mts);
-        mach_port_deallocate(mach_task_self(), cclock);
-        ms = (uint64_t)mts.tv_sec * 1000 / RESOLUTION;
-        ms += mts.tv_nsec / 1000000 / RESOLUTION;
+	clock_serv_t cclock;
+	mach_timespec_t mts;
+	host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+	clock_get_time(cclock, &mts);
+	mach_port_deallocate(mach_task_self(), cclock);
+	ms = (uint64_t)mts.tv_sec * 1000 / RESOLUTION;
+	ms += mts.tv_nsec / 1000000 / RESOLUTION;
 #else
-        struct timespec tp;
-        clock_gettime(CLOCK_MONOTONIC, &tp);
-        ms = (uint64_t)tp.tv_sec * 1000 / RESOLUTION;
-        ms += tp.tv_nsec / 1000000 / RESOLUTION;
+	struct timespec tp;
+	clock_gettime(CLOCK_MONOTONIC, &tp);
+	ms = (uint64_t)tp.tv_sec * 1000 / RESOLUTION;
+	ms += tp.tv_nsec / 1000000 / RESOLUTION;
 #endif
-        return ms;
+	return ms;
 }
 
 static uint64_t
 clocktime()
 {
-        uint64_t ms;
-        struct timeval t;
-        gettimeofday(&t, NULL);
-        ms = t.tv_sec * 1000 / RESOLUTION;
-        ms += t.tv_usec / 1000 / RESOLUTION;
-        return ms;
+	uint64_t ms;
+	struct timeval t;
+	gettimeofday(&t, NULL);
+	ms = t.tv_sec * 1000 / RESOLUTION;
+	ms += t.tv_usec / 1000 / RESOLUTION;
+	return ms;
 
 }
 
 static void
 expire_timer(struct silly_timer *timer)
 {
-        int idx = timer->expire & SR_MASK;
-        while (timer->root.slot[idx]) {
-                struct node *n = timer->root.slot[idx];
-                timer->root.slot[idx] = NULL;
-                unlock(timer);
-                while (n) {
-                        struct node *tmp = n;
-                        n = n->next;
-                        assert((int32_t)(tmp->expire - timer->expire) <= 0);
-                        timeout(timer, tmp->session);
-                        freenode(tmp);   
-                }
-                lock(timer);
-        }
-        return ;
+	int idx = timer->expire & SR_MASK;
+	while (timer->root.slot[idx]) {
+		struct node *n = timer->root.slot[idx];
+		timer->root.slot[idx] = NULL;
+		unlock(timer);
+		while (n) {
+			struct node *tmp = n;
+			n = n->next;
+			assert((int32_t)(tmp->expire - timer->expire) <= 0);
+			timeout(timer, tmp->session);
+			freenode(tmp);	 
+		}
+		lock(timer);
+	}
+	return ;
 }
 
 static int
 cascade_timer(struct silly_timer *timer, int level)
 {
-        struct node *n;
-        int idx = timer->expire >> (level * SL_BITS + SR_BITS);
-        idx &= SL_MASK;
-        assert(level < 4);
-        n = timer->level[level].slot[idx];
-        timer->level[level].slot[idx] = NULL;
-        while (n) {
-                struct node *tmp = n;
-                n = n->next;
-                assert(tmp->expire >> (level * SL_BITS + SR_BITS) ==
-                        timer->expire >> (level * SL_BITS + SR_BITS));
-                add_node(timer, tmp);
-        }
-        return idx;
+	struct node *n;
+	int idx = timer->expire >> (level * SL_BITS + SR_BITS);
+	idx &= SL_MASK;
+	assert(level < 4);
+	n = timer->level[level].slot[idx];
+	timer->level[level].slot[idx] = NULL;
+	while (n) {
+		struct node *tmp = n;
+		n = n->next;
+		assert(tmp->expire >> (level * SL_BITS + SR_BITS) ==
+			timer->expire >> (level * SL_BITS + SR_BITS));
+		add_node(timer, tmp);
+	}
+	return idx;
 }
 
 static void
 update_timer(struct silly_timer *timer)
 {
-        uint32_t idx;
-        lock(T);
-        expire_timer(timer);
-        idx = ++timer->expire;
-        idx &= SR_MASK;
-        if (idx == 0) {
-                int i;
-                for (i = 0; i < 4; i++) {
-                        idx = cascade_timer(timer, i);
-                        if (idx != 0)
-                                break;
-                }
-        }
-        expire_timer(timer);
-        unlock(T);
-        return ;
+	uint32_t idx;
+	lock(T);
+	expire_timer(timer);
+	idx = ++timer->expire;
+	idx &= SR_MASK;
+	if (idx == 0) {
+		int i;
+		for (i = 0; i < 4; i++) {
+			idx = cascade_timer(timer, i);
+			if (idx != 0)
+				break;
+		}
+	}
+	expire_timer(timer);
+	unlock(T);
+	return ;
 }
 
 void
 silly_timer_update()
 {
-        int     i;
-        int     delta;
-        uint64_t time = ticktime();
-        if (T->ticktime == time)
-                return;
-        if (T->ticktime > time) {
-                const char *fmt =
-                "[timer] time rewind change from %lld to %lld\n";
-                fprintf(stderr, fmt, T->ticktime, time);
-        }
-        delta = time - T->ticktime;
-        assert(delta > 0);
-        //uint64_t on x86 platform, can't assign as a automatic
-        __sync_lock_test_and_set(&T->ticktime, time);
-        __sync_fetch_and_add(&T->clocktime, delta);
-        for (i = 0; i < delta; i++)
-                update_timer(T);
-        assert((uint32_t)T->ticktime == T->expire);
-        return ;
+	int	i;
+	int	delta;
+	uint64_t time = ticktime();
+	if (T->ticktime == time)
+		return;
+	if (T->ticktime > time) {
+		const char *fmt =
+		"[timer] time rewind change from %lld to %lld\n";
+		fprintf(stderr, fmt, T->ticktime, time);
+	}
+	delta = time - T->ticktime;
+	assert(delta > 0);
+	//uint64_t on x86 platform, can't assign as a automatic
+	__sync_lock_test_and_set(&T->ticktime, time);
+	__sync_fetch_and_add(&T->clocktime, delta);
+	for (i = 0; i < delta; i++)
+		update_timer(T);
+	assert((uint32_t)T->ticktime == T->expire);
+	return ;
 }
 
 void
 silly_timer_init()
 {
-        T = silly_malloc(sizeof(*T));
-        memset(T, 0, sizeof(*T));
-        T->clocktime = clocktime();
-        T->ticktime = ticktime();
-        T->expire = T->ticktime;
-        return ;
+	T = silly_malloc(sizeof(*T));
+	memset(T, 0, sizeof(*T));
+	T->clocktime = clocktime();
+	T->ticktime = ticktime();
+	T->expire = T->ticktime;
+	return ;
 }
 
 static inline void
 freelist(struct node *n)
 {
-        while (n) {
-                struct node *tmp = n;
-                n = n->next;
-                freenode(tmp);
-        }
-        return ;
+	while (n) {
+		struct node *tmp = n;
+		n = n->next;
+		freenode(tmp);
+	}
+	return ;
 }
 
 void
 silly_timer_exit()
 {
-        int i, j;
-        for (i = 0; i < SR_SIZE; i++)
-                freelist(T->root.slot[i]);
-        for (i = 0; i < 4; i++) {
-                for (j = 0; j < SL_SIZE; j++)
-                        freelist(T->level[i].slot[j]);
-        }
-        silly_free(T);
-        return ;
+	int i, j;
+	for (i = 0; i < SR_SIZE; i++)
+		freelist(T->root.slot[i]);
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < SL_SIZE; j++)
+			freelist(T->level[i].slot[j]);
+	}
+	silly_free(T);
+	return ;
 }
 

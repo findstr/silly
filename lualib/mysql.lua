@@ -1,9 +1,8 @@
 -- Copyright (C) 2012 Yichun Zhang (agentzh)
 
 
-local sfifo = require "socketfifo"
+local sfifo = require "socketdispatch"
 local crypt = require "crypt"
-local spacker = require "spacker"
 local sub = string.sub
 local strbyte = string.byte
 local strchar = string.char
@@ -60,7 +59,7 @@ converters[0xf6] = tonumber  -- newdecimal
 
 
 local function _get_byte2(data, i)
-            return strunpack("<I2", data, i)
+	return strunpack("<I2", data, i)
 end
 
 
@@ -161,7 +160,7 @@ local function _compose_packet(self, req, size)
         print("sending packet: ", _dump(packet))
 
         print("sending packet... of size " .. #packet)
-        
+
         return packet
 
 end
@@ -444,12 +443,12 @@ local function _mysql_login(self, opts)
         return function (sfifo)
                 local packet, typ, err = _recv_packet(self)
                 if not packet then
-                    return nil, err
+                    return false, false, err
                 end
 
                 if typ == "ERR" then
                     local errno, msg, sqlstate = _parse_err_packet(packet)
-                    return nil, msg, errno, sqlstate
+                    return false, false, msg, errno, sqlstate
                 end
 
                 self.protocol_ver = strbyte(packet)
@@ -458,7 +457,7 @@ local function _mysql_login(self, opts)
 
                 local server_ver, pos = _from_cstring(packet, 2)
                 if not server_ver then
-                    return nil, "bad handshake initialization packet: bad server version"
+                    return false, false, "bad handshake initialization packet: bad server version"
                 end
 
                 print("server version: ", server_ver)
@@ -471,7 +470,7 @@ local function _mysql_login(self, opts)
 
                 local scramble = sub(packet, pos, pos + 8 - 1)
                 if not scramble then
-                    return nil, "1st part of scramble not found"
+                    return false, false, "1st part of scramble not found"
                 end
 
                 pos = pos + 9 -- skip filler
@@ -507,7 +506,7 @@ local function _mysql_login(self, opts)
 
                 local scramble_part2 = sub(packet, pos, pos + len - 1)
                 if not scramble_part2 then
-                    return nil, "2nd part of scramble not found"
+                    return false, false, "2nd part of scramble not found"
                 end
 
                 scramble = scramble .. scramble_part2
@@ -520,7 +519,7 @@ local function _mysql_login(self, opts)
 
                 if use_ssl then
                     if band(capabilities, CLIENT_SSL) == 0 then
-                        return nil, "ssl disabled on server"
+                        return false, false, "ssl disabled on server"
                     end
 
                     -- send a SSL Request Packet
@@ -532,15 +531,15 @@ local function _mysql_login(self, opts)
                     local packet_len = 4 + 4 + 1 + 23
                     local bytes, err = _send_packet(self, req, packet_len)
                     if not bytes then
-                        return nil, "failed to send client authentication packet: " .. err
+                        return false, false, "failed to send client authentication packet: " .. err
                     end
 
                     local ok, err = sock:sslhandshake(false, nil, ssl_verify)
                     if not ok then
-                        return nil, "failed to do ssl handshake: " .. (err or "")
+                        return false, false, "failed to do ssl handshake: " .. (err or "")
                     end
                 end
-                
+
                 local user = opts.user or ""
                 local password = opts.password or ""
                 local database = opts.database or ""
@@ -564,49 +563,48 @@ local function _mysql_login(self, opts)
 
                 local bytes, err = _send_packet(self, req, packet_len)
                 if not bytes then
-                    return nil, "failed to send client authentication packet: " .. err
+                    return false, false, "failed to send client authentication packet: " .. err
                 end
 
                 print("packet sent ", bytes, " bytes")
 
                 local packet, typ, err = _recv_packet(self)
                 if not packet then
-                    return nil, "failed to receive the result packet: " .. err
+                    return false, false, "failed to receive the result packet: " .. err
                 end
 
                 if typ == 'ERR' then
                     local errno, msg, sqlstate = _parse_err_packet(packet)
-                    return nil, msg, errno, sqlstate
+                    return false, false, msg, errno, sqlstate
                 end
 
                 if typ == 'EOF' then
-                    return nil, "old pre-4.1 authentication protocol not supported"
+                    return false, false, "old pre-4.1 authentication protocol not supported"
                 end
 
                 if typ ~= 'OK' then
-                    return nil, "bad packet type: " .. typ
+                    return false, false, "bad packet type: " .. typ
                 end
 
                 print("login status: " .. typ)
 
                 self.state = STATE_CONNECTED
 
-                return true
+                return true, true
         end
 end
 
-function _M.create(self, opts)
+function _M.create(opts)
         local self = {
                 opts = opts,
                 auth = nil,
                 sock = nil,
         }
-        
+
         self.auth = _mysql_login(self, opts)
         self.sock = sfifo:create {
-                        ip = opts.host,
-                        port = opts.port or 3306,
-                        auth = self.auth
+                addr = opts.host,
+                auth = self.auth
         }
 
         setmetatable(self, mt)
@@ -622,16 +620,6 @@ function _M.create(self, opts)
 end
 
 function _M.connect(self)
-        local opts = self.opts
-
-        if self.sock:closed() then
-                self.sock = sfifo:create {
-                        ip = self.opts.host,
-                        port = opts.port or 3306,
-                        auth = self.auth
-                }
-        end
-
         return self.sock:connect()
 end
 
@@ -763,11 +751,11 @@ local function _query_response(self, est_nrows)
                         badresult.err = err
                         badresult.errno = errno
                         badresult.sqlstate = sqlstate
-                        return true, badresult
+                        return true, false, badresult
                 end
 
                 if err ~= "again" then
-                        return true, res
+                        return true, true, res
                 end
 
                 local multiresultset = {res}
@@ -776,35 +764,27 @@ local function _query_response(self, est_nrows)
                 while err == "again" do
                         res, err, errno, sqlstate = read_result(self, est_nrows)
                         if not res then
-                                return true, multiresultset
+                                return true, true, multiresultset
                         end
                         multiresultset[i] = res
                         i = i + 1
                 end
-
-                return true, multiresultset
+                return true, true, multiresultset
         end
 end
 
 function _M.query(self, query, est_nrows)
     if self.state ~= STATE_CONNECTED then
-        return nil, "cannot send query in the current context: "
-                    .. (self.state or "nil")
+        return false,
+                "cannot send query in the current context: "
+                .. (self.state or "nil")
     end
-
     local sock = self.sock
-
     self.packet_no = -1
-
     local cmd_packet = strchar(COM_QUERY) .. query
     local packet_len = 1 + #query
-
     local packet = _compose_packet(self, cmd_packet, packet_len)
-
     self.state = STATE_COMMAND_SENT
-
-    --print("packet sent ", bytes, " bytes")
-
     return self.sock:request(packet, _query_response(self, est_nrows))
 end
 

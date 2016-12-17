@@ -20,7 +20,7 @@ linux:CCFLAG += -D__linux__
 macosx:CCFLAG += -D__macosx__
 
 linux:LDFLAG += -Wl,-E -lrt
-macosx:LDFLAG += -Wl,-no_compact_unwind 
+macosx:LDFLAG += -Wl,-no_compact_unwind
 linux macosx:LDFLAG += -lpthread
 
 linux:SHARED:=--share -fPIC
@@ -57,7 +57,7 @@ all: \
 	$(LUACLIB_PATH)	\
 	$(TARGET) \
 	$(LUACLIB_PATH)/silly.so \
-	$(LUACLIB_PATH)/lprofiler.so \
+	$(LUACLIB_PATH)/profiler.so \
 	$(LUACLIB_PATH)/log.so \
 	$(LUACLIB_PATH)/crypt.so \
 	$(LUACLIB_PATH)/netpacket.so \
@@ -72,10 +72,10 @@ $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED) 
+	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/netpacket.so: lualib-src/lualib-netpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/lprofiler.so: lualib-src/lualib-lprofiler.c
+$(LUACLIB_PATH)/profiler.so: lualib-src/lualib-profiler.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
