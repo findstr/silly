@@ -13,7 +13,7 @@ local function new_socket(fd)
 		fd = fd,
 		delim = false,
 		co = false,
-		limit = 8192,
+		limit = 65535,
 	}
 	assert(socket_pool[fd] == nil,
 		"new_socket incorrect" .. fd .. "not be closed")
