@@ -277,7 +277,7 @@ static void inline
 newmetatable(lua_State *L)
 {
 	lua_newtable(L);
-	lua_pushliteral(L, "kv");
+	lua_pushliteral(L, "k");
 	lua_setfield(L, -2, "__mode");
 	return ;
 }
