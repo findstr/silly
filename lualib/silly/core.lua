@@ -203,7 +203,7 @@ function core.listen(port, dispatch)
 		ip = "0.0.0.0"
 	end
 	if backlog == "" then
-		backlog = 5
+		backlog = 256 --this constant come from linux kernel comment
 	else
 		backlog = tonumber(backlog)
 		assert(backlog > 0, "backlog need large than 0")
