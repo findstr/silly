@@ -1,3 +1,4 @@
+local core = require "silly.core"
 local P = {}
 
 function P.hex(str)
@@ -16,6 +17,13 @@ function P.print_r(tbl)
 		else
 			print(v)
 		end
+	end
+end
+
+function P.bugon(exp, tips)
+	if not exp then
+		print(tips)
+		core.exit()
 	end
 end
 

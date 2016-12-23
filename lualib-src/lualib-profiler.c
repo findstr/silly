@@ -123,16 +123,6 @@ setkuv(lua_State *L, int k, lua_Integer v)
 }
 
 static void inline
-setstamp(lua_State *L, lua_Integer stamp)
-{
-	//update 'stamp'
-	lua_pushthread(L);
-	lua_pushinteger(L, stamp);
-	lua_rawset(L, -3);
-	return ;
-}
-
-static void inline
 setkt(lua_State *L, lua_Integer v)
 {
 	lua_pushthread(L);
