@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -153,6 +154,145 @@ laesdecode(lua_State *L)
 	return aes_do(L, aes_decode);
 }
 
+static inline char
+dict(int n)
+{
+	static const char *dict =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	return dict[n];
+}
+
+static int
+undict(int ch)
+{
+	int v;
+	if (ch == '+')
+		v = 62;
+	else if (ch == '/')
+		v = 63;
+	else if (ch >= 'A' && ch <= 'Z')
+		v = ch - 'A';
+	else if (ch >= 'a' && ch <= 'z')
+		v = ch - 'a' + 26;
+	else if (ch >= '0' && ch <= '9')
+		v = ch - '0' + 26 + 26;
+	else //'='
+		v = 0;
+	return v;
+}
+
+static void
+numtochar(char *dst, const char *src, int sz)
+{
+	int n = 0;
+	switch (sz) {
+	default:
+		/* fall through */
+	case 3:
+		n |= src[2];
+		/* fall through */
+	case 2:
+		n |= src[1] << 8;
+		/* fall through */
+	case 1:
+		n |= src[0] << 16;
+		break;
+	case 0:
+		assert(0);
+		break;
+	}
+	dst[3] = dict(n & 0x3f);
+	dst[2] = dict((n & (0x3f << 6)) >> 6);
+	dst[1] = dict((n & (0x3f << 12)) >> 12);
+	dst[0] = dict((n & (0x3f << 18)) >> 18);
+}
+
+static void
+chartonum(char *dst, size_t sz, const char *src)
+{
+	int n = 0;
+	n |= undict(src[3]);
+	n |= undict(src[2]) << 6;
+	n |= undict(src[1]) << 12;
+	n |= undict(src[0]) << 18;
+	switch (sz) {
+	default:
+		/* fall through */
+	case 3:
+		dst[2] = n & 0xff;
+		/* fall through */
+	case 2:
+		dst[1] = (n >> 8) & 0xff;
+		/* fall through */
+	case 1:
+		dst[0] = (n >> 16) & 0xff;
+		break;
+	case 0:
+		assert(0);
+		break;
+	}
+	return ;
+
+}
+int
+lbase64encode(lua_State *L)
+{
+	const char *buff;
+	size_t sz;
+	int a, b;
+	char *ret, *ptr;
+	buff = luaL_checklstring(L, 1, &sz);
+	a = sz / 3;
+	b = sz % 3;
+	int need = a + (b == 0 ? 0 : 1);
+	need *= 4;
+	ptr = ret = lua_newuserdata(L, need);
+	while (a--) {
+		numtochar(ptr, buff, 3);
+		buff += 3;
+		ptr += 4;
+	}
+	if (b) { // if b == 0perfect, just direct return
+		numtochar(ptr, buff, b);
+		ptr += 1 + b;
+		while (ptr < (ret + need))
+			*ptr++ = '=';
+	}
+	lua_pushlstring(L, ret, need);
+	return 1;
+}
+
+int
+lbase64decode(lua_State *L)
+{
+	int need;
+	char *dst, *ptr1;
+	const char *src, *ptr2;
+	size_t sz;
+	src = luaL_checklstring(L, 1, &sz);
+	if (sz % 4 != 0)
+		return luaL_error(L, "base64decode invalie param");
+	if (sz == 0) {
+		lua_pushliteral(L, "");
+		return 1;
+	}
+	need = sz / 4 * 3;
+	ptr2 = src + sz;
+	while (*(ptr2- 1) == '=') {
+		--ptr2;
+		--need;
+	};
+	ptr1 = dst = lua_newuserdata(L, need);
+	ptr2 = dst + need;
+	while (ptr1 < ptr2) {
+		chartonum(ptr1, ptr2 - ptr1, src);
+		ptr1 += 3;
+		src += 4;
+	}
+	lua_pushlstring(L, dst, need);
+	return 1;
+}
+
 int
 luaopen_crypt(lua_State *L)
 {
@@ -162,6 +302,8 @@ luaopen_crypt(lua_State *L)
 		{"hmac", lhmac_sha1},
 		{"aesencode", laesencode},
 		{"aesdecode", laesdecode},
+		{"base64encode", lbase64encode},
+		{"base64decode", lbase64decode},
 		{NULL, NULL},
 	};
 
