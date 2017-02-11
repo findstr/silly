@@ -278,7 +278,7 @@ lbase64decode(lua_State *L)
 	}
 	need = sz / 4 * 3;
 	ptr2 = src + sz;
-	while (*(ptr2- 1) == '=') {
+	while ((*(ptr2- 1) == '=') && (ptr2 > src)) {
 		--ptr2;
 		--need;
 	};
