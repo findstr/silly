@@ -36,8 +36,9 @@ function stream.recv_request(readl, readn)
 			readl()
 		end
 	end
-	if header["Content-Length"] then
-		local len = tonumber(header["Content-Length"])
+	local len = header["Content-Length"]
+	if len then
+		local len = tonumber(len)
 		if len > 4096 then
 			return 400
 		end
