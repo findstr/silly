@@ -36,6 +36,7 @@ $(LUASTATICLIB):
 	make -C lua/ $(PLAT)
 
 #-----------project
+TEST_PATH = test
 LUACLIB_PATH ?= luaclib
 INCLUDE = -I lua/ -I silly-src/
 SRC = \
@@ -64,6 +65,7 @@ all: \
 	$(LUACLIB_PATH)/netstream.so \
 	$(LUACLIB_PATH)/netssl.so \
 	$(LUACLIB_PATH)/zproto.so \
+	$(TEST_PATH)/testaux.so\
 
 
 $(TARGET):$(OBJS) $(LUASTATICLIB)
@@ -88,6 +90,8 @@ $(LUACLIB_PATH)/netssl.so: lualib-src/lualib-netssl.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+$(TEST_PATH)/testaux.so: test/testaux.c
+	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 -include $(SRC:.c=.d)
 
@@ -103,6 +107,7 @@ $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.
 clean:
 	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
+	-rm $(TEST_PATH)/*.so
 
 cleanall: clean
 	make -C lua/ clean
