@@ -1,18 +1,27 @@
 local core = require "silly.core"
 
 local modules = {
-	"testchannel",
-	"testcrypt",
-	"testdns",
-	"testredis",
-	"testrpc",
 	"testsocket",
+	"testdns",
+	"testrpc",
 	"testudp",
 	"testwakeup",
 	"testtimer",
 	"testnetstream",
+	"testnetpacket",
+	"testchannel",
+	"testcrypt",
+	"testredis",
 	"testhttp",
 }
+
+local M = ""
+local gprint = print
+local function print(...)
+	gprint(M, ...)
+end
+
+_ENV.print = print
 
 core.start(function()
 	local entry = {}
@@ -21,10 +30,10 @@ core.start(function()
 	end
 
 	for k, v in ipairs(modules) do
-		print(string.format("======%s start++++++\n", v))
+		M = v .. ":"
+		print("=========start=========\n")
 		assert(entry[k])()
-		print(string.format("\n======%s over------\n", v))
-		print("\n")
+		print("======success==========\n")
 	end
 	core.exit()
 end)

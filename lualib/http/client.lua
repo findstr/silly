@@ -1,41 +1,49 @@
 local socket = require "socket"
+local ssl = require "ssl"
 local stream = require "http.stream"
 local dns = require "dns"
 
 local client = {}
+local EMPTY = {}
 
-local connect = socket.connect
-local readline = socket.readline
-local read = socket.read
-local write = socket.write
-
-local function parsehost(url)
-	local host, port, abs = string.match(url, "http://([^:/]+):?(%d*)([%w-%._/]*)")
-	if abs == "" then
-		abs = "/"
+local function parseurl(url)
+	local default = false
+	local scheme, host, port, path= string.match(url, "(http[s]-)://([^:/]+):?(%d*)([%w-%.?&=_/]*)")
+	if path == "" then
+		path = "/"
 	end
-	return host, port, abs
+	if port == "" then
+		if scheme == "https" then
+			port = "443"
+		elseif scheme == "http" then
+			port = "80"
+		else
+			assert(false, "unsupport parse url scheme:" .. scheme)
+		end
+		default = true
+	end
+	return scheme, host, port, path, default
 end
 
-local function send_request(fd, method, host, abs, header, body)
+local function send_request(io_do, fd, method, host, abs, header, body)
 	local tmp = ""
 	table.insert(header, 1, string.format("%s %s HTTP/1.1", method, abs))
 	table.insert(header, string.format("Host: %s", host))
 	table.insert(header, string.format("Content-Length: %d", #body))
 	table.insert(header, "User-Agent: Silly/0.2")
 	table.insert(header, "Connection: keep-alive")
-	tmp = tmp .. table.concat(header, "\r\n")
-	tmp = tmp .. "\r\n\r\n"
+	table.insert(header, "\r\n")
+	tmp = table.concat(header, "\r\n")
 	tmp = tmp .. body
-	write(fd, tmp)
+	io_do.write(fd, tmp)
 end
 
-local function recv_response(fd)
+local function recv_response(io_do, fd)
 	local readl = function()
-		return readline(fd, "\r\n")
+		return io_do.readline(fd, "\r\n")
 	end
 	local readn = function(n)
-		return read(fd, n)
+		return io_do.read(fd, n)
 	end
 	local status, first, header, body = stream.recv_request(readl, readn)
 	if not status then	--disconnected
@@ -49,30 +57,31 @@ local function recv_response(fd)
 end
 
 local function process(uri, method, header, body)
-	header = header or {}
-	body = body or ""
-	local ip
-	local host, port, abs = parsehost(uri)
+	local ip, io_do
+	local scheme, host, port, path, default = parseurl(uri)
 	if dns.isdomain(host) then
 		ip = dns.query(host)
 	else
 		ip = host
 	end
-	if not port or port == "" then
-		ip = ip .. "@80"
-	else
-		ip = string.format("%s@%s", ip, port)
+	if scheme == "https" then
+		io_do = ssl
+	elseif scheme == "http" then
+		io_do = socket
 	end
-	local fd = connect(ip)
-	if fd < 0 then
+	if not default then
+		host = string.format("%s:%s", host, port)
+	end
+	ip = string.format("%s@%s", ip, port)
+	local fd = io_do.connect(ip)
+	if not fd then
 		return 599
 	end
-	if port ~= "" then
-		host = host .. ":" .. port
-	end
-	send_request(fd, method, host, abs, header, body)
-	local status, header, body, ver = recv_response(fd)
-	socket.close(fd)
+	header = header or EMPTY
+	body = body or ""
+	send_request(io_do, fd, method, host, path, header, body)
+	local status, header, body, ver = recv_response(io_do, fd)
+	io_do.close(fd)
 	return status, header, body, ver
 end
 

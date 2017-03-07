@@ -10,8 +10,8 @@
 #include "silly_malloc.h"
 
 #define DEFAULT_QUEUE_SIZE 2048
-#define INCOMPLETE_HASH_SIZE 2048
-#define INCOMPLETE_HASH(a) (a % INCOMPLETE_HASH_SIZE)
+#define HASH_SIZE 2048
+#define HASH(a) (a % HASH_SIZE)
 
 #define min(a, b)		((a) > (b) ? (b) : (a))
 
@@ -34,8 +34,8 @@ struct netpacket {
 	int cap;			//default DEFAULT_QUEUE_SIZE
 	int head;
 	int tail;
+	struct incomplete *hash[HASH_SIZE];
 	struct packet queue[DEFAULT_QUEUE_SIZE];	//for more effective gc
-	struct incomplete *incomplete_hash[INCOMPLETE_HASH_SIZE];
 };
 
 static int
@@ -43,16 +43,13 @@ lcreate(lua_State *L)
 {
 	struct netpacket *r = lua_newuserdata(L, sizeof(struct netpacket));
 	memset(r, 0, sizeof(*r));
-
 	r->cap = DEFAULT_QUEUE_SIZE;
-
 	luaL_getmetatable(L, "netpacket");
 	lua_setmetatable(L, -2);
-
 	return 1;
 }
 
-static __inline struct netpacket *
+static inline struct netpacket *
 get_netpacket(lua_State *L)
 {
 	return luaL_checkudata(L, 1, "netpacket");
@@ -62,11 +59,11 @@ static struct incomplete *
 get_incomplete(struct netpacket *p, int fd)
 {
 	struct incomplete *i;
-	i = p->incomplete_hash[INCOMPLETE_HASH(fd)];
+	i = p->hash[HASH(fd)];
 	while (i) {
 		if (i->fd == fd) {
 			if (i->prev == NULL)
-				p->incomplete_hash[INCOMPLETE_HASH(fd)] = i->next;
+				p->hash[HASH(fd)] = i->next;
 			else
 				i->prev->next = i->next;
 			return i;
@@ -81,10 +78,10 @@ static void
 put_incomplete(struct netpacket *p, struct incomplete *ic)
 {
 	struct incomplete *i;
-	i = p->incomplete_hash[INCOMPLETE_HASH(ic->fd)];
+	i = p->hash[HASH(ic->fd)];
 	ic->next = i;
 	ic->prev = NULL;
-	p->incomplete_hash[INCOMPLETE_HASH(ic->fd)] = ic;
+	p->hash[HASH(ic->fd)] = ic;
 }
 
 static void
@@ -95,21 +92,17 @@ expand_queue(lua_State *L, struct netpacket *p)
 	new->cap = p->cap + DEFAULT_QUEUE_SIZE;
 	new->head = p->cap;
 	new->tail = 0;
-
-	memcpy(new->incomplete_hash, p->incomplete_hash, sizeof(new->incomplete_hash));
+	memcpy(new->hash, p->hash, sizeof(new->hash));
+	memset(p->hash, 0, sizeof(p->hash));
 	h = p->tail;
 	for (i = 0; i < p->cap; i++) {
 		new->queue[i] = p->queue[h % p->cap];
 		++h;
 	}
-
 	luaL_getmetatable(L, "netpacket");
 	lua_setmetatable(L, -2);
-
 	p->head = p->tail = 0;
-
 	lua_replace(L, 1);
-
 	return ;
 }
 
@@ -333,8 +326,8 @@ packet_gc(lua_State *L)
 {
 	int i;
 	struct netpacket *pk = get_netpacket(L);
-	for (i = 0; i < INCOMPLETE_HASH_SIZE; i++) {
-		struct incomplete *ic = pk->incomplete_hash[i];
+	for (i = 0; i < HASH_SIZE; i++) {
+		struct incomplete *ic = pk->hash[i];
 		while (ic) {
 			struct incomplete *t = ic;
 			ic = ic->next;
@@ -356,15 +349,12 @@ int luaopen_netpacket(lua_State *L)
 		{"message", lmessage},
 		{NULL, NULL},
 	};
-
 	luaL_checkversion(L);
-
 	luaL_newmetatable(L, "netpacket");
 	lua_pushliteral(L, "__gc");
 	lua_pushcfunction(L, packet_gc);
 	lua_settable(L, -3);
 	luaL_newlibtable(L, tbl);
 	luaL_setfuncs(L, tbl, 0);
-
 	return 1;
 }

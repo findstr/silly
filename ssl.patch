@@ -1,0 +1,13 @@
+diff --git a/Makefile b/Makefile
+index a07c9ca..cc7f2f4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -85,7 +85,7 @@ $(LUACLIB_PATH)/crypt.so: lualib-src/crypt/lualib-crypt.c lualib-src/crypt/lsha1
+ $(LUACLIB_PATH)/netstream.so: lualib-src/lualib-netstream.c
+ 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+ $(LUACLIB_PATH)/netssl.so: lualib-src/lualib-netssl.c
+-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
++	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED) -DUSE_OPENSSL -lssl -lcrypt
+ $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c
+ 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+ 
