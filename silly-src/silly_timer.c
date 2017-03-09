@@ -85,7 +85,7 @@ silly_timer_current()
 	return T->ticktime * RESOLUTION;
 }
 
-uint64_t 
+uint64_t
 silly_timer_now()
 {
 	return T->clocktime * RESOLUTION;
@@ -146,6 +146,7 @@ silly_timer_timeout(uint32_t expire)
 static void
 timeout(struct silly_timer *t, uint32_t session)
 {
+	(void)t;
 	struct silly_message_texpire *te;
 	te = silly_malloc(sizeof(*te));
 	te->type = SILLY_TEXPIRE;
@@ -200,7 +201,7 @@ expire_timer(struct silly_timer *timer)
 			n = n->next;
 			assert((int32_t)(tmp->expire - timer->expire) <= 0);
 			timeout(timer, tmp->session);
-			freenode(tmp);	 
+			freenode(tmp);
 		}
 		lock(timer);
 	}

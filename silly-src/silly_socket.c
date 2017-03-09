@@ -553,12 +553,12 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 			delsocket(ss, s);
 			return ;
 		}
-		if (sz < w->size) {//send some
+		if ((size_t)sz < w->size) {//send some
 			w->size -= sz;
 			w->offset += sz;
 			return ;
 		}
-		assert(sz == w->size);
+		assert((size_t)sz == w->size);
 		s->wlhead.next = w->next;
 		silly_free(w->buff);
 		silly_free(w);
@@ -584,7 +584,7 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 		sz = sendudp(s->fd, w->buff + w->offset, w->size, &w->udpaddress);
 		if (sz == -2)	//EAGAIN, so block it
 			break;
-		assert(sz == -1 || sz == w->size);
+		assert(sz == -1 || (size_t)sz == w->size);
 		//send fail && send ok will clear
 		s->wlhead.next = w->next;
 		silly_free(w->buff);
@@ -962,7 +962,7 @@ tryudpconnect(struct silly_socket *ss, struct cmdpacket *cmd)
 static inline struct socket *
 checksocket(struct silly_socket *ss, int sid)
 {
-	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+	struct socket *s = &ss->socketpool[HASH(sid)];
 	if (s->sid != sid) {
 		fprintf(stderr, "[socket] checksocket invalid sid\n");
 		return NULL;
@@ -1075,11 +1075,11 @@ trysend(struct silly_socket *ss, struct cmdpacket *cmd)
 			report_close(ss, s, errno);
 			delsocket(ss, s);
 			return -1;
-		} else if (n < sz) {
+		} else if ((size_t)n < sz) {
 			wlist_append(s, data, n, sz - n, NULL);
 			sp_write_enable(ss->spfd, s->fd, s, 1);
 		} else {
-			assert(n == sz);
+			assert((size_t)n == sz);
 			silly_free(data);
 		}
 	} else {

@@ -45,14 +45,14 @@ timestamp()
 	return ms;
 }
 
-static lua_Integer inline
+static inline lua_Integer
 diff(lua_Integer last, lua_Integer now)
 {
 	return (uint64_t)now - (uint64_t) last;
 }
 
 
-static lua_Integer inline
+static inline lua_Integer
 gettuv(lua_State *L, int upidx)
 {
 	lua_Integer v;
@@ -63,7 +63,7 @@ gettuv(lua_State *L, int upidx)
 	return v;
 }
 
-static void inline
+static inline void
 settuv(lua_State *L, int t, lua_Integer v)
 {
 	lua_pushthread(L);
@@ -85,7 +85,7 @@ coupdate(lua_State *L, lua_Integer stamp)
 	return time;
 }
 
-static lua_Integer inline
+static inline lua_Integer
 coinit(lua_State *L, lua_Integer stamp)
 {
 	lua_Integer time;
@@ -102,7 +102,7 @@ coinit(lua_State *L, lua_Integer stamp)
 	return time;
 }
 
-static lua_Integer inline
+static inline lua_Integer
 getkuv(lua_State *L, int k)
 {
 	lua_Integer v;
@@ -113,7 +113,7 @@ getkuv(lua_State *L, int k)
 	return v;
 }
 
-static void inline
+static inline void
 setkuv(lua_State *L, int k, lua_Integer v)
 {
 	lua_pushvalue(L, lua_upvalueindex(k));
@@ -122,7 +122,7 @@ setkuv(lua_State *L, int k, lua_Integer v)
 	return ;
 }
 
-static void inline
+static inline void
 setkt(lua_State *L, lua_Integer v)
 {
 	lua_pushthread(L);
@@ -131,7 +131,7 @@ setkt(lua_State *L, lua_Integer v)
 	return ;
 }
 
-static lua_Integer inline
+static inline lua_Integer
 getkt(lua_State *L)
 {
 	lua_Integer v;
@@ -142,7 +142,7 @@ getkt(lua_State *L)
 	return v;
 }
 
-static lua_Integer inline
+static inline lua_Integer
 fetchsetkt(lua_State *L, lua_Integer v)
 {
 	lua_Integer res;
@@ -263,7 +263,7 @@ ldump(lua_State *L)
 	return 1;
 }
 
-static void inline
+static inline void
 newmetatable(lua_State *L)
 {
 	lua_newtable(L);

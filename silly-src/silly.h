@@ -62,7 +62,7 @@ struct silly_message_socket {	//socket accept
 	uint8_t *data;
 };
 
-static void __inline
+static inline void
 silly_message_free(struct silly_message *msg)
 {
 	int type = msg->type;

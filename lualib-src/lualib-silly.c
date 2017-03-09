@@ -110,6 +110,7 @@ lsetenv(lua_State *L)
 static int
 lexit(lua_State *L)
 {
+	(void)L;
 	silly_exit();
 	return 0;
 }

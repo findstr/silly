@@ -73,7 +73,7 @@ enveach(lua_State *L, char *curr, char *end)
 		checktype(L, "[enveach] key", -2, LUA_TSTRING);
 		k = lua_tolstring(L, -2, &sz);
 		assert(curr <= end);
-		if (sz >= (end - curr)) {
+		if (sz >= (size_t)(end - curr)) {
 			fprintf(stderr, "[enveach] buff is too short\n");
 			exit(-1);
 		}
