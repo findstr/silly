@@ -117,7 +117,7 @@ local function waityield(co, ret, typ)
 		print("silly.core waityield unkonw return type", typ)
 		print(debug.traceback())
 	end
-	dispatch_wakeup()
+	return dispatch_wakeup()
 end
 
 function dispatch_wakeup()
@@ -128,7 +128,7 @@ function dispatch_wakeup()
 	local param = wakeup_co_param[co]
 	wakeup_co_status[co] = nil
 	wakeup_co_param[co] = nil
-	waityield(co, coresume(co, "WAKEUP", param))
+	return waityield(co, coresume(co, "WAKEUP", param))
 end
 
 function core.fork(func)
