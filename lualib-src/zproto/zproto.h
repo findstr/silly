@@ -29,7 +29,7 @@ struct zproto_args {
 	const char *name;
 	const char *mapname; //for map
 	uint8_t *buff;
-	size_t buffsz;
+	int buffsz;
 	struct zproto_struct *sttype;
 };
 
@@ -42,8 +42,8 @@ int zproto_load(struct zproto *z, const char *path);
 int zproto_parse(struct zproto *z, const char *data);
 
 struct zproto_struct *zproto_query(struct zproto *z, const char *name);
-struct zproto_struct *zproto_querytag(struct zproto *z, uint32_t tag);
-uint32_t zproto_tag(struct zproto_struct *st);
+struct zproto_struct *zproto_querytag(struct zproto *z, int tag);
+int zproto_tag(struct zproto_struct *st);
 const char *zproto_name(struct zproto_struct *st);
 
 //travel

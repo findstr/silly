@@ -312,6 +312,7 @@ merge_field(struct zproto *z, struct zproto_struct *proto)
 static void
 reverse_field(struct zproto *z, struct zproto_struct *proto)
 {
+	(void)z;
 	struct zproto_field *f = proto->field;
 	proto->field = NULL;
 	while (f) {
@@ -515,7 +516,7 @@ zproto_query(struct zproto *z, const char *name)
 }
 
 struct zproto_struct *
-zproto_querytag(struct zproto *z, uint32_t tag)
+zproto_querytag(struct zproto *z, int tag)
 {
 	struct zproto_struct *r;
 	for (r = z->record.child; r; r = r->next) {
@@ -524,7 +525,8 @@ zproto_querytag(struct zproto *z, uint32_t tag)
 	}
 	return NULL;
 }
-uint32_t
+
+int
 zproto_tag(struct zproto_struct *st)
 {
 	return st->tag;
@@ -547,7 +549,7 @@ zproto_next(struct zproto *z, struct zproto_struct *st)
 	return st;
 }
 
-static void inline
+static inline void
 fill_args(struct zproto_args *args, struct zproto_field *f, void *ud)
 {
 	args->tag = f->tag;
@@ -607,7 +609,7 @@ queryfield(struct zproto_struct *st, int tag)
 }
 
 #define CHECK_OOM(sz, need)    \
-	if (sz < (need))\
+	if (sz < (int)(need))\
 		return ZPROTO_OOM;
 
 static int
@@ -687,7 +689,7 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 	uint8_t *body;
 	int last = st->basetag - 1; //tag now
 	int fcnt = st->fieldnr; //field count
-	size_t hdrsz= (fcnt + 1) * sizeof(hdr_t) + sizeof(len_t);
+	int hdrsz= (fcnt + 1) * sizeof(hdr_t) + sizeof(len_t);
 
 	CHECK_OOM(sz, hdrsz);
 	total = (len_t *)buff;
@@ -719,8 +721,8 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 		assert(sz >= err);
 		buff += err;
 		sz -= err;
+		assert(f->tag >= last + 1);
 		*tag = (f->tag - last - 1);
-		assert(*tag >= 0);
 		tag++;
 		last = f->tag;
 	}
@@ -734,7 +736,7 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 
 
 #define CHECK_VALID(sz, need)	\
-	if (sz < (need))\
+	if (sz < (int)(need))\
 		return ZPROTO_ERROR;
 
 static int
@@ -897,6 +899,7 @@ packff(const uint8_t *src, int sn, uint8_t *dst, int dn)
 			++packsz;
 	}
 	if (packsz >= 6) {	//6, 7, 8
+		assert(dn >= sn);
 		memcpy(dst, src, sn);
 		packsz = sn;
 	}

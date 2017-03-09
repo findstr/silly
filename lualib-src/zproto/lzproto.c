@@ -96,7 +96,7 @@ struct lencode_ud {
 };
 
 #define CHECK_OOM(sz, need) \
-	if (sz < need)\
+	if (sz < (int)(need))\
 		return ZPROTO_OOM;
 
 #define uint8(ptr)    (*(uint8_t *)ptr)
