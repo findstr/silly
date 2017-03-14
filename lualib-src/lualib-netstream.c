@@ -301,7 +301,11 @@ static int
 lcheck(struct lua_State *L)
 {
 	if (lua_isnil(L, 2)) {
-		lua_pushboolean(L, 0);
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+	if (lua_isnil(L, 1)) {
+		lua_pushinteger(L, 0);
 		return 1;
 	}
 	struct node_buffer *nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
