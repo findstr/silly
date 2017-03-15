@@ -1,5 +1,5 @@
 local core = require "silly.core"
-local rpc = require "rpc"
+local rpc = require "saux.rpc"
 local crypt = require "crypt"
 local zproto = require "zproto"
 

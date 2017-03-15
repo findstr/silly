@@ -74,6 +74,7 @@ function server.listen(self)
 			return
 		end
 		core.fork(EVENT.data)
+		local rpcproto = self.config.proto
 		--parse
 		local str = proto:unpack(d, sz)
 		np.drop(d, sz)
@@ -82,7 +83,7 @@ function server.listen(self)
 			print("[rpc.server] parse the header fail")
 			return
 		end
-		local body = self.config.proto:decode(rpc.command, str:sub(takes + 1))
+		local body = rpcproto:decode(rpc.command, str:sub(takes + 1))
 		if not body then
 			print("[rpc.server] parse body fail", rpc.session, rpc.command)
 			return
@@ -93,9 +94,12 @@ function server.listen(self)
 			return
 		end
 		--ack
+		if type(cmd) == "string" then
+			cmd = rpcproto:querytag(cmd)
+		end
 		local hdr = {session = rpc.session, command = cmd}
 		local hdrdat = proto:encode("rpc", hdr)
-		local bodydat = self.config.proto:encode(cmd, res)
+		local bodydat = rpcproto:encode(cmd, res)
 		local full = proto:pack(hdrdat .. bodydat)
 		core.write(fd, np.pack(full))
 	end
@@ -139,10 +143,11 @@ end
 
 
 local function wakeupall(self)
-	for _, v in pairs(self.connectqueue) do
+	local q = self.connectqueue
+	for k, v in pairs(q) do
 		core.wakeup(v)
+		q[k] = v
 	end
-	self.connectqueue = {}
 end
 
 local function doconnect(self)
@@ -195,7 +200,7 @@ end
 --return true/false
 local function checkconnect(self)
        if self.fd and self.fd >= 0 then
-		return true
+		return self.fd
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
@@ -212,7 +217,8 @@ local function checkconnect(self)
 		return ok
 	else
 		local co = core.running()
-		table.insert(self.connectqueue, co)
+		local t = self.connectqueue
+		t[#t + 1] = co
 		core.wait()
 		return self.fd and self.fd > 0
 	end
@@ -229,7 +235,8 @@ local function waitfor(self, session)
 	if not self.timeout[expire] then
 		self.timeout[expire] = {}
 	end
-	table.insert(self.timeout[expire], session)
+	local t = self.timeout[expire]
+	t[#t + 1] = session
 	self.waitpool[session] = co
 	local body = core.wait()
 	local cmd = self.ackcmd[session]
