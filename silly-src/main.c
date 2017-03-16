@@ -159,14 +159,35 @@ parseconfig(lua_State *L, struct silly_config *config)
 }
 
 static const char *load_config = "\
-	local config_file = ...\
-	local f = assert(io.open(config_file, 'r'))\
-	local code = assert(f:read('a'), 'read config file error')\
-	f:close()\
 	local config = {}\
-	assert(load(code, '=(load)', 't', config))()\
+	local function include(name)\
+		local f = io.open(name, 'r')\
+		if not f then\
+			error('open config error of file:' .. name)\
+		end\
+		local code = f:read('a')\
+		if not code then\
+			error('read config error of file:' .. name)\
+		end\
+		f:close()\
+		assert(load(code, name, 't', config))()\
+		return \
+	end\
+	config.include = include\
+	include(...)\
+	config.include = nil\
 	return config\
 	";
+
+static const char *
+skipcode(const char *str)
+{
+	while (*str && *str++ != ']')
+		;
+	if (*str)
+		str += 3;
+	return str;
+}
 
 int main(int argc, char *argv[])
 {
@@ -185,8 +206,10 @@ int main(int argc, char *argv[])
 	assert(err == LUA_OK);
 	err = lua_pcall(L, 1, 1, 0);
 	if (err != LUA_OK) {
+		const char *err = lua_tostring(L, -1);
+		err = skipcode(err);
 		fprintf(stderr, "%s parse config file:%s fail,%s\n",
-			argv[0], argv[1], lua_tostring(L, -1));
+			argv[0], argv[1], err);
 		lua_close(L);
 		return -1;
 	}
