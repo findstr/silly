@@ -1,17 +1,9 @@
-local rpc = require "saux.rpc"
-local proto = require "rpcproto"
 local env = require "silly.env"
-
-local DO = {}
-
-DO[proto:querytag("rrpc_sum")] = function(fd, cmd, msg)
-	local arpc_sum = {
-		val = msg.val1 + msg.val2,
-		suffix = msg.suffix .. "rpcd"
-	}
-	print("call", fd, cmd, msg)
-	return "arpc_sum", arpc_sum
-end
+local patch = require "silly.patch"
+local console = require "console"
+local proto = require "rpcproto"
+local rpc = require "saux.rpc"
+local DO = require "rpcl"
 
 local server = rpc.createserver {
 	addr = env.get "rpcd_port",
@@ -29,4 +21,8 @@ local server = rpc.createserver {
 
 local ok = server:listen()
 print("rpc server start:", ok)
+
+console {
+	addr = "@2323"
+}
 
