@@ -38,7 +38,7 @@ timestamp()
 	ms += info.system_time.microseconds / 1000;
 #else
 	struct timespec tp;
-	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp);
+	clock_gettime(CLOCK_MONOTONIC, &tp);
 	ms = tp.tv_sec * 1000;
 	ms += tp.tv_nsec / 1000000;
 #endif
