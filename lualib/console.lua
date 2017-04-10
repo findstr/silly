@@ -8,7 +8,7 @@ local desc = {
 "PING: Test connection alive [PING <text>]",
 "MINFO: Show memory infomation [MINFO <kb|mb>]",
 "QINFO: Show framework message queue size[QINFO]",
-"PATCH: Hot patch the code [PATCH <fixfile> <modulename> <funcname>]"
+"PATCH: Hot patch the code [PATCH <fixfile> <modulename> <funcname> ...]"
 
 }
 
@@ -17,21 +17,31 @@ local console = {}
 
 local envmt = {__index = _ENV}
 
-local function _patch(fixfile, module, funcname)
+local function _patch(fixfile, module, ...)
 	local ENV = {}
-	assert(#funcname > 1, "function name is empty")
-	local funcid = tonumber(funcname)
-	if funcid then
-		funcname = funcid
-	end
+	local funcs = {}
+	local funcname = {...}
+	assert(#funcname > 0, "function list is empty")
 	setmetatable(ENV, envmt)
 	local runm = require(module)
 	local fixm = assert(loadfile(fixfile, "bt", ENV))()
 	assert(runm and type(runm) == "table")
 	assert(fixm and type(fixm) == "table")
-	local runf = assert(runm[funcname], "run code has no function")
-	local fixf = assert(fixm[funcname], "fix code has no function")
-	runm[funcname] = patch(runf, fixf, ENV)
+	for k, v in pairs(funcname) do
+		local funcid = tonumber(v)
+		if funcid then
+			funcname[k] = funcid
+			v = funcid
+		end
+		local runf = assert(runm[v], "run code has no function")
+		local fixf = assert(fixm[v], "fix code has no function")
+		funcs[#funcs + 1] = fixf
+		funcs[#funcs + 1] = runf
+	end
+	patch(ENV, table.unpack(funcs))
+	for k, v in pairs(funcname) do
+		runm[v] = assert(fixm[v])
+	end
 	return
 end
 
@@ -70,15 +80,15 @@ function console.qinfo()
 	return string.format("Message Queue Count:%d", sz)
 end
 
-function console.patch(fix, module, funcname)
+function console.patch(fix, module, ...)
 	if not fix then
 		return "ERR lost the fix file name"
 	elseif not module then
 		return "ERR lost the module file name"
-	elseif not funcname then
+	elseif select("#", ...) == 0 then
 		return "ERR lost the function name"
 	end
-	local ok, err = pcall(_patch, fix, module, funcname)
+	local ok, err = pcall(_patch, fix, module, ...)
 	local fmt = "Patch module:%s function:%s by:%s %s"
 	if ok then
 		return string.format(fmt, module, funcname, fix, "Success")
