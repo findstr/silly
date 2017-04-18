@@ -4,8 +4,20 @@ local np = require "netpacket"
 local msg = {}
 local msgserver = {}
 local msgclient = {}
-local servermt = {__index = msgserver}
-local clientmt = {__index = msgclient}
+
+local function gc(obj)
+	if not obj.fd then
+		return
+	end
+	if obj.fd < 0 then
+		return
+	end
+	core.close(obj.fd)
+	obj.fd = false
+end
+
+local servermt = {__index = msgserver, __gc == gc}
+local clientmt = {__index = msgclient, __gc == gc}
 
 local NIL = {}
 
@@ -78,7 +90,13 @@ end
 msgserver.send = sendmsg
 
 function msgserver.start(self)
-	return core.listen(self.addr, servercb(self))
+	local fd = core.listen(self.addr, servercb(self))
+	self.fd = fd
+	return fd
+end
+
+function msgserver.close(self)
+	gc(self)
 end
 
 -----client
@@ -180,8 +198,8 @@ function msgclient.read(self)
 	return cmd, dat
 end
 
-function msgclient.close(fd)
-	return core.close(fd)
+function msgclient.close(self)
+	gc(self)
 end
 
 function msgclient.send(self, cmd, body)
@@ -200,16 +218,28 @@ end
 
 
 function msg.createclient(config)
-	setmetatable(config, clientmt)
-	config.fd = false
-	config.waitco = false
-	config.connectqueue = {}
-	return config
+	local obj = {
+		fd = false,
+		waitco = false,
+		connectqueue = {},
+	}
+	for k, v in pairs(config) do
+		assert(not obj[k])
+		obj[k] = v
+	end
+	setmetatable(obj, clientmt)
+	return obj
 end
 
 function msg.createserver(config)
-        setmetatable(config, servermt)
-        return config
+	local obj = {
+		fd = false,
+	}
+	for k, v in pairs(config) do
+		obj[k] = v
+	end
+        setmetatable(obj, servermt)
+        return obj
 end
 
 

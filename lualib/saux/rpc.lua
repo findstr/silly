@@ -45,9 +45,20 @@ rpc {
 
 local rpc = {}
 
+local function gc(obj)
+	if not obj.fd then
+		return
+	end
+	if obj.fd < 0 then
+		return
+	end
+	core.close(obj.fd)
+	obj.fd = false
+end
+
 -----------server
 local server = {}
-local servermt = {__index = server}
+local servermt = {__index = server, __gc = gc}
 
 function server.listen(self)
 	local EVENT = {}
@@ -108,13 +119,18 @@ function server.listen(self)
 		self.queue = np.message(self.queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.listen(self.config.addr, callback)
+	local fd = core.listen(self.config.addr, callback)
+	self.fd = fd
+	return fd
 end
 
+function server.close(self)
+	gc(self)
+end
 
 -------client
 local client = {}
-local clientmt = {__index = client}
+local clientmt = {__index = client, __gc = gc}
 
 local function clienttimer(self)
 	local wheel
@@ -259,9 +275,7 @@ function client.call(self, cmd, body)
 end
 
 function client.close(self)
-	if self.fd >= 0 then
-		core.close(self.fd)
-	end
+	gc(self)
 end
 
 -----rpc

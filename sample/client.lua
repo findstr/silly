@@ -24,6 +24,7 @@ local function oneuser()
 	print("send", ok)
 	local cmd, dat = client:read()
 	print("read", cmd, dat, dat and dat.suffix)
+	client:close()
 
 end
 
