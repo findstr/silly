@@ -1,5 +1,9 @@
-# silly
+# silly  
+
+[![license](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat)](https://github.com/findstr/silly/blob/master/LICENSE)
+
 --------
+
 ## Depend
 
 - sudo apt-get install libreadline-dev(debain)
