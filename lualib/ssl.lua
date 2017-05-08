@@ -1,6 +1,6 @@
 local core = require "silly.core"
 local netssl = require "netssl.c"
-
+local TAG = "ssl"
 local socket_pool = {}
 
 local ssl = {}
@@ -89,7 +89,7 @@ local function suspend(s)
 end
 
 function ssl.connect(ip, bind)
-	local fd = core.connect(ip, socket_dispatch, bind)
+	local fd = core.connect(ip, socket_dispatch, bind, TAG)
 	if not fd then
 		return nil
 	end
@@ -118,7 +118,7 @@ function ssl.close(fd)
 		core.wakeup(s.so, false)
 	end
 	socket_pool[fd] = nil
-	core.close(fd)
+	core.close(fd, TAG)
 end
 
 function ssl.read(fd, n)

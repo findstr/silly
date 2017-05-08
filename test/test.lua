@@ -1,6 +1,7 @@
 local core = require "silly.core"
 
 local modules = {
+	"testtag",
 	"testsocket",
 	"testdns",
 	"testrpc",

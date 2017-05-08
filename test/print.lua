@@ -20,12 +20,5 @@ function P.print_r(tbl)
 	end
 end
 
-function P.bugon(exp, tips)
-	if not exp then
-		print(tips)
-		core.exit()
-	end
-end
-
 return P
 

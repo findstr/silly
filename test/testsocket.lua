@@ -9,18 +9,6 @@ local send_nr = 0
 
 local WAIT
 
-socket.listen("@8990", function(fd, addr)
-	while true do
-		local n = socket.readline(fd)
-		assert(n)
-		recv_nr = recv_nr + #n
-		recv_sum = testaux.checksum(recv_sum, n)
-		if WAIT and recv_nr == send_nr then
-			core.wakeup(WAIT)
-		end
-	end
-end)
-
 local function testsend(fd, one, nr)
 	print(string.format("====test packet of %d count %d===", one, nr))
 	for i = 1, nr do
@@ -32,6 +20,19 @@ local function testsend(fd, one, nr)
 end
 
 return function()
+	local listenfd = socket.listen("@8990", function(fd, addr)
+		while true do
+			local n = socket.readline(fd)
+			assert(n)
+			recv_nr = recv_nr + #n
+			recv_sum = testaux.checksum(recv_sum, n)
+			if WAIT and recv_nr == send_nr then
+				core.wakeup(WAIT)
+				return
+			end
+		end
+	end)
+	print("testsocket listenfd:", listenfd)
 	local fd = socket.connect("127.0.0.1@8990")
 	if not fd then
 		print("connect fail:", fd)
@@ -54,5 +55,7 @@ return function()
 	core.wait()
 	testaux.asserteq(recv_nr, send_nr, "test socket send type count")
 	testaux.asserteq(recv_sum, send_sum, "test socket send checksum")
+	socket.close(listenfd)
+	socket.close(fd)
 end
 

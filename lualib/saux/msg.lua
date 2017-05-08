@@ -1,5 +1,6 @@
 local core = require "silly.core"
 local np = require "netpacket"
+local TAG = "saux.msg"
 
 local msg = {}
 local msgserver = {}
@@ -12,7 +13,7 @@ local function gc(obj)
 	if obj.fd < 0 then
 		return
 	end
-	core.close(obj.fd)
+	core.close(obj.fd, TAG)
 	obj.fd = false
 end
 
@@ -44,7 +45,7 @@ local function servercb(sc)
                 local ok, err = core.pcall(sc.accept, fd, addr)
                 if not ok then
                         print("[gate] EVENT.accept", err)
-                        core.close(fd)
+                        core.close(fd, TAG)
                 end
         end
 
@@ -90,7 +91,7 @@ end
 msgserver.send = sendmsg
 
 function msgserver.start(self)
-	local fd = core.listen(self.addr, servercb(self))
+	local fd = core.listen(self.addr, servercb(self), TAG)
 	self.fd = fd
 	return fd
 end
@@ -162,7 +163,7 @@ local function checkconnect(self)
 	if not self.fd then	--disconnected
 		self.fd = -1
 		local ok
-		local fd = core.connect(self.addr, clientcb(self))
+		local fd = core.connect(self.addr, clientcb(self), nil, TAG)
 		if not fd then
 			self.fd = false
 			ok = false

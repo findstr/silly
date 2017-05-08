@@ -3,6 +3,7 @@ local env = require "silly.env"
 
 local core = {}
 
+local sformat = string.format
 local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack
@@ -193,9 +194,14 @@ end
 
 --socket
 local socket_dispatch = {}
+local socket_tag = {}
 local socket_connect = {}
 
-function core.listen(port, dispatch)
+function core.tag(fd)
+	return socket_tag[fd] or "[no value]"
+end
+
+function core.listen(port, dispatch, tag)
 	assert(port)
 	assert(dispatch)
 	local ip, port, backlog = port:match("([0-9%.]*)@([0-9]+):?([0-9]*)")
@@ -219,10 +225,11 @@ function core.listen(port, dispatch)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
+	socket_tag[id] = tag
 	return id
 end
 
-function core.bind(port, dispatch)
+function core.bind(port, dispatch, tag)
 	assert(port)
 	assert(dispatch)
 	local ip, port = port:match("([0-9%.]*)@([0-9]+)")
@@ -240,11 +247,12 @@ function core.bind(port, dispatch)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
+	socket_tag[id] = tag
 	return id
 
 end
 
-local function doconnect(ip, dispatch, bind, dofunc)
+local function doconnect(ip, dispatch, bind, dofunc, tag)
 	assert(ip)
 	assert(dispatch)
 	local ip, port = ip:match("([0-9%.]*)@([0-9]+)")
@@ -264,24 +272,31 @@ local function doconnect(ip, dispatch, bind, dofunc)
 		return nil
 	end
 	socket_dispatch[fd] = assert(dispatch)
+	socket_tag[fd]= tag
 	return fd
 
 end
 
-function core.connect(ip, dispatch, bind)
-	return doconnect(ip, dispatch, bind, silly.connect)
+function core.connect(ip, dispatch, bind, tag)
+	return doconnect(ip, dispatch, bind, silly.connect, tag)
 end
 
-function core.udp(ip, dispatch, bind)
-	return doconnect(ip, dispatch, bind, silly.udp)
+function core.udp(ip, dispatch, bind, tag)
+	return doconnect(ip, dispatch, bind, silly.udp, tag)
 end
 
-function core.close(fd)
+function core.close(fd, tag)
 	local sc = socket_dispatch[fd]
 	if sc == nil then
 		return false
 	end
+	local t = socket_tag[fd]
+	if t and t ~= tag then
+		error(sformat([[incorrect tag, "%s" exptected, got "%s"]],
+			t, tag or "nil"))
+	end
 	socket_dispatch[fd] = nil
+	socket_tag[fd] = nil
 	assert(socket_connect[fd] == nil)
 	silly.close(fd)
 end
@@ -310,6 +325,7 @@ function MSG.accept(fd, _, portid, addr)
 	assert(socket_connect[fd] == nil)
 	assert(socket_dispatch[portid])
 	socket_dispatch[fd] = assert(socket_dispatch[portid])
+	socket_tag[fd] = socket_tag[portid]
 	return socket_dispatch[fd]
 end
 
@@ -325,6 +341,7 @@ function MSG.close(fd)
 	end
 	local d = socket_dispatch[fd];
 	socket_dispatch[fd] = nil
+	socket_tag[fd] = nil
 	return d
 end
 

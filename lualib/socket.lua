@@ -8,6 +8,8 @@ local socket = {}
 
 local EVENT = {}
 
+local TAG = "socket"
+
 local function new_socket(fd)
 	local s = {
 		fd = fd,
@@ -23,7 +25,7 @@ end
 function EVENT.accept(fd, _, portid, addr)
 	local lc = socket_pool[portid];
 	new_socket(fd)
-	local ok, err = core.pcall(lc, fd, addr)
+	local ok, err = core.pcall(lc.disp, fd, addr)
 	if not ok then
 		print(err)
 		socket.close(fd)
@@ -36,9 +38,7 @@ function EVENT.close(fd, _, errno)
 		return
 	end
 	assert(s.callback == nil)
-	if s.sbuffer then
-		ns.clear(nb_pool, s.sbuffer)
-	end
+	ns.clear(nb_pool, s.sbuffer)
 	if s.co then
 		local co = s.co
 		s.co = false
@@ -82,18 +82,22 @@ local function socket_dispatch(type, fd, message, ...)
 	assert(EVENT[type])(fd, message, ...)
 end
 
-function socket.listen(port, config)
+function socket.listen(port, disp)
 	assert(port)
-	assert(config)
-	local portid = core.listen(port, socket_dispatch)
+	assert(disp)
+	local portid = core.listen(port, socket_dispatch, TAG)
 	if portid then
-		socket_pool[portid] = config
+		socket_pool[portid] = {
+			fd = portid,
+			disp = disp,
+			co = false
+		}
 	end
 	return portid
 end
 
 function socket.connect(ip, bind)
-	local fd = core.connect(ip, socket_dispatch, bind)
+	local fd = core.connect(ip, socket_dispatch, bind, TAG)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -119,7 +123,7 @@ function socket.close(fd)
 	end
 	ns.clear(nb_pool, s.sbuffer)
 	socket_pool[fd] = nil
-	core.close(fd)
+	core.close(fd, TAG)
 end
 
 local function suspend(s)
@@ -224,7 +228,7 @@ local function udp_dispatch(type, fd, message, _, addr)
 end
 
 function socket.bind(addr, callback)
-	local fd = core.bind(addr, udp_dispatch)
+	local fd = core.bind(addr, udp_dispatch, TAG)
 	if fd  then
 		new_udp(fd, callback)
 	end
@@ -232,7 +236,7 @@ function socket.bind(addr, callback)
 end
 
 function socket.udp(addr, callback, bindip)
-	local fd = core.udp(addr, udp_dispatch, bindip)
+	local fd = core.udp(addr, udp_dispatch, bindip, TAG)
 	if fd  then
 		new_udp(fd, callback)
 	end

@@ -1,7 +1,7 @@
 local core = require "silly.core"
 local np = require "netpacket"
 local zproto = require "zproto"
-
+local TAG = "saux.rpc"
 --[[
 rpc.listen {
 	addr = ip@port:backlog
@@ -52,7 +52,7 @@ local function gc(obj)
 	if obj.fd < 0 then
 		return
 	end
-	core.close(obj.fd)
+	core.close(obj.fd, TAG)
 	obj.fd = false
 end
 
@@ -67,7 +67,7 @@ function server.listen(self)
 		if not ok then
 			print("[rpc.server] EVENT.accept", err)
 			np.clear(self.queue, fd)
-			core.close(fd)
+			core.close(fd, TAG)
 		end
 	end
 
@@ -119,7 +119,7 @@ function server.listen(self)
 		self.queue = np.message(self.queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(self.config.addr, callback)
+	local fd = core.listen(self.config.addr, callback, TAG)
 	self.fd = fd
 	return fd
 end
@@ -210,7 +210,7 @@ local function doconnect(self)
 		self.queue = np.message(self.queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.connect(self.config.addr, callback)
+	return core.connect(self.config.addr, callback, nil, TAG)
 end
 
 --return true/false

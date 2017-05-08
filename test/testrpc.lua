@@ -20,7 +20,6 @@ local server = rpc.createserver {
 
 	close = function(fd, errno)
 		print("close", fd, errno)
-		core.exit()
 	end,
 
 	call = function(fd, cmd, msg)
@@ -83,6 +82,8 @@ end
 return function()
 	server_part()
 	client_part()
+	client:close()
+	server:close()
 	print("testrpc ok")
 end
 
