@@ -64,7 +64,7 @@ optstr(lua_State *L, const char *key, size_t *sz, const char *v)
 
 
 static void
-enveach(lua_State *L, char *curr, char *end)
+enveach(lua_State *L, char *first, char *curr, char *end)
 {
 	lua_pushnil(L);
 	while (lua_next(L, -2) != 0) {
@@ -80,7 +80,7 @@ enveach(lua_State *L, char *curr, char *end)
 		memcpy(curr, k, sz);
 		if (lua_type(L, -1) == LUA_TTABLE) {
 			curr[sz] = '.';
-			enveach(L, &curr[sz + 1], end);
+			enveach(L, first, &curr[sz + 1], end);
 		} else {
 			int type = lua_type(L, -1);
 			if (type != LUA_TSTRING && type != LUA_TNUMBER) {
@@ -90,7 +90,7 @@ enveach(lua_State *L, char *curr, char *end)
 			}
 			const char *value = lua_tostring(L, -1);
 			curr[sz] = '\0';
-			silly_env_set(k, value);
+			silly_env_set(first, value);
 		}
 		lua_pop(L, 1);
 	}
@@ -100,8 +100,8 @@ enveach(lua_State *L, char *curr, char *end)
 static void
 initenv(lua_State *L)
 {
-	char name[128] = {0};
-	return enveach(L, name, &name[128]);
+	char name[256] = {0};
+	return enveach(L, name, name, &name[256]);
 }
 
 static void
