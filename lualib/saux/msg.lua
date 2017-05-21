@@ -20,23 +20,6 @@ end
 local servermt = {__index = msgserver, __gc == gc}
 local clientmt = {__index = msgclient, __gc == gc}
 
-local NIL = {}
-
-local function decode(proto, d, sz)
-	local str = core.tostring(d, sz)
-	np.drop(d)
-	local len = #str
-	assert(len >= 4)
-	local data
-	local cmd = string.unpack("<I4", str)
-	if (len > 4) then
-		data = proto:decode(cmd, str:sub(4+1))
-	else
-		data = NIL
-	end
-	return cmd, data
-end
-
 ---server
 local function servercb(sc)
         local EVENT = {}
@@ -44,7 +27,7 @@ local function servercb(sc)
         function EVENT.accept(fd, portid, addr)
                 local ok, err = core.pcall(sc.accept, fd, addr)
                 if not ok then
-                        print("[gate] EVENT.accept", err)
+                        print("[msg] EVENT.accept", err)
                         core.close(fd, TAG)
                 end
         end
@@ -52,7 +35,7 @@ local function servercb(sc)
         function EVENT.close(fd, errno)
                 local ok, err = core.pcall(assert(sc).close, fd, errno)
                 if not ok then
-                        print("[gate] EVENT.close", err)
+                        print("[msg] EVENT.close", err)
                 end
         end
 
@@ -62,13 +45,9 @@ local function servercb(sc)
                         return
                 end
                 core.fork(EVENT.data)
-		local cmd, data = decode(sc.proto, d, sz)
-		if not data then
-			return
-		end
-		local ok, err = core.pcall(sc.data, f, cmd, data)
+		local ok, err = core.pcall(sc.data, f, d, sz)
                 if not ok then
-                        print("[gate] dispatch socket", err)
+                        print("[msg] dispatch socket", err)
                 end
         end
 
@@ -78,14 +57,8 @@ local function servercb(sc)
         end
 end
 
-local function sendmsg(self, fd, cmd, body)
-	local proto = self.proto
-	if type(cmd) == "string" then
-		cmd = proto:querytag(cmd)
-	end
-	local cmddat = string.pack("<I4", cmd)
-	local bodydat = proto:encode(cmd, body)
-	return core.write(fd, np.pack(cmddat .. bodydat))
+local function sendmsg(self, fd, data)
+	return core.write(fd, np.pack(data))
 end
 
 msgserver.send = sendmsg
@@ -96,8 +69,12 @@ function msgserver.start(self)
 	return fd
 end
 
-function msgserver.close(self)
+function msgserver.stop(self)
 	gc(self)
+end
+
+function msgserver.close(self, fd)
+	core.close(fd, TAG)
 end
 
 -----client
@@ -105,20 +82,17 @@ end
 local function clientcb(sc)
         local EVENT = {}
         local queue = np.create()
-	sc.waitco = false
-	sc.queuecmd = {}
 	sc.queuedat = {}
         function EVENT.accept(fd, portid, addr)
 		assert(not "never come here")
         end
 
         function EVENT.close(fd, errno)
-		local co = sc.waitco
-		if co then
-			sc.fd = false
-			core.wakeup(co, false)
-			sc.waitco = false
-		end
+		local ok, err = core.pcall(assert(sc).close, fd, errno)
+		sc.fd = false
+                if not ok then
+                        print("[msg] EVENT.close", err)
+                end
         end
 
         function EVENT.data()
@@ -127,18 +101,9 @@ local function clientcb(sc)
                         return
                 end
                 core.fork(EVENT.data)
-		local cmd, data = decode(sc.proto, d, sz)
-		if not data then
-			return
-		end
-		local qc = sc.queuecmd
-		local qd = sc.queuedat
-		qc[#qc + 1] = cmd
-		qd[#qd + 1] = data
-		local co = sc.waitco
-		if co then
-			sc.waitco = false
-			core.wakeup(co, true)
+		local ok, err = core.pcall(assert(sc).data, f, d, sz)
+		if not ok then
+			print("[msg] EVENT.data", err)
 		end
         end
 
@@ -182,35 +147,17 @@ local function checkconnect(self)
 	end
 end
 
-function msgclient.read(self)
-	if not self.fd then
-		return nil
-	end
-	if #self.queuecmd == 0 then
-		self.waitco = core.running()
-		local ok = core.wait()
-		if not ok then
-			return nil
-		end
-	end
-	assert(#self.queuecmd > 0)
-	local cmd = table.remove(self.queuecmd, 1)
-	local dat = table.remove(self.queuedat, 1)
-	return cmd, dat
-end
-
 function msgclient.close(self)
 	gc(self)
 end
 
-function msgclient.send(self, cmd, body)
+function msgclient.send(self, data)
 	local fd = checkconnect(self)
 	if not fd then
 		return false
 	end
-	return sendmsg(self, fd, cmd, body)
+	return sendmsg(self, fd, data)
 end
-
 
 function msgclient.connect(self)
 	local fd = checkconnect(self)
@@ -221,7 +168,6 @@ end
 function msg.createclient(config)
 	local obj = {
 		fd = false,
-		waitco = false,
 		connectqueue = {},
 	}
 	for k, v in pairs(config) do
