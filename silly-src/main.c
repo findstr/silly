@@ -90,6 +90,9 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 			}
 			const char *value = lua_tostring(L, -1);
 			curr[sz] = '\0';
+			char *eval = getenv(first);
+			if (eval)
+				value = eval;
 			silly_env_set(first, value);
 		}
 		lua_pop(L, 1);
