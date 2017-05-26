@@ -127,17 +127,14 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local ok
 		local fd = core.connect(self.addr, clientcb(self), nil, TAG)
 		if not fd then
 			self.fd = false
-			ok = false
 		else
 			self.fd = fd
-			ok = true
 		end
 		wakeupall(self)
-		return ok
+		return self.fd
 	else
 		local co = core.running()
 		local t = self.connectqueue

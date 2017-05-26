@@ -162,7 +162,7 @@ local function wakeupall(self)
 	local q = self.connectqueue
 	for k, v in pairs(q) do
 		core.wakeup(v)
-		q[k] = v
+		q[k] = nil
 	end
 end
 
@@ -220,17 +220,14 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local ok
 		local fd = doconnect(self)
 		if not fd then
 			self.fd = false
-			ok = false
 		else
 			self.fd = fd
-			ok = true
 		end
 		wakeupall(self)
-		return ok
+		return self.fd
 	else
 		local co = core.running()
 		local t = self.connectqueue
