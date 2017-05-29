@@ -21,11 +21,15 @@ local servermt = {__index = msgserver, __gc == gc}
 local clientmt = {__index = msgclient, __gc == gc}
 
 ---server
-local function servercb(sc)
+local function servercb(sc, config)
         local EVENT = {}
         local queue = np.create()
+	local accept_cb = assert(config.accept, "servercb accept")
+	local close_cb = assert(config.close, "servercb close")
+	local data_cb = assert(config.data, "servercb data")
+
         function EVENT.accept(fd, portid, addr)
-                local ok, err = core.pcall(sc.accept, fd, addr)
+                local ok, err = core.pcall(accept_cb, fd, addr)
                 if not ok then
                         print("[msg] EVENT.accept", err)
                         core.close(fd, TAG)
@@ -33,7 +37,7 @@ local function servercb(sc)
         end
 
         function EVENT.close(fd, errno)
-                local ok, err = core.pcall(assert(sc).close, fd, errno)
+                local ok, err = core.pcall(close_cb, fd, errno)
                 if not ok then
                         print("[msg] EVENT.close", err)
                 end
@@ -45,7 +49,7 @@ local function servercb(sc)
                         return
                 end
                 core.fork(EVENT.data)
-		local ok, err = core.pcall(sc.data, f, d, sz)
+		local ok, err = core.pcall(data_cb, f, d, sz)
                 if not ok then
                         print("[msg] dispatch socket", err)
                 end
@@ -64,7 +68,7 @@ end
 msgserver.send = sendmsg
 
 function msgserver.start(self)
-	local fd = core.listen(self.addr, servercb(self), TAG)
+	local fd = core.listen(self.addr, self.callback, TAG)
 	self.fd = fd
 	return fd
 end
@@ -79,16 +83,18 @@ end
 
 -----client
 
-local function clientcb(sc)
+local function clientcb(sc, config)
         local EVENT = {}
         local queue = np.create()
 	sc.queuedat = {}
+	local close_cb = assert(config.close, "clientcb close")
+	local data_cb = assert(config.data, "clientcb data")
         function EVENT.accept(fd, portid, addr)
 		assert(not "never come here")
         end
 
         function EVENT.close(fd, errno)
-		local ok, err = core.pcall(assert(sc).close, fd, errno)
+		local ok, err = core.pcall(close_cb, fd, errno)
 		sc.fd = false
                 if not ok then
                         print("[msg] EVENT.close", err)
@@ -101,7 +107,7 @@ local function clientcb(sc)
                         return
                 end
                 core.fork(EVENT.data)
-		local ok, err = core.pcall(assert(sc).data, f, d, sz)
+		local ok, err = core.pcall(data_cb, f, d, sz)
 		if not ok then
 			print("[msg] EVENT.data", err)
 		end
@@ -127,7 +133,7 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local fd = core.connect(self.addr, clientcb(self), nil, TAG)
+		local fd = core.connect(self.addr, self.callback, nil, TAG)
 		if not fd then
 			self.fd = false
 		else
@@ -165,12 +171,11 @@ end
 function msg.createclient(config)
 	local obj = {
 		fd = false,
+		addr = config.addr,
+		callback = false,
 		connectqueue = {},
 	}
-	for k, v in pairs(config) do
-		assert(not obj[k])
-		obj[k] = v
-	end
+	obj.callback = clientcb(obj, config),
 	setmetatable(obj, clientmt)
 	return obj
 end
@@ -178,10 +183,10 @@ end
 function msg.createserver(config)
 	local obj = {
 		fd = false,
+		addr = config.addr,
+		callback = false,
 	}
-	for k, v in pairs(config) do
-		obj[k] = v
-	end
+	obj.callback = servercb(obj, config)
         setmetatable(obj, servermt)
         return obj
 end
