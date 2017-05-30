@@ -34,10 +34,9 @@ lfile(lua_State *L)
 static int
 lprint(lua_State *L)
 {
+	int i;
 	struct tm fmt;
 	time_t now = time(NULL);
-	char indent[128];
-	int i;
 	int paramn = lua_gettop(L);
 	localtime_r(&now, &fmt);
 	if (today != fmt.tm_mday) { //do split
@@ -58,13 +57,11 @@ lprint(lua_State *L)
 			return 0;
 		}
 	}
-	snprintf(indent, sizeof(indent) / sizeof(indent[0]), "[%02d:%02d:%02d] [%d]",
+	fprintf(fp, "[%02d:%02d:%02d] [%d]",
 		fmt.tm_hour,
 		fmt.tm_min,
 		fmt.tm_sec,
-		pid
-	);
-	fprintf(fp, indent);
+		pid);
 	for (i = 1; i <= paramn; i++) {
 		int type = lua_type(L, i);
 		switch (type) {
