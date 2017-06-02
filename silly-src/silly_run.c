@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/file.h>
 
 #include "silly.h"
 #include "silly_env.h"
