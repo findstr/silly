@@ -213,7 +213,7 @@ ltcpsend(lua_State *L)
 	sid = luaL_checkinteger(L, 1);
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
-	err = silly_socket_send(sid, buff, size);
+	err = silly_socket_send(sid, buff, size, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }
@@ -249,7 +249,7 @@ ludpsend(lua_State *L)
 	sz = luaL_checkinteger(L, 3);
 	if (lua_type(L, 4) != LUA_TNIL)
 		addr = luaL_checklstring(L, 4, &addrlen);
-	err = silly_socket_udpsend(sid, buff, sz, addr, addrlen);
+	err = silly_socket_udpsend(sid, buff, sz, addr, addrlen, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }

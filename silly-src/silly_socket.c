@@ -51,11 +51,12 @@ enum stype {
 	STYPE_CTRL,		//pipe cmd type
 };
 
+
 struct wlist {
-	size_t offset;
 	size_t size;
 	uint8_t *buff;
 	struct wlist *next;
+	silly_finalizer_t finalizer;
 	struct sockaddr udpaddress;
 };
 
@@ -65,6 +66,7 @@ struct socket {
 	int presize;
 	int protocol;
 	enum stype type;
+	size_t wloffset;
 	struct wlist wlhead;
 	struct wlist *wltail;
 };
@@ -90,6 +92,14 @@ struct silly_socket {
 static struct silly_socket *SSOCKET;
 
 static void
+default_finalizer(void *ptr, size_t sz)
+{
+	(void)sz;
+	silly_free(ptr);
+	return ;
+}
+
+static void
 socketpool_init(struct silly_socket *ss)
 {
 	int i;
@@ -101,6 +111,7 @@ socketpool_init(struct silly_socket *ss)
 		pool->fd = -1;
 		pool->type = STYPE_RESERVE;
 		pool->presize = MIN_READBUFF_LEN;
+		pool->wloffset = 0;
 		pool->wlhead.next = NULL;
 		pool->wltail = &pool->wlhead;
 		pool++;
@@ -134,6 +145,7 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 				s->presize = MIN_READBUFF_LEN;
 				s->sid = id;
 				s->fd = -1;
+				s->wloffset = 0;
 				return s;
 			}
 		}
@@ -143,13 +155,14 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 }
 
 static void
-wlist_append(struct socket *s, uint8_t *buff, size_t offset, size_t size, const struct sockaddr *addr)
+wlist_append(struct socket *s, uint8_t *buff, size_t size,
+		silly_finalizer_t finalizer, const struct sockaddr *addr)
 {
 	struct wlist *w;
 	w = (struct wlist *)silly_malloc(sizeof(*w));
-	w->offset = offset;
 	w->size = size;
 	w->buff = buff;
+	w->finalizer = finalizer;
 	w->next = NULL;
 	if (addr)
 		w->udpaddress = *addr;
@@ -168,7 +181,7 @@ wlist_free(struct socket *s)
 		t = w;
 		w = w->next;
 		assert(t->buff);
-		silly_free(t->buff);
+		t->finalizer(t->buff, t->size);
 		silly_free(t);
 	}
 	s->wlhead.next = NULL;
@@ -547,20 +560,20 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 	assert(w);
 	while (w) {
 		ssize_t sz;
-		sz = sendn(s->fd, w->buff + w->offset, w->size);
+		assert(w->size > s->wloffset);
+		sz = sendn(s->fd, w->buff + s->wloffset, w->size - s->wloffset);
 		if (sz < 0) {
 			report_close(ss, s, errno);
 			delsocket(ss, s);
 			return ;
 		}
-		if ((size_t)sz < w->size) {//send some
-			w->size -= sz;
-			w->offset += sz;
+		s->wloffset += sz;
+		if (s->wloffset < w->size) //send some
 			return ;
-		}
-		assert((size_t)sz == w->size);
+		assert((size_t)s->wloffset == w->size);
+		s->wloffset = 0;
 		s->wlhead.next = w->next;
-		silly_free(w->buff);
+		w->finalizer(w->buff, w->size);
 		silly_free(w);
 		w = s->wlhead.next;
 		if (w == NULL) {//send ok
@@ -581,13 +594,13 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 	assert(w);
 	while (w) {
 		ssize_t sz;
-		sz = sendudp(s->fd, w->buff + w->offset, w->size, &w->udpaddress);
+		sz = sendudp(s->fd, w->buff, w->size, &w->udpaddress);
 		if (sz == -2)	//EAGAIN, so block it
 			break;
 		assert(sz == -1 || (size_t)sz == w->size);
 		//send fail && send ok will clear
 		s->wlhead.next = w->next;
-		silly_free(w->buff);
+		w->finalizer(w->buff, w->size);
 		silly_free(w);
 		w = s->wlhead.next;
 		if (w == NULL) {//send all
@@ -600,7 +613,7 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 	return ;
 }
 
-static int
+static inline int
 hascmd(struct silly_socket *ss)
 {
 	int ret;
@@ -636,12 +649,14 @@ struct cmdpacket {
 			int sid;
 			ssize_t size;
 			uint8_t *data;
+			silly_finalizer_t finalizer;
 		} send; //'S'
 		struct {
 			int sid;
 			ssize_t size;
 			uint8_t *data;
 			struct sockaddr to;
+			silly_finalizer_t finalizer;
 		} udpsend;  //'U'
 	} u;
 };
@@ -1010,7 +1025,7 @@ tryclose(struct silly_socket *ss, struct cmdpacket *cmd)
 }
 
 int
-silly_socket_send(int sid, uint8_t *buff,  size_t sz)
+silly_socket_send(int sid, uint8_t *buff, size_t sz, silly_finalizer_t finalizer)
 {
 	struct cmdpacket cmd;
 	struct socket *s = checksocket(SSOCKET, sid);
@@ -1026,12 +1041,13 @@ silly_socket_send(int sid, uint8_t *buff,  size_t sz)
 	cmd.u.send.sid = sid;
 	cmd.u.send.data = buff;
 	cmd.u.send.size = sz;
+	cmd.u.send.finalizer = finalizer ? finalizer : default_finalizer;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
 	return 0;
 }
 
 int
-silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t addrlen)
+silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t addrlen, silly_finalizer_t finalizer)
 {
 	struct cmdpacket cmd;
 	struct socket *s = checksocket(SSOCKET, sid);
@@ -1049,6 +1065,7 @@ silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t
 	cmd.u.udpsend.sid = sid;
 	cmd.u.udpsend.data= buff;
 	cmd.u.udpsend.size = sz;
+	cmd.u.udpsend.finalizer = finalizer ? finalizer : default_finalizer;
 	if (s->type == STYPE_UDPBIND) {//udp bind socket need sendto address
 		assert(addrlen == sizeof(cmd.u.udpsend.to));
 		memcpy(&cmd.u.udpsend.to, addr, sizeof(cmd.u.udpsend.to));
@@ -1064,26 +1081,28 @@ trysend(struct silly_socket *ss, struct cmdpacket *cmd)
 	struct socket *s = checksocket(ss, cmd->u.send.sid);
 	uint8_t *data = cmd->u.send.data;
 	size_t sz = cmd->u.send.size;
+	silly_finalizer_t finalizer = cmd->u.send.finalizer;
 	if (s == NULL) {
-		silly_free(data);
+		finalizer(data, sz);
 		return 0;
 	}
 	if (wlist_empty(s)) {//try send
 		ssize_t n = sendn(s->fd, data, sz);
 		if (n < 0) {
-			silly_free(data);
+			finalizer(data, sz);
 			report_close(ss, s, errno);
 			delsocket(ss, s);
 			return -1;
 		} else if ((size_t)n < sz) {
-			wlist_append(s, data, n, sz - n, NULL);
+			s->wloffset = n;
+			wlist_append(s, data, sz, finalizer, NULL);
 			sp_write_enable(ss->spfd, s->fd, s, 1);
 		} else {
 			assert((size_t)n == sz);
-			silly_free(data);
+			finalizer(data, sz);
 		}
 	} else {
-		wlist_append(s, data, 0, sz, NULL);
+		wlist_append(s, data, sz, finalizer, NULL);
 	}
 	return 0;
 }
@@ -1095,8 +1114,9 @@ tryudpsend(struct silly_socket *ss, struct cmdpacket *cmd)
 	uint8_t *data = cmd->u.udpsend.data;
 	size_t sz = cmd->u.udpsend.size;
 	const struct sockaddr *addr = &cmd->u.udpsend.to;
+	silly_finalizer_t finalizer = cmd->u.udpsend.finalizer;
 	if (s == NULL) {
-		silly_free(data);
+		finalizer(data, sz);
 		return 0;
 	}
 	assert(s->protocol == PROTOCOL_UDP);
@@ -1105,13 +1125,13 @@ tryudpsend(struct silly_socket *ss, struct cmdpacket *cmd)
 	if (wlist_empty(s)) {//try send
 		ssize_t n = sendudp(s->fd, data, sz, addr);
 		if (n == -1 || n >= 0) {	//occurs error or send ok
-			silly_free(data);
+			finalizer(data, sz);
 			return 0;
 		}
 		assert(n == -2);	//EAGAIN
-		wlist_append(s, data, 0, sz, addr);
+		wlist_append(s, data, sz, finalizer, addr);
 	} else {
-		wlist_append(s, data, 0, sz, addr);
+		wlist_append(s, data, sz, finalizer, addr);
 	}
 	return 0;
 }
