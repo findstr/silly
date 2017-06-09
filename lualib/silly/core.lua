@@ -48,8 +48,9 @@ local function cocreate(f)
 	coresume(co, "STARTUP", f)	 --pass the function handler
 	return co
 end
-
+core.packmulti = silly.packmulti
 core.write = silly.send
+core.multicast = silly.multicast
 core.udpwrite = silly.udpsend
 function core.running()
 	local co = corunning()

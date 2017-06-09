@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
 #include <lua.h>
 #include <lualib.h>
@@ -203,8 +204,43 @@ ltcplisten(lua_State *L)
 	return 1;
 }
 
+//NOTE:this function may cocurrent
+static void
+finalizermulti(uint8_t *ptr, size_t sz)
+{
+	uint32_t *mask = (uint32_t *)(ptr + sz);
+	uint32_t *ref = mask + 1;
+	assert(*mask == 'M');
+	uint32_t refcount = __sync_sub_and_fetch(ref, 1);
+	if (refcount == 0)
+		silly_free(ptr);
+	return ;
+}
+
 static int
-ltcpsend(lua_State *L)
+lpackmulti(lua_State *L)
+{
+	int size;
+	int refcount;
+	uint8_t *buff;
+	uint8_t *pack;
+	uint32_t *mask;
+	uint32_t *ref;
+	buff = lua_touserdata(L, 1);
+	size = luaL_checkinteger(L, 2);
+	refcount = luaL_checkinteger(L, 3);
+	pack = (uint8_t *)silly_malloc(size + 2 * sizeof(uint32_t));
+	memcpy(pack, buff, size);
+	mask = (uint32_t *)(pack + size);
+	ref = mask + 1;
+	*mask = 'M';
+	*ref = refcount;
+	lua_pushlightuserdata(L, pack);
+	return 1;
+}
+
+static inline int
+dotcpsend(lua_State *L, silly_finalizer_t finalizer)
 {
 	int err;
 	int sid;
@@ -213,9 +249,21 @@ ltcpsend(lua_State *L)
 	sid = luaL_checkinteger(L, 1);
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
-	err = silly_socket_send(sid, buff, size, NULL);
+	err = silly_socket_send(sid, buff, size, finalizer);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
+}
+
+static int
+ltcpsend(lua_State *L)
+{
+	return dotcpsend(L, NULL);
+}
+
+static int
+ltcpmulticast(lua_State *L)
+{
+	return dotcpsend(L, finalizermulti);
 }
 
 static int
@@ -303,7 +351,9 @@ luaopen_silly(lua_State *L)
 		//socket
 		{"connect", ltcpconnect},
 		{"listen", ltcplisten},
+		{"packmulti", lpackmulti},
 		{"send", ltcpsend},
+		{"multicast", ltcpmulticast},
 		{"bind", ludpbind},
 		{"udp", ludpconnect},
 		{"udpsend", ludpsend},

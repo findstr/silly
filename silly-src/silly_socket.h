@@ -4,7 +4,7 @@
 #include <stdint.h>
 //sid == socket number, it will be remap in silly_socket, not a real socket fd
 
-typedef void (*silly_finalizer_t)(void *ptr, size_t sz);
+typedef void (*silly_finalizer_t)(uint8_t *ptr, size_t sz);
 
 
 int silly_socket_init();

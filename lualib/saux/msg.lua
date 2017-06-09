@@ -66,6 +66,9 @@ local function sendmsg(self, fd, data)
 end
 
 msgserver.send = sendmsg
+msgserver.multicast = function(self, fd, data, sz)
+	return core.multicast(fd, data, sz)
+end
 
 function msgserver.start(self)
 	local fd = core.listen(self.addr, self.callback, TAG)

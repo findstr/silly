@@ -92,7 +92,7 @@ struct silly_socket {
 static struct silly_socket *SSOCKET;
 
 static void
-default_finalizer(void *ptr, size_t sz)
+default_finalizer(uint8_t *ptr, size_t sz)
 {
 	(void)sz;
 	silly_free(ptr);
@@ -1029,19 +1029,20 @@ silly_socket_send(int sid, uint8_t *buff, size_t sz, silly_finalizer_t finalizer
 {
 	struct cmdpacket cmd;
 	struct socket *s = checksocket(SSOCKET, sid);
+	finalizer = finalizer ? finalizer : default_finalizer;
 	if (s == NULL) {
-		silly_free(buff);
+		finalizer(buff, sz);
 		return -1;
 	}
 	if (sz == 0) {
-		silly_free(buff);
+		finalizer(buff, sz);
 		return -1;
 	}
 	cmd.type = 'S';
 	cmd.u.send.sid = sid;
 	cmd.u.send.data = buff;
 	cmd.u.send.size = sz;
-	cmd.u.send.finalizer = finalizer ? finalizer : default_finalizer;
+	cmd.u.send.finalizer = finalizer;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
 	return 0;
 }
@@ -1051,13 +1052,15 @@ silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t
 {
 	struct cmdpacket cmd;
 	struct socket *s = checksocket(SSOCKET, sid);
+	finalizer = finalizer ? finalizer : default_finalizer;
 	if (s == NULL) {
-		silly_free(buff);
+		finalizer(buff, sz);
 		return -1;
 	}
 	assert(s->protocol = PROTOCOL_UDP);
 	assert(s->type == STYPE_UDPBIND || s->type == STYPE_SOCKET);
 	if (s->type == STYPE_UDPBIND && addr == NULL) {
+		finalizer(buff, sz);
 		fprintf(stderr, "[socket] udpsend udpbind socket must specify dest addr\n");
 		return -1;
 	}
@@ -1065,7 +1068,7 @@ silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t
 	cmd.u.udpsend.sid = sid;
 	cmd.u.udpsend.data= buff;
 	cmd.u.udpsend.size = sz;
-	cmd.u.udpsend.finalizer = finalizer ? finalizer : default_finalizer;
+	cmd.u.udpsend.finalizer = finalizer;
 	if (s->type == STYPE_UDPBIND) {//udp bind socket need sendto address
 		assert(addrlen == sizeof(cmd.u.udpsend.to));
 		memcpy(&cmd.u.udpsend.to, addr, sizeof(cmd.u.udpsend.to));
