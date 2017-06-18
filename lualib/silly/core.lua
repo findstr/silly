@@ -49,8 +49,9 @@ local function cocreate(f)
 	return co
 end
 core.packmulti = silly.packmulti
-core.write = silly.send
+core.freemulti = silly.freemulti
 core.multicast = silly.multicast
+core.write = silly.send
 core.udpwrite = silly.udpsend
 function core.running()
 	local co = corunning()

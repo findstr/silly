@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 #include <sys/time.h>
 #include <lua.h>
@@ -205,15 +206,25 @@ ltcplisten(lua_State *L)
 }
 
 //NOTE:this function may cocurrent
+
+struct multicasthdr {
+	uint32_t ref;
+	char mask;
+	uint8_t data[1];
+};
+
+#define	MULTICAST_SIZE offsetof(struct multicasthdr, data)
+
 static void
-finalizermulti(uint8_t *ptr, size_t sz)
+finalizermulti(void *buff)
 {
-	uint32_t *mask = (uint32_t *)(ptr + sz);
-	uint32_t *ref = mask + 1;
-	assert(*mask == 'M');
-	uint32_t refcount = __sync_sub_and_fetch(ref, 1);
+	struct multicasthdr *hdr;
+	uint8_t *ptr = (uint8_t *)buff;
+	hdr = (struct multicasthdr *)(ptr - MULTICAST_SIZE);
+	assert(hdr->mask == 'M');
+	uint32_t refcount = __sync_sub_and_fetch(&hdr->ref, 1);
 	if (refcount == 0)
-		silly_free(ptr);
+		silly_free(hdr);
 	return ;
 }
 
@@ -223,19 +234,15 @@ lpackmulti(lua_State *L)
 	int size;
 	int refcount;
 	uint8_t *buff;
-	uint8_t *pack;
-	uint32_t *mask;
-	uint32_t *ref;
+	struct multicasthdr *hdr;
 	buff = lua_touserdata(L, 1);
 	size = luaL_checkinteger(L, 2);
 	refcount = luaL_checkinteger(L, 3);
-	pack = (uint8_t *)silly_malloc(size + 2 * sizeof(uint32_t));
-	memcpy(pack, buff, size);
-	mask = (uint32_t *)(pack + size);
-	ref = mask + 1;
-	*mask = 'M';
-	*ref = refcount;
-	lua_pushlightuserdata(L, pack);
+	hdr = (struct multicasthdr *)silly_malloc(size + MULTICAST_SIZE);
+	memcpy(hdr->data, buff, size);
+	hdr->mask = 'M';
+	hdr->ref = refcount;
+	lua_pushlightuserdata(L, &hdr->data);
 	return 1;
 }
 
@@ -243,8 +250,7 @@ static int
 lfreemulti(lua_State *L)
 {
 	uint8_t *buff = lua_touserdata(L, 1);
-	size_t size = luaL_checkinteger(L, 2);
-	finalizermulti(buff, size);
+	finalizermulti(buff);
 	return 0;
 }
 
