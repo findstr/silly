@@ -239,6 +239,15 @@ lpackmulti(lua_State *L)
 	return 1;
 }
 
+static int
+lfreemulti(lua_State *L)
+{
+	uint8_t *buff = lua_touserdata(L, 1);
+	size_t size = luaL_checkinteger(L, 2);
+	finalizermulti(buff, size);
+	return 0;
+}
+
 static inline int
 dotcpsend(lua_State *L, silly_finalizer_t finalizer)
 {
@@ -352,6 +361,7 @@ luaopen_silly(lua_State *L)
 		{"connect", ltcpconnect},
 		{"listen", ltcplisten},
 		{"packmulti", lpackmulti},
+		{"freemulti", lfreemulti},
 		{"send", ltcpsend},
 		{"multicast", ltcpmulticast},
 		{"bind", ludpbind},
