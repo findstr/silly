@@ -5,8 +5,9 @@
 
 #define ZPROTO_BOOLEAN (1)
 #define ZPROTO_INTEGER (2)
-#define ZPROTO_STRING (3)
-#define ZPROTO_STRUCT (4)
+#define ZPROTO_FLOAT (3)
+#define ZPROTO_STRING (4)
+#define ZPROTO_STRUCT (5)
 
 #define ZPROTO_OOM (-1)
 #define ZPROTO_NOFIELD (-2)
