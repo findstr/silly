@@ -285,6 +285,18 @@ lclear(lua_State *L)
 }
 
 static int
+ltostring(lua_State *L)
+{
+	char *buff;
+	int size;
+	buff = lua_touserdata(L, 1);
+	size = luaL_checkinteger(L, 2);
+	lua_pushlstring(L, buff, size);
+	silly_free(buff);
+	return 1;
+}
+
+static int
 ldrop(lua_State *L)
 {
 	int type = lua_type(L, 1);
@@ -345,6 +357,7 @@ int luaopen_netpacket(lua_State *L)
 		{"pop", lpop},
 		{"pack", lpack},
 		{"clear", lclear},
+		{"tostring", ltostring},
 		{"drop", ldrop},
 		{"message", lmessage},
 		{NULL, NULL},
