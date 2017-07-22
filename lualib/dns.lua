@@ -54,7 +54,7 @@ local function build_request(domain)
 
 		--[[
 		QR = 0,
-		OPCODE = 0,
+		OPCODE = 0, (4bit)
 		AA = 0,
 		TC = 0,
 		RD = 1,
@@ -162,7 +162,9 @@ local function callback(msg, addr)
 	core.wakeup(co, true)
 end
 
-local function query(domain)
+local query_request
+
+function query(domain, timeout)
 	local d = domain_cache[domain]
 	if not d then
 		return nil
@@ -172,7 +174,7 @@ local function query(domain)
 		return nil
 	end
 	if d.type == "cname" then
-		return query(d.addr)
+		return query_request(d.addr, timeout)
 	else
 		return d.addr
 	end
@@ -200,15 +202,14 @@ local function checkconnect()
 	return socket.udp("223.5.5.5@53", callback)
 end
 
---all query use one udp connecction, so need no close
-function dns.query(domain, timeout)
-	timeout = timeout or 1000
-	local s, r = build_request(domain)
-	local fd = checkconnect()
+function query_request(domain, timeout)
 	local res = query(domain)
 	if res then
 		return res
 	end
+	timeout = timeout or 1000
+	local s, r = build_request(domain)
+	local fd = checkconnect()
 	local i = 1
 	assert(fd > 0)
 	while true do
@@ -218,7 +219,7 @@ function dns.query(domain, timeout)
 		end
 		local ok = suspend(s, timeout)
 		if ok then
-			return query(domain)
+			return query(domain, timeout)
 		end
 		i = i + 1
 		if i > 3 then
@@ -227,6 +228,9 @@ function dns.query(domain, timeout)
 		core.sleep(timeout * i)
 	end
 end
+
+--all query use one udp connecction, so need no close
+dns.query = query_request
 
 function dns.isdomain(addr)
 	local s1, s2, s3, s4 = string.match(addr, "(%d+).(%d+).(%d+).(%d+)")
