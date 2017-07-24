@@ -43,6 +43,7 @@ struct silly_timer {
 	uint32_t expire;
 	uint64_t ticktime;
 	uint64_t clocktime;
+	uint64_t monotonic;
 	struct slot_root root;
 	struct slot_level level[4];
 };
@@ -80,9 +81,9 @@ unlock(struct silly_timer *timer)
 }
 
 uint64_t
-silly_timer_current()
+silly_timer_monotonic()
 {
-	return T->ticktime * RESOLUTION;
+	return T->monotonic * RESOLUTION;
 }
 
 uint64_t
@@ -266,6 +267,7 @@ silly_timer_update()
 	//uint64_t on x86 platform, can't assign as a automatic
 	__sync_lock_test_and_set(&T->ticktime, time);
 	__sync_fetch_and_add(&T->clocktime, delta);
+	__sync_fetch_and_add(&T->monotonic, delta);
 	for (i = 0; i < delta; i++)
 		update_timer(T);
 	assert((uint32_t)T->ticktime == T->expire);
@@ -280,6 +282,7 @@ silly_timer_init()
 	T->clocktime = clocktime();
 	T->ticktime = ticktime();
 	T->expire = T->ticktime;
+	T->monotonic = 0;
 	return ;
 }
 

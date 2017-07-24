@@ -12,7 +12,7 @@ local session = 0
 setmetatable(domain_cache, weakmt)
 
 local function timenow()
-	return math.floor(core.current() / 1000)
+	return math.floor(core.monotonic() / 1000)
 end
 
 --[[

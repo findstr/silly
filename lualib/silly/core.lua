@@ -63,7 +63,7 @@ core.genid = silly.genid
 core.memstatus = silly.memstatus
 core.msgstatus = silly.msgstatus
 core.now = silly.timenow
-core.current = silly.timecurrent
+core.monotonic = silly.timemonotonic
 
 local function errmsg(msg)
 	return debug.traceback("error: " .. tostring(msg), 2)
