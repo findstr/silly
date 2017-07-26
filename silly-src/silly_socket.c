@@ -328,15 +328,15 @@ static void
 report_close(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
-	int or;
+	int type;
 	struct silly_message_socket *sc;
 	if (s->type == STYPE_HALFCLOSE)//don't notify the active close
 		return ;
-	or = s->type == STYPE_LISTEN ? 1 : 0;
-	or += s->type == STYPE_SOCKET ? 1 : 0;
-	or += s->type == STYPE_CONNECTING ? 1 : 0;
-	or += s->type == STYPE_ALLOCED ? 1 : 0;
-	assert(or > 0);
+	type = s->type;
+	assert(type == STYPE_LISTEN ||
+		type == STYPE_SOCKET ||
+		type == STYPE_CONNECTING ||
+		type == STYPE_ALLOCED);
 	sc = silly_malloc(sizeof(*sc));
 	sc->type = SILLY_SCLOSE;
 	sc->sid = s->sid;
