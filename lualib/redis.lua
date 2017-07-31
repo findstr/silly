@@ -1,134 +1,128 @@
-local fifo = require "socketdispatch"
+local dispatch = require "socketdispatch"
 
+local tostring = tostring
+local tonumber = tonumber
 local tinsert = table.insert
 local tunpack = table.unpack
 local tconcat = table.concat
+local sub = string.sub
+local upper = string.upper
+local format = string.format
 
 local redis = {}
-
+local redis_mt = { __index = redis }
+local header = "+-:*$"
 local response_header = {}
 
-local header = "+-:*$"
-
-response_header[header:byte(1)] = function (sfifo, res)        --'+'
-	return true, true, res
+response_header[header:byte(1)] = function (sock, res)        --'+'
+	return true, res
 end
 
-response_header[header:byte(2)] = function (sfifo, res)        --'-'
-	return true, false, res
+response_header[header:byte(2)] = function (sock, res)        --'-'
+	return false, res
 end
 
-response_header[header:byte(3)] = function (sfifo, res)        --':'
-	return true, true, tonumber(res)
+response_header[header:byte(3)] = function (sock, res)        --':'
+	return true, tonumber(res)
 end
 
-response_header[header:byte(5)] = function (sfifo, res)        --'$'
+response_header[header:byte(5)] = function (sock, res)        --'$'
 	local nr = tonumber(res)
 	if nr == -1 then
-		return true, false, nil
+		return false, nil
 	end
-
-	local param = sfifo:read(nr + 2)
-	if param == nil then
-		return false
-	end
-	return true, true, string.sub(param, 1, -3)
+	local param = sock:read(nr + 2)
+	return true, sub(param, 1, -3)
 end
 
 
-local function read_response(sfifo)
-	local data = sfifo:readline("\r\n")
-	if data == nil then
-		return false
-	end
-
+local function read_response(sock)
+	local data = sock:readline("\r\n")
 	local head = data:byte(1)
 	local func = response_header[head]
-	local res = data
-	if func then
-		res = string.sub(res, 2)
-	else
-		res = string.sub(res, 1, #res - 2)
-		func = response_header.data
-	end
-	return func(sfifo, res)
+	return func(sock, sub(data, 2))
 end
 
-response_header[header:byte(4)] = function (sfifo, res)        --'*'
-	local cmd_success = true
-	local cmd_res = {}
+response_header[header:byte(4)] = function (sock, res)        --'*'
 	local nr = tonumber(res)
-	for i = 1, nr do
-		local ok, success, data = read_response(sfifo)
-		if ok == false then
-			return false
+	if nr ~= 1 then
+		local cmd_success = true
+		local cmd_res = {}
+		for i = 1, nr do
+			local success, data = read_response(sock)
+			cmd_success = cmd_success and success
+			tinsert(cmd_res, data)
 		end
-		cmd_success = cmd_success and success
-		tinsert(cmd_res, data)
-	end
-
-	if #cmd_res == 1 then
-		return true, cmd_success, tunpack(cmd_res)
+		return cmd_success, cmd_res
 	else
-		return true, cmd_success, cmd_res
+		return read_response(sock)
 	end
 end
 
-local function request(self, cmd)
-	return self.sfifo:request(cmd, read_response)
+local function cache_(func)
+	return setmetatable({}, { mode = "kv", __index = func })
 end
 
-local function pack_param(lines, param)
-	local p =  tostring(param)
-	tinsert(lines, string.format("$%d", #p))
-	tinsert(lines, p)
-end
+local cache_head = cache_(function (self, key)
+	local s = format("*%d", key)
+	self[key] = s
+	return s
+end)
+
+local cache_count = cache_(function (self, key)
+	local s = format("\r\n$%d\r\n", key)
+	self[key] = s
+	return s
+end)
 
 local function pack_cmd(cmd, param)
-	local pn = 1
-	if param ~= nil then
-		assert(type(param) == "table")
-		pn = pn + #param;
+	assert(type(param) == "table")
+	local count = #param
+	local lines = {}
+	lines[1] = cache_head[count + 1]
+	lines[2] = cache_count[#cmd]
+	lines[3] = cmd
+	local idx = 4
+	for i = 1, count do
+		local v = tostring(param[i])
+		lines[idx] = cache_count[#v]
+		idx = idx + 1
+		lines[idx] = v
+		idx = idx + 1
 	end
-	local lines = {string.format("*%d", pn), }
-	pack_param(lines, cmd)
-	for _, v in ipairs (param) do
-		pack_param(lines, v)
-	end
-	local sz = tconcat(lines, "\r\n")
-	return sz .. "\r\n"
+	lines[idx] = "\r\n"
+	return lines
 end
 
 function redis:connect(config)
-	local t = {
+	local obj = {
 		addr = config.addr,
 		user = config.user,
 		passwd = config.passwd,
-		sfifo = fifo:create {
+		sock = dispatch:create {
 			addr = config.addr,
 		},
 	}
-	setmetatable(t, {__index = self})
-	local ret, err = t.sfifo:connect()
+	setmetatable(obj, redis_mt)
+	local ret, err = obj.sock:connect()
 	if ret then
-		return t
+		return obj
 	else
 		return nil, err
 	end
 end
 
 setmetatable(redis, {__index = function (self, k)
-	local cmd = string.upper(k)
+	local cmd = upper(k)
 	local f = function (self, p, ...)
 		if type(p) == "table" then
-			return request(self, pack_cmd(cmd, p))
-		elseif p ~= nil then
-			return request(self, pack_cmd(cmd, {p, ...}))
+			local str = pack_cmd(cmd, p)
+			return self.sock:request(str, read_response)
 		else
-			return request(self, pack_cmd(cmd, {}))
+			local str = pack_cmd(cmd, {p, ...})
+			return self.sock:request(str, read_response)
 		end
 	end
-
 	self[k] = f
 	return f
 end

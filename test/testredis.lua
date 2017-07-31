@@ -21,6 +21,7 @@ local function test1()
 		addr = "127.0.0.1@6379",
 	}
 	print("Connect",  db, err)
+	dprint("SELECT 10", db:select(10))
 	dprint("PING", db:ping())
 	dprint("SET bar hello", db:set("bar", "hello"))
 	dprint("GET bar", db:get("bar"))
@@ -37,6 +38,9 @@ local function test1()
 	dprint("LPUSH bar 1", db:lpush("bar", 1))
 	dprint("TYPE bar", db:type("bar"))
 	dprint("STRLEN bar", db:strlen("foo"))
+	dprint("HMSET hash k1 v1 k2 v2", db:hmset("hash", "k1", "v1", "k2", "v2"))
+	dprint("HGET hash k1", db:hget("hash", "k1"))
+	dprint("HGETALL hash", db:hgetall("hash"))
 	print("test finish")
 	F = F + 1
 end

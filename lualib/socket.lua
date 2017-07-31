@@ -17,8 +17,7 @@ local function new_socket(fd)
 		co = false,
 		limit = 65535,
 	}
-	assert(socket_pool[fd] == nil,
-		"new_socket incorrect" .. fd .. "not be closed")
+	assert(not socket_pool[fd], "new_socket fd already connected")
 	socket_pool[fd] = s
 end
 
@@ -206,8 +205,7 @@ local function new_udp(fd, callback)
 		fd = fd,
 		callback = callback,
 	}
-	assert(socket_pool[fd] == nil,
-		"new_socket incorrect" .. fd .. "not be closed")
+	assert(not socket_pool[fd], "new_udp fd already connected")
 	socket_pool[fd] = s
 end
 

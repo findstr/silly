@@ -22,43 +22,49 @@ local clientmt = {__index = msgclient, __gc == gc}
 
 ---server
 local function servercb(sc, config)
-        local EVENT = {}
-        local queue = np.create()
+	local EVENT = {}
+	local queue = np.create()
 	local accept_cb = assert(config.accept, "servercb accept")
 	local close_cb = assert(config.close, "servercb close")
 	local data_cb = assert(config.data, "servercb data")
 
-        function EVENT.accept(fd, portid, addr)
-                local ok, err = core.pcall(accept_cb, fd, addr)
-                if not ok then
-                        print("[msg] EVENT.accept", err)
-                        core.close(fd, TAG)
-                end
-        end
+	function EVENT.accept(fd, portid, addr)
+		local ok, err = core.pcall(accept_cb, fd, addr)
+		if not ok then
+			print("[msg] EVENT.accept", err)
+			core.close(fd, TAG)
+		end
+	end
 
-        function EVENT.close(fd, errno)
-                local ok, err = core.pcall(close_cb, fd, errno)
-                if not ok then
-                        print("[msg] EVENT.close", err)
-                end
-        end
+	function EVENT.close(fd, errno)
+		local ok, err = core.pcall(close_cb, fd, errno)
+		if not ok then
+			print("[msg] EVENT.close", err)
+		end
+	end
 
-        function EVENT.data()
-                local f, d, sz = np.pop(queue)
-                if not f then
-                        return
-                end
-                core.fork(EVENT.data)
-		local ok, err = core.pcall(data_cb, f, d, sz)
-                if not ok then
-                        print("[msg] dispatch socket", err)
-                end
-        end
+	function EVENT.data()
+		local f, d, sz = np.pop(queue)
+		if not f then
+			return
+		end
+		core.fork(EVENT.data)
+		while true do
+			local ok, err = core.pcall(data_cb, f, d, sz)
+			if not ok then
+				print("[msg] dispatch socket", err)
+			end
+			f, d, sz = np.pop(queue)
+			if not f then
+				return
+			end
+		end
+	end
 
-        return function (type, fd, message, ...)
-                queue = np.message(queue, message)
-                assert(EVENT[type])(fd, ...)
-        end
+	return function (type, fd, message, ...)
+		queue = np.message(queue, message)
+		assert(EVENT[type])(fd, ...)
+	end
 end
 
 local function sendmsg(self, fd, data)
@@ -87,39 +93,45 @@ end
 -----client
 
 local function clientcb(sc, config)
-        local EVENT = {}
-        local queue = np.create()
+	local EVENT = {}
+	local queue = np.create()
 	sc.queuedat = {}
 	local close_cb = assert(config.close, "clientcb close")
 	local data_cb = assert(config.data, "clientcb data")
-        function EVENT.accept(fd, portid, addr)
+	function EVENT.accept(fd, portid, addr)
 		assert(not "never come here")
-        end
+	end
 
-        function EVENT.close(fd, errno)
+	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close_cb, fd, errno)
 		sc.fd = false
-                if not ok then
-                        print("[msg] EVENT.close", err)
-                end
-        end
-
-        function EVENT.data()
-                local f, d, sz = np.pop(queue)
-                if not f then
-                        return
-                end
-                core.fork(EVENT.data)
-		local ok, err = core.pcall(data_cb, f, d, sz)
 		if not ok then
-			print("[msg] EVENT.data", err)
+			print("[msg] EVENT.close", err)
 		end
-        end
+	end
 
-        return function (type, fd, message, ...)
-                queue = np.message(queue, message)
-                assert(EVENT[type])(fd, ...)
-        end
+	function EVENT.data()
+		local f, d, sz = np.pop(queue)
+		if not f then
+			return
+		end
+		core.fork(EVENT.data)
+		while true do
+			local ok, err = core.pcall(data_cb, f, d, sz)
+			if not ok then
+				print("[msg] EVENT.data", err)
+			end
+			f, d, sz = np.pop(queue)
+			if not f then
+				return
+			end
+		end
+	end
+
+	return function (type, fd, message, ...)
+		queue = np.message(queue, message)
+		assert(EVENT[type])(fd, ...)
+	end
 end
 
 local function wakeupall(self)
@@ -190,8 +202,8 @@ function msg.createserver(config)
 		callback = false,
 	}
 	obj.callback = servercb(obj, config)
-        setmetatable(obj, servermt)
-        return obj
+	setmetatable(obj, servermt)
+	return obj
 end
 
 

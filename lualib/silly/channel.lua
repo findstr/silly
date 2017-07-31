@@ -19,11 +19,13 @@ function channel.channel()
 end
 
 function channel.push(self, dat)
-	self.queue[self.pushi] = dat
-	self.pushi = self.pushi + 1
-	assert(self.pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
-	if self.co then
-		local co = self.co
+	local pushi = self.pushi
+	self.queue[pushi] = dat
+	pushi = pushi + 1
+	self.pushi = pushi
+	assert(pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
+	local co = self.co
+	if co then
 		self.co = false
 		core.wakeup(co)
 	end
@@ -40,8 +42,9 @@ function channel.pop(self)
 	assert(self.popi - self.pushi < 0)
 	local i = self.popi
 	self.popi= i + 1
-	local d = self.queue[i]
-	self.queue[i] = nil
+	local queue = self.queue
+	local d = queue[i]
+	queue[i] = nil
 	return d
 end
 

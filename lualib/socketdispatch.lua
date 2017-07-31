@@ -33,13 +33,16 @@ function dispatch:create(config)
 end
 
 local function wakeup_all(self, ret, err)
-	local co = tremove(self.waitqueue, 1)
-	tremove(self.funcqueue, 1)
+	local waitqueue = self.waitqueue
+	local funcqueue = self.funcqueue
+	local result_data = self.result_data
+	local co = tremove(waitqueue, 1)
+	tremove(funcqueue, 1)
 	while co do
-		self.result_data[co] = err
+		result_data[co] = err
 		core.wakeup(co, ret)
-		co = tremove(self.waitqueue, 1)
-		tremove(self.funcqueue, 1)
+		co = tremove(waitqueue, 1)
+		tremove(funcqueue, 1)
 	end
 end
 
@@ -59,22 +62,19 @@ end
 --this function will be run the indepedent coroutine
 local function dispatch_response(self)
 	return function ()
+		local waitqueue = self.waitqueue
+		local funcqueue = self.funcqueue
+		local result_data = self.result_data
 		while true do
-			local co = tremove(self.waitqueue, 1)
-			local func = tremove(self.funcqueue, 1)
+			local co = tremove(waitqueue, 1)
+			local func = tremove(funcqueue, 1)
 			if func and co then
-				local ok, do_ok, status, data  = core.pcall(func, self)
-				if ok and do_ok then
-					self.result_data[co] = data
+				local ok, status, data  = core.pcall(func, self)
+				if ok then
+					result_data[co] = data
 					core.wakeup(co, status)
 				else
-					local err
-					if not ok then
-						err = do_ok
-					else
-						err = "disconnected"
-					end
-					self.result_data[co] = err
+					result_data[co] = status
 					core.wakeup(co, false)
 					doclose(self)
 					return
@@ -89,45 +89,53 @@ end
 
 local function waitfor_response(self, response)
 	local co = core.running()
-	self.waitqueue[#self.waitqueue + 1] = co
-	self.funcqueue[#self.funcqueue + 1] = response
+	local waitqueue = self.waitqueue
+	local funcqueue = self.funcqueue
+	waitqueue[#waitqueue + 1] = co
+	funcqueue[#funcqueue + 1] = response
 	if self.dispatchco then     --the first request
 		local co = self.dispatchco
 		self.dispatchco = nil
 		core.wakeup(co)
 	end
 	local status = core.wait()
-	local data = self.result_data[co]
-	self.result_data[co] = nil
+	local result_data = self.result_data
+	local data = result_data[co]
+	result_data[co] = nil
 	return status, data
 end
 
 local function waitfor_connect(self)
 	local co = core.running()
-	self.connectqueue[#self.connectqueue + 1] = co
+	local connectqueue = self.connectqueue
+	connectqueue[#connectqueue + 1] = co
 	local status = core.wait()
-	local data = self.result_data[co]
-	self.result_data[co] = nil
+	local result_data = self.result_data
+	local data = result_data[co]
+	result_data[co] = nil
 	return status, data
 end
 
 local function wakeup_conn(self, success, err)
-	for k, v in pairs(self.connectqueue) do
-		self.result_data[v] = err
+	local result_data = self.result_data
+	local connectqueue = self.connectqueue
+	for k, v in pairs(connectqueue) do
+		result_data[v] = err
 		core.wakeup(v, success)
-		self.connectqueue[k] = nil
+		connectqueue[k] = nil
 	end
 end
 
 local function tryconnect(self)
-	if self.status == CONNECTED then
+	local status = self.status
+	if status == CONNECTED then
 		return true;
 	end
-	if self.status == FINAL then
+	if status == FINAL then
 		return false, "already closed"
 	end
 	local res
-	if self.status == CLOSE then
+	if status == CLOSE then
 		local err
 		self.status = CONNECTING;
 		self.sock = socket.connect(self.config.addr)
@@ -154,7 +162,7 @@ local function tryconnect(self)
 		end
 		wakeup_conn(self, res, err)
 		return res, err
-	elseif self.status == CONNECTING then
+	elseif status == CONNECTING then
 		return waitfor_connect(self)
 	else
 		core.error("try_connect incorrect call at status:" .. self.status)
@@ -176,9 +184,8 @@ end
 
 -- the respose function will be called in the socketfifo coroutine
 function dispatch:request(cmd, response)
-	local res
 	assert(tryconnect(self))
-	res = socket.write(self.sock, cmd)
+	local res = socket.write(self.sock, cmd)
 	if not res then
 		doclose(self)
 		return nil

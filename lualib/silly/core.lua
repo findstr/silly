@@ -188,9 +188,9 @@ function core.timeout(ms, func)
 	return session
 end
 
-function core.start(func, ...)
+function core.start(func)
 	local co = cocreate(func)
-	waityield(co, coresume(co, ...))
+	waityield(co, coresume(co))
 end
 
 

@@ -62,64 +62,77 @@ local servermt = {__index = server, __gc = gc}
 
 function server.listen(self)
 	local EVENT = {}
+	local config = self.config
+	local accept = assert(config.accept, "accept")
+	local close = assert(config.close, "close")
+	local call = assert(config.call, "call")
+	local rpcproto = config.proto
+	local queue = np.create()
 	function EVENT.accept(fd, portid, addr)
-		local ok, err = core.pcall(self.config.accept, fd, addr)
+		local ok, err = core.pcall(accept, fd, addr)
 		if not ok then
 			print("[rpc.server] EVENT.accept", err)
-			np.clear(self.queue, fd)
+			np.clear(queue, fd)
 			core.close(fd, TAG)
 		end
 	end
 
 	function EVENT.close(fd, errno)
-		local ok, err = core.pcall(assert(self.config).close, fd, errno)
+		local ok, err = core.pcall(close, fd, errno)
 		if not ok then
 			print("[rpc.server] EVENT.close", err)
 		end
-		np.clear(self.queue, fd)
+		np.clear(queue, fd)
 	end
 
 	function EVENT.data()
-		local fd, d, sz = np.pop(self.queue)
+		local fd, d, sz = np.pop(queue)
 		if not fd then
 			return
 		end
 		core.fork(EVENT.data)
-		local rpcproto = self.config.proto
-		--parse
-		local str = proto:unpack(d, sz)
-		np.drop(d, sz)
-		local rpc, takes = proto:decode("rpc", str)
-		if not rpc then
-			print("[rpc.server] parse the header fail")
-			return
+		while true do
+			--parse
+			local str = proto:unpack(d, sz)
+			np.drop(d, sz)
+			local rpc, takes = proto:decode("rpc", str)
+			if not rpc then
+				print("[rpc.server] parse the header fail")
+				return
+			end
+			local command = rpc.command
+			local body = rpcproto:decode(command, str:sub(takes + 1))
+			if not body then
+				print("[rpc.server] parse body fail", rpc.session, command)
+				return
+			end
+			local ok, cmd, res = core.pcall(call, fd, command, body)
+			if not ok or not cmd then
+				print("[rpc.server] dispatch socket", cmd)
+				return
+			end
+			--ack
+			if type(cmd) == "string" then
+				cmd = rpcproto:querytag(cmd)
+			end
+			local hdr = {session = rpc.session, command = cmd}
+			local hdrdat = proto:encode("rpc", hdr)
+			local bodydat = rpcproto:encode(cmd, res)
+			local full = proto:pack(hdrdat .. bodydat)
+			core.write(fd, np.pack(full))
+			--next
+			fd, d, sz = np.pop(queue)
+			if not fd then
+				return
+			end
 		end
-		local body = rpcproto:decode(rpc.command, str:sub(takes + 1))
-		if not body then
-			print("[rpc.server] parse body fail", rpc.session, rpc.command)
-			return
-		end
-		local ok, cmd, res = core.pcall(assert(self.config).call, fd, rpc.command, body)
-		if not ok or not cmd then
-			print("[rpc.server] dispatch socket", cmd)
-			return
-		end
-		--ack
-		if type(cmd) == "string" then
-			cmd = rpcproto:querytag(cmd)
-		end
-		local hdr = {session = rpc.session, command = cmd}
-		local hdrdat = proto:encode("rpc", hdr)
-		local bodydat = rpcproto:encode(cmd, res)
-		local full = proto:pack(hdrdat .. bodydat)
-		core.write(fd, np.pack(full))
-	end
 
+	end
 	local callback = function(type, fd, message, ...)
-		self.queue = np.message(self.queue, message)
+		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(self.config.addr, callback, TAG)
+	local fd = core.listen(config.addr, callback, TAG)
 	self.fd = fd
 	return fd
 end
@@ -143,13 +156,15 @@ local function clienttimer(self)
 		if not wk then
 			return
 		end
+		local waitpool = self.waitpool
+		local ackcmd = self.ackcmd
 		for k, v in pairs(wk) do
-			local co = self.waitpool[v]
+			local co = waitpool[v]
 			if co then
 				print("[rpc.client] timeout session", v)
-				self.ackcmd[v] = "timeout"
+				ackcmd[v] = "timeout"
 				core.wakeup(co)
-				self.waitpool[v] = nil
+				waitpool[v] = nil
 			end
 			wk[k] = nil
 		end
@@ -168,49 +183,61 @@ end
 
 local function doconnect(self)
 	local EVENT = {}
+	local config = self.config
+	local close = config.close
+	local rpcproto = config.proto
+	local queue = np.create()
 	function EVENT.close(fd, errno)
-		local ok, err = core.pcall(assert(self.config).close, fd, errno)
+		local ok, err = core.pcall(close, fd, errno)
 		if not ok then
 			print("[rpc.client] EVENT.close", err)
 		end
 		self.fd = nil
-		np.clear(self.queue, fd)
+		np.clear(queue, fd)
 	end
 
 	function EVENT.data()
-		local fd, d, sz = np.pop(self.queue)
+		local fd, d, sz = np.pop(queue)
 		if not fd then
 			return
 		end
 		core.fork(EVENT.data)
-		--parse
-		local str = proto:unpack(d, sz)
-		np.drop(d, sz)
-		local rpc, takes = proto:decode("rpc", str)
-		if not rpc then
-			print("[rpc.client] parse the header fail")
-			return
+		while true do
+			--parse
+			local str = proto:unpack(d, sz)
+			np.drop(d, sz)
+			local rpc, takes = proto:decode("rpc", str)
+			if not rpc then
+				print("[rpc.client] parse the header fail")
+				return
+			end
+			local command = rpc.command
+			local body = rpcproto:decode(command, str:sub(takes + 1))
+			if not body then
+				print("[rpc.client] parse body fail", rpc.session, command)
+				return
+			end
+			--ack
+			local co = self.waitpool[rpc.session]
+			if not co then --timeout
+				return
+			end
+			self.waitpool[rpc.session] = nil
+			self.ackcmd[rpc.session] = command
+			core.wakeup(co, body)
+			--next
+			fd, d, sz = np.pop(queue)
+			if not fd then
+				return
+			end
 		end
-		local body = self.config.proto:decode(rpc.command, str:sub(takes + 1))
-		if not body then
-			print("[rpc.client] parse body fail", rpc.session, rpc.command)
-			return
-		end
-		--ack
-		local co = self.waitpool[rpc.session]
-		if not co then --timeout
-			return
-		end
-		self.waitpool[rpc.session] = nil
-		self.ackcmd[rpc.session] = rpc.command
-		core.wakeup(co, body)
 	end
 
 	local callback = function(type, fd, message, ...)
-		self.queue = np.message(self.queue, message)
+		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.connect(self.config.addr, callback, nil, TAG)
+	return core.connect(config.addr, callback, nil, TAG)
 end
 
 --return true/false
@@ -245,15 +272,17 @@ local function waitfor(self, session)
 	local co = core.running()
 	local expire = self.timeoutwheel + self.nowwheel
 	expire = expire % self.totalwheel
-	if not self.timeout[expire] then
-		self.timeout[expire] = {}
+	local timeout = self.timeout
+	if not timeout[expire] then
+		timeout[expire] = {}
 	end
-	local t = self.timeout[expire]
+	local t = timeout[expire]
 	t[#t + 1] = session
 	self.waitpool[session] = co
 	local body = core.wait()
-	local cmd = self.ackcmd[session]
-	self.ackcmd[session] = nil
+	local ackcmd = self.ackcmd
+	local cmd = ackcmd[session]
+	ackcmd[session] = nil
 	return body, cmd
 end
 
@@ -262,13 +291,15 @@ function client.call(self, cmd, body)
 	if not ok then
 		return ok
 	end
-	local cmd = self.config.proto:querytag(cmd)
-	local hdr = {session = core.genid(), command = cmd}
+	local rpcproto = self.config.proto
+	local cmd = rpcproto:querytag(cmd)
+	local session = core.genid()
+	local hdr = {session = session, command = cmd}
 	local hdrdat = proto:encode("rpc", hdr)
-	local bodydat = self.config.proto:encode(cmd, body)
+	local bodydat = rpcproto:encode(cmd, body)
 	local full = proto:pack(hdrdat .. bodydat)
 	core.write(self.fd, np.pack(full))
-	return waitfor(self, hdr.session)
+	return waitfor(self, session)
 end
 
 function client.close(self)
@@ -277,26 +308,27 @@ end
 
 -----rpc
 function rpc.createclient(config)
-	local obj = {}
-	obj.fd = false	--false disconnected, -1 conncting, >=0 conncted
-	obj.connectqueue = {}
-	obj.queue = np.create()
-	obj.timeout = {}
-	obj.waitpool = {}
-	obj.ackcmd = {}
-	obj.nowwheel = 0
-	obj.totalwheel = math.floor((config.timeout + 999) / 1000)
-	obj.timeoutwheel = obj.totalwheel - 1
-	obj.config = config
+	local totalwheel = math.floor((config.timeout + 999) / 1000)
+	local obj = {
+		fd = false,	--false disconnected, -1 conncting, >=0 conncted
+		connectqueue = {},
+		timeout = {},
+		waitpool = {},
+		ackcmd = {},
+		nowwheel = 0,
+		totalwheel = totalwheel,
+		timeoutwheel = totalwheel - 1,
+		config = config,
+	}
 	setmetatable(obj, clientmt)
 	clienttimer(obj)
 	return obj
 end
 
 function rpc.createserver(config)
-	local obj = {}
-	obj.queue = np.create()
-	obj.config = config
+	local obj = {
+		config = config
+	}
 	setmetatable(obj, servermt)
 	return obj
 end
