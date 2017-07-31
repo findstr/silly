@@ -379,15 +379,53 @@ lreadline(struct lua_State *L)
 	return pushstring(L, nb, readn);
 }
 
+static inline void *
+createbuffer(lua_State *L, int idx, size_t *size)
+{
+	int type = lua_type(L, idx);
+	switch (type) {
+	case LUA_TSTRING: {
+		size_t sz;
+		const char *str = lua_tolstring(L, idx, &sz);
+		char *p = silly_malloc(sz);
+		memcpy(p, str, sz);
+		*size = sz;
+		return p;}
+	case LUA_TTABLE: {
+		int i;
+		size_t n;
+		const char *str;
+		char *p, *current;
+		size_t total = 0;
+		int top = lua_gettop(L);
+		int count = lua_rawlen(L, idx);
+		lua_checkstack(L, count);
+		for (i = 1; i <= count; i++) {
+			lua_rawgeti(L, idx, i);
+			luaL_checklstring(L, -1, &n);
+			total += n;
+		}
+		current = p = silly_malloc(total);
+		for (i = top + 1; i <= count + top; i++) {
+			str = lua_tolstring(L, i, &n);
+			memcpy(current, str, n);
+			current += n;
+		}
+		*size = total;
+		lua_settop(L, top);
+		return p;}
+	}
+	*size = 0;
+	luaL_error(L, "netstream.pack unsupport:%s", lua_typename(L, idx));
+	return NULL;
+}
+
 static int
 lpack(struct lua_State *L)
 {
 	char *p;
-	const char *str;
 	size_t size;
-	str = luaL_checklstring(L, 1, &size);
-	p = silly_malloc(size);
-	memcpy(p, str, size);
+	p = createbuffer(L, 1, &size);
 	lua_pushlightuserdata(L, p);
 	lua_pushinteger(L, size);
 	return 2;

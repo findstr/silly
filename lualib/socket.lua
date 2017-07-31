@@ -196,9 +196,6 @@ function socket.write(fd, str)
 	if not s then
 		return false, "already closed"
 	end
-	if #str > s.limit then
-		return false, "socket send size is limited:" .. s.limit
-	end
 	local p, sz = ns.pack(str)
 	return core.write(fd, p, sz)
 end
