@@ -1,7 +1,6 @@
 local core = require "silly.core"
 local ns = require "netstream"
 
-local nb_pool = {}
 local socket_pool = {}
 
 local socket = {}
@@ -37,11 +36,11 @@ function EVENT.close(fd, _, errno)
 		return
 	end
 	assert(s.callback == nil)
-	ns.clear(nb_pool, s.sbuffer)
+	ns.clear(s.sbuffer)
 	if s.co then
 		local co = s.co
 		s.co = false
-		core.wakeup(co, false)
+		core.wakeup(co)
 	end
 	socket_pool[fd] = nil
 end
@@ -52,27 +51,31 @@ function EVENT.data(fd, message)
 		return
 	end
 	assert(s.callback == nil)
-	s.sbuffer = ns.push(nb_pool, s.sbuffer, message)
+	local sbuffer = s.sbuffer
+	sbuffer = ns.push(sbuffer, message)
+	s.sbuffer = sbuffer
 	if not s.delim then	--non suspend read
 		assert(not s.co)
 		return
 	end
-
-	if type(s.delim) == "number" then
+	local delim = s.delim
+	if type(delim) == "number" then
 		assert(s.co)
-		if ns.check(s.sbuffer) >= s.delim then
+		local dat = ns.read(sbuffer, delim)
+		if dat then
 			local co = s.co
 			s.co = false
 			s.delim = false
-			core.wakeup(co, true)
+			core.wakeup(co, dat)
 		end
-	elseif type(s.delim) == "string" then
+	elseif type(delim) == "string" then
 		assert(s.co)
-		if ns.checkline(s.sbuffer, s.delim) then
+		local dat = ns.readline(sbuffer, delim)
+		if dat then
 			local co = s.co
 			s.co = false
 			s.delim = false
-			core.wakeup(co, true)
+			core.wakeup(co, dat)
 		end
 	end
 end
@@ -118,9 +121,9 @@ function socket.close(fd)
 		return
 	end
 	if s.so then
-		core.wakeup(s.so, false)
+		core.wakeup(s.so)
 	end
-	ns.clear(nb_pool, s.sbuffer)
+	ns.clear(s.sbuffer)
 	socket_pool[fd] = nil
 	core.close(fd, TAG)
 end
@@ -140,18 +143,12 @@ function socket.read(fd, n)
 	if n <= 0 then
 		return ""
 	end
-	local r = ns.read(nb_pool, s.sbuffer, n)
+	local r = ns.read(s.sbuffer, n)
 	if r then
 		return r
 	end
 	s.delim = n
-	local ok = suspend(s)
-	if ok == false then	--occurs error
-		return nil
-	end
-	local r = ns.read(nb_pool, s.sbuffer, n)
-	assert(r)
-	return r;
+	return suspend(s)
 end
 
 function socket.readall(fd)
@@ -163,7 +160,7 @@ function socket.readall(fd)
 	if n == 0 then
 		return ""
 	end
-	local r = ns.read(nb_pool, s.sbuffer, n)
+	local r = ns.read(s.sbuffer, n)
 	assert(r)
 	return r;
 end
@@ -174,20 +171,13 @@ function socket.readline(fd, delim)
 	if not s then
 		return nil
 	end
-	local r = ns.readline(nb_pool, s.sbuffer, delim)
+	local r = ns.readline(s.sbuffer, delim)
 	if r then
 		return r
 	end
 
 	s.delim = delim
-	local ok = suspend(s)
-	if ok == false then	--occurs error
-		return nil
-	end
-
-	local r = ns.readline(nb_pool, s.sbuffer, delim)
-	assert(r)
-	return r
+	return suspend(s)
 end
 
 function socket.write(fd, str)
