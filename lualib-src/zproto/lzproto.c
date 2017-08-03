@@ -380,14 +380,23 @@ decode_table(struct zproto_args *args)
 static const void *
 get_buffer(lua_State *L, int n, size_t *sz)
 {
+	size_t offset;
+	const char *ptr;
 	if (lua_type(L, n) == LUA_TSTRING) {
-		return luaL_checklstring(L, n, sz);
+		ptr = luaL_checklstring(L, n, sz);
+		++n;
 	} else {
+		ptr = (char *)lua_touserdata(L, n);
 		*sz = luaL_checkinteger(L, n + 1);
-		return lua_touserdata(L, n);
+		n = n + 2;
 	}
-
-	return NULL;
+	offset = luaL_optinteger(L, n, 0);
+	if (offset != 0) {
+		luaL_argcheck(L, offset < *sz, n, "offset out of buffer");
+		ptr += offset;
+		*sz -= offset;
+	}
+	return ptr;
 }
 
 static int
