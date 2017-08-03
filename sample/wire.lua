@@ -11,7 +11,7 @@ function M.decode(proto, d, sz)
 	local data
 	local cmd = string.unpack("<I4", str)
 	if (len > 4) then
-		data = proto:decode(cmd, str:sub(4+1))
+		data = proto:decode(cmd, str, 4)
 	else
 		data = NIL
 	end

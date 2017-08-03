@@ -101,7 +101,7 @@ function server.listen(self)
 				return
 			end
 			local command = rpc.command
-			local body = rpcproto:decode(command, str:sub(takes + 1))
+			local body = rpcproto:decode(command, str, takes)
 			if not body then
 				print("[rpc.server] parse body fail", rpc.session, command)
 				return
@@ -212,7 +212,7 @@ local function doconnect(self)
 				return
 			end
 			local command = rpc.command
-			local body = rpcproto:decode(command, str:sub(takes + 1))
+			local body = rpcproto:decode(command, str, takes)
 			if not body then
 				print("[rpc.client] parse body fail", rpc.session, command)
 				return
