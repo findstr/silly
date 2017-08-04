@@ -13,7 +13,7 @@ return function()
 	local aes1_key = "lilei"
 	local aes1_body = "hello"
 	local aes2_key = "hanmeimei"
-	local aes2_body = "12345678910111213141516"
+	local aes2_body = "1234567891011121314151612345678910111213141516"
 	local aes1_encode = crypt.aesencode(aes1_key, aes1_body)
 	local aes2_encode = crypt.aesencode(aes2_key, aes2_body)
 	local aes1_decode = crypt.aesdecode(aes1_key, aes1_encode)

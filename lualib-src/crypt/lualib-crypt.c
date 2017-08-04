@@ -13,18 +13,18 @@ lrandomkey(lua_State *L)
 {
 	int i;
 	char buff[8];
-
 	for (i = 0; i < 8; i++)
 		buff[i] = random() % 26 + 'a';
-
 	lua_pushlstring(L, buff, 8);
 
 	return 1;
 }
 
+#define	AESBUFF_LEN (512)
 #define AESKEY_LEN (32)
 #define AESGROUP_LEN (16)
-#define AESIV ("!*^$~)_+=-)(87^$#Dfhjklmnb<>,k./;KJl")
+#define	AESGROUP_LEN_POWER (4)
+#define AESIV ((uint32_t *)("!*^$~)_+=-)(87^$#Dfhjklmnb<>,k./;KJl"))
 
 static void
 aes_encode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
@@ -32,32 +32,32 @@ aes_encode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
 	int i;
 	int group;
 	int last;
+	const uint32_t *iv;
 	uint8_t tail[AESGROUP_LEN];
 	aes_context ctx;
-
-	group = sz / AESGROUP_LEN;
-	last = sz % AESGROUP_LEN;
-
+	group = sz >> AESGROUP_LEN_POWER;
+	last = sz & (AESGROUP_LEN - 1);
 	//CBC
+	iv = AESIV;
 	aes_set_key(&ctx, key, AESKEY_LEN * 8);
 	for (i = 0; i < group; i++) {
-		int gi = i * AESGROUP_LEN;
-		aes_encrypt(&ctx, &src[gi], &dst[gi]);
+		const uint32_t *from = (uint32_t *)src;
+		uint32_t *to = (uint32_t *)dst;
+		to[0] = from[0] ^ iv[0];
+		to[1] = from[1] ^ iv[1];
+		to[2] = from[2] ^ iv[2];
+		to[3] = from[3] ^ iv[3];
+		aes_encrypt(&ctx, dst, dst);
+		iv = (uint32_t *)dst;
+		src += AESGROUP_LEN;
+		dst += AESGROUP_LEN;
 	}
-
+	if (last == 0)
+		return ;
 	//OFB
-	if (last) {
-		if (group) {
-			memcpy(tail, &dst[(group - 1) * AESGROUP_LEN], sizeof(tail));
-		} else {
-			memcpy(tail, AESIV, sizeof(tail));
-		}
-		aes_encrypt(&ctx, tail, tail);
-		for (i = 0; i < last; i++) {
-			int gi = group * AESGROUP_LEN;
-			dst[gi + i] = src[gi + i]^tail[i];
-		}
-	}
+	aes_encrypt(&ctx, (uint8_t *)iv, tail);
+	for (i = 0; i < last; i++)
+		dst[i] = src[i] ^ tail[i];
 	return ;
 }
 
@@ -65,37 +65,50 @@ static void
 aes_decode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
 {
 	int i;
-	int group;
 	int last;
+	int group;
+	uint32_t *ptr32;
+	const uint32_t *iv;
 	uint8_t tail[AESGROUP_LEN];
 	aes_context ctx;
-
-	group = sz / AESGROUP_LEN;
-	last = sz % AESGROUP_LEN;
-
+	src += sz;
+	dst += sz;
+	group = sz >> AESGROUP_LEN_POWER;
+	last = sz & (AESGROUP_LEN - 1);
 	aes_set_key(&ctx, key, AESKEY_LEN * 8);
-	if (last) {
-		if (group) {
-			int gi = (group - 1) * AESGROUP_LEN;
-			memcpy(tail, &src[gi], sizeof(tail));
-		} else {
-			memcpy(tail, AESIV, sizeof(tail));
-		}
-	}
-	//CBC
-	for (i = 0; i < group; i++) {
-		int gi = i * AESGROUP_LEN;
-		aes_decrypt(&ctx, &src[gi], &dst[gi]);
-	}
-
 	//OFB
-	if (last) {
-		aes_encrypt(&ctx, tail, tail);
-		for (i = 0; i < last; i++) {
-			int gi = group * AESGROUP_LEN;
-			dst[gi + i] = src[gi + i]^tail[i];
-		}
+	if (last != 0) {
+		src = src - last;
+		dst = dst - last;
+		iv = group == 0 ? AESIV : (uint32_t *)(src - AESGROUP_LEN);
+		aes_encrypt(&ctx, (const uint8_t *)iv, tail);
+		for (i = 0; i < last; i++)
+			dst[i] = src[i] ^ tail[i];
 	}
+	if (group == 0)
+		return ;
+	src -= AESGROUP_LEN;
+	dst -= AESGROUP_LEN;
+	while (group > 1) {
+		iv = (uint32_t *)(src - AESGROUP_LEN);
+		aes_decrypt(&ctx, src, dst);
+		ptr32 = (uint32_t *)dst;
+		ptr32[0] = ptr32[0] ^ iv[0];
+		ptr32[1] = ptr32[1] ^ iv[1];
+		ptr32[2] = ptr32[2] ^ iv[2];
+		ptr32[3] = ptr32[3] ^ iv[3];
+		src = (uint8_t *)iv;
+		dst -= AESGROUP_LEN;
+		--group;
+	}
+	iv = AESIV;
+	aes_decrypt(&ctx, src, dst);
+	ptr32 = (uint32_t *)dst;
+	ptr32[0] = ptr32[0] ^ iv[0];
+	ptr32[1] = ptr32[1] ^ iv[1];
+	ptr32[2] = ptr32[2] ^ iv[2];
+	ptr32[3] = ptr32[3] ^ iv[3];
+
 	return ;
 }
 
@@ -105,14 +118,28 @@ typedef void (* aes_func_t)(
 				uint8_t *dst,
 				int sz);
 
-static int
+static inline uint8_t *
+aes_getbuffer(lua_State *L, size_t need)
+{
+	uint8_t *data;
+	int idx = lua_upvalueindex(1);
+	size_t total = lua_rawlen(L, idx);
+	if (total < need) {
+		data = lua_newuserdata(L, need);
+		lua_replace(L, idx);
+	} else {
+		data = lua_touserdata(L, idx);
+	}
+	return data;
+}
+
+static inline int
 aes_do(lua_State *L, aes_func_t func)
 {
 	uint8_t key[AESKEY_LEN];
 	int data_type;
 	size_t key_sz;
 	const uint8_t *key_text;
-
 	key_text = (uint8_t *)luaL_checklstring(L, 1, &key_sz);
 	if (key_sz > AESKEY_LEN) {
 		sha256_context ctx;
@@ -123,14 +150,15 @@ aes_do(lua_State *L, aes_func_t func)
 		memset(key, 0, sizeof(key));
 		memcpy(key, key_text, key_sz);
 	}
-
 	data_type = lua_type(L, 2);
 	if (data_type == LUA_TSTRING) {
-		size_t data_sz;
-		const uint8_t *data = (const uint8_t *)luaL_checklstring(L, 2, &data_sz);
-		uint8_t *recv = (uint8_t *)lua_newuserdata(L, data_sz);
-		func(key, data, recv, data_sz);
-		lua_pushlstring(L, (char *)recv, data_sz);
+		uint8_t *recv;
+		size_t datasz;
+		const uint8_t *data;
+		data = (const uint8_t *)luaL_checklstring(L, 2, &datasz);
+		recv = aes_getbuffer(L, datasz);
+		func(key, data, recv, datasz);
+		lua_pushlstring(L, (char *)recv, datasz);
 		return 1;
 	} else if (data_type == LUA_TLIGHTUSERDATA) {
 		uint8_t *data = (uint8_t *)lua_touserdata(L, 2);
@@ -293,6 +321,18 @@ lbase64decode(lua_State *L)
 	return 1;
 }
 
+static inline void
+setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
+{
+	while (tbl->name) {
+		lua_newuserdata(L, AESBUFF_LEN);
+		lua_pushcclosure(L, tbl->func, 1);
+		lua_setfield(L, -2, tbl->name);
+		++tbl;
+	}
+	return ;
+}
+
 int
 luaopen_crypt(lua_State *L)
 {
@@ -306,8 +346,13 @@ luaopen_crypt(lua_State *L)
 		{"base64decode", lbase64decode},
 		{NULL, NULL},
 	};
-
+	luaL_Reg tbl_b[] = {
+		{"aesencode", laesencode},
+		{"aesdecode", laesdecode},
+		{NULL, NULL},
+	};
+	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
-
+	setfuncs_withbuffer(L, tbl_b);
 	return 1;
 }
