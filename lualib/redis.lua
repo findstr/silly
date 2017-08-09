@@ -78,10 +78,11 @@ end)
 local function pack_cmd(cmd, param)
 	assert(type(param) == "table")
 	local count = #param
-	local lines = {}
-	lines[1] = cache_head[count + 1]
-	lines[2] = cache_count[#cmd]
-	lines[3] = cmd
+	local lines = {
+		cache_head[count + 1],
+		cache_count[#cmd],
+		cmd,
+	}
 	local idx = 4
 	for i = 1, count do
 		local v = tostring(param[i])
@@ -92,6 +93,21 @@ local function pack_cmd(cmd, param)
 	end
 	lines[idx] = "\r\n"
 	return lines
+end
+
+local function pack_table(cmd, out)
+	local len = #cmd
+	local oi = #out + 1
+	out[oi] = cache_head[len]
+	oi = oi + 1
+	for i = 1, len do
+		local v = tostring(cmd[i])
+		out[oi] = cache_count[#v]
+		oi = oi + 1
+		out[oi] = v
+		oi = oi + 1
+	end
+	out[oi] = "\r\n"
 end
 
 function redis:connect(config)
@@ -114,20 +130,51 @@ end
 
 setmetatable(redis, {__index = function (self, k)
 	local cmd = upper(k)
-	local f = function (self, p, ...)
-		if type(p) == "table" then
-			local str = pack_cmd(cmd, p)
-			return self.sock:request(str, read_response)
+	local f = function (self, p1, ...)
+		local sock = self.sock
+		local str
+		if type(p1) == "table" then
+			str = pack_cmd(cmd, p1)
 		else
-			local str = pack_cmd(cmd, {p, ...})
-			return self.sock:request(str, read_response)
+			str = pack_cmd(cmd, {p1, ...})
 		end
+		return sock:request(str, read_response)
 	end
 	self[k] = f
 	return f
 end
 })
 
+function redis:pipeline(req, ret)
+	local out = {}
+	local cmd_len = #req
+	for i = 1, cmd_len do
+		pack_table(req[i], out)
+	end
+	local read
+	if not ret then
+		return self.sock:request(out, function(sock)
+			local ok, res
+			for i = 1, cmd_len do
+				ok, res = read_response(sock)
+			end
+			return ok, res
+		end)
+	else
+		return self.sock:request(out, function(sock)
+			local ok, res
+			local j = 0
+			for i = 1, cmd_len do
+				ok, res = read_response(sock)
+				j = j + 1
+				ret[j] = ok
+				j = j + 1
+				ret[j] = res
+			end
+			return true, j
+		end)
+	end
+end
 
 return redis
 
