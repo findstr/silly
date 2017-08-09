@@ -174,7 +174,8 @@ push(struct lua_State *L, int sid, char *data, int sz)
 		nb->head = NULL;
 		nb->tail = NULL;
 		if (luaL_newmetatable(L, "nodebuffer")) {
-			lua_pushcfunction(L, lclear);
+			lua_pushvalue(L, POOL);
+			lua_pushcclosure(L, lclear, 1);
 			lua_setfield(L, -2, "__gc");
 		}
 		lua_setmetatable(L, -2);
