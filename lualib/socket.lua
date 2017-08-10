@@ -185,8 +185,7 @@ function socket.write(fd, str)
 	if not s then
 		return false, "already closed"
 	end
-	local p, sz = ns.pack(str)
-	return core.write(fd, p, sz)
+	return core.write(fd, str)
 end
 
 ---------udp
@@ -232,8 +231,7 @@ function socket.udpwrite(fd, str, addr)
 	if not socket_pool[fd] then
 		return false
 	end
-	local p, sz = ns.pack(str)
-	return core.udpwrite(fd, p, sz, addr)
+	return core.udpwrite(fd, str, addr)
 end
 
 return socket

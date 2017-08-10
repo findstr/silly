@@ -348,58 +348,6 @@ lreadline(struct lua_State *L)
 	return pushstring(L, nb, readn);
 }
 
-static inline void *
-createbuffer(lua_State *L, int idx, size_t *size)
-{
-	int type = lua_type(L, idx);
-	switch (type) {
-	case LUA_TSTRING: {
-		size_t sz;
-		const char *str = lua_tolstring(L, idx, &sz);
-		char *p = silly_malloc(sz);
-		memcpy(p, str, sz);
-		*size = sz;
-		return p;}
-	case LUA_TTABLE: {
-		int i;
-		size_t n;
-		const char *str;
-		char *p, *current;
-		size_t total = 0;
-		int top = lua_gettop(L);
-		int count = lua_rawlen(L, idx);
-		lua_checkstack(L, count);
-		for (i = 1; i <= count; i++) {
-			lua_rawgeti(L, idx, i);
-			luaL_checklstring(L, -1, &n);
-			total += n;
-		}
-		current = p = silly_malloc(total);
-		for (i = top + 1; i <= count + top; i++) {
-			str = lua_tolstring(L, i, &n);
-			memcpy(current, str, n);
-			current += n;
-		}
-		*size = total;
-		lua_settop(L, top);
-		return p;}
-	}
-	*size = 0;
-	luaL_error(L, "netstream.pack unsupport:%s", lua_typename(L, idx));
-	return NULL;
-}
-
-static int
-lpack(struct lua_State *L)
-{
-	char *p;
-	size_t size;
-	p = createbuffer(L, 1, &size);
-	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, size);
-	return 2;
-}
-
 static int
 lpush(lua_State *L)
 {
@@ -448,10 +396,12 @@ ltodata(lua_State *L)
 static int
 tpush(lua_State *L)
 {
+	size_t sz;
 	int fd = luaL_checkinteger(L, 2);
-	char *ud = lua_touserdata(L, 3);
-	int sz = luaL_checkinteger(L, 4);
-	return push(L, fd, ud, sz);
+	const char *src = luaL_checklstring(L, 3, &sz);
+	void *dat = silly_malloc(sz);
+	memcpy(dat, src, sz);
+	return push(L, fd, dat, sz);
 }
 
 int luaopen_netstream(lua_State *L)
@@ -464,7 +414,6 @@ int luaopen_netstream(lua_State *L)
 		{"readline", lreadline},
 		{"check", lcheck},
 		{"todata", ltodata},
-		{"pack", lpack},
 		{NULL, NULL},
 	};
 

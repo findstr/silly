@@ -254,8 +254,81 @@ lfreemulti(lua_State *L)
 	return 0;
 }
 
-static inline int
-dotcpsend(lua_State *L, silly_finalizer_t finalizer)
+static inline void *
+stringbuffer(lua_State *L, int idx, size_t *size)
+{
+	size_t sz;
+	const char *str = lua_tolstring(L, idx, &sz);
+	char *p = silly_malloc(sz);
+	memcpy(p, str, sz);
+	*size = sz;
+	return p;
+}
+
+static inline void *
+udatabuffer(lua_State *L, int idx, size_t *size)
+{
+	*size = luaL_checkinteger(L, idx + 1);
+	return lua_touserdata(L, idx);
+}
+
+static inline void *
+tablebuffer(lua_State *L, int idx, size_t *size)
+{
+	int i;
+	size_t n;
+	const char *str;
+	char *p, *current;
+	size_t total = 0;
+	int top = lua_gettop(L);
+	int count = lua_rawlen(L, idx);
+	lua_checkstack(L, count);
+	for (i = 1; i <= count; i++) {
+		lua_rawgeti(L, idx, i);
+		luaL_checklstring(L, -1, &n);
+		total += n;
+	}
+	current = p = silly_malloc(total);
+	for (i = top + 1; i <= count + top; i++) {
+		str = lua_tolstring(L, i, &n);
+		memcpy(current, str, n);
+		current += n;
+	}
+	*size = total;
+	lua_settop(L, top);
+	return p;
+}
+
+static int
+ltcpsend(lua_State *L)
+{
+	int err;
+	int sid;
+	size_t size;
+	uint8_t *buff;
+	sid = luaL_checkinteger(L, 1);
+	int type = lua_type(L, 2);
+	switch (type) {
+	case LUA_TSTRING:
+		buff = stringbuffer(L, 2, &size);
+		break;
+	case LUA_TLIGHTUSERDATA:
+		buff = udatabuffer(L, 2, &size);
+		break;
+	case LUA_TTABLE:
+		buff = tablebuffer(L, 2, &size);
+		break;
+	default:
+		return luaL_error(L, "netstream.pack unsupport:%s",
+			lua_typename(L, 2));
+	}
+	err = silly_socket_send(sid, buff, size, NULL);
+	lua_pushboolean(L, err < 0 ? 0 : 1);
+	return 1;
+}
+
+static int
+ltcpmulticast(lua_State *L)
 {
 	int err;
 	int sid;
@@ -264,21 +337,9 @@ dotcpsend(lua_State *L, silly_finalizer_t finalizer)
 	sid = luaL_checkinteger(L, 1);
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
-	err = silly_socket_send(sid, buff, size, finalizer);
+	err = silly_socket_send(sid, buff, size, finalizermulti);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
-}
-
-static int
-ltcpsend(lua_State *L)
-{
-	return dotcpsend(L, NULL);
-}
-
-static int
-ltcpmulticast(lua_State *L)
-{
-	return dotcpsend(L, finalizermulti);
 }
 
 static int
@@ -300,19 +361,35 @@ ludpbind(lua_State *L)
 static int
 ludpsend(lua_State *L)
 {
+	int idx;
 	int err;
 	int sid;
-	size_t sz;
+	size_t size;
 	uint8_t *buff;
 	const char *addr = NULL;
 	size_t addrlen = 0;
-
 	sid = luaL_checkinteger(L, 1);
-	buff = lua_touserdata(L, 2);
-	sz = luaL_checkinteger(L, 3);
-	if (lua_type(L, 4) != LUA_TNIL)
-		addr = luaL_checklstring(L, 4, &addrlen);
-	err = silly_socket_udpsend(sid, buff, sz, addr, addrlen, NULL);
+	int type = lua_type(L, 2);
+	switch (type) {
+	case LUA_TSTRING:
+		idx = 3;
+		buff = stringbuffer(L, 2, &size);
+		break;
+	case LUA_TLIGHTUSERDATA:
+		idx = 4;
+		buff = udatabuffer(L, 2, &size);
+		break;
+	case LUA_TTABLE:
+		idx = 3;
+		buff = tablebuffer(L, 2, &size);
+		break;
+	default:
+		return luaL_error(L, "netstream.pack unsupport:%s",
+			lua_typename(L, 2));
+	}
+	if (lua_type(L, idx) != LUA_TNIL)
+		addr = luaL_checklstring(L, idx, &addrlen);
+	err = silly_socket_udpsend(sid, buff, size, addr, addrlen, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }

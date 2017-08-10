@@ -3,18 +3,16 @@ local rp = require "netstream"
 return function()
 
 	print("test rawpacket module")
-	local pack1, sz1 = rp.pack("hello")
 	print("pack first", "hello")
-	local pack2, sz2 = rp.pack("a")
 	print("pack first", "a")
-	local pack3, sz3 = rp.pack("\rworld\ntail\r\n");
 	print("pack second", "\\rworld\\ntail\\r\\n")
 
 	local sb
 
-	sb = rp.tpush(sb, 3, pack1, sz1)
-	sb = rp.tpush(sb, 3, pack2, sz2)
-	sb = rp.tpush(sb, 3, pack3, sz3)
+	sb = rp.tpush(sb, 3, "hello")
+	sb = rp.tpush(sb, 3, "a")
+	sb = rp.tpush(sb, 3, "\rworld\ntail\r\n")
+
 
 	local data = rp.read(sb, 1)
 	print("read 1 byte:", data)
