@@ -8,7 +8,7 @@
 
 static size_t allocsize = 0;
 
-static size_t
+static inline size_t
 xalloc_usable_size(void *ptr)
 {
 #if defined(__linux__)
@@ -42,7 +42,7 @@ silly_realloc(void *ptr, size_t sz)
 	return ptr;
 }
 
-void 
+void
 silly_free(void *ptr)
 {
 	size_t real = xalloc_usable_size(ptr);

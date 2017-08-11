@@ -22,8 +22,8 @@ struct silly_config {
 };
 
 #define MSGCOMMONFIELD	\
-	enum silly_message_type type;\
-	struct silly_message *next;
+	struct silly_message *next;\
+	enum silly_message_type type;
 
 #define tocommon(msg)   ((struct silly_message *)(msg))
 #define tosocket(msg)   ((struct silly_message_socket *)(msg))

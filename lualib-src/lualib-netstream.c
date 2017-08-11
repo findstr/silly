@@ -17,17 +17,17 @@
 #define POOL_CHUNK_LIMIT (512)
 
 struct node {
+	struct node *next;
 	int start;
 	int size;
 	char *buff;
-	struct node *next;
 };
 
 struct node_buffer {
 	int sid;
 	int size;
 	struct node *head;
-	struct node *tail;
+	struct node **tail;
 };
 
 static int
@@ -100,14 +100,8 @@ static inline void
 append_node(struct node_buffer *nb, struct node *n)
 {
 	n->next = NULL;
-	if (nb->head == NULL)
-		nb->head = n;
-	if (nb->tail == NULL) {
-		nb->tail = n;
-	} else {
-		nb->tail->next = n;
-		nb->tail = n;
-	}
+	*nb->tail = n;
+	nb->tail = &n->next;
 	nb->size += n->size;
 	return ;
 }
@@ -119,7 +113,7 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 	assert(nb->tail);
 	nb->head = nb->head->next;
 	if (nb->head == NULL)
-		nb->tail = NULL;
+		nb->tail = &nb->head;
 	assert(n->buff);
 	silly_free(n->buff);
 	n->buff = NULL;
@@ -172,7 +166,7 @@ push(struct lua_State *L, int sid, char *data, int sz)
 		nb->sid = sid;
 		nb->size = 0;
 		nb->head = NULL;
-		nb->tail = NULL;
+		nb->tail = &nb->head;
 		if (luaL_newmetatable(L, "nodebuffer")) {
 			lua_pushvalue(L, POOL);
 			lua_pushcclosure(L, lclear, 1);

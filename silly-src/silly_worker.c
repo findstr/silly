@@ -24,12 +24,11 @@ struct silly_worker {
 struct silly_worker *W;
 
 
-void 
+void
 silly_worker_push(struct silly_message *msg)
 {
 	size_t sz;
-	silly_queue_push(W->queue, msg);
-	sz = silly_queue_size(W->queue);
+	sz = silly_queue_push(W->queue, msg);
 	if (sz > W->maxmsg) {
 		W->maxmsg *= 2;
 		fprintf(stderr, "may overload, now message size is:%zu\n", sz);
@@ -40,12 +39,14 @@ void
 silly_worker_dispatch()
 {
 	struct silly_message *msg;
+	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
 	while (msg) {
 		assert(W->callback);
 		W->callback(W->L, msg);
-		silly_message_free(msg);
-		msg = silly_queue_pop(W->queue);
+		tmp = msg;
+		msg = msg->next;
+		silly_message_free(tmp);
 	}
 	return ;
 }
@@ -62,7 +63,7 @@ silly_worker_msgsz()
 	return silly_queue_size(W->queue);
 }
 
-void 
+void
 silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message *msg))
 {
 	assert(callback);
@@ -138,7 +139,7 @@ silly_worker_start(struct silly_config *config)
 	return ;
 }
 
-void 
+void
 silly_worker_init()
 {
 	W = (struct silly_worker *)silly_malloc(sizeof(*W));
@@ -148,7 +149,7 @@ silly_worker_init()
 	return ;
 }
 
-void 
+void
 silly_worker_exit()
 {
 	lua_close(W->L);

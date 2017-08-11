@@ -6,9 +6,9 @@
 
 struct silly_queue {
 	int lock;
-	struct silly_message head;
-	struct silly_message *tail;
 	size_t size;
+	struct silly_message **tail;
+	struct silly_message *head;
 };
 
 static inline void
@@ -32,7 +32,7 @@ silly_queue_create()
 	struct silly_queue *q = (struct silly_queue *)silly_malloc(sizeof(*q));
 	q->lock = 0;
 	q->size = 0;
-	q->head.next = NULL;
+	q->head = NULL;
 	q->tail = &q->head;
 
 	return q;
@@ -43,7 +43,7 @@ silly_queue_free(struct silly_queue *q)
 {
 	struct silly_message *next, *tmp;
 	lock(q);
-	next = q->head.next;
+	next = q->head;
 	while (next) {
 		tmp = next;
 		next = next->next;
@@ -57,13 +57,12 @@ silly_queue_free(struct silly_queue *q)
 int
 silly_queue_push(struct silly_queue *q, struct silly_message *msg)
 {
-	lock(q);
-	q->tail->next = msg;
 	msg->next = NULL;
-	q->tail = msg;
+	lock(q);
+	*q->tail = msg;
+	q->tail = &msg->next;
 	unlock(q);
-	__sync_fetch_and_add(&q->size, 1);
-	return 0;
+	return __sync_add_and_fetch(&q->size, 1);
 }
 
 
@@ -71,22 +70,19 @@ struct silly_message *
 silly_queue_pop(struct silly_queue *q)
 {
 	struct silly_message *msg;
-
-	if (q->head.next == NULL)
+	if (q->head == NULL)
 		return NULL;
 	lock(q);
 	//double check
-	if (q->head.next == NULL) {
+	if (q->head == NULL) {
 		unlock(q);
 		return NULL;
 	}
-	msg = q->head.next;
-	q->head.next = msg->next;
-	if (q->tail == msg)
-		q->tail = &q->head;
-
+	msg = q->head;
+	q->head = NULL;
+	q->tail = &q->head;
 	unlock(q);
-	__sync_fetch_and_sub(&q->size, 1);
+	__sync_fetch_and_xor(&q->size, q->size);
 	return msg;
 }
 

@@ -53,9 +53,9 @@ enum stype {
 
 
 struct wlist {
+	struct wlist *next;
 	size_t size;
 	uint8_t *buff;
-	struct wlist *next;
 	silly_finalizer_t finalizer;
 	struct sockaddr udpaddress;
 };
@@ -67,8 +67,8 @@ struct socket {
 	int protocol;
 	enum stype type;
 	size_t wloffset;
-	struct wlist wlhead;
-	struct wlist *wltail;
+	struct wlist *wlhead;
+	struct wlist **wltail;
 };
 
 struct silly_socket {
@@ -104,7 +104,7 @@ socketpool_init(struct silly_socket *ss)
 		pool->type = STYPE_RESERVE;
 		pool->presize = MIN_READBUFF_LEN;
 		pool->wloffset = 0;
-		pool->wlhead.next = NULL;
+		pool->wlhead = NULL;
 		pool->wltail = &pool->wlhead;
 		pool++;
 	}
@@ -131,7 +131,7 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 		struct socket *s = &ss->socketpool[HASH(id)];
 		if (s->type == STYPE_RESERVE) {
 			if (__sync_bool_compare_and_swap(&s->type, STYPE_RESERVE, type)) {
-				assert(s->wlhead.next == NULL);
+				assert(s->wlhead == NULL);
 				assert(s->wltail == &s->wlhead);
 				s->protocol = protocol;
 				s->presize = MIN_READBUFF_LEN;
@@ -146,7 +146,7 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 	return NULL;
 }
 
-static void
+static inline void
 wlist_append(struct socket *s, uint8_t *buff, size_t size,
 		silly_finalizer_t finalizer, const struct sockaddr *addr)
 {
@@ -158,8 +158,8 @@ wlist_append(struct socket *s, uint8_t *buff, size_t size,
 	w->next = NULL;
 	if (addr)
 		w->udpaddress = *addr;
-	s->wltail->next = w;
-	s->wltail = w;
+	*s->wltail = w;
+	s->wltail = &w->next;
 	return ;
 }
 
@@ -168,7 +168,7 @@ wlist_free(struct socket *s)
 {
 	struct wlist *w;
 	struct wlist *t;
-	w = s->wlhead.next;
+	w = s->wlhead;
 	while (w) {
 		t = w;
 		w = w->next;
@@ -176,14 +176,14 @@ wlist_free(struct socket *s)
 		t->finalizer(t->buff);
 		silly_free(t);
 	}
-	s->wlhead.next = NULL;
+	s->wlhead = NULL;
 	s->wltail = &s->wlhead;
 	return ;
 }
 static inline int
 wlist_empty(struct socket *s)
 {
-	return s->wlhead.next == NULL ? 1 : 0;
+	return s->wlhead == NULL ? 1 : 0;
 }
 
 static inline void
@@ -191,7 +191,7 @@ freesocket(struct silly_socket *ss, struct socket *s)
 {
 	(void)ss;
 	wlist_free(s);
-	assert(s->wlhead.next == NULL);
+	assert(s->wlhead == NULL);
 	__sync_synchronize();
 	s->type = STYPE_RESERVE;
 }
@@ -548,7 +548,7 @@ static void
 send_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
 	struct wlist *w;
-	w = s->wlhead.next;
+	w = s->wlhead;
 	assert(w);
 	while (w) {
 		ssize_t sz;
@@ -564,10 +564,10 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 			return ;
 		assert((size_t)s->wloffset == w->size);
 		s->wloffset = 0;
-		s->wlhead.next = w->next;
+		s->wlhead = w->next;
 		w->finalizer(w->buff);
 		silly_free(w);
-		w = s->wlhead.next;
+		w = s->wlhead;
 		if (w == NULL) {//send ok
 			s->wltail = &s->wlhead;
 			sp_write_enable(ss->spfd, s->fd, s, 0);
@@ -582,7 +582,7 @@ static void
 send_msg_udp(struct silly_socket *ss, struct socket *s)
 {
 	struct wlist *w;
-	w = s->wlhead.next;
+	w = s->wlhead;
 	assert(w);
 	while (w) {
 		ssize_t sz;
@@ -591,10 +591,10 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 			break;
 		assert(sz == -1 || (size_t)sz == w->size);
 		//send fail && send ok will clear
-		s->wlhead.next = w->next;
+		s->wlhead = w->next;
 		w->finalizer(w->buff);
 		silly_free(w);
-		w = s->wlhead.next;
+		w = s->wlhead;
 		if (w == NULL) {//send all
 			s->wltail = &s->wlhead;
 			sp_write_enable(ss->spfd, s->fd, s, 0);
