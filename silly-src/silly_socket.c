@@ -14,6 +14,7 @@
 #include <sys/select.h>
 
 #include "silly.h"
+#include "atomic.h"
 #include "socket_poll.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
@@ -122,15 +123,15 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 		protocol == PROTOCOL_PIPE
 		);
 	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
-		id = __sync_add_and_fetch(&ss->reserveid, 1);
+		id = atomic_add_return(&ss->reserveid, 1);
 		if (id < 0) {
 			id = id & 0x7fffffff;
-			__sync_and_and_fetch(&ss->reserveid, 0x7fffffff);
+			atomic_and_return(&ss->reserveid, 0x7fffffff);
 		}
 
 		struct socket *s = &ss->socketpool[HASH(id)];
 		if (s->type == STYPE_RESERVE) {
-			if (__sync_bool_compare_and_swap(&s->type, STYPE_RESERVE, type)) {
+			if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
 				assert(s->wlhead == NULL);
 				assert(s->wltail == &s->wlhead);
 				s->protocol = protocol;
@@ -192,7 +193,7 @@ freesocket(struct silly_socket *ss, struct socket *s)
 	(void)ss;
 	wlist_free(s);
 	assert(s->wlhead == NULL);
-	__sync_synchronize();
+	atomic_barrier();
 	s->type = STYPE_RESERVE;
 }
 

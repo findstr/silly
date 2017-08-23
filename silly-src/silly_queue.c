@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "atomic.h"
 #include "silly.h"
 #include "silly_malloc.h"
 
@@ -14,7 +15,7 @@ struct silly_queue {
 static inline void
 lock(struct silly_queue *q)
 {
-	while (__sync_lock_test_and_set(&q->lock, 1))
+	while (atomic_lock(&q->lock, 1))
 		;
 	return ;
 }
@@ -22,7 +23,7 @@ lock(struct silly_queue *q)
 static inline void
 unlock(struct silly_queue *q)
 {
-	__sync_lock_release(&q->lock);
+	atomic_release(&q->lock);
 	return ;
 }
 
@@ -62,7 +63,7 @@ silly_queue_push(struct silly_queue *q, struct silly_message *msg)
 	*q->tail = msg;
 	q->tail = &msg->next;
 	unlock(q);
-	return __sync_add_and_fetch(&q->size, 1);
+	return atomic_add_return(&q->size, 1);
 }
 
 
@@ -82,7 +83,7 @@ silly_queue_pop(struct silly_queue *q)
 	q->head = NULL;
 	q->tail = &q->head;
 	unlock(q);
-	__sync_fetch_and_xor(&q->size, q->size);
+	atomic_xor(&q->size, q->size);
 	return msg;
 }
 

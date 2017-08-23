@@ -11,6 +11,7 @@
 #endif
 
 #include "silly.h"
+#include "atomic.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
@@ -69,7 +70,7 @@ freenode(struct node *n)
 static inline void
 lock(struct silly_timer *timer)
 {
-	while (__sync_lock_test_and_set(&timer->lock, 1))
+	while (atomic_lock(&timer->lock, 1))
 		;
 
 }
@@ -77,7 +78,7 @@ lock(struct silly_timer *timer)
 static inline void
 unlock(struct silly_timer *timer)
 {
-	__sync_lock_release(&timer->lock);
+	atomic_release(&timer->lock);
 }
 
 uint64_t
@@ -265,9 +266,9 @@ silly_timer_update()
 	delta = time - T->ticktime;
 	assert(delta > 0);
 	//uint64_t on x86 platform, can't assign as a automatic
-	__sync_lock_test_and_set(&T->ticktime, time);
-	__sync_fetch_and_add(&T->clocktime, delta);
-	__sync_fetch_and_add(&T->monotonic, delta);
+	atomic_lock(&T->ticktime, time);
+	atomic_add(&T->clocktime, delta);
+	atomic_add(&T->monotonic, delta);
 	for (i = 0; i < delta; i++)
 		update_timer(T);
 	assert((uint32_t)T->ticktime == T->expire);

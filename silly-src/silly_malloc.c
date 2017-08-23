@@ -1,3 +1,4 @@
+#include "atomic.h"
 #include "silly_malloc.h"
 
 #if defined(__linux__)
@@ -25,7 +26,7 @@ silly_malloc(size_t sz)
 {
 	void *ptr = malloc(sz);
 	int real = xalloc_usable_size(ptr);
-	__sync_fetch_and_add(&allocsize, real);
+	atomic_add(&allocsize, real);
 	return ptr;
 }
 
@@ -36,9 +37,9 @@ silly_realloc(void *ptr, size_t sz)
 	ptr = realloc(ptr, sz);
 	size_t realn = xalloc_usable_size(ptr);
 	if (realo > realn)	//shrink
-		__sync_fetch_and_sub(&allocsize, realo - realn);
+		atomic_sub(&allocsize, realo - realn);
 	else
-		__sync_fetch_and_add(&allocsize, realn - realo);
+		atomic_add(&allocsize, realn - realo);
 	return ptr;
 }
 
@@ -46,7 +47,7 @@ void
 silly_free(void *ptr)
 {
 	size_t real = xalloc_usable_size(ptr);
-	__sync_fetch_and_sub(&allocsize, real);
+	atomic_sub(&allocsize, real);
 	free(ptr);
 }
 
