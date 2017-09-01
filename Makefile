@@ -38,17 +38,18 @@ $(LUASTATICLIB):
 #-----------project
 TEST_PATH = test
 LUACLIB_PATH ?= luaclib
-INCLUDE = -I lua/ -I silly-src/
+SRC_PATH = silly-src
+INCLUDE = -I lua/ -I $(SRC_PATH)
 SRC = \
-      silly-src/main.c\
-      silly-src/silly_socket.c\
-      silly-src/silly_queue.c\
-      silly-src/silly_worker.c\
-      silly-src/silly_timer.c\
-      silly-src/silly_run.c\
-      silly-src/silly_daemon.c\
-      silly-src/silly_env.c\
-      silly-src/silly_malloc.c\
+      $(SRC_PATH)/main.c\
+      $(SRC_PATH)/silly_socket.c\
+      $(SRC_PATH)/silly_queue.c\
+      $(SRC_PATH)/silly_worker.c\
+      $(SRC_PATH)/silly_timer.c\
+      $(SRC_PATH)/silly_run.c\
+      $(SRC_PATH)/silly_daemon.c\
+      $(SRC_PATH)/silly_env.c\
+      $(SRC_PATH)/silly_malloc.c\
 
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
@@ -93,21 +94,20 @@ $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.
 $(TEST_PATH)/testaux.so: test/testaux.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
--include $(SRC:.c=.d)
+.depend:
+	@$(CC) $(INCLUDE) -MM $(SRC) |\
+		sed 's/\([^.]*\).o[: ]/$(SRC_PATH)\/\1.o $@: /g' > $@ || true
 
-%.d:%.c
-	@set -e; rm -f $@;\
-	$(CC) $(INCLUDE) -MM $< > $@.$$$$;\
-	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
-	rm -f $@.$$$$
+-include .depend
 
 %.o:%.c
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
 
 clean:
-	-rm $(SRC:.c=.d) $(SRC:.c=.o) *.so $(TARGET)
+	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
 	-rm $(TEST_PATH)/*.so
+	-rm .depend
 
 cleanall: clean
 	make -C lua/ clean
