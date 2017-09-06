@@ -1,6 +1,7 @@
 # Object files
 *.o
 *.d
+.depend
 tags
 gate
 server

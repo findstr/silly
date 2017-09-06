@@ -1,3 +1,4 @@
+local core = require "silly.core"
 local socket = require "socket"
 local stream = require "http.stream"
 
@@ -101,7 +102,7 @@ local function httpd(fd, handler)
 	local write = function (status, header, body)
 		server.send(fd, status, header, body)
 	end
-
+	local pcall = core.pcall
 	while true do
 		local status, first, header, body = stream.recv_request(readl, readn)
 		if not status then	--disconnected
@@ -132,10 +133,18 @@ local function httpd(fd, handler)
 			end
 			body = ""
 		end
-		handler(header, body, write)
+		local ok, err = pcall(handler, header, body, write)
+		if not ok then
+			print(err)
+			socket.close(fd)
+			return
+		end
+		if header["Connection"] == "close" then
+			socket.close(fd)
+			return
+		end
 	end
 end
-
 
 function server.listen(port, handler)
 	local h = function(fd)

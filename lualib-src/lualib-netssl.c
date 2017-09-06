@@ -52,7 +52,7 @@ newsocketbuff(lua_State *L, size_t queuesz)
 static void
 expandqueue(lua_State *L, struct socketbuff *sb)
 {
-	int i;
+	size_t i;
 	size_t idx = sb->popi;
 	struct socketbuff *newsb;
 	size_t queuecap = sb->queuecap * 2;
@@ -138,7 +138,7 @@ sslwrite(BIO *h, const char *buff, int num)
 {
 	uint8_t *dat = (uint8_t *)silly_malloc(num);
 	memcpy(dat, buff, num);
-	silly_socket_send(h->num, dat, num);
+	silly_socket_send(h->num, dat, num, NULL);
 	return num;
 }
 
@@ -158,7 +158,7 @@ sslread(BIO *h, char *buff, int size)
 	int offset;
 	struct socketbuff *sb;
 	sb = h->ptr;
-	if (sb->datasz < size)
+	if (sb->datasz < (size_t)size)
 		return -1;
 	count += size;
 	ret = size;
@@ -171,7 +171,7 @@ sslread(BIO *h, char *buff, int size)
 		once = i->size;
 		once = once > size ? size : once;
 		memcpy(buff, i->buff + offset, once);
-		if (once == i->size) {
+		if (once == (int)i->size) {
 			offset = 0;
 			silly_free(i->buff);
 			queuedrop(sb);
