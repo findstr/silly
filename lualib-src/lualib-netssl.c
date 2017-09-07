@@ -149,8 +149,6 @@ sslputs(BIO *h, const char *str)
 	return sslwrite(h, str, n);
 }
 
-static int count = 0;
-
 static int
 sslread(BIO *h, char *buff, int size)
 {
@@ -160,7 +158,6 @@ sslread(BIO *h, char *buff, int size)
 	sb = h->ptr;
 	if (sb->datasz < (size_t)size)
 		return -1;
-	count += size;
 	ret = size;
 	offset = sb->offset;
 	while (size > 0) {
@@ -321,15 +318,19 @@ lread(lua_State *L)
 	struct socketbuff *sb;
 	sb = (struct socketbuff *)luaL_checkudata(L, 1, "socketbuff");
 	size = luaL_checkinteger(L, 2);
-	assert(sb->presize == 0);
+	assert((size_t)size > sb->presize);
+	size -= sb->presize;
 	checkprebuff(sb, size);
-	ret = SSL_read(sb->ssl, sb->prebuff, size);
+	ret = SSL_read(sb->ssl, &sb->prebuff[sb->presize], size);
 	if (ret < 0) {
 		lua_pushnil(L);
+	} else if (ret < size) {
+		sb->presize += ret;
+		lua_pushnil(L);
 	} else {
-		assert(ret == size);
-		lua_pushlstring(L, sb->prebuff, size);
+		size += sb->presize;
 		sb->presize = 0;
+		lua_pushlstring(L, sb->prebuff, size);
 	}
 	return 1;
 }
