@@ -61,7 +61,7 @@ thread_socket(void *arg)
 static void *
 thread_worker(void *arg)
 {
-	struct silly_config *c;
+	const struct silly_config *c;
 	c = (struct silly_config *)arg;
 	silly_worker_start(c);
 	while (R.run) {
@@ -106,7 +106,7 @@ signal_init()
 }
 
 void
-silly_run(struct silly_config *config)
+silly_run(const struct silly_config *config)
 {
 	int i;
 	int err;
@@ -128,7 +128,7 @@ silly_run(struct silly_config *config)
 	srand(time(NULL));
 	thread_create(&pid[0], thread_socket, NULL);
 	thread_create(&pid[1], thread_timer, NULL);
-	thread_create(&pid[2], thread_worker, config);
+	thread_create(&pid[2], thread_worker, (void *)config);
 	fprintf(stdout, "%s is running ...\n", config->selfname);
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);

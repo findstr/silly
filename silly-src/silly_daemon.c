@@ -8,66 +8,76 @@
 #include "silly.h"
 #include "silly_daemon.h"
 
-static FILE *pidfile;
+static int pidfile;
 extern int daemon(int, int);
 
 static void
-pidfile_create(struct silly_config *config)
+pidfile_create(const struct silly_config *config)
 {
-	int fd;
 	int err;
 	const char *path = config->pidfile;
-	pidfile = NULL;
+	pidfile = -1;
 	if (path[0] == '\0')
 		return ;
-	fd = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-	if (fd == -1) {
+	pidfile = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+	if (pidfile == -1) {
 		perror("open");
 		fprintf(stderr, "[pidfile] create '%s' fail.\n", path);
 		exit(-1);
 	}
-	err = flock(fd, LOCK_NB | LOCK_EX);
+	err = flock(pidfile, LOCK_NB | LOCK_EX);
 	if (err == -1) {
 		char pid[128];
-		pidfile = fdopen(fd, "r+");
-		fscanf(pidfile, "%s\n", pid);
+		FILE *fp = fdopen(pidfile, "r+");
+		fscanf(fp , "%s\n", pid);
 		fprintf(stderr, "[pidfile] lock '%s' fail,"
 			"another instace of '%s' alread run\n",
 			path, pid);
-		fclose(pidfile);
-		pidfile = NULL;
+		fclose(fp);
 		exit(-1);
 	}
-	ftruncate(fd, 0);
-	pidfile = fdopen(fd, "r+");
-	fprintf(pidfile, "%d\n", (int)getpid());
-	fclose(pidfile);
+	ftruncate(pidfile, 0);
 	return ;
 }
 
-static void
-pidfile_delete(struct silly_config *config)
+static inline void
+pidfile_write()
 {
-	if (pidfile == NULL)
+	int sz;
+	char pid[128];
+	if (pidfile == -1)
 		return ;
+	sz = sprintf(pid, "%d\n", (int)getpid());
+	write(pidfile, pid, sz);
+	return ;
+}
+
+static inline void
+pidfile_delete(const struct silly_config *config)
+{
+	if (pidfile == -1)
+		return ;
+	close(pidfile);
 	unlink(config->pidfile);
 	return ;
 }
 
 void
-silly_daemon_start(struct silly_config *config)
+silly_daemon_start(const struct silly_config *config)
 {
 	int fd;
 	int err;
 	char path[128];
 	if (!config->daemon)
 		return ;
+	pidfile_create(config);
 	err = daemon(1, 0);
 	if (err < 0) {
+		pidfile_delete(config);
 		perror("DAEMON");
 		exit(0);
 	}
-	pidfile_create(config);
+	pidfile_write();
 	snprintf(path, 128, "%s%s-%d.log", config->logpath, config->selfname, getpid());
 	fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 00666);
 	if (fd >= 0) {
@@ -81,7 +91,7 @@ silly_daemon_start(struct silly_config *config)
 }
 
 void
-silly_daemon_stop(struct silly_config *config)
+silly_daemon_stop(const struct silly_config *config)
 {
 	if (!config->daemon)
 		return ;

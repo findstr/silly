@@ -119,7 +119,7 @@ lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 }
 
 void
-silly_worker_start(struct silly_config *config)
+silly_worker_start(const struct silly_config *config)
 {
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
