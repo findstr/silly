@@ -4,7 +4,6 @@ local stream = require "http.stream"
 local dns = require "dns"
 
 local client = {}
-local EMPTY = {}
 
 local function parseurl(url)
 	local default = false
@@ -77,7 +76,9 @@ local function process(uri, method, header, body)
 	if not fd then
 		return 599
 	end
-	header = header or EMPTY
+	if not header then
+		header = {}
+	end
 	body = body or ""
 	send_request(io_do, fd, method, host, path, header, body)
 	local status, header, body, ver = recv_response(io_do, fd)
