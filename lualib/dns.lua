@@ -2,7 +2,7 @@ local socket = require "socket"
 local core = require "silly.core"
 
 local dns = {}
-
+local dns_server = "192.168.1.1@53"
 local domain_cache = {}
 local wait_coroutine = {}
 local weakmt = {__mode = "kv"}
@@ -199,7 +199,7 @@ local function checkconnect()
 	if connectfd >= 0 then
 		return connectfd
 	end
-	return socket.udp("223.5.5.5@53", callback)
+	return socket.udp(dns_server, callback)
 end
 
 function query_request(domain, timeout)
@@ -240,6 +240,9 @@ function dns.isdomain(addr)
 	return true
 end
 
+function dns.server(ip)
+	dns_server = ip
+end
 
 return dns
 
