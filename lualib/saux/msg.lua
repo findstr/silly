@@ -31,7 +31,7 @@ local function servercb(sc, config)
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
-			print("[msg] EVENT.accept", err)
+			core.log("[msg] EVENT.accept", err)
 			core.close(fd, TAG)
 		end
 	end
@@ -39,7 +39,7 @@ local function servercb(sc, config)
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close_cb, fd, errno)
 		if not ok then
-			print("[msg] EVENT.close", err)
+			core.log("[msg] EVENT.close", err)
 		end
 	end
 
@@ -52,7 +52,7 @@ local function servercb(sc, config)
 		while true do
 			local ok, err = core.pcall(data_cb, f, d, sz)
 			if not ok then
-				print("[msg] dispatch socket", err)
+				core.log("[msg] dispatch socket", err)
 			end
 			f, d, sz = np.pop(queue)
 			if not f then
@@ -106,7 +106,7 @@ local function clientcb(sc, config)
 		local ok, err = core.pcall(close_cb, fd, errno)
 		sc.fd = false
 		if not ok then
-			print("[msg] EVENT.close", err)
+			core.log("[msg] EVENT.close", err)
 		end
 	end
 
@@ -119,7 +119,7 @@ local function clientcb(sc, config)
 		while true do
 			local ok, err = core.pcall(data_cb, f, d, sz)
 			if not ok then
-				print("[msg] EVENT.data", err)
+				core.log("[msg] EVENT.data", err)
 			end
 			f, d, sz = np.pop(queue)
 			if not f then

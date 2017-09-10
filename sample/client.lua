@@ -10,16 +10,16 @@ local encode = wire.encode
 local client = msg.createclient {
 	addr = env.get "sampled_port",
 	accept = function(fd, addr)
-		print("accept", addr)
+		core.log("accept", addr)
 	end,
 	close = function(fd, errno)
-		print("close", fd, errno)
+		core.log("close", fd, errno)
 	end,
 	data = function(fd, d, sz)
 		local cmd, dat = decode(proto, d, sz)
-		print("read", cmd)
+		core.log("read", cmd)
 		for k, v in pairs(dat) do
-			print(k, v)
+			core.log(k, v)
 		end
 	end
 }
@@ -29,13 +29,13 @@ local function oneuser()
 	local ok = client:send(encode(proto, "r_hello", {
 		val = "client"
 	}))
-	print("send r_hello", ok)
+	core.log("send r_hello", ok)
 	local ok = client:send(encode(proto, "r_sum", {
 		val1 = 1,
 		val2 = 3,
 		suffix = "client"
 	}))
-	print("send r_sum", ok)
+	core.log("send r_sum", ok)
 	core.sleep(100)
 	client:close()
 end

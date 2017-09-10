@@ -71,7 +71,7 @@ function server.listen(self)
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept, fd, addr)
 		if not ok then
-			print("[rpc.server] EVENT.accept", err)
+			core.log("[rpc.server] EVENT.accept", err)
 			np.clear(queue, fd)
 			core.close(fd, TAG)
 		end
@@ -80,7 +80,7 @@ function server.listen(self)
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close, fd, errno)
 		if not ok then
-			print("[rpc.server] EVENT.close", err)
+			core.log("[rpc.server] EVENT.close", err)
 		end
 		np.clear(queue, fd)
 	end
@@ -97,18 +97,18 @@ function server.listen(self)
 			np.drop(d, sz)
 			local rpc, takes = proto:decode("rpc", str)
 			if not rpc then
-				print("[rpc.server] parse the header fail")
+				core.log("[rpc.server] parse the header fail")
 				return
 			end
 			local command = rpc.command
 			local body = rpcproto:decode(command, str, takes)
 			if not body then
-				print("[rpc.server] parse body fail", rpc.session, command)
+				core.log("[rpc.server] parse body fail", rpc.session, command)
 				return
 			end
 			local ok, cmd, res = core.pcall(call, fd, command, body)
 			if not ok or not cmd then
-				print("[rpc.server] dispatch socket", cmd)
+				core.log("[rpc.server] dispatch socket", cmd)
 				return
 			end
 			--ack
@@ -161,7 +161,7 @@ local function clienttimer(self)
 		for k, v in pairs(wk) do
 			local co = waitpool[v]
 			if co then
-				print("[rpc.client] timeout session", v)
+				core.log("[rpc.client] timeout session", v)
 				ackcmd[v] = "timeout"
 				core.wakeup(co)
 				waitpool[v] = nil
@@ -190,7 +190,7 @@ local function doconnect(self)
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close, fd, errno)
 		if not ok then
-			print("[rpc.client] EVENT.close", err)
+			core.log("[rpc.client] EVENT.close", err)
 		end
 		self.fd = nil
 		np.clear(queue, fd)
@@ -208,13 +208,13 @@ local function doconnect(self)
 			np.drop(d, sz)
 			local rpc, takes = proto:decode("rpc", str)
 			if not rpc then
-				print("[rpc.client] parse the header fail")
+				core.log("[rpc.client] parse the header fail")
 				return
 			end
 			local command = rpc.command
 			local body = rpcproto:decode(command, str, takes)
 			if not body then
-				print("[rpc.client] parse body fail", rpc.session, command)
+				core.log("[rpc.client] parse body fail", rpc.session, command)
 				return
 			end
 			--ack

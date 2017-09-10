@@ -120,7 +120,7 @@ end
 
 return function (config)
 	socket.listen(config.addr, function(fd, addr)
-		print("console come in:", addr)
+		core.log("console come in:", addr)
 		local param = {}
 		while true do
 			local l = socket.readline(fd)
@@ -148,7 +148,7 @@ return function (config)
 				param[i] = nil
 			end
 		end
-		print(addr, "leave")
+		core.log(addr, "leave")
 end)
 
 end

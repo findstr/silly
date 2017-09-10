@@ -5,6 +5,25 @@
 #include "silly_malloc.h"
 #include "silly_socket.h"
 
+#define MSGCOMMONFIELD	\
+	struct silly_message *next;\
+	enum silly_message_type type;
+
+#define tocommon(msg)   ((struct silly_message *)(msg))
+#define tosocket(msg)   ((struct silly_message_socket *)(msg))
+#define texpire(msg)    (assert((msg)->type == SILLY_TEXPIRE),\
+				((struct silly_message_texpire *)(msg)))
+#define saccept(msg)    (assert((msg)->type == SILLY_SACCEPT),\
+				((struct silly_message_socket *)(msg)))
+#define sclose(msg)     (assert((msg)->type == SILLY_SCLOSE),\
+				((struct silly_message_socket *)(msg)))
+#define sconnected(msg) (assert((msg)->type == SILLY_SCONNECTED),\
+				((struct silly_message_socket *)(msg)))
+#define sdata(msg)      (assert((msg)->type == SILLY_SDATA),\
+				((struct silly_message_socket *)(msg)))
+#define sudp(msg)       (assert((msg)->type == SILLY_SUDP),\
+				((struct silly_message_socket *)(msg)))
+
 struct silly_listen {
 	char name[64];
 	char addr[64];
@@ -21,18 +40,6 @@ struct silly_config {
 	char pidfile[256];
 };
 
-#define MSGCOMMONFIELD	\
-	struct silly_message *next;\
-	enum silly_message_type type;
-
-#define tocommon(msg)   ((struct silly_message *)(msg))
-#define tosocket(msg)   ((struct silly_message_socket *)(msg))
-#define texpire(msg)    (assert((msg)->type == SILLY_TEXPIRE), ((struct silly_message_texpire *)(msg)))
-#define saccept(msg)    (assert((msg)->type == SILLY_SACCEPT), ((struct silly_message_socket *)(msg)))
-#define sclose(msg)     (assert((msg)->type == SILLY_SCLOSE), ((struct silly_message_socket *)(msg)))
-#define sconnected(msg) (assert((msg)->type == SILLY_SCONNECTED), ((struct silly_message_socket *)(msg)))
-#define sdata(msg)      (assert((msg)->type == SILLY_SDATA), ((struct silly_message_socket *)(msg)))
-#define sudp(msg)       (assert((msg)->type == SILLY_SUDP), ((struct silly_message_socket *)(msg)))
 
 enum silly_message_type {
 	SILLY_TEXPIRE		= 1,

@@ -25,13 +25,13 @@ local function cocall()
 	while true do
 		local ret, func = coyield("EXIT")
 		if ret ~= "STARTUP" then
-			print("create coroutine fail", ret)
-			print(debug.traceback())
+			core.log("create coroutine fail", ret)
+			core.log(debug.traceback())
 			return
 		end
 		local ok, err = core.pcall(func, coyield())
 		if ok == false then
-			print("call", err)
+			core.log("call", err)
 		end
 	end
 end
@@ -57,6 +57,7 @@ function core.running()
 	local co = corunning()
 	return co
 end
+core.log = silly.log
 core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
@@ -74,8 +75,8 @@ core.pcall = function(f, ...)
 end
 
 function core.error(errmsg)
-	print(errmsg)
-	print(debug.traceback())
+	core.log(errmsg)
+	core.log(debug.traceback())
 end
 
 
@@ -117,8 +118,8 @@ local function waityield(co, ret, typ)
 		assert(co)
 		copool[#copool + 1] = co
 	else
-		print("silly.core waityield unkonw return type", typ)
-		print(debug.traceback())
+		core.log("silly.core waityield unkonw return type", typ)
+		core.log(debug.traceback())
 	end
 	return dispatch_wakeup()
 end
@@ -218,12 +219,12 @@ function core.listen(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		print("listen invaild port", port)
+		core.log("listen invaild port", port)
 		return nil
 	end
 	local id = silly.listen(ip, port, backlog);
 	if id < 0 then
-		print("listen", port, "error",	id)
+		core.log("listen", port, "error", id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
@@ -240,12 +241,12 @@ function core.bind(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		print("listen invaild port", port)
+		core.log("listen invaild port", port)
 		return nil
 	end
 	local id = silly.bind(ip, port);
 	if id < 0 then
-		print("udpbind", port, "error",  id)
+		core.log("udpbind", port, "error",  id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
@@ -325,7 +326,7 @@ end
 function MSG.accept(fd, _, portid, addr)
 	assert(socket_dispatch[fd] == nil)
 	assert(socket_connect[fd] == nil)
-	assert(socket_dispatch[portid])
+	assert(socket_dispatch[portid], portid)
 	socket_dispatch[fd] = assert(socket_dispatch[portid])
 	socket_tag[fd] = socket_tag[portid]
 	return socket_dispatch[fd]

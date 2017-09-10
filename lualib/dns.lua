@@ -83,14 +83,6 @@ local function build_request(domain)
 			)
 end
 
-local function dump_hex(str)
-	local echo = ""
-	for i = 1, #str do
-		echo = echo .. string.format("(%d)%x ", i, str:byte(i))
-	end
-	print(echo)
-end
-
 local function parsename(init, dat, pos, ptr)
 	if ptr and ptr > 0xc000 then --ptr
 		pos = ptr & 0x3fff

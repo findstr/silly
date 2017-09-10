@@ -15,6 +15,7 @@
 
 #include "silly.h"
 #include "atomic.h"
+#include "silly_log.h"
 #include "socket_poll.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
@@ -143,7 +144,7 @@ allocsocket(struct silly_socket *ss, enum stype type, int protocol)
 			}
 		}
 	}
-	fprintf(stderr, "[socket] allocsocket fail, find no empty entry\n");
+	silly_log("[socket] allocsocket fail, find no empty entry\n");
 	return NULL;
 }
 
@@ -214,9 +215,9 @@ newsocket(struct silly_socket *ss, struct socket *s, int fd, enum stype type, vo
 	s->type = type;
 	err = sp_add(ss->spfd, fd, s);
 	if (err < 0) {
+		silly_log("[socket] newsocket %s\n", strerror(errno));
 		if (report)
 			report(ss, s, errno);
-		perror("newsocket");
 		close(fd);
 		freesocket(ss, s);
 		return NULL;
@@ -229,7 +230,7 @@ delsocket(struct silly_socket *ss, struct socket *s)
 {
 	if (s->type == STYPE_RESERVE) {
 		const char *fmt = "[socket] delsocket sid:%d error type:%d\n";
-		fprintf(stderr, fmt, s->sid, s->type);
+		silly_log(fmt, s->sid, s->type);
 		return ;
 	}
 	sp_del(ss->spfd, s->fd);
@@ -262,13 +263,13 @@ nonblock(int fd)
 	int flag;
 	flag = fcntl(fd, F_GETFL, 0);
 	if (flag < 0) {
-		perror("nonblock F_GETFL");
+		silly_log("[socket] nonblock F_GETFL:%s\n", strerror(errno));
 		return ;
 	}
 	flag |= O_NONBLOCK;
 	err = fcntl(fd, F_SETFL, flag);
 	if (err < 0) {
-		perror("nonblock F_SETFL");
+		silly_log("[socket] nonblock F_SETFL:%s\n", strerror(errno));
 		return ;
 	}
 	return ;
@@ -281,7 +282,7 @@ nodelay(int fd)
 	int on = 1;
 	err = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
 	if (err < 0)
-		perror("nodelay fail");
+		silly_log("[socket] nodelay error:%s\n", strerror(errno));
 }
 
 static void
@@ -291,7 +292,7 @@ keepalive(int fd)
 	int on = 1;
 	err = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
 	if (err < 0)
-		perror("keepalive fail");
+		silly_log("[socket] keepalive error:%s\n", strerror(errno));
 }
 
 #define ADDRLEN (64)
@@ -369,12 +370,11 @@ checkconnected(int fd)
 	socklen_t errlen = sizeof(err);
 	ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
 	if (ret < 0) {
-		perror("checkconnected");
+		silly_log("[socket] checkconnected:%s\n", strerror(errno));
 		return ret;
 	}
 	if (err != 0) {
-		errno = err;
-		fprintf(stderr, "[socket] checkconnected:%d\n", err);
+		silly_log("[socket] checkconnected:%s\n", strerror(err));
 		return -1;
 	}
 	return 0;
@@ -662,7 +662,8 @@ pipe_blockread(int fd, struct cmdpacket *pk)
 		if (err == -1) {
 			if (errno  == EINTR)
 				continue;
-			perror("pip_blockread");
+			silly_log("[socket] pip_blockread error:%s\n",
+				strerror(errno));
 			return -1;
 		}
 		assert(err == sizeof(*pk));
@@ -679,7 +680,8 @@ pipe_blockwrite(int fd, struct cmdpacket *pk)
 		if (err == -1) {
 			if (errno == EINTR)
 				continue;
-			perror("pipe_blockwrite");
+			silly_log("[socket] pipe_blockwrite error:%s",
+				strerror(errno));
 			return -1;
 		}
 		assert(err == sizeof(*pk));
@@ -730,7 +732,7 @@ dolisten(const char *ip, uint16_t port, int backlog)
 		goto end;
 	return fd;
 end:
-	perror("dolisten");
+	silly_log("[socket] dolisten error:%s\n", strerror(errno));
 	close(fd);
 	return -1;
 
@@ -747,7 +749,8 @@ silly_socket_listen(const char *ip, uint16_t port, int backlog)
 		return fd;
 	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (s == NULL) {
-		fprintf(stderr, "[socket] listen %s:%d:%d allocsocket fail\n", ip, port, backlog);
+		silly_log("[socket] listen %s:%d:%d allocsocket fail\n",
+			ip, port, backlog);
 		close(fd);
 		return -1;
 	}
@@ -775,7 +778,8 @@ silly_socket_udpbind(const char *ip, uint16_t port)
 	nonblock(fd);
 	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (s == NULL) {
-		fprintf(stderr, "[socket] udplisten %s:%d allocsocket fail\n", ip, port);
+		silly_log("[socket] udplisten %s:%d allocsocket fail\n",
+			ip, port);
 		goto end;
 	}
 	s->fd = fd;
@@ -784,7 +788,7 @@ silly_socket_udpbind(const char *ip, uint16_t port)
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd);
 	return s->sid;
 end:
-	perror("udplisten");
+	silly_log("[socket] udplisten error:%s\n", strerror(errno));
 	close(fd);
 	return -1;
 }
@@ -799,7 +803,7 @@ trylisten(struct silly_socket *ss, struct cmdpacket *cmd)
 	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
 	if (err < 0) {
-		perror("trylisten");
+		silly_log("[socket] trylisten error:%s\n", strerror(errno));
 		report_close(ss, s, errno);
 		close(s->fd);
 		freesocket(ss, s);
@@ -819,7 +823,7 @@ tryudpbind(struct silly_socket *ss, struct cmdpacket *cmd)
 	assert(s->type = STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
 	if (err < 0) {
-		perror("tryudpbind");
+		silly_log("[socket] tryudpbind error:%s\n", strerror(errno));
 		report_close(ss, s, errno);
 		close(s->fd);
 		freesocket(ss, s);
@@ -883,7 +887,7 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
 		err = bindfd(fd, bip, bport);
 	if (fd < 0 || err < 0) {
 		const char *fmt = "[socket] bind %s:%d, errno:%d\n";
-		fprintf(stderr, fmt, bip, bport, errno);
+		silly_log(fmt, bip, bport, errno);
 		if (fd >= 0)
 			close(fd);
 		report_close(ss, s, errno);
@@ -896,7 +900,7 @@ tryconnect(struct silly_socket *ss, struct cmdpacket *cmd)
 	err = connect(fd, &addr, sizeof(addr));
 	if (err == -1 && errno != EINPROGRESS) {	//error
 		const char *fmt = "[socket] tryconnect %s:%d,errno:%d\n";
-		fprintf(stderr, fmt, ip, port, errno);
+		silly_log(fmt, ip, port, errno);
 		close(fd);
 		report_close(ss, s, errno);
 		freesocket(ss, s);
@@ -949,7 +953,7 @@ end:
 		close(fd);
 	if (s)
 		freesocket(SSOCKET, s);
-	fprintf(stderr, fmt, addr, port, errno);
+	silly_log(fmt, addr, port, errno);
 	return -1;
 }
 
@@ -972,7 +976,7 @@ checksocket(struct silly_socket *ss, int sid)
 {
 	struct socket *s = &ss->socketpool[HASH(sid)];
 	if (s->sid != sid) {
-		fprintf(stderr, "[socket] checksocket invalid sid\n");
+		silly_log("[socket] checksocket invalid sid\n");
 		return NULL;
 	}
 	switch (s->type) {
@@ -981,8 +985,7 @@ checksocket(struct silly_socket *ss, int sid)
 	case STYPE_UDPBIND:
 		return s;
 	default:
-		fprintf(stderr,
-			"[socket] checksocket sid:%d unsupport type:%d\n",
+		silly_log("[socket] checksocket sid:%d unsupport type:%d\n",
 			s->sid, s->type);
 		return NULL;
 	}
@@ -1054,7 +1057,7 @@ silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t
 	assert(s->type == STYPE_UDPBIND || s->type == STYPE_SOCKET);
 	if (s->type == STYPE_UDPBIND && addr == NULL) {
 		finalizer(buff);
-		fprintf(stderr, "[socket] udpsend udpbind socket must specify dest addr\n");
+		silly_log("[socket] udpsend udpbind must specify dest addr\n");
 		return -1;
 	}
 	cmd.type = 'U';
@@ -1190,7 +1193,8 @@ cmd_process(struct silly_socket *ss)
 			close = -1;
 			break;
 		default:
-			fprintf(stderr, "[socket] cmd_process:unkonw operation:%d\n", cmd.type);
+			silly_log("[socket] cmd_process:unkonw operation:%d\n",
+				cmd.type);
 			assert(!"oh, no!");
 			break;
 		}
@@ -1205,7 +1209,7 @@ eventwait(struct silly_socket *ss)
 		ss->eventcount = sp_wait(ss->spfd, ss->eventbuff, ss->eventcap);
 		ss->eventindex = 0;
 		if (ss->eventcount < 0) {
-			fprintf(stderr, "[socket] eventwait:%d\n", errno);
+			silly_log("[socket] eventwait:%d\n", errno);
 			continue;
 		}
 		break;
@@ -1242,7 +1246,7 @@ silly_socket_poll()
 			report_connected(ss, s);
 			continue;
 		case STYPE_RESERVE:
-			fprintf(stderr, "[socket] poll reserve socket\n");
+			silly_log("[socket] poll reserve socket\n");
 			continue;
 		case STYPE_HALFCLOSE:
 		case STYPE_SOCKET:
@@ -1251,7 +1255,7 @@ silly_socket_poll()
 		case STYPE_CTRL:
 			continue;
 		default:
-			fprintf(stderr, "[socket] poll: unkonw socket type:%d\n", s->type);
+			silly_log("[socket] poll: unkonw socket type:%d\n", s->type);
 			continue;
 		}
 
@@ -1269,7 +1273,9 @@ silly_socket_poll()
 				err = forward_msg_udp(ss, s);
 				break;
 			default:
-				fprintf(stderr, "[socket] poll: unsupport protocol:%d\n", s->protocol);
+				silly_log("[socket] poll:"
+					"unsupport protocol:%d\n",
+					s->protocol);
 				continue;
 			}
 			//this socket have already occurs error, so ignore the write event

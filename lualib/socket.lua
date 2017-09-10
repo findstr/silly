@@ -25,7 +25,7 @@ function EVENT.accept(fd, _, portid, addr)
 	new_socket(fd)
 	local ok, err = core.pcall(lc.disp, fd, addr)
 	if not ok then
-		print(err)
+		core.log(err)
 		socket.close(fd)
 	end
 end

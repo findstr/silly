@@ -6,6 +6,7 @@
 #include <lauxlib.h>
 
 #include "silly.h"
+#include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
 #include "silly_worker.h"
@@ -31,7 +32,7 @@ silly_worker_push(struct silly_message *msg)
 	sz = silly_queue_push(W->queue, msg);
 	if (sz > W->maxmsg) {
 		W->maxmsg *= 2;
-		fprintf(stderr, "may overload, now message size is:%zu\n", sz);
+		silly_log("may overload, now message size is:%zu\n", sz);
 	}
 }
 
@@ -125,13 +126,13 @@ silly_worker_start(const struct silly_config *config)
 	luaL_openlibs(L);
 
 	if (setlibpath(L, config->lualib_path, config->lualib_cpath) != 0) {
-		fprintf(stderr, "silly worker set lua libpath fail,%s\n", lua_tostring(L, -1));
+		silly_log("silly worker set lua libpath fail,%s\n", lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}
 	lua_gc(L, LUA_GCRESTART, 0);
 	if (luaL_loadfile(L, config->bootstrap) || lua_pcall(L, 0, 0, 0)) {
-		fprintf(stderr, "silly worker call %s fail,%s\n", config->bootstrap, lua_tostring(L, -1));
+		silly_log("silly worker call %s fail,%s\n", config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}

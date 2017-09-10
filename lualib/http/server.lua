@@ -135,7 +135,7 @@ local function httpd(fd, handler)
 		end
 		local ok, err = pcall(handler, header, body, write)
 		if not ok then
-			print(err)
+			core.log(err)
 			socket.close(fd)
 			return
 		end

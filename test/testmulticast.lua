@@ -29,6 +29,7 @@ return function()
 		end
 	}
 	local ok = server:start()
+	print("testmulticast start", ok, server.fd)
 	assert(ok, "testmulticast start")
 
 	local inst

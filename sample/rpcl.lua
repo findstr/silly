@@ -1,3 +1,4 @@
+local core = require "silly.core"
 local proto = require "rpcproto"
 
 local DO = {}
@@ -11,7 +12,7 @@ DO[proto:querytag("rrpc_sum")] = function(fd, cmd, msg)
 		val = msg.val1 + msg.val2,
 		suffix = msg.suffix .. ".rpcd." .. idx
 	}
-	print("call", fd, cmd, msg)
+	core.log("call", fd, cmd, msg)
 	return "arpc_sum", arpc_sum
 end
 

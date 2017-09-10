@@ -30,6 +30,7 @@ SRC = \
       $(SRC_PATH)/silly_daemon.c\
       $(SRC_PATH)/silly_env.c\
       $(SRC_PATH)/silly_malloc.c\
+      $(SRC_PATH)/silly_log.c\
 
 OBJS = $(patsubst %.c,%.o,$(SRC))
 

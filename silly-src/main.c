@@ -6,6 +6,7 @@
 #include <lauxlib.h>
 #include <string.h>
 #include "silly.h"
+#include "silly_log.h"
 #include "silly_env.h"
 #include "silly_run.h"
 
@@ -21,7 +22,7 @@ checktype(lua_State *L, const char *key, int skt, int type)
 		const char *expect = lua_typename(L, type);
 		const char *got = lua_typename(L, lua_type(L, skt));
 		const char *fmt = "[checktype] %s expecte %s but got %s\n";
-		fprintf(stderr, fmt, key, expect, got);
+		silly_log(fmt, key, expect, got);
 		exit(-1);
 	}
 	return 0;
@@ -72,7 +73,7 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 		k = lua_tolstring(L, -2, &sz);
 		assert(curr <= end);
 		if (sz >= (size_t)(end - curr)) {
-			fprintf(stderr, "[enveach] buff is too short\n");
+			silly_log("[enveach] buff is too short\n");
 			exit(-1);
 		}
 		memcpy(curr, k, sz);
@@ -84,7 +85,7 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 			if (type != LUA_TSTRING && type != LUA_TNUMBER) {
 				const char *fmt = "[enveach]"
 					"%s expect string/number bug got:%s\n";
-				fprintf(stderr, fmt, lua_typename(L, type));
+				silly_log(fmt, lua_typename(L, type));
 			}
 			const char *value = lua_tostring(L, -1);
 			curr[sz] = '\0';
@@ -142,7 +143,7 @@ initenv(lua_State *L, const char *self, const char *file)
 	if (err != LUA_OK) {
 		const char *err = lua_tostring(L, -1);
 		err = skipcode(err);
-		fprintf(stderr, "%s parse config file:%s fail,%s\n",
+		silly_log("%s parse config file:%s fail,%s\n",
 			self, file, err);
 		lua_close(L);
 		exit(-1);
@@ -160,32 +161,32 @@ parseconfig(lua_State *L, struct silly_config *config)
 	//bootstrap
 	str = optstr(L, "bootstrap", &sz, "");
 	if (sz >= ARRAY_SIZE(config->bootstrap)) {
-		fprintf(stderr, "[config] bootstrap is too long\n");
+		silly_log("[config] bootstrap is too long\n");
 		exit(-1);
 	}
 	if (sz == 0) {
-		fprintf(stderr, "[config] bootstrap can't be empty\n");
+		silly_log("[config] bootstrap can't be empty\n");
 		exit(-1);
 	}
 	memcpy(config->bootstrap, str, sz + 1);
 	//lualib_path
 	str = optstr(L, "lualib_path", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_path)) {
-		fprintf(stderr, "[config] lualib_path is too long\n");
+		silly_log("[config] lualib_path is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_path, str, sz + 1);
 	//lualib_cpath
 	str = optstr(L, "lualib_cpath", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_cpath)) {
-		fprintf(stderr, "[config] lualib_cpath is too long\n");
+		silly_log("[config] lualib_cpath is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_cpath, str, sz + 1);
 	//logpath
 	str = optstr(L, "logpath", &sz, "");
 	if ((sz + 1) >= ARRAY_SIZE(config->logpath)) { //reserve one byte for /
-		fprintf(stderr, "[config] logpath is too long\n");
+		silly_log("[config] logpath is too long\n");
 		exit(-1);
 	}
 	memcpy(config->logpath, str, sz + 1);
@@ -199,7 +200,7 @@ parseconfig(lua_State *L, struct silly_config *config)
 	//pidfile
 	str = optstr(L, "pidfile", &sz, "");
 	if ((sz + 1) >= ARRAY_SIZE(config->pidfile)) {
-		fprintf(stderr, "[config] pidfile is too long\n");
+		silly_log("[config] pidfile is too long\n");
 		exit(-1);
 	}
 	memcpy(config->pidfile, str, sz + 1);
@@ -211,7 +212,7 @@ int main(int argc, char *argv[])
 	lua_State *L;
 	struct silly_config config;
 	if (argc != 2) {
-		fprintf(stderr, "USAGE:%s <config file>\n", argv[0]);
+		printf("USAGE:%s <config file>\n", argv[0]);
 		return -1;
 	}
 	silly_env_init();
@@ -222,7 +223,7 @@ int main(int argc, char *argv[])
 	lua_close(L);
 	silly_run(&config);
 	silly_env_exit();
-	printf("%s exit, leak memory size:%zu\n",
+	silly_log("%s exit, leak memory size:%zu\n",
 		argv[0], silly_memstatus());
 	return 0;
 }

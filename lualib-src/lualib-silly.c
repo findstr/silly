@@ -9,6 +9,7 @@
 #include <lauxlib.h>
 
 #include "silly.h"
+#include "silly_log.h"
 #include "silly_env.h"
 #include "silly_run.h"
 #include "silly_worker.h"
@@ -28,7 +29,8 @@ dispatch(lua_State *L, struct silly_message *sm)
 	lua_gettable(L, LUA_REGISTRYINDEX);
 	type = lua_type(L, -1);
 	if (type != LUA_TFUNCTION) {
-		fprintf(stderr, "callback need function but got:%d\n", type);
+		silly_log("[silly.core] callback need function"
+			"but got:%d\n", type);
 		return ;
 	}
 	lua_pushinteger(L, sm->type);
@@ -71,13 +73,15 @@ dispatch(lua_State *L, struct silly_message *sm)
 		args += 3;
 		break;
 	default:
-		fprintf(stderr, "callback unknow message type:%d\n", sm->type);
+		silly_log("[silly.core] callback unknow message type:%d\n",
+			sm->type);
 		assert(0);
 		break;
 	}
 	err = lua_pcall(L, args, 0, 0);
 	if (err != LUA_OK) {
-		fprintf(stderr, "callback call fail:%s\n", lua_tostring(L, -1));
+		silly_log("[silly.core] callback call fail:%s\n",
+			lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
 	return ;
@@ -133,6 +137,40 @@ lmsgstatus(lua_State *L)
 	sz = silly_worker_msgsz();
 	lua_pushinteger(L, sz);
 	return 1;
+}
+
+static int
+llog(lua_State *L)
+{
+	int i;
+	int paramn = lua_gettop(L);
+	silly_log("");
+	for (i = 1; i <= paramn; i++) {
+		int type = lua_type(L, i);
+		switch (type) {
+		case LUA_TSTRING:
+			silly_lograw("%s ", lua_tostring(L, i));
+			break;
+		case LUA_TNUMBER:
+			silly_lograw("%d ", (int)lua_tointeger(L, i));
+			break;
+		case LUA_TBOOLEAN:
+			silly_lograw("%s ",
+				lua_toboolean(L, i) ? "true" : "false");
+			break;
+		case LUA_TTABLE:
+			silly_lograw("table: %p ", lua_topointer(L, i));
+			break;
+		case LUA_TNIL:
+			silly_lograw("#%d.null ", i);
+			break;
+		default:
+			return luaL_error(L, "log unspport param#%d type:%s",
+				i, lua_typename(L, type));
+		}
+	}
+	silly_lograw("\n");
+	return 0;
 }
 
 static int
@@ -436,6 +474,7 @@ luaopen_silly(lua_State *L)
 		{"exit", lexit},
 		{"memstatus", lmemstatus},
 		{"msgstatus", lmsgstatus},
+		{"log", llog},
 		//timer
 		{"timeout", ltimeout},
 		{"timenow", ltimenow},

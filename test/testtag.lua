@@ -19,5 +19,6 @@ end
 return function()
 	local fd = core.listen("127.0.0.1@9009", disp)
 	test_core()
+	core.sleep(10)
 	core.close(fd)
 end

@@ -6,6 +6,7 @@
 #include <lauxlib.h>
 
 #include "silly.h"
+#include "silly_log.h"
 #include "silly_malloc.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -358,8 +359,8 @@ lpush(lua_State *L)
 	case SILLY_SCLOSE:
 	case SILLY_SCONNECTED:
 	default:
+		silly_log("lmessage unspport:%d\n", msg->type);
 		assert(!"never come here");
-		fprintf(stderr, "lmessage unspport:%d\n", msg->type);
 		return 1;
 	}
 }

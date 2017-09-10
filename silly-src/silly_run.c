@@ -7,6 +7,7 @@
 #include <errno.h>
 
 #include "silly.h"
+#include "silly_log.h"
 #include "silly_env.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
@@ -83,7 +84,7 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg)
 	int err;
 	err = pthread_create(tid, NULL, start, arg);
 	if (err < 0) {
-		fprintf(stderr, "thread create fail:%d\n", err);
+		silly_log("thread create fail:%d\n", err);
 		exit(-1);
 	}
 	return ;
@@ -120,7 +121,7 @@ silly_run(const struct silly_config *config)
 	silly_timer_init();
 	err = silly_socket_init();
 	if (err < 0) {
-		fprintf(stderr, "%s socket init fail:%d\n", config->selfname, err);
+		silly_log("%s socket init fail:%d\n", config->selfname, err);
 		silly_daemon_stop(config);
 		exit(-1);
 	}
@@ -129,7 +130,7 @@ silly_run(const struct silly_config *config)
 	thread_create(&pid[0], thread_socket, NULL);
 	thread_create(&pid[1], thread_timer, NULL);
 	thread_create(&pid[2], thread_worker, (void *)config);
-	fprintf(stdout, "%s is running ...\n", config->selfname);
+	silly_log("%s is running ...\n", config->selfname);
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
 	silly_daemon_stop(config);
@@ -138,7 +139,7 @@ silly_run(const struct silly_config *config)
 	silly_worker_exit();
 	silly_timer_exit();
 	silly_socket_exit();
-	fprintf(stdout, "%s has already exit...\n", config->selfname);
+	silly_log("%s has already exit...\n", config->selfname);
 	return ;
 }
 
