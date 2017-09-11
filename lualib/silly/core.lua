@@ -15,6 +15,8 @@ coroutine.running = nil
 coroutine.yield = nil
 coroutine.resume = nil
 
+local core_log = silly.log
+
 --coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
@@ -25,13 +27,13 @@ local function cocall()
 	while true do
 		local ret, func = coyield("EXIT")
 		if ret ~= "STARTUP" then
-			core.log("create coroutine fail", ret)
-			core.log(debug.traceback())
+			core_log("[silly.core] create coroutine fail", ret)
+			core_log(debug.traceback())
 			return
 		end
 		local ok, err = core.pcall(func, coyield())
 		if ok == false then
-			core.log("call", err)
+			core_log("[silly.core] call", err)
 		end
 	end
 end
@@ -57,7 +59,7 @@ function core.running()
 	local co = corunning()
 	return co
 end
-core.log = silly.log
+core.log = core_log
 core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
@@ -75,8 +77,8 @@ core.pcall = function(f, ...)
 end
 
 function core.error(errmsg)
-	core.log(errmsg)
-	core.log(debug.traceback())
+	core_log(errmsg)
+	core_log(debug.traceback())
 end
 
 
@@ -118,8 +120,8 @@ local function waityield(co, ret, typ)
 		assert(co)
 		copool[#copool + 1] = co
 	else
-		core.log("silly.core waityield unkonw return type", typ)
-		core.log(debug.traceback())
+		core_log("[silly.core] waityield unkonw return type", typ)
+		core_log(debug.traceback())
 	end
 	return dispatch_wakeup()
 end
@@ -219,12 +221,12 @@ function core.listen(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		core.log("listen invaild port", port)
+		core_log("[silly.core] listen invaild port", port)
 		return nil
 	end
 	local id = silly.listen(ip, port, backlog);
 	if id < 0 then
-		core.log("listen", port, "error", id)
+		core_log("[silly.core] listen", port, "error", id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
@@ -241,12 +243,12 @@ function core.bind(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		core.log("listen invaild port", port)
+		core_log("[silly.core] listen invaild port", port)
 		return nil
 	end
 	local id = silly.bind(ip, port);
 	if id < 0 then
-		core.log("udpbind", port, "error",  id)
+		core_log("[silly.core] udpbind", port, "error",  id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
