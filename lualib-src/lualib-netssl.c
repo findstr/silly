@@ -321,16 +321,21 @@ lread(lua_State *L)
 	assert((size_t)size > sb->presize);
 	size -= sb->presize;
 	checkprebuff(sb, size);
-	ret = SSL_read(sb->ssl, &sb->prebuff[sb->presize], size);
-	if (ret < 0) {
-		lua_pushnil(L);
-	} else if (ret < size) {
-		sb->presize += ret;
-		lua_pushnil(L);
-	} else {
-		size += sb->presize;
-		sb->presize = 0;
-		lua_pushlstring(L, sb->prebuff, size);
+	for (;;) {
+		ret = SSL_read(sb->ssl, &sb->prebuff[sb->presize], size);
+		if (ret < 0) {
+			lua_pushnil(L);
+			break;
+		} else {
+			sb->presize += ret;
+			size -= ret;
+			assert(size >= 0);
+			if (size == 0) {//read finish
+				lua_pushlstring(L, sb->prebuff, sb->presize);
+				sb->presize = 0;
+				break;
+			}
+		}
 	}
 	return 1;
 }
