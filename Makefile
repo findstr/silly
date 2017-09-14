@@ -41,7 +41,6 @@ all: \
 	$(TARGET) \
 	$(LUACLIB_PATH)/silly.so \
 	$(LUACLIB_PATH)/profiler.so \
-	$(LUACLIB_PATH)/log.so \
 	$(LUACLIB_PATH)/crypt.so \
 	$(LUACLIB_PATH)/netpacket.so \
 	$(LUACLIB_PATH)/netstream.so \
@@ -61,8 +60,6 @@ $(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
 $(LUACLIB_PATH)/netpacket.so: lualib-src/lualib-netpacket.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/profiler.so: lualib-src/lualib-profiler.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/log.so: lualib-src/lualib-log.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
 $(LUACLIB_PATH)/crypt.so: lualib-src/crypt/lualib-crypt.c lualib-src/crypt/lsha1.c lualib-src/crypt/aes.c lualib-src/crypt/sha256.c
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
