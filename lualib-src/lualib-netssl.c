@@ -1,7 +1,8 @@
-#include <stdlib.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef USE_OPENSSL
 
@@ -11,18 +12,58 @@
 
 #include "silly.h"
 
+#define	ssl_malloc	silly_malloc
+#define	ssl_free	silly_free
+
+static BIO_METHOD *ssl_method = NULL;
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+
+static inline
+BIO_METHOD *BIO_meth_new(int type, const char *name)
+{
+	BIO_METHOD *bm = ssl_malloc(sizeof(BIO_METHOD));
+	memset(bm, 0 , sizeof(*bm));
+	if (bm != NULL) {
+		bm->type = type;
+		bm->name = name;
+	}
+	return bm;
+}
+
+#define	BIO_set_init(b, val) (b)->init = (val)
+#define	BIO_set_data(b, val) (b)->ptr = (val)
+#define BIO_set_shutdown(b, val) (b)->shutdown = (val)
+#define	BIO_clear_flags(b, flag) (b)->flags &= ~(flag)
+#define BIO_get_init(b) (b)->init
+#define	BIO_get_data(b) (b)->ptr
+#define	BIO_get_shutdown(b) (b)->shutdown
+
+#define BIO_meth_set_write(b, f) (b)->bwrite = (f)
+#define BIO_meth_set_read(b, f) (b)->bread = (f)
+#define BIO_meth_set_puts(b, f) (b)->bputs = (f)
+#define BIO_meth_set_ctrl(b, f) (b)->ctrl = (f)
+#define BIO_meth_set_create(b, f) (b)->create = (f)
+#define BIO_meth_set_destroy(b, f) (b)->destroy = (f)
+
+
+#endif
+
+
+
 struct item {
 	uint8_t *buff;
 	size_t size;
 };
 
 struct socketbuff {
+	int fd;
+	int offset;
 	SSL *ssl;
 	BIO *bio;
+	char *prebuff;
 	size_t precap;
 	size_t presize;
-	char *prebuff;
-	int offset;
 	size_t datasz;
 	size_t popi;
 	size_t pushi;
@@ -57,6 +98,7 @@ expandqueue(lua_State *L, struct socketbuff *sb)
 	struct socketbuff *newsb;
 	size_t queuecap = sb->queuecap * 2;
 	newsb = newsocketbuff(L, queuecap);
+	newsb->fd = sb->fd;
 	newsb->bio = sb->bio;
 	newsb->ssl = sb->ssl;
 	newsb->precap = sb->precap;
@@ -71,7 +113,7 @@ expandqueue(lua_State *L, struct socketbuff *sb)
 		++idx;
 	}
 	memset(sb, 0, sizeof(*sb));
-	newsb->bio->ptr = newsb;
+	BIO_set_data(newsb->bio, newsb);
 	return ;
 }
 
@@ -136,9 +178,12 @@ gc(lua_State *L)
 static int
 sslwrite(BIO *h, const char *buff, int num)
 {
+	struct socketbuff *sb;
 	uint8_t *dat = (uint8_t *)silly_malloc(num);
 	memcpy(dat, buff, num);
-	silly_socket_send(h->num, dat, num, NULL);
+ 	sb = (struct socketbuff *)BIO_get_data(h);
+	printf("write:%d\n", sb->fd);
+	silly_socket_send(sb->fd, dat, num, NULL);
 	return num;
 }
 
@@ -155,7 +200,7 @@ sslread(BIO *h, char *buff, int size)
 	int ret;
 	int offset;
 	struct socketbuff *sb;
-	sb = h->ptr;
+	sb = (struct socketbuff *)BIO_get_data(h);
 	if (sb->datasz < (size_t)size)
 		return -1;
 	ret = size;
@@ -187,10 +232,9 @@ sslread(BIO *h, char *buff, int size)
 static int
 sslnew(BIO *bi)
 {
-	bi->init = 0;
-	bi->num = 0;
-	bi->ptr = NULL;
-	bi->flags = 0;
+	BIO_set_init(bi, 0);
+	BIO_set_data(bi, 0);
+	BIO_clear_flags(bi, ~0);
 	return 1;
 }
 
@@ -199,13 +243,13 @@ sslfree(BIO *a)
 {
 	if (a == NULL)
 		return 0;
-	if (a->shutdown) {
-		if (a->init) {
+	if (BIO_get_shutdown(a)) {
+		if (BIO_get_init(a)) {
 			//silly_socket_close(a->num);
 			//we'll do it at lua level
 		}
-		a->init = 0;
-		a->flags = 0;
+		BIO_set_init(a, 0);
+		BIO_clear_flags(a, ~0);
 	}
 	return 1;
 }
@@ -214,29 +258,18 @@ static long
 sslctrl(BIO *b, int cmd, long num, void *ptr)
 {
 	long ret = 1;
-	int *ip;
+	(void)ptr;
 	switch (cmd) {
 	case BIO_C_SET_FD:
 		sslfree(b);
-		b->num = *((int *)ptr);
-		b->shutdown = (int)num;
-		b->init = 1;
-		break;
-	case BIO_C_GET_FD:
-		if (b->init) {
-			ip = (int *)ptr;
-			if (ip != NULL)
-				*ip = b->num;
-			ret = b->num;
-		} else {
-			ret = -1;
-		}
+		BIO_set_init(b, 1);
+		BIO_set_shutdown(b, num);
 		break;
 	case BIO_CTRL_GET_CLOSE:
-		ret = b->shutdown;
+		ret = BIO_get_shutdown(b);
 		break;
 	case BIO_CTRL_SET_CLOSE:
-		b->shutdown = (int)num;
+		BIO_set_shutdown(b, (int)num);
 		break;
 	case BIO_CTRL_DUP:
 	case BIO_CTRL_FLUSH:
@@ -249,18 +282,20 @@ sslctrl(BIO *b, int cmd, long num, void *ptr)
 	return ret;
 }
 
-static BIO_METHOD ssl_method = {
-	BIO_TYPE_SOCKET,
-	"lua ssl socket",
-	sslwrite,
-	sslread,
-	sslputs,
-	NULL,
-	sslctrl,
-	sslnew,
-	sslfree,
-	NULL,
-};
+
+static void
+sslmethodcreate()
+{
+	ssl_method = BIO_meth_new(BIO_TYPE_SOCKET, "lua ssl socket");
+	BIO_meth_set_write(ssl_method, sslwrite);
+	BIO_meth_set_read(ssl_method, sslread);
+	BIO_meth_set_puts(ssl_method, sslputs);
+	BIO_meth_set_ctrl(ssl_method, sslctrl);
+	BIO_meth_set_create(ssl_method, sslnew);
+	BIO_meth_set_destroy(ssl_method, sslfree);
+	return ;
+}
+
 
 static int
 lcreate(lua_State *L)
@@ -271,9 +306,10 @@ lcreate(lua_State *L)
 	sb = newsocketbuff(L, 1);
 	sslctx = SSL_CTX_new(SSLv23_client_method());
 	sb->ssl = SSL_new(sslctx);
-	sb->bio = BIO_new(&ssl_method);
+	sb->bio = BIO_new(ssl_method);
+	sb->fd = fd;
 	BIO_set_fd(sb->bio, fd, 0);
-	sb->bio->ptr = sb;
+	BIO_set_data(sb->bio, sb);
 	SSL_set_bio(sb->ssl, sb->bio, sb->bio);
 	SSL_set_connect_state(sb->ssl);
 	return 1;
@@ -414,6 +450,7 @@ luaopen_netssl_c(lua_State *L)
 #ifdef USE_OPENSSL
 	SSL_load_error_strings();
 	SSL_library_init();
+	sslmethodcreate();
 #endif
 	return 1;
 }
