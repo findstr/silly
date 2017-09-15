@@ -6,6 +6,7 @@
 #include <lauxlib.h>
 
 #include "silly.h"
+#include "compiler.h"
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -30,7 +31,7 @@ silly_worker_push(struct silly_message *msg)
 {
 	size_t sz;
 	sz = silly_queue_push(W->queue, msg);
-	if (sz > W->maxmsg) {
+	if (unlikely(sz > W->maxmsg)) {
 		W->maxmsg *= 2;
 		silly_log("may overload, now message size is:%zu\n", sz);
 	}
@@ -122,17 +123,21 @@ lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 void
 silly_worker_start(const struct silly_config *config)
 {
+	int err;
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
-
-	if (setlibpath(L, config->lualib_path, config->lualib_cpath) != 0) {
-		silly_log("silly worker set lua libpath fail,%s\n", lua_tostring(L, -1));
+	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
+	if (unlikely(err != 0)) {
+		silly_log("silly worker set lua libpath fail,%s\n",
+			lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}
 	lua_gc(L, LUA_GCRESTART, 0);
-	if (luaL_loadfile(L, config->bootstrap) || lua_pcall(L, 0, 0, 0)) {
-		silly_log("silly worker call %s fail,%s\n", config->bootstrap, lua_tostring(L, -1));
+	err = luaL_loadfile(L, config->bootstrap);
+	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 0))) {
+		silly_log("silly worker call %s fail,%s\n",
+			config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}

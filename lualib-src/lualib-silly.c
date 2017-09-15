@@ -9,6 +9,7 @@
 #include <lauxlib.h>
 
 #include "silly.h"
+#include "compiler.h"
 #include "silly_log.h"
 #include "silly_env.h"
 #include "silly_run.h"
@@ -28,7 +29,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 	lua_pushlightuserdata(L, dispatch);
 	lua_gettable(L, LUA_REGISTRYINDEX);
 	type = lua_type(L, -1);
-	if (type != LUA_TFUNCTION) {
+	if (unlikely(type != LUA_TFUNCTION)) {
 		silly_log("[silly.core] callback need function"
 			"but got:%d\n", type);
 		return ;
@@ -79,7 +80,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 		break;
 	}
 	err = lua_pcall(L, args, 0, 0);
-	if (err != LUA_OK) {
+	if (unlikely(err != LUA_OK)) {
 		silly_log("[silly.core] callback call fail:%s\n",
 			lua_tostring(L, -1));
 		lua_pop(L, 1);
@@ -107,9 +108,7 @@ lsetenv(lua_State *L)
 {
 	const char *key = luaL_checkstring(L, 1);
 	const char *value = luaL_checkstring(L, 2);
-
 	silly_env_set(key, value);
-
 	return 0;
 }
 

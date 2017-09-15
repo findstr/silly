@@ -12,6 +12,7 @@
 
 #include "silly.h"
 #include "atomic.h"
+#include "compiler.h"
 #include "silly_log.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
@@ -134,7 +135,7 @@ uint32_t
 silly_timer_timeout(uint32_t expire)
 {
 	struct node *n = newnode();
-	if (n == NULL) {
+	if (unlikely(n == NULL)) {
 		silly_log("silly timer alloc node failed\n");
 		return -1;
 	}
@@ -259,7 +260,7 @@ silly_timer_update()
 	uint64_t time = ticktime();
 	if (T->ticktime == time)
 		return;
-	if (T->ticktime > time) {
+	if (unlikely(T->ticktime > time)) {
 		const char *fmt =
 		"[timer] time rewind change from %lld to %lld\n";
 		silly_log(fmt, T->ticktime, time);

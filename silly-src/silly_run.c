@@ -7,6 +7,7 @@
 #include <errno.h>
 
 #include "silly.h"
+#include "compiler.h"
 #include "silly_log.h"
 #include "silly_env.h"
 #include "silly_malloc.h"
@@ -83,7 +84,7 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg)
 {
 	int err;
 	err = pthread_create(tid, NULL, start, arg);
-	if (err < 0) {
+	if (unlikely(err < 0)) {
 		silly_log("thread create fail:%d\n", err);
 		exit(-1);
 	}
@@ -120,7 +121,7 @@ silly_run(const struct silly_config *config)
 	signal_init();
 	silly_timer_init();
 	err = silly_socket_init();
-	if (err < 0) {
+	if (unlikely(err < 0)) {
 		silly_log("%s socket init fail:%d\n", config->selfname, err);
 		silly_daemon_stop(config);
 		exit(-1);
