@@ -1,29 +1,28 @@
 #include <stdio.h>
 #include "atomic.h"
+#include "spinlock.h"
 #include "silly.h"
 #include "silly_malloc.h"
 
 #include "silly_queue.h"
 
 struct silly_queue {
-	int lock;
 	size_t size;
 	struct silly_message **tail;
 	struct silly_message *head;
+	spinlock_t lock;
 };
 
 static inline void
 lock(struct silly_queue *q)
 {
-	while (atomic_lock(&q->lock, 1))
-		;
-	return ;
+	spinlock_lock(&q->lock);
 }
 
 static inline void
 unlock(struct silly_queue *q)
 {
-	atomic_release(&q->lock);
+	spinlock_unlock(&q->lock);
 	return ;
 }
 
@@ -31,11 +30,10 @@ struct silly_queue *
 silly_queue_create()
 {
 	struct silly_queue *q = (struct silly_queue *)silly_malloc(sizeof(*q));
-	q->lock = 0;
 	q->size = 0;
 	q->head = NULL;
 	q->tail = &q->head;
-
+	spinlock_init(&q->lock);
 	return q;
 }
 
@@ -51,6 +49,7 @@ silly_queue_free(struct silly_queue *q)
 		silly_message_free(tmp);
 	}
 	unlock(q);
+	spinlock_destroy(&q->lock);
 	silly_free(q);
 	return ;
 }

@@ -12,6 +12,7 @@
 
 #include "silly.h"
 #include "atomic.h"
+#include "spinlock.h"
 #include "compiler.h"
 #include "silly_log.h"
 #include "silly_worker.h"
@@ -42,7 +43,7 @@ struct slot_level {
 };
 
 struct silly_timer {
-	int lock;
+	spinlock_t lock;
 	uint32_t expire;
 	uint64_t ticktime;
 	uint64_t clocktime;
@@ -72,15 +73,13 @@ freenode(struct node *n)
 static inline void
 lock(struct silly_timer *timer)
 {
-	while (atomic_lock(&timer->lock, 1))
-		;
-
+	spinlock_lock(&timer->lock);
 }
 
 static inline void
 unlock(struct silly_timer *timer)
 {
-	atomic_release(&timer->lock);
+	spinlock_unlock(&timer->lock);
 }
 
 uint64_t
@@ -286,6 +285,7 @@ silly_timer_init()
 	T->ticktime = ticktime();
 	T->expire = T->ticktime;
 	T->monotonic = 0;
+	spinlock_init(&T->lock);
 	return ;
 }
 
@@ -310,6 +310,7 @@ silly_timer_exit()
 		for (j = 0; j < SL_SIZE; j++)
 			freelist(T->level[i].slot[j]);
 	}
+	spinlock_destroy(&T->lock);
 	silly_free(T);
 	return ;
 }
