@@ -19,9 +19,9 @@ local function test1()
 	local err
 	db, err= redis:connect{
 		addr = "127.0.0.1@6379",
+		db = 10,
 	}
 	print("Connect",  db, err)
-	dprint("SELECT 10", db:select(10))
 	dprint("PING", db:ping())
 	dprint("SET bar hello", db:set("bar", "hello"))
 	dprint("GET bar", db:get("bar"))

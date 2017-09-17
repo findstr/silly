@@ -19,15 +19,18 @@ local mt = {
 
 --the function of process response insert into d.funcqueue
 function dispatch:create(config)
-	local d = {}
-	d.socket = false
-	d.status = CLOSE
-	d.dispatchco = false
-	d.config = config
-	d.connectqueue = {}
-	d.waitqueue = {}
-	d.funcqueue = {}	--process response, return
-	d.result_data = {}
+	local d = {
+		socket = false,
+		status = CLOSE,
+		dispatchco = false,
+		connectqueue = {},
+		waitqueue = {},
+		funcqueue = {},	--process response, return
+		result_data = {},
+		--come from config
+		addr = config.addr,
+		auth = config.auth,
+	}
 	setmetatable(d, mt)
 	return d
 end
@@ -138,7 +141,7 @@ local function tryconnect(self)
 	if status == CLOSE then
 		local err
 		self.status = CONNECTING;
-		self.sock = socket.connect(self.config.addr)
+		self.sock = socket.connect(self.addr)
 		if not self.sock then
 			res = false
 			self.status = CLOSE
@@ -150,22 +153,28 @@ local function tryconnect(self)
 		if res then
 			assert(self.dispatchco == false)
 			core.fork(dispatch_response(self))
-			if self.config.auth then
-				res = waitfor_response(self, self.config.auth)
+			local auth = self.auth
+			if auth then
+				local ok, msg
+				ok, res, msg = core.pcall(auth, self)
+				if not ok then
+					err = res
+					res = err
+					doclose(self)
+				elseif not res then
+					err = msg
+					doclose(self)
+				end
 			end
 			assert(#self.funcqueue == 0)
 			assert(#self.waitqueue == 0)
-			if not res then
-				doclose(self)
-				err = "socketdispatch auth fail"
-			end
 		end
 		wakeup_conn(self, res, err)
 		return res, err
 	elseif status == CONNECTING then
 		return waitfor_connect(self)
 	else
-		core.error("try_connect incorrect call at status:" .. self.status)
+		core.error("[socketdispatch] incorrect call at status:" .. self.status)
 	end
 end
 

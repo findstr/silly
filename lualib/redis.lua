@@ -110,13 +110,35 @@ local function pack_table(cmd, out)
 	out[oi] = "\r\n"
 end
 
+local function redis_login(auth, db)
+	if not auth and not db then
+		return
+	end
+	return function(sock)
+		local ok, err
+		if auth then
+			local req = format("AUTH %s\r\n", auth)
+			ok, err = sock:request(req, read_response)
+			if not ok then
+				return ok, err
+			end
+		end
+		if db then
+			local req = format("SELECT %s\r\n", db)
+			ok, err = sock:request(req, read_response)
+			if not ok then
+				return ok, err
+			end
+		end
+		return true
+	end
+end
+
 function redis:connect(config)
 	local obj = {
-		addr = config.addr,
-		user = config.user,
-		passwd = config.passwd,
 		sock = dispatch:create {
 			addr = config.addr,
+			auth = redis_login(config.auth, config.db)
 		},
 	}
 	setmetatable(obj, redis_mt)
@@ -126,6 +148,10 @@ function redis:connect(config)
 	else
 		return nil, err
 	end
+end
+
+function redis:select()
+	assert(~"please specify the dbid when redis:create")
 end
 
 setmetatable(redis, {__index = function (self, k)
