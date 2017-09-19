@@ -37,40 +37,40 @@ dispatch(lua_State *L, struct silly_message *sm)
 	lua_pushinteger(L, sm->type);
 	switch (sm->type) {
 	case SILLY_TEXPIRE:
-		lua_pushinteger(L, texpire(sm)->session);
+		lua_pushinteger(L, totexpire(sm)->session);
 		lua_pushlightuserdata(L, sm);
 		args += 2;
 		break;
 	case SILLY_SACCEPT:
-		lua_pushinteger(L, saccept(sm)->sid);
+		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, saccept(sm)->ud);
-		lua_pushstring(L, (char *)saccept(sm)->data);
+		lua_pushinteger(L, tosocket(sm)->ud);
+		lua_pushstring(L, (char *)tosocket(sm)->data);
 		args += 4;
 		break;
 	case SILLY_SCONNECTED:
-		lua_pushinteger(L, sconnected(sm)->sid);
+		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		args += 2;
 		break;
 	case SILLY_SDATA:
-		lua_pushinteger(L, sdata(sm)->sid);
+		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		args += 2;
 		break;
 	case SILLY_SUDP:
-		addr = (const char *)sudp(sm)->data + sudp(sm)->ud;
+		addr = (const char *)tosocket(sm)->data + tosocket(sm)->ud;
 		addr = silly_socket_udpaddress(addr, &addrlen);
-		lua_pushinteger(L, sudp(sm)->sid);
+		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, sudp(sm)->ud);
+		lua_pushinteger(L, tosocket(sm)->ud);
 		lua_pushlstring(L, addr, addrlen);
 		args += 4;
 		break;
 	case SILLY_SCLOSE:
-		lua_pushinteger(L, sclose(sm)->sid);
+		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, sclose(sm)->ud);
+		lua_pushinteger(L, tosocket(sm)->ud);
 		args += 3;
 		break;
 	default:

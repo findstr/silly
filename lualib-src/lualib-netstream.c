@@ -372,13 +372,10 @@ ltodata(lua_State *L)
 	size_t datasz;
 	struct silly_message *sm = (struct silly_message *)lua_touserdata(L, 1);
 	switch (sm->type) {
-	case SILLY_SDATA:
-		data = sdata(sm)->data;
-		datasz = sdata(sm)->ud;
-		break;
 	case SILLY_SUDP:
-		data = sudp(sm)->data;
-		datasz = sudp(sm)->ud;
+	case SILLY_SDATA:
+		data = tosocket(sm)->data;
+		datasz = tosocket(sm)->ud;
 		break;
 	default:
 		luaL_error(L, "tomsgstring unsupport message type");
