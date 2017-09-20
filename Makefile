@@ -1,4 +1,4 @@
-.PNONY:all
+.PNONY:all malloc
 
 #---------
 
@@ -8,18 +8,51 @@ TARGET ?= silly
 
 include Platform.mk
 
+linux macosx: all
+
+all:malloc
+
 #-----------library
 
-LUASTATICLIB=lua/liblua.a
+#lua
 
-$(LUASTATICLIB):
-	make -C lua/ $(PLAT)
+LUA_DIR=deps/lua
+LUA_INC=$(LUA_DIR)
+LUA_STATICLIB=$(LUA_DIR)/liblua.a
+
+$(LUA_STATICLIB):
+	make -C $(LUA_DIR) $(PLAT)
+
+#jemalloc
+
+JEMALLOC_DIR=deps/jemalloc
+JEMALLOC_INC=$(JEMALLOC_DIR)/include
+JEMALLOC_STATICLIB=$(JEMALLOC_DIR)/lib/libjemalloc.a
+
+
+$(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
+	make -C $(JEMALLOC_DIR)
+
+$(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
+	cd $(JEMALLOC_DIR)&&\
+		./autogen.sh --with-jemalloc-prefix=je_
+
+$(JEMALLOC_DIR)/autogen.sh:
+	git submodule update --init
+
+#malloc lib select
+
+CCFLAG += -DUSE_JEMALLOC
+
+MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
+
+malloc:$(MALLOC_STATICLIB)
 
 #-----------project
 TEST_PATH = test
 LUACLIB_PATH ?= luaclib
 SRC_PATH = silly-src
-INCLUDE = -I lua/ -I $(SRC_PATH)
+INCLUDE = -I $(LUA_INC) -I $(JEMALLOC_INC) -I $(SRC_PATH)
 SRC = \
       $(SRC_PATH)/main.c\
       $(SRC_PATH)/silly_socket.c\
@@ -34,8 +67,6 @@ SRC = \
 
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
-linux macosx: all
-
 all: \
 	$(LUACLIB_PATH)	\
 	$(TARGET) \
@@ -49,7 +80,7 @@ all: \
 	$(TEST_PATH)/testaux.so\
 
 
-$(TARGET):$(OBJS) $(LUASTATICLIB)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
 	$(LD) -o $@ $^ $(LDFLAG)
 
 $(LUACLIB_PATH):
@@ -88,5 +119,8 @@ clean:
 	-rm .depend
 
 cleanall: clean
-	make -C lua/ clean
+	make -C $(LUA_DIR) clean
+ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
+	cd $(JEMALLOC_DIR)&&make clean&&rm Makefile
+endif
 

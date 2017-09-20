@@ -6,8 +6,8 @@ tags
 gate
 server
 client
-lua/lua
-lua/luac
+/deps/lua/lua
+luac
 *.ko
 *.obj
 *.elf

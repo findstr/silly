@@ -1,7 +1,9 @@
 #include "atomic.h"
 #include "silly_malloc.h"
 
-#if defined(__linux__)
+#if defined(USE_JEMALLOC)
+#include <jemalloc/jemalloc.h>
+#elif defined(__linux__)
 #include <malloc.h>
 #elif defined(__macosx__)
 #include <malloc/malloc.h>
@@ -9,10 +11,26 @@
 
 static size_t allocsize = 0;
 
+#if defined(USE_JEMALLOC)
+
+#define MALLOC je_malloc
+#define REALLOC je_realloc
+#define	FREE je_free
+
+#else
+
+#define MALLOC malloc
+#define REALLOC realloc
+#define	FREE free
+
+#endif
+
 static inline size_t
 xalloc_usable_size(void *ptr)
 {
-#if defined(__linux__)
+#if defined(USE_JEMALLOC)
+	return je_malloc_usable_size(ptr);
+#elif defined(__linux__)
 	return malloc_usable_size(ptr);
 #elif defined(__macosx__)
 	return malloc_size(ptr);
@@ -24,7 +42,7 @@ xalloc_usable_size(void *ptr)
 void *
 silly_malloc(size_t sz)
 {
-	void *ptr = malloc(sz);
+	void *ptr = MALLOC(sz);
 	int real = xalloc_usable_size(ptr);
 	atomic_add(&allocsize, real);
 	return ptr;
@@ -34,7 +52,7 @@ void *
 silly_realloc(void *ptr, size_t sz)
 {
 	size_t realo = xalloc_usable_size(ptr);
-	ptr = realloc(ptr, sz);
+	ptr = REALLOC(ptr, sz);
 	size_t realn = xalloc_usable_size(ptr);
 	if (realo > realn)	//shrink
 		atomic_sub(&allocsize, realo - realn);
@@ -48,7 +66,7 @@ silly_free(void *ptr)
 {
 	size_t real = xalloc_usable_size(ptr);
 	atomic_sub(&allocsize, real);
-	free(ptr);
+	FREE(ptr);
 }
 
 size_t
