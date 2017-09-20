@@ -13,7 +13,7 @@ void silly_worker_push(struct silly_message *msg);
 void silly_worker_dispatch();
 
 uint32_t silly_worker_genid();
-size_t silly_worker_msgsz();
+size_t silly_worker_msgsize();
 
 void silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message *msg));
 

@@ -121,22 +121,14 @@ lexit(lua_State *L)
 }
 
 static int
-lmemstatus(lua_State *L)
+lmsgsize(lua_State *L)
 {
 	size_t sz;
-	sz = silly_memstatus();
+	sz = silly_worker_msgsize();
 	lua_pushinteger(L, sz);
 	return 1;
 }
 
-static int
-lmsgstatus(lua_State *L)
-{
-	size_t sz;
-	sz = silly_worker_msgsz();
-	lua_pushinteger(L, sz);
-	return 1;
-}
 
 static int
 llog(lua_State *L)
@@ -171,6 +163,34 @@ llog(lua_State *L)
 	silly_lograw("\n");
 	return 0;
 }
+
+static int
+lmemallocator(lua_State *L)
+{
+	const char *ver;
+	ver = silly_allocator();
+	lua_pushstring(L, ver);
+	return 1;
+}
+
+static int
+lmemused(lua_State *L)
+{
+	size_t sz;
+	sz = silly_memused();
+	lua_pushinteger(L, sz);
+	return 1;
+}
+
+static int
+lmemrss(lua_State *L)
+{
+	size_t sz;
+	sz = silly_memrss();
+	lua_pushinteger(L, sz);
+	return 1;
+}
+
 
 static int
 ltimeout(lua_State *L)
@@ -471,9 +491,12 @@ luaopen_silly(lua_State *L)
 		{"getenv", lgetenv},
 		{"setenv", lsetenv},
 		{"exit", lexit},
-		{"memstatus", lmemstatus},
-		{"msgstatus", lmsgstatus},
 		{"log", llog},
+		{"msgsize", lmsgsize},
+		//memory
+		{"memused", lmemused},
+		{"memrss", lmemrss},
+		{"memallocator", lmemallocator},
 		//timer
 		{"timeout", ltimeout},
 		{"timenow", ltimenow},

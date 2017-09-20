@@ -60,7 +60,7 @@ silly_worker_genid()
 }
 
 size_t
-silly_worker_msgsz()
+silly_worker_msgsize()
 {
 	return silly_queue_size(W->queue);
 }

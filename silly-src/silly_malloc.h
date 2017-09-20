@@ -6,7 +6,10 @@
 void *silly_malloc(size_t sz);
 void *silly_realloc(void *ptr, size_t sz);
 void silly_free(void *ptr);
-size_t silly_memstatus();
+
+const char *silly_allocator();
+size_t silly_memused();
+size_t silly_memrss();
 
 #endif
 

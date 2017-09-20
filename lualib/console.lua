@@ -1,7 +1,11 @@
 local core = require "silly.core"
 local patch = require "silly.patch"
 local socket = require "socket"
+local lower = string.lower
+local format = string.format
+local concat = table.concat
 
+local NULL = ""
 local desc = {
 
 "HELP: List command description [HELP]",
@@ -63,21 +67,38 @@ function console.ping(txt)
 end
 
 function console.minfo(fmt)
-	local sz = core.memstatus()
-	fmt = fmt or ""
-	fmt = string.lower(fmt)
-	if fmt == "kb" then
-		return string.format("Memory Used:%d KByte", sz // 1024)
-	elseif fmt == "mb" then
-		return string.format("Memory Used:%d MByte", sz // (1024 * 1024))
+	local tbl = {}
+	local sz = core.memused()
+	if fmt then
+		fmt = lower(fmt)
 	else
-		return string.format("Memory Used:%d Byte", sz)
+		fmt = NULL
 	end
+	tbl[1] = "Memory used:"
+	if fmt == "kb" then
+		tbl[2] = sz // 1024
+		tbl[3] = " KByte\r\n"
+	elseif fmt == "mb" then
+		tbl[2] = sz // (1024 * 1024)
+		tbl[3] = " MByte\r\n"
+	else
+		tbl[2] = sz
+		tbl[3] = " Byte\r\n"
+	end
+	local rss = core.memrss()
+	tbl[4] = "Memory rss:"
+	tbl[5] = rss
+	tbl[6] = " Byte\r\n"
+	tbl[7] = "Memory fragmentation_ratio:"
+	tbl[8] = format("%.2f\r\n", rss / sz)
+	tbl[9] = "Memory allocator:"
+	tbl[10] = core.allocator()
+	return concat(tbl)
 end
 
 function console.qinfo()
-	local sz = core.msgstatus();
-	return string.format("Message Queue Count:%d", sz)
+	local sz = core.msgsize();
+	return string.format("Message pending:%d", sz)
 end
 
 function console.patch(fix, module, ...)

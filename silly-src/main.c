@@ -224,6 +224,6 @@ int main(int argc, char *argv[])
 	silly_run(&config);
 	silly_env_exit();
 	silly_log("%s exit, leak memory size:%zu\n",
-		argv[0], silly_memstatus());
+		argv[0], silly_memused());
 	return 0;
 }

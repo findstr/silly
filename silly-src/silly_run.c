@@ -35,7 +35,7 @@ thread_timer(void *arg)
 		if (R.exit)
 			break;
 		usleep(5000);
-		if (silly_worker_msgsz() > 0)
+		if (silly_worker_msgsize() > 0)
 			pthread_cond_signal(&R.cond);
 	}
 	silly_socket_terminate();

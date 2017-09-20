@@ -63,10 +63,13 @@ core.log = core_log
 core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
-core.memstatus = silly.memstatus
-core.msgstatus = silly.msgstatus
+core.msgsize = silly.msgsize
 core.now = silly.timenow
 core.monotonic = silly.timemonotonic
+
+core.memused = silly.memused
+core.memrss = silly.memrss
+core.allocator = silly.memallocator
 
 local function errmsg(msg)
 	return debug.traceback("error: " .. tostring(msg), 2)
