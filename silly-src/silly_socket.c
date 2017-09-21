@@ -76,6 +76,9 @@ struct socket {
 
 struct silly_socket {
 	sp_t spfd;
+	//reverse for accept
+	//when reach the limit of file descriptor's number
+	int reservefd;
 	size_t eventcap;
 	//event
 	int eventindex;
@@ -83,7 +86,8 @@ struct silly_socket {
 	sp_event_t *eventbuff;
 	//socket pool
 	struct socket *socketpool;
-	//ctrl pipe, call write can be automatic wen data less then 64k(from APUE)
+	//ctrl pipe, call write can be automatic
+	//when data less then 64k(from APUE)
 	int ctrlsendfd;
 	int ctrlrecvfd;
 	fd_set ctrlfdset;
@@ -311,8 +315,16 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 	assert(ADDRLEN >= INET_ADDRSTRLEN + 8);
 	socklen_t len = sizeof(struct sockaddr);
 	int fd = accept(listen->fd, (struct sockaddr *)&addr, &len);
-	if (unlikely(fd < 0))
+	if (unlikely(fd < 0)) {
+		if (errno != EMFILE)
+			return ;
+		close(ss->reservefd);
+		fd = accept(listen->fd, NULL, NULL);
+		close(fd);
+		silly_log("[socket] accept reach limit of file descriptor\n");
+		ss->reservefd = open("/dev/null", O_RDONLY);
 		return ;
+	}
 	sa = silly_malloc(sizeof(*sa) + ADDRLEN);
 	sa->data = (uint8_t *)(sa + 1);
 	sa->type = SILLY_SACCEPT;
@@ -1329,6 +1341,7 @@ silly_socket_init()
 	if (unlikely(err < 0))
 		goto end;
 	ss->spfd = spfd;
+	ss->reservefd = open("/dev/null", O_RDONLY);
 	ss->ctrlsendfd = fd[1];
 	ss->ctrlrecvfd = fd[0];
 	ss->eventindex = 0;
@@ -1357,6 +1370,7 @@ void silly_socket_exit()
 	int i;
 	assert(SSOCKET);
 	sp_free(SSOCKET->spfd);
+	close(SSOCKET->reservefd);
 	close(SSOCKET->ctrlsendfd);
 	close(SSOCKET->ctrlrecvfd);
 
