@@ -182,7 +182,6 @@ sslwrite(BIO *h, const char *buff, int num)
 	uint8_t *dat = (uint8_t *)silly_malloc(num);
 	memcpy(dat, buff, num);
  	sb = (struct socketbuff *)BIO_get_data(h);
-	printf("write:%d\n", sb->fd);
 	silly_socket_send(sb->fd, dat, num, NULL);
 	return num;
 }
