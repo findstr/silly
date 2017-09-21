@@ -10,8 +10,8 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 
 #include "silly.h"
 #include "atomic.h"
@@ -20,7 +20,6 @@
 #include "socket_poll.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
-
 #include "silly_socket.h"
 
 //STYPE == socket type
@@ -314,7 +313,11 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 	char buff[INET_ADDRSTRLEN];
 	assert(ADDRLEN >= INET_ADDRSTRLEN + 8);
 	socklen_t len = sizeof(struct sockaddr);
+#ifndef USE_ACCEPT4
 	int fd = accept(listen->fd, (struct sockaddr *)&addr, &len);
+#else
+	int fd = accept4(listen->fd, (struct sockaddr *)&addr, &len, SOCK_NONBLOCK);
+#endif
 	if (unlikely(fd < 0)) {
 		if (errno != EMFILE)
 			return ;
@@ -325,12 +328,14 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 		ss->reservefd = open("/dev/null", O_RDONLY);
 		return ;
 	}
+#ifndef USE_ACCEPT4
+	nonblock(fd);
+#endif
 	sa = silly_malloc(sizeof(*sa) + ADDRLEN);
 	sa->data = (uint8_t *)(sa + 1);
 	sa->type = SILLY_SACCEPT;
 	str = inet_ntop(addr.sin_family, &addr.sin_addr, buff, sizeof(buff));
 	snprintf((char *)sa->data, ADDRLEN, "%s:%d", str, ntohs(addr.sin_port));
-	nonblock(fd);
 	keepalive(fd);
 	nodelay(fd);
 	s = newsocket(ss, NULL, fd, STYPE_SOCKET, NULL);
