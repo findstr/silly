@@ -207,6 +207,18 @@ parseconfig(lua_State *L, struct silly_config *config)
 	return;
 }
 
+static const char *
+selfname(const char *path)
+{
+	size_t len = strlen(path);
+	const char *end = &path[len];
+	while (end-- > path) {
+		if (*end == '/' || *end == '\\')
+			break;
+	}
+	return (end + 1);
+}
+
 int main(int argc, char *argv[])
 {
 	lua_State *L;
@@ -218,7 +230,7 @@ int main(int argc, char *argv[])
 	silly_env_init();
 	L = luaL_newstate();
 	initenv(L, argv[0], argv[1]);
-	config.selfname = argv[0];
+	config.selfname = selfname(argv[0]);
 	parseconfig(L, &config);
 	lua_close(L);
 	silly_run(&config);
