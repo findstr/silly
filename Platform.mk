@@ -1,5 +1,17 @@
+.PHONY:target
+
+uname := $(shell sh -c 'uname -s 2>/dev/null || echo not')
+
 CC := gcc -std=gnu99
 LD := gcc
+
+ifeq ($(uname),Linux)
+target:linux
+else
+ifeq ($(uname),Darwin)
+target:macosx
+endif
+endif
 
 
 PLATS=linux macosx
@@ -25,3 +37,4 @@ macosx: PLAT := macosx
 #enable accept4 should define _GNU_SOURCE
 linux:CCFLAG += -DUSE_ACCEPT4
 linux:CCFLAG += -D_GNU_SOURCE
+
