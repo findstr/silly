@@ -31,6 +31,7 @@
 #endif
 
 #define EVENT_SIZE (128)
+#define CTRL_PROCESS_ONCE (8)
 #define MAX_UDP_PACKET (512)
 #define MAX_SOCKET_COUNT (1 << 16)	//65536
 #define MIN_READBUFF_LEN (64)
@@ -89,6 +90,7 @@ struct silly_socket {
 	//when data less then 64k(from APUE)
 	int ctrlsendfd;
 	int ctrlrecvfd;
+	int ctrlcount;
 	fd_set ctrlfdset;
 	//reserve id(for socket fd remap)
 	int reserveid;
@@ -627,16 +629,6 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 	return ;
 }
 
-static inline int
-hascmd(struct silly_socket *ss)
-{
-	int ret;
-	struct timeval tv = {0, 0};
-	FD_SET(ss->ctrlrecvfd, &ss->ctrlfdset);
-	ret = select(ss->ctrlrecvfd + 1, &ss->ctrlfdset, NULL, NULL, &tv);
-	return ret == 1 ? 1 : 0;
-}
-
 //for read one complete packet once system call, fix the packet length
 struct cmdpacket {
 	int type;
@@ -646,11 +638,11 @@ struct cmdpacket {
 			int sid;
 		} listen; //'L' 'B'
 		struct {
-			char ip[64];
-			int  port;
-			char bip[64];
-			int  bport;
 			int  sid;
+			int  port;
+			int  bport;
+			char ip[64];
+			char bip[64];
 		} connect; //'C'
 		struct {
 			int sid;
@@ -676,10 +668,11 @@ struct cmdpacket {
 };
 
 static int
-pipe_blockread(int fd, struct cmdpacket *pk)
+pipe_blockread(int fd, struct cmdpacket *pk, int n)
 {
 	for (;;) {
-		ssize_t err = read(fd, pk, sizeof(*pk));
+		n = n * sizeof(*pk);
+		ssize_t err = read(fd, pk, n);
 		if (err == -1) {
 			if (likely(errno  == EINTR))
 				continue;
@@ -687,7 +680,7 @@ pipe_blockread(int fd, struct cmdpacket *pk)
 				strerror(errno));
 			return -1;
 		}
-		assert(err == sizeof(*pk));
+		assert(err == n);
 		return 0;
 	}
 	return 0;
@@ -705,6 +698,7 @@ pipe_blockwrite(int fd, struct cmdpacket *pk)
 				strerror(errno));
 			return -1;
 		}
+		atomic_add(&SSOCKET->ctrlcount, 1);
 		assert(err == sizeof(*pk));
 		return 0;
 	}
@@ -1183,45 +1177,56 @@ static int
 cmd_process(struct silly_socket *ss)
 {
 	int close = 0;
-	while (hascmd(ss)) {
-		int err;
-		struct cmdpacket cmd;
-		err = pipe_blockread(ss->ctrlrecvfd, &cmd);
+	int i, err, count;
+	struct cmdpacket *cmd;
+	count = ss->ctrlcount;
+	while (count > 0) {
+		if (count > CTRL_PROCESS_ONCE)
+			count = CTRL_PROCESS_ONCE;
+		struct cmdpacket cmdbuf[count];
+		err = pipe_blockread(ss->ctrlrecvfd, cmdbuf, count);
 		if (unlikely(err < 0))
-			continue;
-		switch (cmd.type) {
-		case 'L':
-			trylisten(ss, &cmd);
-			break;
-		case 'B':
-			tryudpbind(ss, &cmd);
-			break;
-		case 'C':
-			tryconnect(ss, &cmd);
-			break;
-		case 'O':
-			tryudpconnect(ss, &cmd);
-			break;
-		case 'K':
-			if (tryclose(ss, &cmd) == 0)
-				close = 1;
-			break;
-		case 'S':
-			if (trysend(ss, &cmd) < 0)
-				close = 1;
-			break;
-		case 'U':
-			tryudpsend(ss, &cmd);	//udp socket can only be closed active
-			break;
-		case 'T':	//just to return from sp_wait
-			close = -1;
-			break;
-		default:
-			silly_log("[socket] cmd_process:unkonw operation:%d\n",
-				cmd.type);
-			assert(!"oh, no!");
-			break;
+			return 0;
+		cmd = &cmdbuf[0];
+		for (i = 0; i < count; i++) {
+			switch (cmd->type) {
+			case 'L':
+				trylisten(ss, cmd);
+				break;
+			case 'B':
+				tryudpbind(ss, cmd);
+				break;
+			case 'C':
+				tryconnect(ss, cmd);
+				break;
+			case 'O':
+				tryudpconnect(ss, cmd);
+				break;
+			case 'K':
+				if (tryclose(ss, cmd) == 0)
+					close = 1;
+				break;
+			case 'S':
+				if (trysend(ss, cmd) < 0)
+					close = 1;
+				break;
+			case 'U':
+				//udp socket can only be closed active
+				tryudpsend(ss, cmd);
+				break;
+			case 'T':	//just to return from sp_wait
+				close = -1;
+				break;
+			default:
+				silly_log("[socket] cmd_process:"
+					"unkonw operation:%d\n",
+					cmd->type);
+				assert(!"oh, no!");
+				break;
+			}
+			++cmd;
 		}
+		count = atomic_sub_return(&ss->ctrlcount, count);
 	}
 	return close;
 }
@@ -1349,6 +1354,7 @@ silly_socket_init()
 	ss->reservefd = open("/dev/null", O_RDONLY);
 	ss->ctrlsendfd = fd[1];
 	ss->ctrlrecvfd = fd[0];
+	ss->ctrlcount = 0;
 	ss->eventindex = 0;
 	ss->eventcount = 0;
 	resize_eventbuff(ss, EVENT_SIZE);
