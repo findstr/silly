@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include "atomic.h"
+#include "silly_conf.h"
 #include "silly_malloc.h"
 
 #if defined(USE_JEMALLOC)

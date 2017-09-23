@@ -1180,11 +1180,11 @@ cmd_process(struct silly_socket *ss)
 	int close = 0;
 	int i, err, count;
 	struct cmdpacket *cmd;
+	struct cmdpacket cmdbuf[CTRL_PROCESS_ONCE];
 	count = ss->ctrlcount;
 	while (count > 0) {
-		if (count > CTRL_PROCESS_ONCE)
+		if (unlikely(count > CTRL_PROCESS_ONCE))
 			count = CTRL_PROCESS_ONCE;
-		struct cmdpacket cmdbuf[count];
 		err = pipe_blockread(ss->ctrlrecvfd, cmdbuf, count);
 		if (unlikely(err < 0))
 			return 0;
