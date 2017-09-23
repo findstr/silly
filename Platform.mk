@@ -34,7 +34,3 @@ macosx:SHARED=-dynamiclib -fPIC -Wl,-undefined,dynamic_lookup
 linux: PLAT := linux
 macosx: PLAT := macosx
 
-#enable accept4 should define _GNU_SOURCE
-linux:CCFLAG += -DUSE_ACCEPT4
-linux:CCFLAG += -D_GNU_SOURCE
-

@@ -41,9 +41,6 @@ $(JEMALLOC_DIR)/autogen.sh:
 	git submodule update --init
 
 #malloc lib select
-
-CCFLAG += -DUSE_JEMALLOC
-
 MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
 
 malloc:$(MALLOC_STATICLIB)

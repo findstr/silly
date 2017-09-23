@@ -1,7 +1,7 @@
 #ifndef	_SPINLOCK_H
 #define	_SPINLOCK_H
 
-#ifdef __macosx__
+#ifndef USE_SPINLOCK
 #include "atomic.h"
 typedef int spinlock_t;
 static inline void

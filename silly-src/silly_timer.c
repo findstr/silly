@@ -14,6 +14,7 @@
 #include "atomic.h"
 #include "spinlock.h"
 #include "compiler.h"
+#include "silly_conf.h"
 #include "silly_log.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
@@ -25,8 +26,6 @@
 #define SL_SIZE		(1 << SL_BITS)
 #define SR_MASK		(SR_SIZE - 1)
 #define SL_MASK		(SL_SIZE - 1)
-
-#define RESOLUTION	(10)
 
 struct node {
 	uint32_t expire;
@@ -85,13 +84,13 @@ unlock(struct silly_timer *timer)
 uint64_t
 silly_timer_monotonic()
 {
-	return T->monotonic * RESOLUTION;
+	return T->monotonic * TIMER_RESOLUTION;
 }
 
 uint64_t
 silly_timer_now()
 {
-	return T->clocktime * RESOLUTION;
+	return T->clocktime * TIMER_RESOLUTION;
 }
 
 static inline void
@@ -139,7 +138,7 @@ silly_timer_timeout(uint32_t expire)
 		return -1;
 	}
 	lock(T);
-	n->expire = expire / RESOLUTION + T->ticktime;
+	n->expire = expire / TIMER_RESOLUTION + T->ticktime;
 	assert((int32_t)(n->expire - T->expire) >= 0);
 	add_node(T, n);
 	unlock(T);
@@ -168,13 +167,13 @@ ticktime()
 	host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &cclock);
 	clock_get_time(cclock, &mts);
 	mach_port_deallocate(mach_task_self(), cclock);
-	ms = (uint64_t)mts.tv_sec * 1000 / RESOLUTION;
-	ms += mts.tv_nsec / 1000000 / RESOLUTION;
+	ms = (uint64_t)mts.tv_sec * 1000 / TIMER_RESOLUTION;
+	ms += mts.tv_nsec / 1000000 / TIMER_RESOLUTION;
 #else
 	struct timespec tp;
 	clock_gettime(CLOCK_MONOTONIC, &tp);
-	ms = (uint64_t)tp.tv_sec * 1000 / RESOLUTION;
-	ms += tp.tv_nsec / 1000000 / RESOLUTION;
+	ms = (uint64_t)tp.tv_sec * 1000 / TIMER_RESOLUTION;
+	ms += tp.tv_nsec / 1000000 / TIMER_RESOLUTION;
 #endif
 	return ms;
 }
@@ -185,8 +184,8 @@ clocktime()
 	uint64_t ms;
 	struct timeval t;
 	gettimeofday(&t, NULL);
-	ms = t.tv_sec * 1000 / RESOLUTION;
-	ms += t.tv_usec / 1000 / RESOLUTION;
+	ms = t.tv_sec * 1000 / TIMER_RESOLUTION;
+	ms += t.tv_usec / 1000 / TIMER_RESOLUTION;
 	return ms;
 
 }

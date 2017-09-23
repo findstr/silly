@@ -204,6 +204,10 @@ parseconfig(lua_State *L, struct silly_config *config)
 		exit(-1);
 	}
 	memcpy(config->pidfile, str, sz + 1);
+	//cpu affinity
+	config->socketaffinity= optint(L, "socket_cpu_affinity", -1);
+	config->workeraffinity = optint(L, "worker_cpu_affinity", -1);
+	config->timeraffinity = optint(L, "timer_cpu_affinity", -1);
 	return;
 }
 

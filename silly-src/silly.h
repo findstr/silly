@@ -19,8 +19,11 @@ struct silly_listen {
 };
 
 struct silly_config {
-	const char *selfname;
 	int daemon;
+	int socketaffinity;
+	int workeraffinity;
+	int timeraffinity;
+	const char *selfname;
 	//please forgive my shortsighted, i think listen max to 16 ports is very many
 	char bootstrap[128];
 	char lualib_path[256];

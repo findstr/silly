@@ -1,3 +1,4 @@
+#include "silly_conf.h"
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
@@ -80,7 +81,7 @@ thread_worker(void *arg)
 }
 
 static void
-thread_create(pthread_t *tid, void *(*start)(void *), void *arg)
+thread_create(pthread_t *tid, void *(*start)(void *), void *arg, int cpuid)
 {
 	int err;
 	err = pthread_create(tid, NULL, start, arg);
@@ -88,6 +89,16 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg)
 		silly_log("thread create fail:%d\n", err);
 		exit(-1);
 	}
+#ifdef USE_CPU_AFFINITY
+	if (cpuid < 0)
+		return ;
+	cpu_set_t cpuset;
+	CPU_ZERO(&cpuset);
+	CPU_SET(cpuid, &cpuset);
+	pthread_setaffinity_np(*tid, sizeof(cpuset), &cpuset);
+#else
+	(void)cpuid;
+#endif
 	return ;
 }
 
@@ -128,10 +139,12 @@ silly_run(const struct silly_config *config)
 	}
 	silly_worker_init();
 	srand(time(NULL));
-	thread_create(&pid[0], thread_socket, NULL);
-	thread_create(&pid[1], thread_timer, NULL);
-	thread_create(&pid[2], thread_worker, (void *)config);
+	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
+	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
+	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
 	silly_log("%s is running ...\n", config->selfname);
+	silly_log("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
+		config->timeraffinity, config->socketaffinity, config->workeraffinity);
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
 	silly_daemon_stop(config);

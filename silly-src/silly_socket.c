@@ -1,3 +1,4 @@
+#include "silly_conf.h"
 #include <assert.h>
 #include <stdio.h>
 #include <errno.h>
