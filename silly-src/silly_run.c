@@ -22,6 +22,7 @@
 struct {
 	int exit;
 	int run;
+	const struct silly_config *conf;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
 } R;
@@ -109,12 +110,20 @@ signal_term(int sig)
 	R.exit = 1;
 }
 
+static void
+signal_usr1(int sig)
+{
+	(void)sig;
+	silly_daemon_sigusr1(R.conf);
+}
+
 static int
 signal_init()
 {
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGTERM, signal_term);
 	signal(SIGINT, signal_term);
+	signal(SIGUSR1, signal_usr1);
 	return 0;
 }
 
@@ -126,9 +135,11 @@ silly_run(const struct silly_config *config)
 	pthread_t pid[3];
 	R.run = 1;
 	R.exit = 0;
+	R.conf = config;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
 	silly_daemon_start(config);
+	silly_log_start();
 	signal_init();
 	silly_timer_init();
 	err = silly_socket_init();

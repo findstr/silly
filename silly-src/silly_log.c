@@ -1,12 +1,22 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/time.h>
 #include "silly.h"
 #include "silly_log.h"
 
+static pid_t pid;
+
 void
-silly_lograw(const char *fmt, ...)
+silly_log_start()
+{
+	pid = getpid();
+	return ;
+}
+
+void
+silly_log_raw(const char *fmt, ...)
 {
 	va_list ap;
 	char buffer[LOG_MAX_LEN];
@@ -32,7 +42,7 @@ silly_log(const char *fmt, ...)
 	nr = strftime(head, sizeof(head), "%b %d %H:%M:%S.",
 		localtime(&tv.tv_sec));
 	snprintf(head + nr, sizeof(head) - nr, "%03d", (int)tv.tv_usec/1000);
-	fprintf(stdout, "%s %s", head, buffer);
+	fprintf(stdout, "%d %s %s", pid, head, buffer);
 	return ;
 }
 

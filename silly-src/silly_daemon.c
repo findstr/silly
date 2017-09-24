@@ -14,10 +14,10 @@ static int pidfile;
 extern int daemon(int, int);
 
 static void
-pidfile_create(const struct silly_config *config)
+pidfile_create(const struct silly_config *conf)
 {
 	int err;
-	const char *path = config->pidfile;
+	const char *path = conf->pidfile;
 	pidfile = -1;
 	if (path[0] == '\0')
 		return ;
@@ -55,33 +55,22 @@ pidfile_write()
 }
 
 static inline void
-pidfile_delete(const struct silly_config *config)
+pidfile_delete(const struct silly_config *conf)
 {
 	if (pidfile == -1)
 		return ;
 	close(pidfile);
-	unlink(config->pidfile);
+	unlink(conf->pidfile);
 	return ;
 }
 
-void
-silly_daemon_start(const struct silly_config *config)
+static inline void
+logfileopen(const struct silly_config *conf)
 {
 	int fd;
-	int err;
 	char path[128];
-	if (!config->daemon)
-		return ;
-	pidfile_create(config);
-	err = daemon(1, 0);
-	if (err < 0) {
-		pidfile_delete(config);
-		silly_log("[daemon] %s\n", strerror(errno));
-		exit(0);
-	}
-	pidfile_write();
-	snprintf(path, 128, "%s%s-%d.log", config->logpath, config->selfname, getpid());
-	fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 00666);
+	snprintf(path, 128, "%s%s.log", conf->logpath, conf->selfname);
+	fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 00666);
 	if (fd >= 0) {
 		dup2(fd, 1);
 		dup2(fd, 2);
@@ -89,14 +78,38 @@ silly_daemon_start(const struct silly_config *config)
 		setvbuf(stdout, NULL, _IOLBF, 0);
 		setvbuf(stderr, NULL, _IOLBF, 0);
 	}
+}
+
+void
+silly_daemon_start(const struct silly_config *conf)
+{
+	int err;
+	if (!conf->daemon)
+		return ;
+	pidfile_create(conf);
+	err = daemon(1, 0);
+	if (err < 0) {
+		pidfile_delete(conf);
+		silly_log("[daemon] %s\n", strerror(errno));
+		exit(0);
+	}
+	pidfile_write();
+	logfileopen(conf);
 	return ;
 }
 
 void
-silly_daemon_stop(const struct silly_config *config)
+silly_daemon_sigusr1(const struct silly_config *conf)
 {
-	if (!config->daemon)
+	logfileopen(conf);
+	return ;
+}
+
+void
+silly_daemon_stop(const struct silly_config *conf)
+{
+	if (!conf->daemon)
 		return ;
-	pidfile_delete(config);
+	pidfile_delete(conf);
 	return ;
 }

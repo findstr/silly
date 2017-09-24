@@ -140,27 +140,27 @@ llog(lua_State *L)
 		int type = lua_type(L, i);
 		switch (type) {
 		case LUA_TSTRING:
-			silly_lograw("%s ", lua_tostring(L, i));
+			silly_log_raw("%s ", lua_tostring(L, i));
 			break;
 		case LUA_TNUMBER:
-			silly_lograw("%d ", (int)lua_tointeger(L, i));
+			silly_log_raw("%d ", (int)lua_tointeger(L, i));
 			break;
 		case LUA_TBOOLEAN:
-			silly_lograw("%s ",
+			silly_log_raw("%s ",
 				lua_toboolean(L, i) ? "true" : "false");
 			break;
 		case LUA_TTABLE:
-			silly_lograw("table: %p ", lua_topointer(L, i));
+			silly_log_raw("table: %p ", lua_topointer(L, i));
 			break;
 		case LUA_TNIL:
-			silly_lograw("#%d.null ", i);
+			silly_log_raw("#%d.null ", i);
 			break;
 		default:
 			return luaL_error(L, "log unspport param#%d type:%s",
 				i, lua_typename(L, type));
 		}
 	}
-	silly_lograw("\n");
+	silly_log_raw("\n");
 	return 0;
 }
 
