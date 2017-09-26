@@ -3,7 +3,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include "atomic.h"
-#include "silly_conf.h"
+#include "silly.h"
 #include "silly_malloc.h"
 
 #if defined(USE_JEMALLOC)
@@ -72,11 +72,8 @@ silly_free(void *ptr)
 	FREE(ptr);
 }
 
-#define _xstr(s) __str(s)
-#define __str(s) #s
-
 #define BUILD(name, MAJOR, MINOR)\
-	(name "-" _xstr(MAJOR) "." _xstr(MINOR))
+	(name "-" STR(MAJOR) "." STR(MINOR))
 
 const char *
 silly_allocator()

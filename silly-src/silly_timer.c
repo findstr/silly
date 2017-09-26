@@ -82,15 +82,22 @@ unlock(struct silly_timer *timer)
 }
 
 uint64_t
+silly_timer_now()
+{
+	return T->clocktime * TIMER_RESOLUTION;
+}
+
+uint64_t
 silly_timer_monotonic()
 {
 	return T->monotonic * TIMER_RESOLUTION;
 }
 
-uint64_t
-silly_timer_now()
+time_t
+silly_timer_monotonicsec()
 {
-	return T->clocktime * TIMER_RESOLUTION;
+	int scale = 1000 / TIMER_RESOLUTION;
+	return T->monotonic / scale;
 }
 
 static inline void

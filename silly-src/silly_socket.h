@@ -25,6 +25,8 @@ int silly_socket_close(int sid);
 
 int silly_socket_poll();
 
+const char *silly_socket_pollapi();
+
 #endif
 
 

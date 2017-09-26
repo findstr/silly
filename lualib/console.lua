@@ -4,14 +4,17 @@ local socket = require "socket"
 local lower = string.lower
 local format = string.format
 local concat = table.concat
+local insert = table.insert
 
 local NULL = ""
 local desc = {
 
 "HELP: List command description [HELP]",
 "PING: Test connection alive [PING <text>]",
+"INFO: Show all information of server, include MINFO,QINFO,CPUINFO,...[INFO]",
 "MINFO: Show memory infomation [MINFO <kb|mb>]",
 "QINFO: Show framework message queue size[QINFO]",
+"CPUINFO: Show system time and user time statistics [CPUINFO]",
 "PATCH: Hot patch the code [PATCH <fixfile> <modulename> <funcname> ...]"
 
 }
@@ -74,31 +77,55 @@ function console.minfo(fmt)
 	else
 		fmt = NULL
 	end
-	tbl[1] = "Memory used:"
+	tbl[1] = "#Memory\r\n"
+	tbl[2] = "memory_used:"
 	if fmt == "kb" then
-		tbl[2] = sz // 1024
-		tbl[3] = " KByte\r\n"
+		tbl[3] = format("%.2f", sz / 1024)
+		tbl[4] = " KByte\r\n"
 	elseif fmt == "mb" then
-		tbl[2] = sz // (1024 * 1024)
-		tbl[3] = " MByte\r\n"
+		tbl[3] = format("%.2f", sz / (1024 * 1024))
+		tbl[4] = " MByte\r\n"
 	else
-		tbl[2] = sz
-		tbl[3] = " Byte\r\n"
+		tbl[3] = sz
+		tbl[4] = " Byte\r\n"
 	end
 	local rss = core.memrss()
-	tbl[4] = "Memory rss:"
-	tbl[5] = rss
-	tbl[6] = " Byte\r\n"
-	tbl[7] = "Memory fragmentation_ratio:"
-	tbl[8] = format("%.2f\r\n", rss / sz)
-	tbl[9] = "Memory allocator:"
-	tbl[10] = core.allocator()
+	tbl[5] = "memory_rss:"
+	tbl[6] = rss
+	tbl[7] = " Byte\r\n"
+	tbl[8] = "memory_fragmentation_ratio:"
+	tbl[9] = format("%.2f\r\n", rss / sz)
+	tbl[10] = "memory_allocator:"
+	tbl[11] = core.allocator
 	return concat(tbl)
 end
 
 function console.qinfo()
 	local sz = core.msgsize();
-	return string.format("Message pending:%d", sz)
+	return format("#Message\r\nmessage pending:%d\n", sz)
+end
+
+function console.cpuinfo()
+	local sys, usr = core.cpuinfo()
+	return format("#CPU\r\ncpu_sys:%.2fs\r\ncpu_user:%.2fs\r\n", sys, usr)
+end
+
+function console.info()
+	local tbl = {}
+	local uptime = core.monotonicsec()
+	insert(tbl, "\r\n#Build")
+	insert(tbl, format("version:%s", core.version))
+	insert(tbl, format("process_id:%s", core.getpid()))
+	insert(tbl, format("multiplexing_api:%s", core.pollapi))
+	insert(tbl, format("timer_resolution:%s", core.timerrs))
+	insert(tbl, format("uptime_in_seconds:%s", uptime))
+	insert(tbl, format("uptime_in_days:%.2f\r\n", uptime / (24 * 3600)))
+	insert(tbl, console.cpuinfo())
+	insert(tbl, console.qinfo())
+	insert(tbl, console.minfo("MB"))
+
+
+	return concat(tbl, "\r\n")
 end
 
 function console.patch(fix, module, ...)

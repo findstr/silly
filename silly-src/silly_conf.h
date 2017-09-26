@@ -15,4 +15,9 @@
 
 #define TIMER_RESOLUTION	(10)
 
+
+
+#define STR(s) __STR(s)
+#define __STR(s) #s
+
 #endif

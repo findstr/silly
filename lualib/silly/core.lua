@@ -63,13 +63,21 @@ core.log = core_log
 core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
-core.msgsize = silly.msgsize
 core.now = silly.timenow
 core.monotonic = silly.timemonotonic
+core.monotonicsec = silly.timemonotonicsec
 
+--debug interface
 core.memused = silly.memused
 core.memrss = silly.memrss
-core.allocator = silly.memallocator
+core.msgsize = silly.msgsize
+core.cpuinfo = silly.cpuinfo
+core.getpid = silly.getpid
+--const
+core.allocator = silly.memallocator()
+core.version = silly.version()
+core.pollapi = silly.pollapi()
+core.timerrs = silly.timerresolution()
 
 local function errmsg(msg)
 	return debug.traceback("error: " .. tostring(msg), 2)

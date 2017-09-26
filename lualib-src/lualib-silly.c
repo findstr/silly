@@ -1,9 +1,11 @@
+#include <unistd.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/resource.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -121,16 +123,6 @@ lexit(lua_State *L)
 }
 
 static int
-lmsgsize(lua_State *L)
-{
-	size_t sz;
-	sz = silly_worker_msgsize();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-
-static int
 llog(lua_State *L)
 {
 	int i;
@@ -165,32 +157,31 @@ llog(lua_State *L)
 }
 
 static int
-lmemallocator(lua_State *L)
+lgenid(lua_State *L)
 {
-	const char *ver;
-	ver = silly_allocator();
-	lua_pushstring(L, ver);
+	uint32_t id = silly_worker_genid();
+	lua_pushinteger(L, id);
 	return 1;
 }
 
 static int
-lmemused(lua_State *L)
+ltostring(lua_State *L)
 {
-	size_t sz;
-	sz = silly_memused();
-	lua_pushinteger(L, sz);
+	char *buff;
+	int size;
+	buff = lua_touserdata(L, 1);
+	size = luaL_checkinteger(L, 2);
+	lua_pushlstring(L, buff, size);
 	return 1;
 }
 
 static int
-lmemrss(lua_State *L)
+lgetpid(lua_State *L)
 {
-	size_t sz;
-	sz = silly_memrss();
-	lua_pushinteger(L, sz);
+	int pid = getpid();
+	lua_pushinteger(L, pid);
 	return 1;
 }
-
 
 static int
 ltimeout(lua_State *L)
@@ -215,6 +206,14 @@ static int
 ltimemonotonic(lua_State *L)
 {
 	uint64_t monotonic = silly_timer_monotonic();
+	lua_pushinteger(L, monotonic);
+	return 1;
+}
+
+static int
+ltimemonotonicsec(lua_State *L)
+{
+	uint64_t monotonic = silly_timer_monotonicsec();
 	lua_pushinteger(L, monotonic);
 	return 1;
 }
@@ -463,24 +462,78 @@ lclose(lua_State *L)
 }
 
 static int
-ltostring(lua_State *L)
+lversion(lua_State *L)
 {
-	char *buff;
-	int size;
-	buff = lua_touserdata(L, 1);
-	size = luaL_checkinteger(L, 2);
-	lua_pushlstring(L, buff, size);
+	const char *ver = SILLY_VERSION;
+	lua_pushstring(L, ver);
 	return 1;
 }
 
 static int
-lgenid(lua_State *L)
+lmemallocator(lua_State *L)
 {
-	uint32_t id = silly_worker_genid();
-	lua_pushinteger(L, id);
+	const char *ver;
+	ver = silly_allocator();
+	lua_pushstring(L, ver);
 	return 1;
 }
 
+static int
+lmemused(lua_State *L)
+{
+	size_t sz;
+	sz = silly_memused();
+	lua_pushinteger(L, sz);
+	return 1;
+}
+
+static int
+lmemrss(lua_State *L)
+{
+	size_t sz;
+	sz = silly_memrss();
+	lua_pushinteger(L, sz);
+	return 1;
+}
+
+static int
+lmsgsize(lua_State *L)
+{
+	size_t sz;
+	sz = silly_worker_msgsize();
+	lua_pushinteger(L, sz);
+	return 1;
+}
+
+static int
+lcpuinfo(lua_State *L)
+{
+	struct rusage ru;
+	float stime,utime;
+	getrusage(RUSAGE_SELF, &ru);
+	stime = (float)ru.ru_stime.tv_sec;
+	stime += (float)ru.ru_stime.tv_usec / 1000000;
+	utime = (float)ru.ru_utime.tv_sec;
+	utime += (float)ru.ru_utime.tv_usec / 1000000;
+	lua_pushnumber(L, stime);
+	lua_pushnumber(L, utime);
+	return 2;
+}
+
+static int
+lpollapi(lua_State *L)
+{
+	const char *api = silly_socket_pollapi();
+	lua_pushstring(L, api);
+	return 1;
+}
+
+static int
+ltimerresolution(lua_State *L)
+{
+	lua_pushinteger(L, TIMER_RESOLUTION);
+	return 1;
+}
 
 int
 luaopen_silly(lua_State *L)
@@ -492,15 +545,14 @@ luaopen_silly(lua_State *L)
 		{"setenv", lsetenv},
 		{"exit", lexit},
 		{"log", llog},
-		{"msgsize", lmsgsize},
-		//memory
-		{"memused", lmemused},
-		{"memrss", lmemrss},
-		{"memallocator", lmemallocator},
+		{"genid", lgenid},
+		{"tostring", ltostring},
+		{"getpid", lgetpid},
 		//timer
 		{"timeout", ltimeout},
 		{"timenow", ltimenow},
 		{"timemonotonic", ltimemonotonic},
+		{"timemonotonicsec", ltimemonotonicsec},
 		//socket
 		{"connect", ltcpconnect},
 		{"listen", ltcplisten},
@@ -512,9 +564,15 @@ luaopen_silly(lua_State *L)
 		{"udp", ludpconnect},
 		{"udpsend", ludpsend},
 		{"close", lclose},
-		//
-		{"tostring", ltostring},
-		{"genid", lgenid},
+		//probe
+		{"version", lversion},
+		{"memused", lmemused},
+		{"memrss", lmemrss},
+		{"memallocator", lmemallocator},
+		{"msgsize", lmsgsize},
+		{"cpuinfo", lcpuinfo},
+		{"pollapi", lpollapi},
+		{"timerresolution", ltimerresolution},
 		//end
 		{NULL, NULL},
 	};

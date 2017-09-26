@@ -2,16 +2,22 @@
 #define _SILLY_H
 #include <assert.h>
 #include <stdint.h>
+#include "silly_conf.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
 
-#define MSGCOMMONFIELD	\
-	struct silly_message *next;\
-	enum silly_message_type type;
+#define SILLY_VERSION_MAJOR 0
+#define SILLY_VERSION_MINOR 2
+#define SILLY_VERSION_RELEASE 2
+#define SILLY_VERSION_NUM ((SILLY_VERSION_MAJOR * 100) + SILLY_VERSION_MINOR)
+#define SILLY_VERSION STR(SILLY_VERSION_MAJOR) "." STR(SILLY_VERSION_MINOR)
+#define SILLY_RELEASE SILLY_VERSION "." STR(SILLY_VERSION_RELEASE)
+
 
 #define tocommon(msg)   ((struct silly_message *)(msg))
 #define totexpire(msg)  ((struct silly_message_texpire *)(msg))
 #define tosocket(msg)   ((struct silly_message_socket *)(msg))
+#define COMMONFIELD struct silly_message *next; enum silly_message_type type;
 
 struct silly_listen {
 	char name[64];
@@ -42,18 +48,17 @@ enum silly_message_type {
 	SILLY_SUDP,			//data packet(raw) from client(udp)
 };
 
-
 struct silly_message {
-	MSGCOMMONFIELD
+	COMMONFIELD
 };
 
 struct silly_message_texpire {	//timer expire
-	MSGCOMMONFIELD
+	COMMONFIELD
 	uint32_t session;
 };
 
 struct silly_message_socket {	//socket accept
-	MSGCOMMONFIELD
+	COMMONFIELD
 	int sid;
 	//SACCEPT, it used as portid,
 	//SCLOSE used as errorcode

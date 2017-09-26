@@ -1401,3 +1401,9 @@ void silly_socket_exit()
 	return ;
 }
 
+const char *
+silly_socket_pollapi()
+{
+	return SOCKET_POLL_API;
+}
+

@@ -153,7 +153,7 @@ silly_run(const struct silly_config *config)
 	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
 	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
-	silly_log("%s is running ...\n", config->selfname);
+	silly_log("%s %s is running ...\n", config->selfname, SILLY_RELEASE);
 	silly_log("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
 		config->timeraffinity, config->socketaffinity, config->workeraffinity);
 	for (i = 0; i < 3; i++)
