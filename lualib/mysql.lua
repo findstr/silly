@@ -751,11 +751,11 @@ local function _query_response(self, est_nrows)
                         badresult.err = err
                         badresult.errno = errno
                         badresult.sqlstate = sqlstate
-                        return true, false, badresult
+                        return false, badresult
                 end
 
                 if err ~= "again" then
-                        return true, true, res
+                        return true, res
                 end
 
                 local multiresultset = {res}
@@ -764,12 +764,12 @@ local function _query_response(self, est_nrows)
                 while err == "again" do
                         res, err, errno, sqlstate = read_result(self, est_nrows)
                         if not res then
-                                return true, true, multiresultset
+                                return true, multiresultset
                         end
                         multiresultset[i] = res
                         i = i + 1
                 end
-                return true, true, multiresultset
+                return true, multiresultset
         end
 end
 

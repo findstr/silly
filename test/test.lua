@@ -13,8 +13,9 @@ local modules = {
 	"testnetpacket",
 	"testchannel",
 	"testcrypt",
-	"testredis",
 	"testhttp",
+	"testredis",
+	"testmysql",
 }
 
 local M = ""
