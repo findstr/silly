@@ -1,4 +1,4 @@
-##v0.3.0 (Oct 1, 2017)
+## v0.3.0 (Oct 1, 2017)
 Bug fixes:
 
 - netpacket expand queue
@@ -30,7 +30,7 @@ New features:
 - remove lualib-log and refine daemon log to replace it
 
 
-##v0.2.2 (Jan 3, 2017)
+## v0.2.2 (Jan 3, 2017)
 Bug fixes:
 
 - http protocol
@@ -42,7 +42,7 @@ New features:
 - modify socket.lua default limit of  max packet size to 65535
 - modify default backlog to 256
 
-##v0.2.1 (Oct 9, 2016)
+## v0.2.1 (Oct 9, 2016)
 Bug fixes:
 - daemon log buffer mode
 - zproto map key bug sync
@@ -57,7 +57,7 @@ New features:
 - add core.wait2/core.wakeup2 interface
 
 
-##v0.2.0 (Aug 8, 2016)
+## v0.2.0 (Aug 8, 2016)
 
 Hello World!
 Roughly complete socket I/O and some basic library.
