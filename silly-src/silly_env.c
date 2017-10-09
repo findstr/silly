@@ -18,7 +18,6 @@ const char *silly_env_get(const char *key)
 	lua_getglobal(L, key);
 	value = lua_tostring(L, -1);
 	lua_pop(L, 1);
-
 	return value;
 }
 
@@ -36,7 +35,6 @@ silly_env_init()
 {
 	E = (struct silly_env *)silly_malloc(sizeof(*E));
 	E->L = luaL_newstate();
-
 	return 0;
 }
 

@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <lua.h>
@@ -28,39 +29,37 @@ checktype(lua_State *L, const char *key, int skt, int type)
 	return 0;
 }
 
-static int
-optint(lua_State *L, const char *key, int v)
+static inline int
+optint(const char *key, int v)
 {
 	int n;
-	int nil;
-	lua_getfield(L, -1, key);
-	nil = checktype(L, key, -1, LUA_TNUMBER);
-	if (nil < 0)
-		n = v;
-	else
-		n = lua_tonumber(L, -1);
-	lua_pop(L, 1);
+	int len;
+	char *end;
+	const char *val;
+	val = silly_env_get(key);
+	if (val == NULL)
+		return v;
+	len = strlen(val);
+	errno = 0;
+	n = strtol(val, &end, 0);
+	if (errno != 0 || end != (val + len)) {
+		const char *fmt = "[config] incorrect value of '%s' %s\n";
+		silly_log(fmt, key);
+		exit(-1);
+	}
 	return n;
 }
 
-static const char *
-optstr(lua_State *L, const char *key, size_t *sz, const char *v)
+static inline const char *
+optstr(const char *key, size_t *sz, const char *v)
 {
-	int nil;
 	const char *str;
-	lua_getfield(L, -1, key);
-	nil = checktype(L, key, -1, LUA_TSTRING);
-	if (nil < 0) {
+	str = silly_env_get(key);
+	if (str == NULL)
 		str = v;
-		*sz = strlen(str);
-	} else {
-		str = lua_tolstring(L, -1, sz);
-	}
-	lua_pop(L, 1);
+	*sz = strlen(str);
 	return str;
 }
-
-
 
 static void
 enveach(lua_State *L, char *first, char *curr, char *end)
@@ -135,6 +134,7 @@ initenv(lua_State *L, const char *self, const char *file)
 {
 	int err;
 	char name[256] = {0};
+	L = luaL_newstate();
 	luaL_openlibs(L);
 	err = luaL_loadstring(L, load_config);
 	lua_pushstring(L, file);
@@ -148,18 +148,20 @@ initenv(lua_State *L, const char *self, const char *file)
 		lua_close(L);
 		exit(-1);
 	}
-	return enveach(L, name, name, &name[256]);
+	enveach(L, name, name, &name[256]);
+	lua_close(L);
+	return ;
 }
 
 static void
-parseconfig(lua_State *L, struct silly_config *config)
+parseconfig(struct silly_config *config)
 {
 	size_t sz;
 	int slash;
 	const char *str;
-	config->daemon = optint(L, "daemon", 0);
+	config->daemon = optint("daemon", 0);
 	//bootstrap
-	str = optstr(L, "bootstrap", &sz, "");
+	str = optstr("bootstrap", &sz, "");
 	if (sz >= ARRAY_SIZE(config->bootstrap)) {
 		silly_log("[config] bootstrap is too long\n");
 		exit(-1);
@@ -170,21 +172,21 @@ parseconfig(lua_State *L, struct silly_config *config)
 	}
 	memcpy(config->bootstrap, str, sz + 1);
 	//lualib_path
-	str = optstr(L, "lualib_path", &sz, "");
+	str = optstr("lualib_path", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_path)) {
 		silly_log("[config] lualib_path is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_path, str, sz + 1);
 	//lualib_cpath
-	str = optstr(L, "lualib_cpath", &sz, "");
+	str = optstr("lualib_cpath", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_cpath)) {
 		silly_log("[config] lualib_cpath is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_cpath, str, sz + 1);
 	//logpath
-	str = optstr(L, "logpath", &sz, "");
+	str = optstr("logpath", &sz, "");
 	if ((sz + 1) >= ARRAY_SIZE(config->logpath)) { //reserve one byte for /
 		silly_log("[config] logpath is too long\n");
 		exit(-1);
@@ -198,16 +200,16 @@ parseconfig(lua_State *L, struct silly_config *config)
 		config->logpath[sz + 1] = 0;
 	}
 	//pidfile
-	str = optstr(L, "pidfile", &sz, "");
+	str = optstr("pidfile", &sz, "");
 	if ((sz + 1) >= ARRAY_SIZE(config->pidfile)) {
 		silly_log("[config] pidfile is too long\n");
 		exit(-1);
 	}
 	memcpy(config->pidfile, str, sz + 1);
 	//cpu affinity
-	config->socketaffinity= optint(L, "socket_cpu_affinity", -1);
-	config->workeraffinity = optint(L, "worker_cpu_affinity", -1);
-	config->timeraffinity = optint(L, "timer_cpu_affinity", -1);
+	config->socketaffinity= optint("socket_cpu_affinity", -1);
+	config->workeraffinity = optint("worker_cpu_affinity", -1);
+	config->timeraffinity = optint("timer_cpu_affinity", -1);
 	return;
 }
 
@@ -232,11 +234,9 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 	silly_env_init();
-	L = luaL_newstate();
-	initenv(L, argv[0], argv[1]);
 	config.selfname = selfname(argv[0]);
-	parseconfig(L, &config);
-	lua_close(L);
+	initenv(L, config.selfname, argv[1]);
+	parseconfig(&config);
 	silly_run(&config);
 	silly_env_exit();
 	silly_log("%s exit, leak memory size:%zu\n",
