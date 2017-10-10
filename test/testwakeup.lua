@@ -1,48 +1,28 @@
 local core = require "silly.core"
-
-local closure = {}
-
+local fork_queue = {}
+local nxt = 1
 local last = nil
 
-local more = core.fork(function()
-	core.wait()
-	print("extra")
-end)
-
-local function wrap(str, last)
+local function wrap(str, i)
 	return function()
 		core.wait()
-		if last then
-			print("#", last)
-			core.wakeup(last)
-			if str == "test3" then
-				core.wakeup(more)
-			end
-		end
-		print(str, "exit")
+		assert(nxt == i)
+		nxt = i + 1
+		print("wakeup", i)
 	end
-end
-
-local function create(str)
-	if last then
-		table.insert(closure, last)
-	end
-	local tmp =  core.fork(wrap(str, last))
-	print(tmp)
-	last = tmp
 end
 
 return function()
-	for i = 1, 5 do
-		create("test" .. i)
+	for i = 1, 100 do
+		fork_queue[i] = core.fork(wrap("test" .. i, i))
 	end
-	core.sleep(100)
-	print("--------------")
-	core.fork(function ()
-		print("-", last)
-		core.wakeup(last)
-	end)
-	core.sleep(100)
+	core.sleep(0)
+	local wakeup = core.wakeup
+	for i = 1, 100 do
+		wakeup(fork_queue[i])
+	end
+	core.sleep(0)
+	assert(nxt == 101)
 	print("testwakeup ok")
 end
 

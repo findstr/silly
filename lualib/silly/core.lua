@@ -1,7 +1,8 @@
 local silly = require "silly"
-local env = require "silly.env"
 
 local core = {}
+
+local core_log = silly.log
 
 local sformat = string.format
 local tremove = table.remove
@@ -14,8 +15,10 @@ local coresume = coroutine.resume
 coroutine.running = nil
 coroutine.yield = nil
 coroutine.resume = nil
-
-local core_log = silly.log
+function core.running()
+	local co = corunning()
+	return co
+end
 
 --coroutine pool will be dynamic size
 --so use the weaktable
@@ -44,7 +47,6 @@ local function cocreate(f)
 		coresume(co, "STARTUP", f)
 		return co
 	end
-
 	co = coroutine.create(cocall)
 	coresume(co)	--wakeup the new coroutine
 	coresume(co, "STARTUP", f)	 --pass the function handler
@@ -55,10 +57,6 @@ core.freemulti = silly.freemulti
 core.multicast = silly.multicast
 core.write = silly.send
 core.udpwrite = silly.udpsend
-function core.running()
-	local co = corunning()
-	return co
-end
 core.log = core_log
 core.exit = silly.exit
 core.tostring = silly.tostring
@@ -66,7 +64,6 @@ core.genid = silly.genid
 core.now = silly.timenow
 core.monotonic = silly.timemonotonic
 core.monotonicsec = silly.timemonotonicsec
-
 --debug interface
 core.memused = silly.memused
 core.memrss = silly.memrss
@@ -92,8 +89,7 @@ function core.error(errmsg)
 	core_log(debug.traceback())
 end
 
-
-local wakeup_co_status = {}
+local wakeup_co_queue = {}
 local wakeup_co_param = {}
 local wait_co_status = {}
 local sleep_co_session = {}
@@ -108,7 +104,6 @@ local dispatch_wakeup
 
 local function waitresume(co, typ, ...)
 	assert(typ == "WAKEUP", typ)
-	assert(wakeup_co_status[co] == nil)
 	assert(wait_co_status[co]== nil)
 	assert(sleep_co_session[co] == nil)
 	return ...
@@ -120,15 +115,10 @@ local function waityield(co, ret, typ)
 		return
 	end
 	if typ == "WAIT" then
-		assert(wakeup_co_status[co] == nil)
-		assert(wait_co_status[co])
-		assert(sleep_co_session[co] == nil)
+		assert(wait_co_status[co] and sleep_co_session[co] == nil)
 	elseif typ == "SLEEP" then
-		assert(wakeup_co_status[co] == nil)
-		assert(wait_co_status[co] == nil)
-		assert(sleep_co_session[co])
+		assert(wait_co_status[co] == nil and sleep_co_session[co])
 	elseif typ == "EXIT" then
-		assert(co)
 		copool[#copool + 1] = co
 	else
 		core_log("[silly.core] waityield unkonw return type", typ)
@@ -138,27 +128,23 @@ local function waityield(co, ret, typ)
 end
 
 function dispatch_wakeup()
-	local co = next(wakeup_co_status)
+	local co = tremove(wakeup_co_queue, 1)
 	if not co then
 		return
 	end
 	local param = wakeup_co_param[co]
-	wakeup_co_status[co] = nil
 	wakeup_co_param[co] = nil
 	return waityield(co, coresume(co, "WAKEUP", param))
 end
 
 function core.fork(func)
 	local co = cocreate(func)
-	assert(co)
-	assert(wakeup_co_status[co] == nil)
-	wakeup_co_status[co] = "FORK"
+	wakeup_co_queue[#wakeup_co_queue + 1] = co
 	return co
 end
 
 function core.wait()
 	local co = corunning()
-	assert(wakeup_co_status[co] == nil)
 	assert(sleep_co_session[co] == nil)
 	assert(wait_co_status[co] == nil)
 	wait_co_status[co] = "WAIT"
@@ -174,12 +160,10 @@ function core.wait2()
 end
 
 function core.wakeup(co, res)
-	assert(wait_co_status[co] or sleep_co_session[co])
-	assert(wakeup_co_status[co] == nil)
-	assert(wakeup_co_param[co] == nil)
-	wakeup_co_status[co] = "WAKEUP"
+	assert(wait_co_status[co])
 	wakeup_co_param[co] = res
 	wait_co_status[co] = nil
+	wakeup_co_queue[#wakeup_co_queue + 1] = co
 end
 
 function core.wakeup2(co, ...)
@@ -331,9 +315,9 @@ local MSG = {}
 function MSG.expire(session, _, _)
 	local co = sleep_session_co[session]
 	assert(sleep_co_session[co] == session)
-	core.wakeup(co)
 	sleep_session_co[session] = nil
 	sleep_co_session[co] = nil
+	wakeup_co_queue[#wakeup_co_queue + 1] = co
 end
 
 function MSG.accept(fd, _, portid, addr)
