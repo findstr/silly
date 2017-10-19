@@ -1,13 +1,17 @@
+local core = require "silly.core"
 local socket = require "socket"
 local ssl = require "ssl"
 local stream = require "http.stream"
 local dns = require "dns"
-
+local format = string.format
+local match = string.match
+local insert = table.insert
+local concat = table.concat
 local client = {}
-
+local http_agent = format("User-Agent: Silly/%s", core.version)
 local function parseurl(url)
 	local default = false
-	local scheme, host, port, path= string.match(url, "(http[s]-)://([^:/]+):?(%d*)([%w-%.?&=_/]*)")
+	local scheme, host, port, path= match(url, "(http[s]-)://([^:/]+):?(%d*)(.*)")
 	if path == "" then
 		path = "/"
 	end
@@ -26,14 +30,14 @@ end
 
 local function send_request(io_do, fd, method, host, abs, header, body)
 	local tmp = ""
-	table.insert(header, 1, string.format("%s %s HTTP/1.1", method, abs))
-	table.insert(header, string.format("Host: %s", host))
-	table.insert(header, string.format("Content-Length: %d", #body))
-	table.insert(header, "User-Agent: Silly/0.2")
-	table.insert(header, "Connection: keep-alive")
-	table.insert(header, "\r\n")
-	tmp = table.concat(header, "\r\n")
-	tmp = tmp .. body
+	insert(header, 1, format("%s %s HTTP/1.1", method, abs))
+	insert(header, format("Host: %s", host))
+	insert(header, format("Content-Length: %d", #body))
+	insert(header, http_agent)
+	insert(header, "Connection: keep-alive")
+	insert(header, "\r\n")
+	insert(header, body)
+	tmp = concat(header, "\r\n")
 	io_do.write(fd, tmp)
 end
 
@@ -63,15 +67,16 @@ local function process(uri, method, header, body)
 	else
 		ip = host
 	end
+	assert(ip)
 	if scheme == "https" then
 		io_do = ssl
 	elseif scheme == "http" then
 		io_do = socket
 	end
 	if not default then
-		host = string.format("%s:%s", host, port)
+		host = format("%s:%s", host, port)
 	end
-	ip = string.format("%s@%s", ip, port)
+	ip = format("%s@%s", ip, port)
 	local fd = io_do.connect(ip)
 	if not fd then
 		return 599
