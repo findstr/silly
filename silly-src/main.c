@@ -130,11 +130,11 @@ skipcode(const char *str)
 }
 
 static void
-initenv(lua_State *L, const char *self, const char *file)
+initenv(const char *self, const char *file)
 {
 	int err;
 	char name[256] = {0};
-	L = luaL_newstate();
+	lua_State *L = luaL_newstate();
 	luaL_openlibs(L);
 	err = luaL_loadstring(L, load_config);
 	lua_pushstring(L, file);
@@ -227,7 +227,6 @@ selfname(const char *path)
 
 int main(int argc, char *argv[])
 {
-	lua_State *L;
 	struct silly_config config;
 	if (argc != 2) {
 		printf("USAGE:%s <config file>\n", argv[0]);
@@ -235,7 +234,7 @@ int main(int argc, char *argv[])
 	}
 	silly_env_init();
 	config.selfname = selfname(argv[0]);
-	initenv(L, config.selfname, argv[1]);
+	initenv(config.selfname, argv[1]);
 	parseconfig(&config);
 	silly_run(&config);
 	silly_env_exit();

@@ -1,4 +1,4 @@
-.PNONY:all malloc
+.PNONY:all
 
 #---------
 
@@ -9,8 +9,6 @@ TARGET ?= silly
 include Platform.mk
 
 linux macosx: all
-
-all:malloc
 
 #-----------library
 
@@ -42,8 +40,6 @@ $(JEMALLOC_DIR)/autogen.sh:
 
 #malloc lib select
 MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
-
-malloc:$(MALLOC_STATICLIB)
 
 #-----------project
 TEST_PATH = test
