@@ -68,9 +68,7 @@ static inline void
 logfileopen(const struct silly_config *conf)
 {
 	int fd;
-	char path[128];
-	snprintf(path, 128, "%s%s.log", conf->logpath, conf->selfname);
-	fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 00666);
+	fd = open(conf->logpath, O_CREAT | O_WRONLY | O_APPEND, 00666);
 	if (fd >= 0) {
 		dup2(fd, 1);
 		dup2(fd, 2);

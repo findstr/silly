@@ -156,8 +156,9 @@ initenv(const char *self, const char *file)
 static void
 parseconfig(struct silly_config *config)
 {
-	size_t sz;
 	int slash;
+	char *p;
+	size_t sz, n;
 	const char *str;
 	config->daemon = optint("daemon", 0);
 	//bootstrap
@@ -187,17 +188,16 @@ parseconfig(struct silly_config *config)
 	memcpy(config->lualib_cpath, str, sz + 1);
 	//logpath
 	str = optstr("logpath", &sz, "");
-	if ((sz + 1) >= ARRAY_SIZE(config->logpath)) { //reserve one byte for /
+	slash = sz > 0 ? str[sz - 1] : '/';
+	p = config->logpath;
+	n = ARRAY_SIZE(config->logpath);
+	if (slash == '/')
+		sz = snprintf(p, n, "%s%s.log", str, config->selfname);
+	else
+		sz = snprintf(p, n, "%s", str);
+	if (sz >= n) {
 		silly_log("[config] logpath is too long\n");
 		exit(-1);
-	}
-	memcpy(config->logpath, str, sz + 1);
-	slash = '/';
-	if (sz > 0)
-		slash = config->logpath[sz - 1];
-	if (slash != '/') {
-		config->logpath[sz] = '/';
-		config->logpath[sz + 1] = 0;
 	}
 	//pidfile
 	str = optstr("pidfile", &sz, "");
