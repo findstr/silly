@@ -1,5 +1,4 @@
 local core = require "sys.core"
-local env = require "sys.env"
 local proto = require "sampleproto"
 local wire = require "wire"
 local msg = require "saux.msg"
@@ -8,7 +7,7 @@ local decode = wire.decode
 local encode = wire.encode
 
 local client = msg.createclient {
-	addr = env.get "sampled_port",
+	addr = core.envget "sampled_port",
 	accept = function(fd, addr)
 		core.log("accept", addr)
 	end,

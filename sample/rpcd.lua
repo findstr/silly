@@ -1,4 +1,3 @@
-local env = require "sys.env"
 local core = require "sys.core"
 local patch = require "sys.patch"
 local console = require "sys.console"
@@ -7,7 +6,7 @@ local rpc = require "saux.rpc"
 local DO = require "rpcl"
 
 local server = rpc.createserver {
-	addr = env.get "rpcd_port",
+	addr = core.envget "rpcd_port",
 	proto = proto,
 	accept = function(fd, addr)
 		core.log("accept", fd, addr)

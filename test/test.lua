@@ -1,5 +1,4 @@
 local core = require "sys.core"
-local env = require "sys.env"
 
 local modules = {
 	"testtag",
@@ -25,7 +24,7 @@ local function print(...)
 	gprint(M, ...)
 end
 
-print("env.get", env.get("hello"))
+assert(core.envget("hello") == "world")
 
 _ENV.print = print
 

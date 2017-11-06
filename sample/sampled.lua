@@ -1,5 +1,4 @@
 local core = require "sys.core"
-local env = require "sys.env"
 local msg = require "saux.msg"
 local rpc = require "saux.rpc"
 local rpcproto = require "rpcproto"
@@ -38,7 +37,7 @@ end
 
 
 rpcclient = rpc.createclient {
-	addr = env.get "rpcd_port",
+	addr = core.envget "rpcd_port",
 	proto = rpcproto,
 	timeout = 5000,
 	close = function(fd, errno)
@@ -47,7 +46,7 @@ rpcclient = rpc.createclient {
 }
 
 server = msg.createserver {
-	addr = env.get("sampled_port"),
+	addr = core.envget("sampled_port"),
 	accept = function(fd, addr)
 		core.log("accept", addr)
 	end,

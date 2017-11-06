@@ -52,6 +52,10 @@ local function cocreate(f)
 	coresume(co, "STARTUP", f)	 --pass the function handler
 	return co
 end
+--env
+core.envget = silly.getenv
+core.envset = silly.setenv
+--socket
 core.packmulti = silly.packmulti
 core.freemulti = silly.freemulti
 core.multicast = silly.multicast
