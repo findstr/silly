@@ -1,7 +1,7 @@
 local format = string.format
 local gsub = string.gsub
 local char = string.char
-local aux = {}
+local helper = {}
 
 local html_unescape = {
 	['quot'] = '"',
@@ -10,7 +10,7 @@ local html_unescape = {
 	['gt'] = '>',
 }
 
-function aux.htmlunescape(html)
+function helper.htmlunescape(html)
 	html = gsub(html, "&#(%d+);", function(s)
 		return string.char(tonumber(s))
 	end)
@@ -18,7 +18,7 @@ function aux.htmlunescape(html)
 	return html
 end
 
-function aux.urlencode(url)
+function helper.urlencode(url)
 	print(url)
 	url = gsub(url, "([^0-9a-zA-Z$-_%.+!*(),])", function(n)
 		local s = format("%%%02X", n:byte(1))
@@ -28,7 +28,7 @@ function aux.urlencode(url)
 	return url
 end
 
-function aux.urldecode(url)
+function helper.urldecode(url)
 	url = gsub(url, "%%([0-9A-Fa-F][0-9A-Fa-F])", function (s)
 		return string.char(tonumber(s, 16))
 	end)
@@ -37,16 +37,16 @@ end
 
 
 
-function aux.setcookie(header, cookie)
+function helper.setcookie(header, cookie)
 	local c = header['Set-Cookie']
 	if c then
 		table.insert(cookie, c)
 	end
 end
 
-function aux.getcookie(cookie)
+function helper.getcookie(cookie)
 	return "Cookie:" .. table.concat(cookie, ";")
 end
 
-return aux
+return helper
 
