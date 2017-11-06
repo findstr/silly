@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local socket = require "socket"
+local core = require "sys.core"
+local socket = require "sys.socket"
 local stream = require "http.stream"
 
 local server = {}

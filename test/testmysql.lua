@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local mysql = require "mysql"
+local core = require "sys.core"
+local mysql = require "sys.db.mysql"
 
 return function()
 	local db = mysql.create {

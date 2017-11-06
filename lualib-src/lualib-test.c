@@ -46,7 +46,7 @@ lnewdatamsg(lua_State *L)
 };
 
 int
-luaopen_testaux_c(lua_State *L)
+luaopen_test_aux_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"newdatamsg", lnewdatamsg},

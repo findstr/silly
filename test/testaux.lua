@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local c = require "testaux.c"
+local core = require "sys.core"
+local c = require "test.aux.c"
 local testaux = {}
 
 local rand = math.random

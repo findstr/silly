@@ -1,4 +1,4 @@
-local core = require "silly.core"
+local core = require "sys.core"
 
 local tremove = table.remove
 local tpack = table.pack

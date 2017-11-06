@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local dns = require "dns"
+local core = require "sys.core"
+local dns = require "sys.dns"
 
 return function()
 	local ip = dns.query("www.baidu.com")

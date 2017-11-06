@@ -1,8 +1,8 @@
-local core = require "silly.core"
-local socket = require "socket"
-local ssl = require "ssl"
+local core = require "sys.core"
+local socket = require "sys.socket"
+local ssl = require "sys.netssl"
 local stream = require "http.stream"
-local dns = require "dns"
+local dns = require "sys.dns"
 local format = string.format
 local match = string.match
 local insert = table.insert
@@ -29,13 +29,13 @@ local function parseurl(url)
 end
 
 local function send_request(io_do, fd, method, host, abs, header, body)
-	local tmp = ""
+	local tmp
 	insert(header, 1, format("%s %s HTTP/1.1", method, abs))
 	insert(header, format("Host: %s", host))
 	insert(header, format("Content-Length: %d", #body))
 	insert(header, http_agent)
 	insert(header, "Connection: keep-alive")
-	insert(header, "\r\n")
+	insert(header, "")
 	insert(header, body)
 	tmp = concat(header, "\r\n")
 	io_do.write(fd, tmp)

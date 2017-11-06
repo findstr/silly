@@ -37,8 +37,6 @@ dispatch["/upload"] = function(request, body, write)
 	local head = {
 		"Content-Type: text/plain",
 		}
-
-
 	write(200, head, body)
 end
 

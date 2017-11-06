@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local env = require "silly.env"
+local core = require "sys.core"
+local env = require "sys.env"
 local proto = require "sampleproto"
 local wire = require "wire"
 local msg = require "saux.msg"

@@ -1,4 +1,4 @@
-local core = require "silly.core"
+local core = require "sys.core"
 local proto = require "rpcproto"
 
 local DO = {}

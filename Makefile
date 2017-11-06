@@ -45,33 +45,35 @@ MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
 TEST_PATH = test
 LUACLIB_PATH ?= luaclib
 SRC_PATH = silly-src
+LIB_PATH = lualib-src
 INCLUDE = -I $(LUA_INC) -I $(JEMALLOC_INC) -I $(SRC_PATH)
-SRC = \
-      $(SRC_PATH)/main.c\
-      $(SRC_PATH)/silly_socket.c\
-      $(SRC_PATH)/silly_queue.c\
-      $(SRC_PATH)/silly_worker.c\
-      $(SRC_PATH)/silly_timer.c\
-      $(SRC_PATH)/silly_run.c\
-      $(SRC_PATH)/silly_daemon.c\
-      $(SRC_PATH)/silly_env.c\
-      $(SRC_PATH)/silly_malloc.c\
-      $(SRC_PATH)/silly_log.c\
+SRC_FILE = \
+      main.c \
+      silly_socket.c \
+      silly_queue.c \
+      silly_worker.c \
+      silly_timer.c \
+      silly_run.c \
+      silly_daemon.c \
+      silly_env.c \
+      silly_malloc.c \
+      silly_log.c \
 
+SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
-all: \
-	$(LUACLIB_PATH)	\
-	$(TARGET) \
-	$(LUACLIB_PATH)/silly.so \
-	$(LUACLIB_PATH)/profiler.so \
-	$(LUACLIB_PATH)/crypt.so \
-	$(LUACLIB_PATH)/netpacket.so \
-	$(LUACLIB_PATH)/netstream.so \
-	$(LUACLIB_PATH)/netssl.so \
-	$(LUACLIB_PATH)/zproto.so \
-	$(TEST_PATH)/testaux.so\
+LIB_SRC = lualib-silly.c \
+	  lualib-profiler.c \
+	  lualib-netstream.c \
+	  lualib-netpacket.c \
+	  lualib-netssl.c \
+	  lualib-crypt.c lsha1.c aes.c sha256.c \
 
+all: \
+	$(TARGET) \
+	$(LUACLIB_PATH)/sys.so \
+	$(LUACLIB_PATH)/zproto.so \
+	$(LUACLIB_PATH)/test.so \
 
 $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
 	$(LD) -o $@ $^ $(LDFLAG)
@@ -79,21 +81,11 @@ $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
-$(LUACLIB_PATH)/silly.so: lualib-src/lualib-silly.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/netpacket.so: lualib-src/lualib-netpacket.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/profiler.so: lualib-src/lualib-profiler.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $< $(SHARED)
-$(LUACLIB_PATH)/crypt.so: lualib-src/crypt/lualib-crypt.c lualib-src/crypt/lsha1.c lualib-src/crypt/aes.c lualib-src/crypt/sha256.c
+$(LUACLIB_PATH)/sys.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/netstream.so: lualib-src/lualib-netstream.c
+$(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/netssl.so: lualib-src/lualib-netssl.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(TEST_PATH)/testaux.so: test/testaux.c
+$(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 .depend:
@@ -108,7 +100,6 @@ $(TEST_PATH)/testaux.so: test/testaux.c
 clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
-	-rm $(TEST_PATH)/*.so
 	-rm .depend
 
 cleanall: clean

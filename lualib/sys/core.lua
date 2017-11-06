@@ -1,4 +1,4 @@
-local silly = require "silly"
+local silly = require "sys.silly"
 
 local core = {}
 
@@ -30,13 +30,13 @@ local function cocall()
 	while true do
 		local ret, func = coyield("EXIT")
 		if ret ~= "STARTUP" then
-			core_log("[silly.core] create coroutine fail", ret)
+			core_log("[sys.core] create coroutine fail", ret)
 			core_log(debug.traceback())
 			return
 		end
 		local ok, err = core.pcall(func, coyield())
 		if ok == false then
-			core_log("[silly.core] call", err)
+			core_log("[sys.core] call", err)
 		end
 	end
 end
@@ -121,7 +121,7 @@ local function waityield(co, ret, typ)
 	elseif typ == "EXIT" then
 		copool[#copool + 1] = co
 	else
-		core_log("[silly.core] waityield unkonw return type", typ)
+		core_log("[sys.core] waityield unkonw return type", typ)
 		core_log(debug.traceback())
 	end
 	return dispatch_wakeup()
@@ -216,12 +216,12 @@ function core.listen(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		core_log("[silly.core] listen invaild port", port)
+		core_log("[sys.core] listen invaild port", port)
 		return nil
 	end
 	local id = silly.listen(ip, port, backlog);
 	if id < 0 then
-		core_log("[silly.core] listen", port, "error", id)
+		core_log("[sys.core] listen", port, "error", id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
@@ -238,12 +238,12 @@ function core.bind(port, dispatch, tag)
 	end
 	port = tonumber(port)
 	if port == 0 then
-		core_log("[silly.core] listen invaild port", port)
+		core_log("[sys.core] listen invaild port", port)
 		return nil
 	end
 	local id = silly.bind(ip, port);
 	if id < 0 then
-		core_log("[silly.core] udpbind", port, "error",  id)
+		core_log("[sys.core] udpbind", port, "error",  id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch

@@ -1,4 +1,4 @@
-local dispatch = require "socketdispatch"
+local dispatch = require "sys.socketdispatch"
 
 local tostring = tostring
 local tonumber = tonumber

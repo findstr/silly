@@ -1,6 +1,6 @@
-local core = require "silly.core"
-local patch = require "silly.patch"
-local socket = require "socket"
+local core = require "sys.core"
+local patch = require "sys.patch"
+local socket = require "sys.socket"
 local lower = string.lower
 local format = string.format
 local concat = table.concat

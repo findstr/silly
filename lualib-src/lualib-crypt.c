@@ -334,7 +334,7 @@ setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 }
 
 int
-luaopen_crypt(lua_State *L)
+luaopen_sys_crypt(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"sha1", lsha1},

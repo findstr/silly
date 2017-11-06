@@ -1,6 +1,6 @@
-local core = require "silly.core"
+local core = require "sys.core"
 local msg = require "saux.msg"
-local np = require "netpacket"
+local np = require "sys.netpacket"
 
 local server
 local accept = {}

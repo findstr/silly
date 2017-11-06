@@ -1,4 +1,4 @@
-local silly = require "silly"
+local silly = require "sys.silly"
 
 local env = {}
 

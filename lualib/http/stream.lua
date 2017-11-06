@@ -1,4 +1,4 @@
-local socket = require "socket"
+local socket = require "sys.socket"
 local stream = {}
 
 function stream.recv_request(readl, readn)

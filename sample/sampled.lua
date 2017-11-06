@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local env = require "silly.env"
+local core = require "sys.core"
+local env = require "sys.env"
 local msg = require "saux.msg"
 local rpc = require "saux.rpc"
 local rpcproto = require "rpcproto"

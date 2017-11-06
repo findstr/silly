@@ -536,7 +536,7 @@ ltimerresolution(lua_State *L)
 }
 
 int
-luaopen_silly(lua_State *L)
+luaopen_sys_silly(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core

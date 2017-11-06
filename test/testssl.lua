@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local ssl = require "ssl"
+local core = require "sys.core"
+local ssl = require "sys.ssl"
 
 return function()
 	local fd = ssl.connect("14.215.177.37@443")

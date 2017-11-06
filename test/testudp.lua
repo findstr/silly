@@ -1,6 +1,6 @@
-local core = require "silly.core"
-local socket = require "socket"
-local crypt = require "crypt"
+local core = require "sys.core"
+local socket = require "sys.socket"
+local crypt = require "sys.crypt"
 local server_fd
 local client_fd
 

@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local channel = require "silly.channel"
+local core = require "sys.core"
+local channel = require "sys.channel"
 
 local c1 = channel.channel()
 local function test()

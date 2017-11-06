@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local np = require "netpacket"
+local core = require "sys.core"
+local np = require "sys.netpacket"
 local zproto = require "zproto"
 local TAG = "saux.rpc"
 --[[

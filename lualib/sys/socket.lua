@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local ns = require "netstream"
+local core = require "sys.core"
+local ns = require "sys.netstream"
 
 local socket_pool = {}
 

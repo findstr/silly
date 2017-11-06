@@ -396,7 +396,7 @@ tpush(lua_State *L)
 	return push(L, fd, dat, sz);
 }
 
-int luaopen_netstream(lua_State *L)
+int luaopen_sys_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"push", lpush},

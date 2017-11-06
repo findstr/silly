@@ -1,4 +1,4 @@
-local core = require "silly.core"
+local core = require "sys.core"
 local fork_queue = {}
 local nxt = 1
 local last = nil

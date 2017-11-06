@@ -441,7 +441,7 @@ static luaL_Reg tbl[] = {
 #endif
 
 int
-luaopen_netssl_c(lua_State *L)
+luaopen_sys_netssl_c(lua_State *L)
 {
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);

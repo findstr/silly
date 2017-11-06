@@ -1,4 +1,4 @@
-local rp = require "netstream"
+local rp = require "sys.netstream"
 
 return function()
 

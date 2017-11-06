@@ -351,7 +351,7 @@ packet_gc(lua_State *L)
 	return 0;
 }
 
-int luaopen_netpacket(lua_State *L)
+int luaopen_sys_netpacket(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"create", lcreate},

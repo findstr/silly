@@ -1,4 +1,5 @@
-local core = require "silly.core"
+local core = require "sys.core"
+local env = require "sys.env"
 
 local modules = {
 	"testtag",
@@ -23,6 +24,8 @@ local gprint = print
 local function print(...)
 	gprint(M, ...)
 end
+
+print("env.get", env.get("hello"))
 
 _ENV.print = print
 

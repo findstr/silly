@@ -1,6 +1,6 @@
-local core = require "silly.core"
+local core = require "sys.core"
 local rpc = require "saux.rpc"
-local crypt = require "crypt"
+local crypt = require "sys.crypt"
 local zproto = require "zproto"
 
 local logic = zproto:parse [[

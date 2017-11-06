@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local netssl = require "netssl.c"
+local core = require "sys.core"
+local netssl = require "sys.netssl.c"
 local TAG = "ssl"
 local socket_pool = {}
 

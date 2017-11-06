@@ -1,5 +1,5 @@
-local socket = require "socket"
-local core = require "silly.core"
+local socket = require "sys.socket"
+local core = require "sys.core"
 
 local dns = {}
 local dns_server = "192.168.1.1@53"

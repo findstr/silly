@@ -1,5 +1,5 @@
 local testaux = require "testaux"
-local core = require "silly.core"
+local core = require "sys.core"
 
 local function disp()
 

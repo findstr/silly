@@ -1,5 +1,5 @@
-local socket = require "socket"
-local core = require "silly.core"
+local socket = require "sys.socket"
+local core = require "sys.core"
 
 local tremove = table.remove
 

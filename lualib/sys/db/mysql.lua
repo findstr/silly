@@ -1,8 +1,8 @@
 -- Copyright (C) 2012 Yichun Zhang (agentzh)
 
 
-local sfifo = require "socketdispatch"
-local crypt = require "crypt"
+local sfifo = require "sys.socketdispatch"
+local crypt = require "sys.crypt"
 local sub = string.sub
 local strbyte = string.byte
 local strchar = string.char

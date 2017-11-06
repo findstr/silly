@@ -1,5 +1,5 @@
-local core = require "silly.core"
-local np = require "netpacket"
+local core = require "sys.core"
+local np = require "sys.netpacket"
 local TAG = "saux.msg"
 
 local msg = {}

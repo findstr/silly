@@ -1,4 +1,4 @@
-local crypt = require "crypt"
+local crypt = require "sys.crypt"
 local P = require "print"
 
 return function()
