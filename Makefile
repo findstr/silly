@@ -38,8 +38,12 @@ $(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
 $(JEMALLOC_DIR)/autogen.sh:
 	git submodule update --init
 
+jemalloc:$(JEMALLOC_STATICLIB)
+
 #malloc lib select
 MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
+
+all:jemalloc
 
 #-----------project
 TEST_PATH = test
