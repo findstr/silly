@@ -23,6 +23,6 @@ local ok = server:listen()
 core.log("rpc server start:", ok)
 
 console {
-	addr = "@2323"
+	addr = ":2323"
 }
 

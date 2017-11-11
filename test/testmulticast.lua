@@ -9,7 +9,7 @@ local recv = {}
 
 return function()
 	server = msg.createserver {
-		addr = "127.0.0.1@8002",
+		addr = "127.0.0.1:8002",
 		accept = function(fd, addr)
 			accept[#accept + 1] = fd
 			print("accept", addr)
@@ -35,7 +35,7 @@ return function()
 	local inst
 	for i = 1, 10 do
 		inst = msg.createclient {
-			addr = "127.0.0.1@8002",
+			addr = "127.0.0.1:8002",
 			data = function(fd, d, sz)
 				print("recv", i)
 				local m = core.tostring(d, sz)

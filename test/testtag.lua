@@ -6,7 +6,7 @@ local function disp()
 end
 
 local function test_core()
-	local fd = core.connect("127.0.0.1@9009", disp, nil, "core")
+	local fd = core.connect("127.0.0.1:9009", disp, nil, "core")
 	print("core connect:", fd, core.tag(fd))
 	assert(fd >= 0)
 	testaux.asserteq(core.tag(fd), "core", "testtag test fd tag")
@@ -17,7 +17,7 @@ local function test_core()
 end
 
 return function()
-	local fd = core.listen("127.0.0.1@9009", disp)
+	local fd = core.listen("127.0.0.1:9009", disp)
 	test_core()
 	core.sleep(10)
 	core.close(fd)

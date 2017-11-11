@@ -41,7 +41,7 @@ dispatch["/upload"] = function(request, body, write)
 end
 
 
-server.listen("@8080", function(request, body, write)
+server.listen(":8080", function(request, body, write)
 	local c = dispatch[request.uri]
 	if c then
 		c(request, body, write)

@@ -76,7 +76,7 @@ local function process(uri, method, header, body)
 	if not default then
 		host = format("%s:%s", host, port)
 	end
-	ip = format("%s@%s", ip, port)
+	ip = format("%s:%s", ip, port)
 	local fd = io_do.connect(ip)
 	if not fd then
 		return 599

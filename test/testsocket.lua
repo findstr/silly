@@ -21,7 +21,7 @@ local function testsend(fd, one, nr)
 end
 
 console {
-	addr = "@3434",
+	addr = ":3434",
 	cmd = {
 		debug = function()
 			return string.format("%s:%s", send_nr, recv_nr)
@@ -30,7 +30,7 @@ console {
 }
 
 return function()
-	local listenfd = socket.listen("@8990", function(fd, addr)
+	local listenfd = socket.listen(":8990", function(fd, addr)
 		while true do
 			local n = socket.readline(fd)
 			assert(n)
@@ -46,7 +46,7 @@ return function()
 		end
 	end)
 	print("testsocket listenfd:", listenfd)
-	local fd = socket.connect("127.0.0.1@8990")
+	local fd = socket.connect("127.0.0.1:8990")
 	if not fd then
 		print("connect fail:", fd)
 		return

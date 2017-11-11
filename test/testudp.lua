@@ -18,9 +18,9 @@ local function udp_client(data, addr)
 end
 
 return function()
-	server_fd = socket.bind("@8989", udp_server)
+	server_fd = socket.bind(":8989", udp_server)
 	assert(server_fd)
-	client_fd = socket.udp("127.0.0.1@8989", udp_client)
+	client_fd = socket.udp("127.0.0.1:8989", udp_client)
 	assert(client_fd)
 	for i = 1, 20 do
 		D = crypt.randomkey()

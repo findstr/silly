@@ -4,7 +4,7 @@ local zproto = require "zproto"
 local TAG = "saux.rpc"
 --[[
 rpc.listen {
-	addr = ip@port:backlog
+	addr = ip:port:backlog
 	proto = the proto instance
 	accept = function(fd, addr)
 		@fd

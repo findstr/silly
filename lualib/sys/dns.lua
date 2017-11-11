@@ -2,7 +2,7 @@ local socket = require "sys.socket"
 local core = require "sys.core"
 
 local dns = {}
-local dns_server = "192.168.1.1@53"
+local dns_server = "192.168.1.1:53"
 local domain_cache = {}
 local wait_coroutine = {}
 local weakmt = {__mode = "kv"}

@@ -208,7 +208,7 @@ end
 function core.listen(port, dispatch, tag)
 	assert(port)
 	assert(dispatch)
-	local ip, port, backlog = port:match("([0-9%.]*)@([0-9]+):?([0-9]*)")
+	local ip, port, backlog = port:match("([0-9%.]*):([0-9]+):?([0-9]*)")
 	if ip == "" then
 		ip = "0.0.0.0"
 	end
@@ -236,7 +236,7 @@ end
 function core.bind(port, dispatch, tag)
 	assert(port)
 	assert(dispatch)
-	local ip, port = port:match("([0-9%.]*)@([0-9]+)")
+	local ip, port = port:match("([0-9%.]*):([0-9]+)")
 	if ip == "" then
 		ip = "0.0.0.0"
 	end
@@ -259,10 +259,10 @@ end
 local function doconnect(ip, dispatch, bind, dofunc, tag)
 	assert(ip)
 	assert(dispatch)
-	local ip, port = ip:match("([0-9%.]*)@([0-9]+)")
+	local ip, port = ip:match("([0-9%.]*):([0-9]+)")
 	assert(ip and port)
-	bind = bind or "@0"
-	local bip, bport = bind:match("([0-9%.]*)@([0-9]+)")
+	bind = bind or ":0"
+	local bip, bport = bind:match("([0-9%.]*):([0-9]+)")
 	assert(bip and bport)
 	local fd = dofunc(ip, port, bip, bport)
 	if fd < 0 then

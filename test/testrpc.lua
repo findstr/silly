@@ -12,7 +12,7 @@ test 0xff {
 ]]
 
 local server = rpc.createserver {
-	addr = "@8989",
+	addr = ":8989",
 	proto = logic,
 	accept = function(fd, addr)
 		print("accept", fd, addr)
@@ -30,7 +30,7 @@ local server = rpc.createserver {
 }
 
 local client = rpc.createclient {
-	addr = "127.0.0.1@8989",
+	addr = "127.0.0.1:8989",
 	proto = logic,
 	timeout = 5000,
 	close = function(fd, errno)
