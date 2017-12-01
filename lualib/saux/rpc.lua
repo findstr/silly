@@ -113,7 +113,7 @@ function server.listen(self)
 			end
 			--ack
 			if type(cmd) == "string" then
-				cmd = rpcproto:querytag(cmd)
+				cmd = rpcproto:tag(cmd)
 			end
 			local hdr = {session = rpc.session, command = cmd}
 			local hdrdat = proto:encode("rpc", hdr)
@@ -292,7 +292,7 @@ function client.call(self, cmd, body)
 		return ok
 	end
 	local rpcproto = self.config.proto
-	local cmd = rpcproto:querytag(cmd)
+	local cmd = rpcproto:tag(cmd)
 	local session = core.genid()
 	local hdr = {session = session, command = cmd}
 	local hdrdat = proto:encode("rpc", hdr)

@@ -20,7 +20,7 @@ end
 
 function M.encode(proto, cmd, body)
 	if type(cmd) == "string" then
-		cmd = proto:querytag(cmd)
+		cmd = proto:tag(cmd)
 	end
 	local cmddat = string.pack("<I4", cmd)
 	local bodydat = proto:encode(cmd, body)

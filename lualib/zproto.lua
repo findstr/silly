@@ -75,7 +75,7 @@ function zproto:encode(typ, packet)
 	return engine.encode(record, packet)
 end
 
-function zproto:querytag(typ)
+function zproto:tag(typ)
 	assert(type(typ) == "string")
 	local tag = self.nametag[typ]
 	if not tag then

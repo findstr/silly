@@ -19,7 +19,7 @@ local function send(fd, cmd, ack)
 	return server:send(fd, dat)
 end
 
-MSG[sampleproto:querytag("r_hello")] = function(fd, cmd, data)
+MSG[sampleproto:tag("r_hello")] = function(fd, cmd, data)
 	core.log(data.val)
 	data.val = data.val .. "sample"
 	local ok = send(fd, "a_hello", data)
@@ -27,7 +27,7 @@ MSG[sampleproto:querytag("r_hello")] = function(fd, cmd, data)
 	return
 end
 
-MSG[sampleproto:querytag("r_sum")] = function(fd, cmd, data)
+MSG[sampleproto:tag("r_sum")] = function(fd, cmd, data)
 	local rrpc_sum = data
 	data.suffix = data.suffix .. "sampled"
 	local res = rpcclient:call("rrpc_sum", rrpc_sum)
