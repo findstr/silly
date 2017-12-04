@@ -86,9 +86,9 @@ function zproto:tag(typ)
 	return tag
 end
 
-function zproto:decode(typ, data, sz)
+function zproto:decode(typ, data, sz, offset)
 	local record = query(self, typ)
-	return engine.decode(record, data, sz)
+	return engine.decode(record, data, sz, offset)
 end
 
 function zproto:pack(data, sz)

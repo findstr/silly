@@ -265,6 +265,8 @@ strtotype(struct zproto *z, struct zproto_struct *proto, const char *type, struc
 		ztype |= ZPROTO_BOOLEAN;
 	} else if (strncmp(type, "integer", sz) == 0) {
 		ztype |= ZPROTO_INTEGER;
+	} else if (strncmp(type, "long", sz) == 0) {
+		ztype |= ZPROTO_LONG;
 	} else if (strncmp(type, "float", sz) == 0) {
 		ztype |= ZPROTO_FLOAT;
 	} else if (strncmp(type, "string", sz) == 0) {
@@ -625,7 +627,10 @@ encode_field(struct zproto_args *args, zproto_cb_t cb)
 		return cb(args);
 	case ZPROTO_INTEGER:
 	case ZPROTO_FLOAT:
-		CHECK_OOM(args->buffsz, sizeof(uint32_t))
+		CHECK_OOM(args->buffsz, sizeof(int32_t))
+		return cb(args);
+	case ZPROTO_LONG:
+		CHECK_OOM(args->buffsz, sizeof(int64_t));
 		return cb(args);
 	case ZPROTO_STRING:
 		CHECK_OOM(args->buffsz, sizeof(len_t))
@@ -754,8 +759,12 @@ decode_field(struct zproto_args *args, zproto_cb_t cb)
 		return cb(args);
 	case ZPROTO_INTEGER:
 	case ZPROTO_FLOAT:
-		CHECK_VALID(args->buffsz, sizeof(uint32_t))
-		args->buffsz = sizeof(uint32_t);
+		CHECK_VALID(args->buffsz, sizeof(int32_t))
+		args->buffsz = sizeof(int32_t);
+		return cb(args);
+	case ZPROTO_LONG:
+		CHECK_VALID(args->buffsz, sizeof(int64_t))
+		args->buffsz = sizeof(int64_t);
 		return cb(args);
 	case ZPROTO_STRING:
 		CHECK_VALID(args->buffsz, sizeof(len_t))

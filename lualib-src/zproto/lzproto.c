@@ -100,7 +100,8 @@ struct lencode_ud {
 		return ZPROTO_OOM;
 
 #define uint8(ptr)    (*(uint8_t *)ptr)
-#define uint32(ptr)   (*(uint32_t *)ptr)
+#define int32(ptr)   (*(int32_t *)ptr)
+#define int64(ptr)   (*(int64_t *)ptr)
 #define float32(ptr)  (*(float *)ptr)
 
 static int encode_table(struct zproto_args *args);
@@ -123,10 +124,18 @@ encode_field(struct zproto_args *args)
 	case ZPROTO_INTEGER: {
 		if (lua_type(L, -1) != LUA_TNUMBER)
 			return luaL_error(L, "encode_data:need integer field:%s\n", name);
-		CHECK_OOM(args->buffsz, sizeof(uint32_t))
-		int32_t d = luaL_checkinteger(L, -1);
-		uint32(args->buff) = (uint32_t)d;
-		return sizeof(uint32_t);
+		CHECK_OOM(args->buffsz, sizeof(int32_t))
+		lua_Integer d = luaL_checkinteger(L, -1);
+		int32(args->buff) = (int32_t)d;
+		return sizeof(int32_t);
+	}
+	case ZPROTO_LONG: {
+		if (lua_type(L, -1) != LUA_TNUMBER)
+			return luaL_error(L, "encode_data need long field:%s\n", name);
+		CHECK_OOM(args->buffsz, sizeof(int64_t));
+		lua_Integer d = luaL_checkinteger(L, -1);
+		int64(args->buff) = (int64_t)d;
+		return sizeof(int64_t);
 	}
 	case ZPROTO_FLOAT: {
 		if (lua_type(L, -1) != LUA_TNUMBER)
@@ -287,7 +296,11 @@ decode_field(struct zproto_args *args, int dupidx)
 		ret = args->buffsz;
 		break;
 	case ZPROTO_INTEGER:
-		lua_pushinteger(L, uint32(args->buff));
+		lua_pushinteger(L, int32(args->buff));
+		ret = args->buffsz;
+		break;
+	case ZPROTO_LONG:
+		lua_pushinteger(L, int64(args->buff));
 		ret = args->buffsz;
 		break;
 	case ZPROTO_FLOAT:
