@@ -12,12 +12,14 @@ local tunpack = table.unpack
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
-coroutine.running = nil
-coroutine.yield = nil
-coroutine.resume = nil
 function core.running()
 	local co = corunning()
 	return co
+end
+
+function core.coroutine(resume, yield)
+	coyield = yield
+	coresume = resume
 end
 
 --coroutine pool will be dynamic size
@@ -124,6 +126,10 @@ local function waityield(co, ret, typ)
 		assert(wait_co_status[co] == nil and sleep_co_session[co])
 	elseif typ == "EXIT" then
 		copool[#copool + 1] = co
+	elseif typ == nil then --pause by other logic
+		assert(sleep_co_session[co] == nil)
+		assert(wait_co_status[co] == nil)
+		wait_co_status[co] = "PAUSE"
 	else
 		core_log("[sys.core] waityield unkonw return type", typ)
 		core_log(debug.traceback())

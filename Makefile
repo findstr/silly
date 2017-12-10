@@ -72,6 +72,7 @@ LIB_SRC = lualib-silly.c \
 	  lualib-netpacket.c \
 	  lualib-netssl.c \
 	  lualib-crypt.c lsha1.c aes.c sha256.c \
+	  lualib-debugger.c\
 
 all: \
 	$(TARGET) \
