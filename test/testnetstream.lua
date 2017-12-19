@@ -1,7 +1,7 @@
 local rp = require "sys.netstream"
+local testaux = require "testaux"
 
 return function()
-
 	print("test rawpacket module")
 	print("pack first", "hello")
 	print("pack first", "a")
@@ -13,18 +13,13 @@ return function()
 	sb = rp.tpush(sb, 3, "a")
 	sb = rp.tpush(sb, 3, "\rworld\ntail\r\n")
 
-
 	local data = rp.read(sb, 1)
-	print("read 1 byte:", data)
+	testaux.asserteq(data, "h", "netstream read 1 byte")
 	data = rp.readline(sb, "a\r")
-	print("read line terminated by 'a\\r'", data)
-	print("terminated", data:byte(#data))
-	print("====================")
+	testaux.asserteq(data, "elloa\r", "netstream read line terminated by 'a\\r'")
 	data = rp.readline(sb, "\n")
-	print("read line terminated by '\\n'", data, "terminated", data:byte(#data))
-	print("====================")
+	testaux.asserteq(data, "world\n", "netstream read line terminated by '\\n'")
 	data = rp.readline(sb, "\r\n")
-	print("read line terminated by '\\r\\n'", data, "terminated", data:byte(#data - 1), data:byte(#data))
-	print("====================")
+	testaux.asserteq(data, "tail\r\n", "netstream read line terminated by '\\r\\n'")
 end
 

@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local testaux = require "testaux"
 
 local total = 30
 local WAIT
@@ -7,10 +8,9 @@ local function gen_closure(n)
 	local now = core.now()
 	return function ()
 		local delta = core.now() - now
-		print("do #", n, " delta:", delta)
 		delta = math.abs(delta - 100 - n * 10)
 		--precise is 10ms
-		assert(delta <= 10, delta)
+		testaux.assertle(delta, 10, "timer check delta")
 		total = total - 1
 		if total == 0 then
 			core.wakeup(WAIT)
@@ -25,6 +25,5 @@ return function()
 	end
 	WAIT = core.running()
 	core.wait()
-	print("testtimer ok")
 end
 

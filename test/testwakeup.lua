@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local testaux = require "testaux"
 local fork_queue = {}
 local nxt = 1
 local last = nil
@@ -6,9 +7,8 @@ local last = nil
 local function wrap(str, i)
 	return function()
 		core.wait()
-		assert(nxt == i)
+		testaux.asserteq(nxt, i, "wakeup validate sequence")
 		nxt = i + 1
-		print("wakeup", i)
 	end
 end
 
@@ -22,7 +22,6 @@ return function()
 		wakeup(fork_queue[i])
 	end
 	core.sleep(0)
-	assert(nxt == 101)
-	print("testwakeup ok")
+	testaux.asserteq(nxt, 101, "wakeup validate sequence")
 end
 

@@ -1,6 +1,7 @@
 local core = require "sys.core"
 local rpc = require "saux.rpc"
 local crypt = require "sys.crypt"
+local testaux = require "testaux"
 local zproto = require "zproto"
 
 local logic = zproto:parse [[
@@ -15,11 +16,11 @@ local server = rpc.createserver {
 	addr = ":8989",
 	proto = logic,
 	accept = function(fd, addr)
-		print("accept", fd, addr)
+		--print("accept", fd, addr)
 	end,
 
 	close = function(fd, errno)
-		print("close", fd, errno)
+		--print("close", fd, errno)
 	end,
 
 	call = function(fd, cmd, msg)
@@ -34,7 +35,7 @@ local client = rpc.createclient {
 	proto = logic,
 	timeout = 5000,
 	close = function(fd, errno)
-		print("close", fd, errno)
+		--print("close", fd, errno)
 	end,
 }
 
@@ -54,14 +55,12 @@ local function request(fd, index)
 			}
 			local body, ack = client:call("test", test)
 			if not body then
-				print("rpc call fail", body)
+				--print("rpc call fail", body)
 				return
 			end
-			assert(test.rand == body.rand)
-			--print("rpc call", index, "ret:", body.name, body.age)
+			testaux.asserteq(test.rand, body.rand, "rpc match request/response")
 		end
 		n = n + 1
-		print(string.format("test coroutine total:%d finish:%d", N, n))
 	end
 end
 
@@ -84,6 +83,5 @@ return function()
 	client_part()
 	client:close()
 	server:close()
-	print("testrpc ok")
 end
 

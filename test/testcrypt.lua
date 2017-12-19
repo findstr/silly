@@ -1,4 +1,5 @@
 local crypt = require "sys.crypt"
+local testaux = require "testaux"
 local P = require "print"
 
 return function()
@@ -18,18 +19,20 @@ return function()
 	local aes2_encode = crypt.aesencode(aes2_key, aes2_body)
 	local aes1_decode = crypt.aesdecode(aes1_key, aes1_encode)
 	local aes2_decode = crypt.aesdecode(aes2_key, aes2_encode)
-	assert(aes1_decode == aes1_body, "test decode fail")
-	assert(aes2_decode == aes2_body, "test decode fail")
-	assert(crypt.aesdecode(aes2_key, aes1_encode) ~= aes1_body, "test encrypt fail")
-	assert(crypt.aesdecode("adsafdsafdsafds", aes1_encode) ~= aes1_body, "test encrypt fail")
-	assert(crypt.aesdecode("fdsafdsafdsafdadfsa", aes2_encode) ~= aes2_body, "test encrypt fail")
+	testaux.asserteq(aes1_decode, aes1_body, "aes test decode success")
+	testaux.asserteq(aes2_decode, aes2_body, "aes test decode success")
+	local incorrect = crypt.aesdecode(aes2_key, aes1_encode)
+	testaux.assertneq(incorrect, aes1_body, "aes test decode fail")
+	local incorrect = crypt.aesdecode("adsafdsafdsafds", aes1_encode)
+	testaux.assertneq(incorrect, aes1_body, "aes test decode fail")
+	local incorrect = crypt.aesdecode("fdsafdsafdsafdadfsa", aes2_encode)
+	testaux.assertneq(incorrect, aes2_body, "aes test decode fail")
 	--test dirty data defend
 	crypt.aesdecode("fdsafdsafdsafdsafda", aes2_body)
 	----------------------test base64
 	local plain = "aGVsbG8sIG15IGZyaWVuZCwgeW91IGtvbncgaSBkb24ndCBnb29kIGF0IGNyeX"
 	local e1 = crypt.base64encode(plain)
 	local d1 = crypt.base64decode(e1)
-	assert(d1 == plain)
-	print("testcrypt ok")
+	testaux.asserteq(d1, plain, "base64 test encode/decode success")
 end
 

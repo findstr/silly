@@ -33,12 +33,11 @@ core.start(function()
 	for k, v in pairs(modules) do
 		entry[k] = require(v)
 	end
-
 	for k, v in ipairs(modules) do
 		M = v .. ":"
-		print("=========start=========\n")
+		print("=========start=========")
 		assert(entry[k])()
-		print("======success==========\n")
+		print("======success==========")
 	end
 	core.exit()
 end)

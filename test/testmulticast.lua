@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local testaux = require "testaux"
 local msg = require "saux.msg"
 local np = require "sys.netpacket"
 
@@ -12,35 +13,34 @@ return function()
 		addr = "127.0.0.1:8002",
 		accept = function(fd, addr)
 			accept[#accept + 1] = fd
-			print("accept", addr)
+			--print("accept", addr)
 		end,
 		close = function(fd, errno)
-			print("close", fd, errno)
+			--print("close", fd, errno)
 		end,
 		data = function(fd, d, sz)
 			local p, sz = np.pack(d, sz)
 			local m = core.packmulti(p, sz, #accept)
 			for _, fd in pairs(accept) do
 				local ok = server:multicast(fd, m, sz)
-				print("server send", fd, ok)
+				testaux.assertneq(fd, nil, "multicast test send")
+				testaux.asserteq(ok, true, "multicast test send")
 			end
 			np.drop(p)
 			np.drop(d)
 		end
 	}
 	local ok = server:start()
-	print("testmulticast start", ok, server.fd)
-	assert(ok, "testmulticast start")
+	testaux.asserteq(not not ok, true, "multicast test start")
 
 	local inst
 	for i = 1, 10 do
 		inst = msg.createclient {
 			addr = "127.0.0.1:8002",
 			data = function(fd, d, sz)
-				print("recv", i)
 				local m = core.tostring(d, sz)
 				np.drop(d);
-				assert(m == "testmulticast")
+				testaux.asserteq(m, "testmulticast", "muticast validate data")
 				recv[i] = true
 			end,
 			close = function(fd, errno)
@@ -48,13 +48,13 @@ return function()
 			end
 		}
 		local ok = inst:connect()
-		assert(ok > 0)
+		testaux.asserteq(ok > 0, true, "multicast connect success")
 		client[i] = inst
 	end
 	inst:send("testmulticast")
 	core.sleep(1000)
 	for k, _ in pairs(client) do
-		assert(recv[k], "multicast")
+		testaux.asserteq(recv[k], true, "multicast recv count validate")
 	end
 	server:stop()
 end

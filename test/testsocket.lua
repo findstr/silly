@@ -1,5 +1,4 @@
 local core = require "sys.core"
-local console = require "sys.console"
 local socket = require "sys.socket"
 local testaux = require "testaux"
 
@@ -11,7 +10,7 @@ local send_nr = 0
 local WAIT
 
 local function testsend(fd, one, nr)
-	print(string.format("====test packet of %d count %d===", one, nr))
+	print(string.format("-----test packet of %d count %d-----", one, nr))
 	for i = 1, nr do
 		local n = testaux.randomdata(one - 1) .. "\n"
 		send_sum = testaux.checksum(send_sum, n)
@@ -19,15 +18,6 @@ local function testsend(fd, one, nr)
 		socket.write(fd, n)
 	end
 end
-
-console {
-	addr = ":3434",
-	cmd = {
-		debug = function()
-			return string.format("%s:%s", send_nr, recv_nr)
-		end
-	}
-}
 
 return function()
 	local listenfd = socket.listen(":8990", function(fd, addr)
@@ -37,7 +27,6 @@ return function()
 			recv_nr = recv_nr + #n
 			recv_sum = testaux.checksum(recv_sum, n)
 			if recv_nr == send_nr then
-				print("WAKEUP", WAIT, send_nr, recv_nr)
 				if WAIT then
 					core.wakeup(WAIT)
 					return
@@ -45,7 +34,6 @@ return function()
 			end
 		end
 	end)
-	print("testsocket listenfd:", listenfd)
 	local fd = socket.connect("127.0.0.1:8990")
 	if not fd then
 		print("connect fail:", fd)
@@ -67,7 +55,6 @@ return function()
 		end
 	end
 	WAIT = core.running()
-	print("WAIT")
 	core.wait()
 	testaux.asserteq(recv_nr, send_nr, "test socket send type count")
 	testaux.asserteq(recv_sum, send_sum, "test socket send checksum")

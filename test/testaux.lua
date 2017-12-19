@@ -35,7 +35,9 @@ end
 local function perror(str, a, b)
 	a = a or "(nil)"
 	b = b or "(nil)"
-	assert(false, str .. " fail(data1:" .. a .. " data2:" .. b .. ")")
+	print(string.format("%s fail(data1:%s:data2:%s)", str, a, b))
+	print("\r\n" .. debug.traceback())
+	core.exit()
 end
 
 function testaux.asserteq(a, b, str)
@@ -47,6 +49,13 @@ end
 
 function testaux.assertneq(a, b, str)
 	if a ~= b then
+		return
+	end
+	perror(str, a, b)
+end
+
+function testaux.assertle(a, b, str)
+	if a <= b then
 		return
 	end
 	perror(str, a, b)

@@ -1,5 +1,6 @@
 local core = require "sys.core"
 local mysql = require "sys.db.mysql"
+local testaux = require "testaux"
 
 return function()
 	local db = mysql.create {
@@ -9,11 +10,7 @@ return function()
 	}
 	db:connect()
 	local status, res = db:query("show databases;")
-	assert(status, res)
-	print("query databases:", status, res)
-	for _, v in pairs(res) do
-		print(v.Database)
-	end
-	print("test ok")
+	print("mysql show databases;", status)
+	testaux.asserteq(res[1].Database, "information_schema", "mysql query showdatabases;")
 end
 

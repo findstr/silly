@@ -1,6 +1,6 @@
 local server = require "http.server"
 local client = require "http.client"
-local P = require "print"
+local testaux = require "testaux"
 
 local dispatch = {}
 
@@ -59,7 +59,7 @@ return function()
 				{"Content-Type: application/x-www-form-urlencoded"},
 				"Hello=findstr&")
 	local status, head, body = client.GET("http://127.0.0.1:8080/download")
-	assert(body == "findstr", body)
-	print("status", status, body)
+	testaux.asserteq(body, "findstr", "http GET data validate")
+	testaux.asserteq(status, 200, "http GET status validate")
 end
 
