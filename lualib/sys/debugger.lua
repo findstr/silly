@@ -9,29 +9,30 @@ local format = string.format
 local coresume = coroutine.resume
 local coyield = coroutine.yield
 
-local writedat = {}
-local debuglock = nil
 local prompt
+local writedat
+local debuglock
 local cwrite, cread
 
 local breakidx = 0
 local breakcount = 0
-local breaksource = {}
-local breakline = {}
+local breaksource = nil
+local breakline = nil
 
 local lastfile = nil
 local lastline = nil
 local calllevel = nil
+local nextlevel = nil
 local stepmode = false
+local calltrigger = nil
 
 local hookmask = nil
 local hookfunc = nil
 
 local lockthread = nil
 
-local livethread = {}
+local livethread = nil
 
-setmetatable(livethread, {__mode="k"})
 
 local function cleardat(tbl)
 	if type(tbl) ~= "table" then
@@ -145,8 +146,7 @@ local function hook_checkcall(event, line)
 		return
 	end
 	assert(event == "call" or event == "tail call")
-	local triggered = istriggered(info)
-	if triggered then
+	if istriggered(info) then
 		checkline()
 	end
 end
@@ -156,22 +156,33 @@ local function hook_checkline(event, runline)
 	if info.what == "C" then
 		return
 	end
-	if event == "line" and calllevel == 0 then
-		local hit = checkhit(info, runline)
-		if not hit then
+	if event == "line" then
+		if not checkhit(info, runline) then
 			return
 		end
 		checkbreak()
 		return breakin(info, runline)
 	elseif event == "call" then
 		calllevel = calllevel + 1
-		if calllevel == 1 then
+		local istrigger = istriggered(info)
+		calltrigger[calllevel] = istrigger
+		if istrigger then
+			sethook(hook_checkline, "crl")
+		else
+			sethook(hook_checkline, "cr")
+		end
+	elseif event == "tail call" then
+		if istriggered(info) then
+			sethook(hook_checkline, "crl")
+		else
 			sethook(hook_checkline, "cr")
 		end
 	elseif event == "return" then
-		assert(calllevel > 0, calllevel)
+		calltrigger[calllevel] = nil
 		calllevel = calllevel - 1
-		if calllevel == 0 then
+		if calllevel == -1 then --has no breakpoint, enter 'checkcall'
+			checkcall()
+		elseif calltrigger[calllevel] then
 			sethook(hook_checkline, "crl")
 		end
 	end
@@ -182,20 +193,25 @@ local function hook_checkbreak(event, runline)
 	if info.what == "C" then
 		return
 	end
-	if event == "line" and stepmode then
-		stepmode = false
-		return breakin(info, runline)
-	elseif event == "call" and stepmode == "next" then
-		calllevel = calllevel + 1
-		if calllevel == 1 then
+	if event == "line" then
+		if stepmode then
+			stepmode = false
+			return breakin(info, runline)
+		elseif checkhit(info, runline) then
+			return breakin(info, runline)
+		end
+	elseif event == "call" then
+		if stepmode == "next" and calllevel == nextlevel then
 			sethook(hook_checkbreak, "cr")
 		end
-	elseif event == "return" and stepmode == "next" then
-		if calllevel > 0 then
-			calllevel = calllevel - 1
-			if calllevel == 0 then
-				sethook(hook_checkbreak, "clr")
-			end
+		calllevel = calllevel + 1
+		calltrigger[calllevel] = istriggered(info)
+	elseif event == "return" then
+		calltrigger[calllevel] = nil
+		calllevel = calllevel - 1
+		if calllevel == nextlevel and stepmode == "next" then
+			nextlevel = nil
+			sethook(hook_checkbreak, "crl")
 		end
 	end
 end
@@ -210,11 +226,16 @@ end
 function checkline()
 	sethookall()	--only only one thread
 	calllevel = 0
+	calltrigger[calllevel] = true
 	sethook(hook_checkline, "crl")
 end
 
+function checklinethread(co)
+	calltrigger[calllevel] = true
+	sethook(co, hook_checkline, "crl")
+end
+
 function checkbreak()
-	calllevel = 0
 	sethook(hook_checkbreak, "clr")
 end
 
@@ -290,7 +311,7 @@ d: Delete a break point [d 'breakpoint id']
 n: Step next line, it will over the call [n]
 s: Step next line, it will into the call [s]
 c: Continue program being debugged [c]
-p: Print local variable include upvalues [p name]
+p: Print variable include local/up/global values [p name]
 bt: Print backtrace of all stack frames [bt]
 q: Quit debug mode [q]
 ]]
@@ -337,7 +358,7 @@ function CMD.n() --next
 		writedat[2] = prompt
 		return writedat
 	end
-	calllevel = 0
+	nextlevel = calllevel
 	stepmode = "next"
 	core.wakeup(lockthread)
 	lockthread = nil
@@ -363,9 +384,11 @@ function CMD.c()	--continue
 		return writedat
 	end
 	core.wakeup(lockthread)
+	checklinethread(lockthread)
 	lockthread = nil
-	checkcall()
-	return
+	prompt = "debugger> "
+	writedat[1] = prompt
+	return writedat
 end
 
 function CMD.p(pname)
@@ -418,30 +441,62 @@ function CMD.bt()
 	return writedat
 end
 
-local function reset()
-	debuglock = nil
-	prompt = nil
-	cwrite = nil
-	cread = nil
-
-	clearallpoint()
+local function enter()
+	writedat = {}
+	debuglock = true
 	breakidx = 0
+	breakcount = 0
+	breaksource = {}
+	breakline = {}
 
 	lastfile = nil
 	lastline = nil
-	calllevel = 0
-	assert(stepmode == false)
+	calllevel = nil
+	nextlevel = nil
+	stepmode = false
+	calltrigger = {}
 
 	hookmask = nil
 	hookfunc = nil
+
+	lockthread = nil
+
+	livethread = {}
+	setmetatable(livethread, {__mode="k"})
+end
+
+local function leave()
+	writedat = nil
+	debuglock = nil
+	cwrite = nil
+	cread = nil
+	prompt = nil
+
+	clearallpoint()
+	breakidx = nil
+	breakcount = nil
+	breaksource = nil
+	breakline = nil
+
+	lastfile = nil
+	lastline = nil
+	calllevel = nil
+	nextlevel = nil
+	stepmode = nil
+	calltrigger = nil
+
+	hookmask = nil
+	hookfunc = nil
+
+	lockthread = nil
+	livethread = nil
 end
 
 function CMD.q()
 	if lockthread then
 		core.wakeup(lockthread)
-		lockthread = nil
 	end
-	reset()
+	leave()
 end
 
 local function cmdline(fd)
@@ -488,9 +543,9 @@ start = function(read, write)
 	if debuglock then
 		return 'debugger is already opened by other user'
 	end
+	enter()
 	cread = read
 	cwrite = write
-	debuglock = true
 	core.coroutine(hookresume, hookyield)
 	local ok, err = core.pcall(cmdline)
 	core.coroutine(coresume, coyield)
