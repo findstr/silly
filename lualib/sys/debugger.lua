@@ -261,26 +261,26 @@ end
 
 local function dumptbl(tbl, out, breakloop)
 	breakloop = breakloop or {}
+	breakloop[tbl] = true
 	out[#out + 1] = "{"
 	for k, v in pairs(tbl) do
-		if not breakloop[v] then
-			local key
-			breakloop[v] = true
-			if type(k) == "string" then
-				key = format("'%s'", k)
-			else
-				key = k
-			end
-			local typ = type(v)
-			if typ == "table" then
+		local key
+		if type(k) == "string" then
+			key = format("'%s'", k)
+		else
+			key = k
+		end
+		local typ = type(v)
+		if typ == "table" then
+			if not breakloop[v] then
 				out[#out + 1] = format("[%s] = ", key)
 				dumptbl(v, out, breakloop)
 				out[#out + 1] = ","
-			elseif typ == "string" then
-				out[#out + 1] = format("[%s] = '%s',", key, dumpstr(v))
-			else
-				out[#out + 1] = format("[%s] = %s,", key, v)
 			end
+		elseif typ == "string" then
+			out[#out + 1] = format("[%s] = '%s',", key, dumpstr(v))
+		else
+			out[#out + 1] = format("[%s] = %s,", key, v)
 		end
 	end
 	out[#out + 1] = "}"
