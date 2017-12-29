@@ -19,7 +19,7 @@ LUA_INC=$(LUA_DIR)
 LUA_STATICLIB=$(LUA_DIR)/liblua.a
 
 $(LUA_STATICLIB):
-	make -C $(LUA_DIR) $(PLAT)
+	make -C $(LUA_DIR) $(PLAT) MYCFLAGS=-g
 
 #jemalloc
 
