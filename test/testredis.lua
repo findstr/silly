@@ -8,7 +8,9 @@ local function asserteq(cmd, expect_success, expect_value, success, value)
 	end
 	print(string.format('====%s:%s', cmd, success and "success" or "fail"))
 	testaux.asserteq(success, expect_success, cmd)
-	testaux.asserteq(value, expect_value, cmd)
+	if success then	--Redis 3.2 has different error message
+		testaux.asserteq(value, expect_value, cmd)
+	end
 	collectgarbage("collect")
 end
 

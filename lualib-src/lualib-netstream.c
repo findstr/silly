@@ -14,19 +14,21 @@
 #define POOL (lua_upvalueindex(1))
 #define NB (1)
 
-#define POOL_CHUNK (32)
-#define POOL_CHUNK_LIMIT (512)
+//2^4=16KiB
+#define CHUNK (1 << 4)
+//2^11=2KiB
+#define CHUNK_EXP (11 - 4)
 
 struct node {
-	struct node *next;
-	int start;
 	int size;
 	char *buff;
+	struct node *next;
 };
 
 struct node_buffer {
 	int sid;
 	int size;
+	int offset;
 	struct node *head;
 	struct node **tail;
 };
@@ -39,12 +41,10 @@ free_pool(struct lua_State *L)
 	int sz = lua_rawlen(L, 1);
 	assert(sz % sizeof(struct node) == 0);
 	sz /= sizeof(struct node);
-
 	for (i = 0; i < sz; i++) {
 		if (n[i].buff)
 			silly_free(n[i].buff);
 	}
-
 	return 0;
 }
 
@@ -52,19 +52,17 @@ static struct node *
 new_pool(struct lua_State *L, int n)
 {
 	int i;
-	struct node *free = (struct node *)lua_newuserdata(L, sizeof(struct node) * n);
+	struct node *free;
+	free = (struct node *)lua_newuserdata(L, sizeof(struct node) * n);
 	memset(free, 0, sizeof(struct node) * n);
 	for (i = 0; i < n - 1; i++)
 		free[i].next = &free[i + 1];
 	free[i].next = NULL;
-
 	if (luaL_newmetatable(L, "nodepool")) {
 		lua_pushcfunction(L, free_pool);
 		lua_setfield(L, -2, "__gc");
 	}
-
 	lua_setmetatable(L, -2);
-
 	return free;
 }
 
@@ -74,14 +72,14 @@ new_node(struct lua_State *L)
 	lua_rawgeti(L, POOL, 1);
 	struct node *free;
 	if (lua_isnil(L, -1)) {
-		int sz;
+		int sz, exp;
+		struct node *new;
 		int n = lua_rawlen(L, POOL);
 		if (n == 0)
 			n = 1;
-		sz = POOL_CHUNK << n;
-		if (sz > POOL_CHUNK_LIMIT)
-			sz = POOL_CHUNK_LIMIT;
-		struct node *new = new_pool(L, sz);
+		exp = n > CHUNK_EXP ? CHUNK_EXP : n;
+		sz = CHUNK << exp;
+		new = new_pool(L, sz);
 		lua_rawseti(L, POOL, n + 1);
 		free = new;
 	} else {
@@ -113,6 +111,7 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 	assert(n == nb->head);
 	assert(nb->tail);
 	nb->head = nb->head->next;
+	nb->offset = 0;
 	if (nb->head == NULL)
 		nb->tail = &nb->head;
 	assert(n->buff);
@@ -159,12 +158,12 @@ push(struct lua_State *L, int sid, char *data, int sz)
 {
 	struct node_buffer *nb;
 	struct node *new = new_node(L);
-	new->start = 0;
 	new->size = sz;
 	new->buff = data;
 	if (lua_isnil(L, NB)) {
 		nb = (struct node_buffer *)lua_newuserdata(L, sizeof(struct node_buffer));
 		nb->sid = sid;
+		nb->offset = 0;
 		nb->size = 0;
 		nb->head = NULL;
 		nb->tail = &nb->head;
@@ -190,9 +189,9 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 	assert(sz > 0);
 	struct node *n = nb->head;
 	if (n->size >= sz) {
-		char *s = &n->buff[n->start];
+		char *s = &n->buff[nb->offset];
 		lua_pushlstring(L, s, sz);
-		n->start += sz;
+		nb->offset += sz;
 		n->size -= sz;
 		if (n->size == 0)
 			remove_node(L, nb, n);
@@ -202,11 +201,10 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 		while (sz) {
 			int tmp;
 			tmp = min(sz, n->size);
-
-			memcpy(p, &n->buff[n->start], tmp);
+			memcpy(p, &n->buff[nb->offset], tmp);
 			p += tmp;
 			sz -= tmp;
-			n->start += tmp;
+			nb->offset += tmp;
 			n->size -= tmp;
 			if (n->size == 0) {
 				remove_node(L, nb, n);
@@ -217,10 +215,8 @@ pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 		lua_pushlstring(L, buff, p - buff);
 		silly_free(buff);
 	}
-
 	lua_replace(L, 1);
 	lua_settop(L, 1);
-
 	return 1;
 }
 
@@ -253,10 +249,9 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 	int ret = -1;
 	int nr = 0;
 	struct node *n;
-
+	int start = nb->offset;
 	for (n = nb->head; n; n = n->next) {
 		int i;
-		int start = n->start;
 		int sz = n->size;
 		for (i = 0; i < n->size; i++) {
 			int e = compare(n, start, sz, delim, delim_len);
@@ -267,26 +262,34 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 			start += 1;
 			continue;
 		}
-		if (i >= n->size)
+		if (i >= n->size) {
+			start = 0;
 			continue;
+		}
 		nr += delim_len;
 		ret = nr;
 		break;
 	}
-
 	return ret;
 }
 
 static int
-lcheck(struct lua_State *L)
+lreadall(struct lua_State *L)
 {
+	struct node_buffer *nb;
 	if (lua_isnil(L, 1)) {
-		lua_pushinteger(L, 0);
+		lua_pushnil(L);
 		return 1;
 	}
-	struct node_buffer *nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
+	nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
 	assert(nb);
-	lua_pushinteger(L, nb->size);
+	if (nb->size > 0) {
+		int sz = nb->size;
+		nb->size = 0;
+		pushstring(L, nb, sz);
+	} else {
+		lua_pushnil(L);
+	}
 	return 1;
 }
 
@@ -310,7 +313,6 @@ lread(struct lua_State *L)
 		lua_pushnil(L);
 		return 1;
 	}
-
 	nb->size -= readn;
 	return pushstring(L, nb, readn);
 }
@@ -404,7 +406,7 @@ int luaopen_sys_netstream(lua_State *L)
 		{"clear", lclear},
 		{"read", lread},
 		{"readline", lreadline},
-		{"check", lcheck},
+		{"readall", lreadall},
 		{"todata", ltodata},
 		{NULL, NULL},
 	};

@@ -156,13 +156,9 @@ function socket.readall(fd)
 	if not s then
 		return nil
 	end
-	local n = ns.check(s.sbuffer);
-	if n == 0 then
-		return ""
-	end
-	local r = ns.read(s.sbuffer, n)
-	assert(r)
-	return r;
+	local r = ns.readall(s.sbuffer, n)
+	r = r or ""
+	return r
 end
 
 function socket.readline(fd, delim)
