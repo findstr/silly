@@ -94,7 +94,7 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 
 .depend:
-	@$(CC) $(INCLUDE) -MM $(SRC) |\
+	@$(CC) $(INCLUDE) -MM $(SRC) 2>/dev/null |\
 		sed 's/\([^.]*\).o[: ]/$(SRC_PATH)\/\1.o $@: /g' > $@ || true
 
 -include .depend
