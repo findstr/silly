@@ -31,5 +31,8 @@
 - all the test code will be included into ./test folder
 - run ./silly test/test will auto test all module
 
-## Blog
-http://blog.gotocoding.com/?p=446
+## Wiki
+https://github.com/findstr/silly/wiki
+
+## Benchmark
+https://github.com/findstr/silly/wiki/Benchmark
