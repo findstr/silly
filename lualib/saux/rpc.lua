@@ -2,6 +2,8 @@ local core = require "sys.core"
 local np = require "sys.netpacket"
 local zproto = require "zproto"
 local TAG = "saux.rpc"
+local pack = string.pack
+local unpack = string.unpack
 --[[
 rpc.listen {
 	addr = ip:port:backlog
@@ -35,13 +37,6 @@ rpc.listen {
 	end
 }
 ]]--
-
-local proto = zproto:parse [[
-rpc {
-	.session:integer 1
-	.command:integer 2
-}
-]]
 
 local rpc = {}
 
@@ -93,20 +88,19 @@ function server.listen(self)
 		core.fork(EVENT.data)
 		while true do
 			--parse
-			local str = proto:unpack(d, sz)
+			local str = rpcproto:unpack(d, sz)
 			np.drop(d, sz)
-			local rpc, takes = proto:decode("rpc", str)
-			if not rpc then
-				core.log("[rpc.server] parse the header fail")
+			if #str < 8 then
+				core.log("[rpc.server] decode the header fail")
 				return
 			end
-			local command = rpc.command
-			local body = rpcproto:decode(command, str, takes)
+			local session, cmd = unpack("<I4I4", str)
+			local body = rpcproto:decode(cmd, str, 8)
 			if not body then
-				core.log("[rpc.server] parse body fail", rpc.session, command)
+				core.log("[rpc.server] decode body fail", session, cmd)
 				return
 			end
-			local ok, cmd, res = core.pcall(call, fd, command, body)
+			local ok, cmd, res = core.pcall(call, fd, cmd, body)
 			if not ok or not cmd then
 				core.log("[rpc.server] dispatch socket", cmd)
 				return
@@ -115,10 +109,9 @@ function server.listen(self)
 			if type(cmd) == "string" then
 				cmd = rpcproto:tag(cmd)
 			end
-			local hdr = {session = rpc.session, command = cmd}
-			local hdrdat = proto:encode("rpc", hdr)
+			local hdrdat = pack("<I4I4", session, cmd)
 			local bodydat = rpcproto:encode(cmd, res)
-			local full = proto:pack(hdrdat .. bodydat)
+			local full = rpcproto:pack(hdrdat .. bodydat)
 			core.write(fd, np.pack(full))
 			--next
 			fd, d, sz = np.pop(queue)
@@ -204,26 +197,25 @@ local function doconnect(self)
 		core.fork(EVENT.data)
 		while true do
 			--parse
-			local str = proto:unpack(d, sz)
+			local str = rpcproto:unpack(d, sz)
 			np.drop(d, sz)
-			local rpc, takes = proto:decode("rpc", str)
-			if not rpc then
-				core.log("[rpc.client] parse the header fail")
-				return
+			if #str < 8 then
+				core.log("[rpc.client] decode the header fail")
 			end
-			local command = rpc.command
-			local body = rpcproto:decode(command, str, takes)
+			local session, cmd = unpack("<I4I4", str)
+			local body = rpcproto:decode(cmd, str, 8)
 			if not body then
-				core.log("[rpc.client] parse body fail", rpc.session, command)
+				core.log("[rpc.client] parse body fail", session, cmd)
 				return
 			end
 			--ack
-			local co = self.waitpool[rpc.session]
+			local waitpool = self.waitpool
+			local co = waitpool[session]
 			if not co then --timeout
 				return
 			end
-			self.waitpool[rpc.session] = nil
-			self.ackcmd[rpc.session] = command
+			waitpool[session] = nil
+			self.ackcmd[session] = cmd
 			core.wakeup(co, body)
 			--next
 			fd, d, sz = np.pop(queue)
@@ -273,10 +265,11 @@ local function waitfor(self, session)
 	local expire = self.timeoutwheel + self.nowwheel
 	expire = expire % self.totalwheel
 	local timeout = self.timeout
-	if not timeout[expire] then
-		timeout[expire] = {}
-	end
 	local t = timeout[expire]
+	if not t then
+		t = {}
+		timeout[expire] = t
+	end
 	t[#t + 1] = session
 	self.waitpool[session] = co
 	local body = core.wait()
@@ -294,10 +287,9 @@ function client.call(self, cmd, body)
 	local rpcproto = self.config.proto
 	local cmd = rpcproto:tag(cmd)
 	local session = core.genid()
-	local hdr = {session = session, command = cmd}
-	local hdrdat = proto:encode("rpc", hdr)
+	local hdrdat = pack("<I4I4", session, cmd)
 	local bodydat = rpcproto:encode(cmd, body)
-	local full = proto:pack(hdrdat .. bodydat)
+	local full = rpcproto:pack(hdrdat .. bodydat)
 	core.write(self.fd, np.pack(full))
 	return waitfor(self, session)
 end
