@@ -28,8 +28,8 @@ end
 
 response_header[header:byte(5)] = function (sock, res)        --'$'
 	local nr = tonumber(res)
-	if nr == -1 then
-		return false, nil
+	if nr < 0 then
+		return true, nil
 	end
 	local param = sock:read(nr + 2)
 	return true, sub(param, 1, -3)
@@ -45,18 +45,17 @@ end
 
 response_header[header:byte(4)] = function (sock, res)        --'*'
 	local nr = tonumber(res)
-	if nr ~= 1 then
-		local cmd_success = true
-		local cmd_res = {}
-		for i = 1, nr do
-			local success, data = read_response(sock)
-			cmd_success = cmd_success and success
-			tinsert(cmd_res, data)
-		end
-		return cmd_success, cmd_res
-	else
-		return read_response(sock)
+	if nr < 0 then
+		return true, nil
 	end
+	local cmd_success = true
+	local cmd_res = {}
+	for i = 1, nr do
+		local success, data = read_response(sock)
+		cmd_success = cmd_success and success
+		tinsert(cmd_res, data)
+	end
+	return cmd_success, cmd_res
 end
 
 local function cache_(func)
