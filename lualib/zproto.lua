@@ -14,29 +14,34 @@ local indexmt = {
 
 
 
-local function create(self)
-	local t = {}
-	t.ncache = {}	-- name cache
-	t.tcache = {}	-- tag cache
-	t.nametag = {}	-- name tag cache
+local function create(self, proto)
+	local t = {
+		ncache = {}, -- name cache
+		tcache = {}, -- tag cache
+		nametag = {}, -- name tag cache
+		proto = proto,
+	}
 	setmetatable(t, indexmt)
 	setmetatable(t.ncache, cachemt)
 	setmetatable(t.tcache, cachemt)
 	setmetatable(t.nametag, cachemt)
-
 	return t;
 end
 
 function zproto:load(path)
-	local t = create(self)
-	t.proto = engine.load(path)
-	return t;
+	local proto, err = engine.load(path)
+	if not proto then
+		return nil, err
+	end
+	return create(self, proto)
 end
 
 function zproto:parse(str)
-	local t = create(self)
-	t.proto = engine.parse(str)
-	return t
+	local proto, err = engine.parse(str)
+	if not proto then
+		return nil, err
+	end
+	return create(self, proto)
 end
 
 local function query(self, typ)

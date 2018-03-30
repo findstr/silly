@@ -10,29 +10,62 @@
 
 #define MAX_RECURSIVE (64)
 
+#if LUA_VERSION_NUM < 502
+#define lua_rawlen	lua_objlen
+#ifndef luaL_checkversion
+#define luaL_checkversion(L)	(void)0
+#endif
+#ifndef luaL_newlib
+#define luaL_newlib(L,l)  \
+	(luaL_checkversion(L),\
+	lua_createtable(L, 0, sizeof(l)/sizeof((l)[0]) - 1),\
+	luaL_setfuncs(L,l,0))
+/*
+** Copy from lua5.3
+** set functions from list 'l' into table at top - 'nup'; each
+** function gets the 'nup' elements at the top as upvalues.
+** Returns with only the table at the stack.
+*/
+LUALIB_API void
+luaL_setfuncs (lua_State *L, const luaL_Reg *l, int nup) {
+	luaL_checkstack(L, nup, "too many upvalues");
+	/* fill the table with given functions */
+	for (; l->name != NULL; l++) {
+		int i;
+		for (i = 0; i < nup; i++)  /* copy upvalues to the top */
+			lua_pushvalue(L, -nup);
+		lua_pushcclosure(L, l->func, nup);  /* closure with those upvalues */
+		lua_setfield(L, -(nup + 2), l->name);
+	}
+	lua_pop(L, nup);  /* remove upvalues */
+}
+#endif
+#endif
+
 static int
 loadstring(lua_State *L, int frompath)
 {
 	int err;
 	size_t sz;
+	struct zproto_parser parser;
 	const char *str = luaL_checklstring(L, 1, &sz);
-	struct zproto *z = zproto_create();
 	if (frompath) {
-		err = zproto_load(z, str);
+		err = zproto_load(&parser, str);
 	} else {
 		char *buff = (char *)malloc(sz + 1);
 		memcpy(buff, str, sz);
 		buff[sz] = 0;
-		err = zproto_parse(z, buff);
+		err = zproto_parse(&parser, buff);
 		free(buff);
 	}
 	if (err < 0) {
 		lua_pushnil(L);
-		zproto_free(z);
+		lua_pushstring(L, parser.error);
 	} else {
-		lua_pushlightuserdata(L, z);
+		lua_pushlightuserdata(L, parser.z);
+		lua_pushnil(L);
 	}
-	return 1;
+	return 2;
 }
 
 static int
