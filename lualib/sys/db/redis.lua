@@ -1,5 +1,7 @@
 local dispatch = require "sys.socketdispatch"
 
+local type = type
+local assert = assert
 local tostring = tostring
 local tonumber = tonumber
 local tinsert = table.insert
