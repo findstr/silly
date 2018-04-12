@@ -140,9 +140,6 @@ function socket.read(fd, n)
 	if not s then
 		return nil
 	end
-	if n <= 0 then
-		return ""
-	end
 	local r = ns.read(s.sbuffer, n)
 	if r then
 		return r
@@ -156,9 +153,7 @@ function socket.readall(fd)
 	if not s then
 		return nil
 	end
-	local r = ns.readall(s.sbuffer, n)
-	r = r or ""
-	return r
+	return ns.readall(s.sbuffer, n)
 end
 
 function socket.readline(fd, delim)

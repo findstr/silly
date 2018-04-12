@@ -186,7 +186,7 @@ push(struct lua_State *L, int sid, char *data, int sz)
 static int
 pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
 {
-	assert(sz > 0);
+	assert(sz >= 0);
 	struct node *n = nb->head;
 	if (n->size >= sz) {
 		char *s = &n->buff[nb->offset];
@@ -278,7 +278,7 @@ lreadall(struct lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, 1)) {
-		lua_pushnil(L);
+		lua_pushliteral(L, "");
 		return 1;
 	}
 	nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
@@ -288,7 +288,7 @@ lreadall(struct lua_State *L)
 		nb->size = 0;
 		pushstring(L, nb, sz);
 	} else {
-		lua_pushnil(L);
+		lua_pushliteral(L, "");
 	}
 	return 1;
 }
@@ -308,7 +308,7 @@ lread(struct lua_State *L)
 	}
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
 	assert(nb);
-	int readn = luaL_checkinteger(L, NB + 1);
+	lua_Integer readn = luaL_checkinteger(L, NB + 1);
 	if (readn > nb->size) {
 		lua_pushnil(L);
 		return 1;
