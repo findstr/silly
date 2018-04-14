@@ -142,13 +142,8 @@ function redis:connect(config)
 			auth = redis_login(config.auth, config.db)
 		},
 	}
-	setmetatable(obj, redis_mt)
-	local ret, err = obj.sock:connect()
-	if ret then
-		return obj
-	else
-		return nil, err
-	end
+	obj.sock:connect()
+	return setmetatable(obj, redis_mt)
 end
 
 function redis:select()
