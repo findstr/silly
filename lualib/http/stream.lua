@@ -1,11 +1,11 @@
 local socket = require "sys.socket"
 local stream = {}
 
-function stream.recv_request(readl, readn)
+function stream.readrequest(fd, readl, readn)
 	local header = {}
 	local body = ""
-	local first = readl()
-	local tmp = readl()
+	local first = readl(fd, "\r\n")
+	local tmp = readl(fd, "\r\n")
 	if not tmp then
 		return nil
 	end
@@ -16,7 +16,7 @@ function stream.recv_request(readl, readn)
 		else
 			header[k] = v
 		end
-		tmp = readl()
+		tmp = readl(fd, "\r\n")
 		if not tmp then
 			return nil
 		end
@@ -27,19 +27,19 @@ function stream.recv_request(readl, readn)
 			return 501
 		end
 		while true do
-			local n = readl()
+			local n = readl(fd, "\r\n")
 			local sz = tonumber(n, 16)
 			if not sz or sz == 0 then
 				break
 			end
-			body = body .. readn(sz)
-			readl()
+			body = body .. readn(fd, sz)
+			readl(fd, "\r\n")
 		end
 	end
 	local len = header["Content-Length"]
 	if len then
 		local len = tonumber(len)
-		body = readn(len)
+		body = readn(fd, len)
 	end
 
 	return 200, first, header, body

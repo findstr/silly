@@ -42,13 +42,9 @@ local function send_request(io_do, fd, method, host, abs, header, body)
 end
 
 local function recv_response(io_do, fd)
-	local readl = function()
-		return io_do.readline(fd, "\r\n")
-	end
-	local readn = function(n)
-		return io_do.read(fd, n)
-	end
-	local status, first, header, body = stream.recv_request(readl, readn)
+	local readl = io_do.readline
+	local readn = io_do.read
+	local status, first, header, body = stream.readrequest(fd, readl, readn)
 	if not status then	--disconnected
 		return nil
 	end

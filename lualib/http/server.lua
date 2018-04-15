@@ -2,8 +2,6 @@ local core = require "sys.core"
 local socket = require "sys.socket"
 local stream = require "http.stream"
 
-local server = {}
-
 local listen = socket.listen
 local readline = socket.readline
 local read = socket.read
@@ -74,7 +72,7 @@ local http_err_msg = {
 	[599] = "Network Connect Timeout Error",
 }
 
-local function parse_uri(str)
+local function parseuri(str)
 	local form = {}
 	local start = string.find(str, "?", 1, true)
 	if not start then
@@ -89,51 +87,47 @@ local function parse_uri(str)
 	return uri, form
 end
 
+local function httpwrite(fd, status, header, body)
+	table.insert(header, 1, string.format("HTTP/1.1 %d %s", status, http_err_msg[status]))
+	table.insert(header, string.format("Content-Length: %d", #body))
+	local tmp = table.concat(header, "\r\n")
+	tmp = tmp .. "\r\n\r\n"
+	tmp = tmp .. body
+	write(fd, tmp)
+end
+
+
 local function httpd(fd, handler)
 	socket.limit(fd, 1024 * 512)
-	local readl = function()
-		return readline(fd, "\r\n")
-	end
-
-	local readn = function(n)
-		return read(fd, n)
-	end
-
-	local write = function (status, header, body)
-		server.send(fd, status, header, body)
-	end
 	local pcall = core.pcall
 	while true do
-		local status, first, header, body = stream.recv_request(readl, readn)
+		local status, first, header, body = stream.readrequest(fd, readline, read)
 		if not status then	--disconnected
 			return
 		end
 		if status ~= 200 then
-			write(status, {}, "")
+			httpwrite(status, {}, "")
 			socket.close(fd)
 			return
 		end
-
 		--request line
 		local method, uri, ver = first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
 		assert(method and uri and ver)
 		header.method = method
 		header.version = ver
-		header.uri, header.form = parse_uri(uri)
-
+		header.uri, header.form = parseuri(uri)
 		if tonumber(ver) > 1.1 then
-			write(505, {}, "")
+			httpwrite(505, {}, "")
 			socket.close(fd)
 			return
 		end
-
 		if header["Content-Type"] == "application/x-www-form-urlencoded" then
 			for k, v in string.gmatch(body, "(%w+)=(%w+)") do
 				header.form[k] = v
 			end
 			body = ""
 		end
-		local ok, err = pcall(handler, header, body, write)
+		local ok, err = pcall(handler, fd, header, body)
 		if not ok then
 			core.log(err)
 			socket.close(fd)
@@ -146,22 +140,15 @@ local function httpd(fd, handler)
 	end
 end
 
-function server.listen(port, handler)
-	local h = function(fd)
-		httpd(fd, handler)
-	end
-	listen(port, h)
-end
-
-function server.send(fd, status, header, body)
-	table.insert(header, 1, string.format("HTTP/1.1 %d %s", status, http_err_msg[status]))
-	table.insert(header, string.format("Content-Length: %d", #body))
-	local tmp = table.concat(header, "\r\n")
-	tmp = tmp .. "\r\n\r\n"
-	tmp = tmp .. body
-	write(fd, tmp)
-end
-
+local server = {
+	listen = function (port, handler)
+		local h = function(fd)
+			httpd(fd, handler)
+		end
+		listen(port, h)
+	end,
+	write = httpwrite
+}
 
 return server
 

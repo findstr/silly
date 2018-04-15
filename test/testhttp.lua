@@ -1,10 +1,10 @@
 local server = require "http.server"
 local client = require "http.client"
 local testaux = require "testaux"
-
+local write = server.write
 local dispatch = {}
 
-dispatch["/"] = function(reqeust, body, write)
+dispatch["/"] = function(fd, reqeust, body)
 	local body = [[
 		<html>
 			<head>Hello Stupid</head>
@@ -20,16 +20,16 @@ dispatch["/"] = function(reqeust, body, write)
 		"Content-Type: text/html",
 		}
 
-	write(200, head, body)
+	write(fd, 200, head, body)
 end
 
 local content = ""
 
-dispatch["/download"] = function(request, body, write)
-	write(200, {"Content-Type: text/plain"}, content)
+dispatch["/download"] = function(fd, request, body)
+	write(fd, 200, {"Content-Type: text/plain"}, content)
 end
 
-dispatch["/upload"] = function(request, body, write)
+dispatch["/upload"] = function(fd, request, body)
 	if request.form.Hello then
 		content = request.form.Hello
 	end
@@ -37,17 +37,17 @@ dispatch["/upload"] = function(request, body, write)
 	local head = {
 		"Content-Type: text/plain",
 		}
-	write(200, head, body)
+	write(fd, 200, head, body)
 end
 
 
-server.listen(":8080", function(request, body, write)
+server.listen(":8080", function(fd, request, body)
 	local c = dispatch[request.uri]
 	if c then
-		c(request, body, write)
+		c(fd, request, body)
 	else
 		print("Unsupport uri", request.uri)
-		write(404, {"Content-Type: text/plain"}, "404 Page Not Found")
+		write(fd, 404, {"Content-Type: text/plain"}, "404 Page Not Found")
 	end
 end)
 
