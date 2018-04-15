@@ -309,7 +309,10 @@ lread(struct lua_State *L)
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
 	assert(nb);
 	lua_Integer readn = luaL_checkinteger(L, NB + 1);
-	if (readn > nb->size) {
+	if (readn <= 0) {
+		lua_pushliteral(L, "");
+		return 1;
+	} else if (readn > nb->size) {
 		lua_pushnil(L);
 		return 1;
 	}
