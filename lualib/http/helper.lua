@@ -19,10 +19,8 @@ function helper.htmlunescape(html)
 end
 
 function helper.urlencode(url)
-	print(url)
 	url = gsub(url, "([^0-9a-zA-Z$-_%.+!*(),])", function(n)
 		local s = format("%%%02X", n:byte(1))
-		print(s)
 		return s
 	end)
 	return url
