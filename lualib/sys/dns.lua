@@ -191,7 +191,8 @@ local function checkconnect()
 	if connectfd >= 0 then
 		return connectfd
 	end
-	return socket.udp(dns_server, callback)
+	connectfd = socket.udp(dns_server, callback)
+	return connectfd
 end
 
 function query_request(domain, timeout)
