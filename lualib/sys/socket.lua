@@ -153,7 +153,7 @@ function socket.readall(fd)
 	if not s then
 		return nil
 	end
-	return ns.readall(s.sbuffer, n)
+	return ns.readall(s.sbuffer)
 end
 
 function socket.readline(fd, delim)
