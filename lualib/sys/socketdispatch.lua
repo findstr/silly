@@ -193,9 +193,12 @@ end
 
 -- the respose function will be called in the socketfifo coroutine
 function dispatch:request(cmd, response)
-	assert(tryconnect(self))
-	local res = socket.write(self.sock, cmd)
-	if not res then
+	local ok, err = tryconnect(self)
+	if not ok then
+		return ok, err
+	end
+	local ok = socket.write(self.sock, cmd)
+	if not ok then
 		doclose(self)
 		return nil
 	end
