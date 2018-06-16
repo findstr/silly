@@ -55,7 +55,7 @@ response_header[header:byte(4)] = function (sock, res)        --'*'
 	for i = 1, nr do
 		local success, data = read_response(sock)
 		cmd_success = cmd_success and success
-		tinsert(cmd_res, data)
+		cmd_res[i] = data
 	end
 	return cmd_success, cmd_res
 end
@@ -76,7 +76,7 @@ local cache_count = cache_(function (self, key)
 	return s
 end)
 
-local function pack_cmd(cmd, param)
+local function compose(cmd, param)
 	assert(type(param) == "table")
 	local count = #param
 	local lines = {
@@ -96,7 +96,7 @@ local function pack_cmd(cmd, param)
 	return lines
 end
 
-local function pack_table(cmd, out)
+local function composetable(cmd, out)
 	local len = #cmd
 	local oi = #out + 1
 	out[oi] = cache_head[len]
@@ -156,9 +156,9 @@ setmetatable(redis, {__index = function (self, k)
 		local sock = self.sock
 		local str
 		if type(p1) == "table" then
-			str = pack_cmd(cmd, p1)
+			str = compose(cmd, p1)
 		else
-			str = pack_cmd(cmd, {p1, ...})
+			str = compose(cmd, {p1, ...})
 		end
 		return sock:request(str, read_response)
 	end
@@ -171,7 +171,7 @@ function redis:pipeline(req, ret)
 	local out = {}
 	local cmd_len = #req
 	for i = 1, cmd_len do
-		pack_table(req[i], out)
+		composetable(req[i], out)
 	end
 	local read
 	if not ret then
