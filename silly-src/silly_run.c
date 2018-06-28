@@ -20,8 +20,8 @@
 #include "silly_run.h"
 
 struct {
-	int exit;
-	int run;
+	int running;
+	int workerstatus; /* 0:sleep 1:running -1:dead */
 	const struct silly_config *conf;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
@@ -34,10 +34,10 @@ thread_timer(void *arg)
 	(void)arg;
 	for (;;) {
 		silly_timer_update();
-		if (R.exit)
+		if (R.workerstatus == -1)
 			break;
-		usleep(5000);
-		if (silly_worker_msgsize() > 0)
+		usleep(TIMER_ACCURACY);
+		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);
 	}
 	silly_socket_terminate();
@@ -53,12 +53,9 @@ thread_socket(void *arg)
 		int err = silly_socket_poll();
 		if (err < 0)
 			break;
-		pthread_cond_signal(&R.cond);
+		if (R.workerstatus == 0)
+			pthread_cond_signal(&R.cond);
 	}
-	pthread_mutex_lock(&R.mutex);
-	R.run = 0;
-	pthread_cond_signal(&R.cond);
-	pthread_mutex_unlock(&R.mutex);
 	return NULL;
 }
 
@@ -68,16 +65,14 @@ thread_worker(void *arg)
 	const struct silly_config *c;
 	c = (struct silly_config *)arg;
 	silly_worker_start(c);
-	while (R.run) {
+	while (R.running) {
 		silly_worker_dispatch();
-		if (!R.run)
-			break;
 		//allow spurious wakeup, it's harmless
-		pthread_mutex_lock(&R.mutex);
-		if (R.run)
-			pthread_cond_wait(&R.cond, &R.mutex);
-		pthread_mutex_unlock(&R.mutex);
+		R.workerstatus = 0;
+		pthread_cond_wait(&R.cond, &R.mutex);
+		R.workerstatus = 1;
 	}
+	R.workerstatus = -1;
 	return NULL;
 }
 
@@ -107,7 +102,7 @@ static void
 signal_term(int sig)
 {
 	(void)sig;
-	R.exit = 1;
+	R.running = 0;
 }
 
 static void
@@ -133,8 +128,7 @@ silly_run(const struct silly_config *config)
 	int i;
 	int err;
 	pthread_t pid[3];
-	R.run = 1;
-	R.exit = 0;
+	R.running = 1;
 	R.conf = config;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
@@ -171,7 +165,7 @@ silly_run(const struct silly_config *config)
 void
 silly_exit()
 {
-	R.exit = 1;
+	R.running = 0;
 }
 
 

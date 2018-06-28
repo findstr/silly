@@ -13,9 +13,9 @@
 
 #endif
 
+//timer resolution = (1000 / TIMER_RESOLUTION)
 #define TIMER_RESOLUTION	(10)
-
-
+#define TIMER_ACCURACY		(50 * 1000)	//us
 
 #define STR(s) __STR(s)
 #define __STR(s) #s
