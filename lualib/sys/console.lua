@@ -21,6 +21,7 @@ local desc = {
 
 "HELP: List command description [HELP]",
 "PING: Test connection alive [PING <text>]",
+"GC: Performs a full garbage-collection cycle. [GC]",
 "INFO: Show all information of server, include MINFO,QINFO,CPUINFO,...[INFO]",
 "MINFO: Show memory infomation [MINFO <kb|mb>]",
 "QINFO: Show framework message queue size[QINFO]",
@@ -79,6 +80,11 @@ function console.ping(_, txt)
 	return txt or "PONG"
 end
 
+function console.gc()
+	collectgarbage()
+	return format("Lua Mem Used:%.2f KiB", collectgarbage("count"))
+end
+
 function console.minfo(_, fmt)
 	local tbl = {}
 	local sz = core.memused()
@@ -91,18 +97,18 @@ function console.minfo(_, fmt)
 	tbl[2] = "memory_used:"
 	if fmt == "kb" then
 		tbl[3] = format("%.2f", sz / 1024)
-		tbl[4] = " KByte\r\n"
+		tbl[4] = " KiB\r\n"
 	elseif fmt == "mb" then
 		tbl[3] = format("%.2f", sz / (1024 * 1024))
-		tbl[4] = " MByte\r\n"
+		tbl[4] = " MB\r\n"
 	else
 		tbl[3] = sz
-		tbl[4] = " Byte\r\n"
+		tbl[4] = " B\r\n"
 	end
 	local rss = core.memrss()
 	tbl[5] = "memory_rss:"
 	tbl[6] = rss
-	tbl[7] = " Byte\r\n"
+	tbl[7] = " B\r\n"
 	tbl[8] = "memory_fragmentation_ratio:"
 	tbl[9] = format("%.2f\r\n", rss / sz)
 	tbl[10] = "memory_allocator:"
