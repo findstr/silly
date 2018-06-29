@@ -1,5 +1,8 @@
 local core = require "sys.core"
 local np = require "sys.netpacket"
+local pairs = pairs
+local assert = assert
+
 local TAG = "saux.msg"
 
 local msg = {}
@@ -17,8 +20,8 @@ local function gc(obj)
 	obj.fd = false
 end
 
-local servermt = {__index = msgserver, __gc == gc}
-local clientmt = {__index = msgclient, __gc == gc}
+local servermt = {__index = msgserver, __gc = gc}
+local clientmt = {__index = msgclient, __gc = gc}
 
 ---server
 local function servercb(sc, config)

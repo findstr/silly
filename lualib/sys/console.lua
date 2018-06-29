@@ -2,10 +2,18 @@ local core = require "sys.core"
 local patch = require "sys.patch"
 local socket = require "sys.socket"
 local debugger = require "sys.debugger"
+local type = type
+local pairs = pairs
+local pcall = pcall
+local assert = assert
+local select = select
+local loadfile = loadfile
+local tonumber = tonumber
 local lower = string.lower
 local format = string.format
 local concat = table.concat
 local insert = table.insert
+local unpack = table.unpack
 
 local NULL = ""
 local prompt = "console> "
@@ -47,7 +55,7 @@ local function _patch(fixfile, module, ...)
 		funcs[#funcs + 1] = fixf
 		funcs[#funcs + 1] = runf
 	end
-	patch(ENV, table.unpack(funcs))
+	patch(ENV, unpack(funcs))
 	for k, v in pairs(funcname) do
 		runm[v] = assert(fixm[v])
 	end
@@ -141,9 +149,9 @@ function console.patch(_, fix, module, ...)
 	local ok, err = pcall(_patch, fix, module, ...)
 	local fmt = "Patch module:%s function:%s by:%s %s"
 	if ok then
-		return string.format(fmt, module, funcname, fix, "Success")
+		return format(fmt, module, fix, "Success")
 	else
-		return string.format(fmt, module, funcname, fix, err)
+		return format(fmt, module, fix, err)
 	end
 end
 
@@ -162,9 +170,9 @@ local function process(fd, config, param, l)
 		return ""
 	end
 	if #param == 0 then
-		return string.format("ERR unknown '%s'\n", l)
+		return format("ERR unknown '%s'\n", l)
 	end
-	local cmd = string.lower(param[1])
+	local cmd = lower(param[1])
 	local func = console[cmd]
 	if not func then
 		if config.cmd then
@@ -172,9 +180,9 @@ local function process(fd, config, param, l)
 		end
 	end
 	if func then
-		return func(fd, table.unpack(param, 2))
+		return func(fd, unpack(param, 2))
 	end
-	return string.format("ERR unknown command '%s'", param[1])
+	return format("ERR unknown command '%s'", param[1])
 end
 
 local function clear(tbl)
@@ -206,7 +214,7 @@ return function (config)
 				break
 			end
 			if type(res) == "table" then
-				dat[1] = table.concat(res, "\n")
+				dat[1] = concat(res, "\n")
 			else
 				dat[1] = res
 			end

@@ -1,5 +1,8 @@
 local core = require "sys.core"
 local netssl = require "sys.netssl.c"
+local type = type
+local assert = assert
+
 local TAG = "ssl"
 local socket_pool = {}
 

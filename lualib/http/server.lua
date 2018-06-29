@@ -2,6 +2,15 @@ local core = require "sys.core"
 local socket = require "sys.socket"
 local stream = require "http.stream"
 
+local assert = assert
+local tonumber = tonumber
+local sub = string.sub
+local find = string.find
+local format = string.format
+local gmatch = string.gmatch
+local insert = table.insert
+local concat = table.concat
+
 local listen = socket.listen
 local readline = socket.readline
 local read = socket.read
@@ -74,23 +83,23 @@ local http_err_msg = {
 
 local function parseuri(str)
 	local form = {}
-	local start = string.find(str, "?", 1, true)
+	local start = find(str, "?", 1, true)
 	if not start then
 		return str, form
 	end
 	assert(start > 1)
-	local uri = string.sub(str, 1, start - 1)
-	local f = string.sub(str, start + 1)
-	for k, v in string.gmatch(f, "([^=&]+)=([^&]+)") do
+	local uri = sub(str, 1, start - 1)
+	local f = sub(str, start + 1)
+	for k, v in gmatch(f, "([^=&]+)=([^&]+)") do
 		form[k] = v
 	end
 	return uri, form
 end
 
 local function httpwrite(fd, status, header, body)
-	table.insert(header, 1, string.format("HTTP/1.1 %d %s", status, http_err_msg[status]))
-	table.insert(header, string.format("Content-Length: %d", #body))
-	local tmp = table.concat(header, "\r\n")
+	insert(header, 1, format("HTTP/1.1 %d %s", status, http_err_msg[status]))
+	insert(header, format("Content-Length: %d", #body))
+	local tmp = concat(header, "\r\n")
 	tmp = tmp .. "\r\n\r\n"
 	tmp = tmp .. body
 	write(fd, tmp)
@@ -122,7 +131,7 @@ local function httpd(fd, handler)
 			return
 		end
 		if header["Content-Type"] == "application/x-www-form-urlencoded" then
-			for k, v in string.gmatch(body, "(%w+)=(%w+)") do
+			for k, v in gmatch(body, "(%w+)=(%w+)") do
 				header.form[k] = v
 			end
 			body = ""

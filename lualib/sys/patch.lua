@@ -1,3 +1,6 @@
+local type = type
+local pairs = pairs
+local assert = assert
 local dgetinfo = debug.getinfo
 local dgetupval = debug.getupvalue
 local dupvaljoin = debug.upvaluejoin

@@ -2,6 +2,9 @@ local core = require "sys.core"
 local np = require "sys.netpacket"
 local zproto = require "zproto"
 local TAG = "saux.rpc"
+local type = type
+local pairs = pairs
+local assert = assert
 local pack = string.pack
 local unpack = string.unpack
 --[[

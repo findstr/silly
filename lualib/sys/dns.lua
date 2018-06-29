@@ -1,6 +1,13 @@
 local socket = require "sys.socket"
 local core = require "sys.core"
 
+local sub = string.sub
+local pack = string.pack
+local unpack = string.unpack
+local format = string.format
+local match = string.match
+local gmatch = string.gmatch
+
 local dns = {}
 local dns_server = "192.168.1.1:53"
 local domain_cache = {}
@@ -41,8 +48,8 @@ local buildformat = ">I2I2I2I2I2I2zI2I2"
 
 local function formatdomain(domain)
 	local n = ""
-	for k in string.gmatch(domain, "([^%.]+)") do
-		n = n .. string.pack("<I1", #k) .. k
+	for k in gmatch(domain, "([^%.]+)") do
+		n = n .. pack("<I1", #k) .. k
 	end
 	return n
 end
@@ -74,7 +81,7 @@ local function build_request(domain)
 		QCLASS = 1,
 	}
 
-	return req.ID, string.pack(buildformat,
+	return req.ID, pack(buildformat,
 			req.ID, req.FLAG,
 			req.QDCOUNT, req.ANCOUNT,
 			req.NSCOUNT, req.ARCOUNT,
@@ -90,27 +97,27 @@ local function parsename(init, dat, pos, ptr)
 	else	--normal
 		local i = pos
 		while i < #dat do
-			local n = string.unpack(">I1", dat, i)
+			local n = unpack(">I1", dat, i)
 			if n >= 0xc0 then
-				n = string.unpack(">I2", dat, i)
+				n = unpack(">I2", dat, i)
 				i = i + 2
 				return parsename(init, dat, i, n)
 			elseif n == 0x00 then
 				break
 			else
 				i = i + 1
-				init = init .. string.sub(dat, i, i + n - 1) .. "."
+				init = init .. sub(dat, i, i + n - 1) .. "."
 				i = i + n;
 			end
 		end
-		init = string.sub(init, 1, -2)
+		init = sub(init, 1, -2)
 		return init
 	end
 end
 
 local function desc(dat, pos, n)
 	for i = 1, n do
-		local ptr, qtype, qclass, ttl, rdlen, offset= string.unpack(">I2I2I2I4I2", dat, pos)
+		local ptr, qtype, qclass, ttl, rdlen, offset= unpack(">I2I2I2I4I2", dat, pos)
 		if qtype == 5 then --cname
 			local src = parsename("", dat, pos)
 			local cname = parsename("", dat, offset)
@@ -123,11 +130,11 @@ local function desc(dat, pos, n)
 		elseif qtype == 1 then --ip
 			local src = parsename("", dat, pos)
 			pos = offset + rdlen
-			local seg1, seg2, seg3, seg4 = string.unpack("<I1I1I1I1", dat, offset)
+			local seg1, seg2, seg3, seg4 = unpack("<I1I1I1I1", dat, offset)
 			domain_cache[src] = {
 				ttl = timenow() + ttl,
 				type = "ip",
-				addr = string.format("%d.%d.%d.%d", seg1, seg2, seg3, seg4),
+				addr = format("%d.%d.%d.%d", seg1, seg2, seg3, seg4),
 			}
 		end
 	end
@@ -144,7 +151,7 @@ local function callback(msg, addr)
 	res.QDCOUNT, res.ANCOUNT,
 	res.NSCOUNT, res.ARCOUNT,
 	res.QNAME,
-	res.QTYPE, res.QCLASS, pos = string.unpack(buildformat, msg)
+	res.QTYPE, res.QCLASS, pos = unpack(buildformat, msg)
 	desc(msg, pos, res.ANCOUNT)
 	local co = wait_coroutine[res.ID]
 	if not co then --already timeout
@@ -156,7 +163,7 @@ end
 
 local query_request
 
-function query(domain, timeout)
+local function query(domain, timeout)
 	local d = domain_cache[domain]
 	if not d then
 		return nil
@@ -226,7 +233,7 @@ end
 dns.query = query_request
 
 function dns.isdomain(addr)
-	local s1, s2, s3, s4 = string.match(addr, "(%d+).(%d+).(%d+).(%d+)")
+	local s1, s2, s3, s4 = match(addr, "(%d+).(%d+).(%d+).(%d+)")
 	if s1 and s2 and s3 and s4 then
 		return false
 	end

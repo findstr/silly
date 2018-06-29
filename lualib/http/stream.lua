@@ -1,4 +1,5 @@
 local socket = require "sys.socket"
+local tonumber = tonumber
 local stream = {}
 
 function stream.readrequest(fd, readl, readn)

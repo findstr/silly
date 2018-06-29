@@ -95,7 +95,7 @@ end
 
 --------state machine
 
-local checkcall, checkline, checkbreak
+local checkcall, checkline, checklinethread, checkbreak
 
 local function istriggered(info)
 	local source = info.source

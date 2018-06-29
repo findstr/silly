@@ -7,6 +7,8 @@ local socket = {}
 
 local EVENT = {}
 
+local type = type
+local assert = assert
 local TAG = "socket"
 
 local function new_socket(fd)

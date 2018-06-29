@@ -1,6 +1,8 @@
 local socket = require "sys.socket"
 local core = require "sys.core"
 
+local pairs = pairs
+local assert = assert
 local tremove = table.remove
 
 local CONNECTING   = 1

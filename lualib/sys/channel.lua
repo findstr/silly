@@ -1,5 +1,5 @@
 local core = require "sys.core"
-
+local assert = assert
 local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack

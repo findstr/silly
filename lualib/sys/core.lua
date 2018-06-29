@@ -1,14 +1,18 @@
 local silly = require "sys.silly"
 
 local core = {}
-
-local core_log = silly.log
-
+local error = error
+local assert = assert
+local xpcall = xpcall
+local tostring = tostring
+local tonumber = tonumber
 local sformat = string.format
 local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack
+local traceback = debug.traceback
 
+local core_log = silly.log
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
@@ -33,7 +37,7 @@ local function cocall()
 		local ret, func = coyield("EXIT")
 		if ret ~= "STARTUP" then
 			core_log("[sys.core] create coroutine fail", ret)
-			core_log(debug.traceback())
+			core_log(traceback())
 			return
 		end
 		local ok, err = core.pcall(func, coyield())
@@ -83,7 +87,7 @@ core.pollapi = silly.pollapi()
 core.timerrs = silly.timerresolution()
 
 local function errmsg(msg)
-	return debug.traceback("error: " .. tostring(msg), 2)
+	return traceback("error: " .. tostring(msg), 2)
 end
 
 core.pcall = function(f, ...)
@@ -92,7 +96,7 @@ end
 
 function core.error(errmsg)
 	core_log(errmsg)
-	core_log(debug.traceback())
+	core_log(traceback())
 end
 
 local wakeup_co_queue = {}
@@ -132,7 +136,7 @@ local function waityield(co, ret, typ)
 		wait_co_status[co] = "PAUSE"
 	else
 		core_log("[sys.core] waityield unkonw return type", typ)
-		core_log(debug.traceback())
+		core_log(traceback())
 	end
 	return dispatch_wakeup()
 end
