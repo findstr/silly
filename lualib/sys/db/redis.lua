@@ -61,7 +61,7 @@ response_header[header:byte(4)] = function (sock, res)        --'*'
 end
 
 local function cache_(func)
-	return setmetatable({}, { mode = "kv", __index = func })
+	return setmetatable({}, { __mode = "kv", __index = func })
 end
 
 local cache_head = cache_(function (self, key)
