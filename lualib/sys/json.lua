@@ -9,6 +9,9 @@ local tonumber = tonumber
 local tconcat = table.concat
 local format = string.format
 local find = string.find
+local sub = string.sub
+local gsub = string.gsub
+local byte = string.byte
 local json = {}
 
 ---------encode
@@ -21,7 +24,8 @@ local function encodenumber(n)
 	return tostring(n)
 end
 local function encodestring(s)
-	return format('"%s"', s) --TODO: escape
+	s = gsub(s, '"', '\\"')
+	return format('"%s"', s)
 end
 local function encodeobj(obj)
 	if obj[1] ~= nil or next(obj) == nil then --array
@@ -56,12 +60,13 @@ local function skipspace(str, i)
 	return find(str, "[^%s]", i)
 end
 local function decodestr(str, i)
-	local s = find(str, '"', i + 1, true)
-	return str:sub(i + 1, s - 1), s + 1
+	local _, n = find(str, '[^\\]"', i)
+	local s = sub(str, i + 1, n - 1)
+	return gsub(s, '\\"', '"'), n + 1
 end
 local function decodebool(str, i)
 	local n = find(str, "[%s,}]", i)
-	local k = str:sub(i, n - 1)
+	local k = sub(str, i, n - 1)
 	if k == "true" then
 		return true, n
 	elseif k == "false" then
@@ -72,41 +77,38 @@ local function decodebool(str, i)
 end
 local function decodenumber(str, i)
 	local n = find(str, "[%s,}]", i)
-	local k = str:sub(i, n - 1)
+	local k = sub(str, i, n - 1)
 	return tonumber(k), n
 end
 local function decodeobj(str, i)
-	local s
 	local len = #str
 	local obj = {}
 	i = skipspace(str, i)
-	if str:byte(i) ~= 0x7b then -- '{'
+	if byte(str, i) ~= 0x7b then -- '{'
 		assert(false, [[need '{']])
 	end
 	i = i + 1
 	while true do
-		local v
+		local k, v
 		i = skipspace(str, i)
-		local ch = str:byte(i)
+		local ch = byte(str, i)
 		if ch == 0x7D then -- '}'
 			break
 		end
 		if ch ~= 0x22 then -- '"'
 			assert(false, [[need '"']])
 		end
-		s = i + 1
-		i = find(str, '"', s, true)
-		local k = str:sub(s, i - 1)
-		i = skipspace(str, i + 1)
-		if str:byte(i) ~= 0x3A then
+		k, i = decodestr(str, i)
+		i = skipspace(str, i)
+		if byte(str, i) ~= 0x3A then
 			assert(false, [[need ':']])
 		end
 		i = skipspace(str, i + 1)
-		local n = str:byte(i)
+		local n = byte(str, i)
 		v, i = assert(decode_func[n], n)(str, i)
 		obj[k] = v
 		i = skipspace(str, i)
-		if str:byte(i) == 0x2C then -- ','
+		if byte(str, i) == 0x2C then -- ','
 			i = i + 1
 		end
 	end
@@ -119,14 +121,14 @@ local function decodearr(str, i)
 	i = i + 1
 	while true do
 		i = skipspace(str, i)
-		local ch = str:byte(i)
+		local ch = byte(str, i)
 		if ch == 0x5D then -- ']'
 			break
 		end
 		ai = ai + 1
 		arr[ai], i = assert(decode_func[ch], ch)(str, i)
 		i = skipspace(str, i)
-		if str:byte(i) == 0x2C then -- ','
+		if byte(str, i) == 0x2C then -- ','
 			i = i + 1
 		end
 	end
