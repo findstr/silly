@@ -65,6 +65,7 @@ thread_worker(void *arg)
 	const struct silly_config *c;
 	c = (struct silly_config *)arg;
 	silly_worker_start(c);
+	pthread_mutex_lock(&R.mutex);
 	while (R.running) {
 		silly_worker_dispatch();
 		//allow spurious wakeup, it's harmless
@@ -72,6 +73,7 @@ thread_worker(void *arg)
 		pthread_cond_wait(&R.cond, &R.mutex);
 		R.workerstatus = 1;
 	}
+	pthread_mutex_unlock(&R.mutex);
 	R.workerstatus = -1;
 	return NULL;
 }
