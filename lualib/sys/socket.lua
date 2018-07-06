@@ -1,8 +1,9 @@
 local core = require "sys.core"
 local ns = require "sys.netstream"
 
+--when luaVM destroyed, all process will be exit
+--so no need to clear socket connection
 local socket_pool = {}
-
 local socket = {}
 
 local EVENT = {}
@@ -17,6 +18,7 @@ local function new_socket(fd)
 		delim = false,
 		co = false,
 		limit = 65535,
+		sbuffer = ns.new(fd),
 	}
 	assert(not socket_pool[fd], "new_socket fd already connected")
 	socket_pool[fd] = s
@@ -38,7 +40,7 @@ function EVENT.close(fd, _, errno)
 		return
 	end
 	assert(s.callback == nil)
-	ns.clear(s.sbuffer)
+	ns.free(s.sbuffer)
 	if s.co then
 		local co = s.co
 		s.co = false
@@ -54,8 +56,7 @@ function EVENT.data(fd, message)
 	end
 	assert(s.callback == nil)
 	local sbuffer = s.sbuffer
-	sbuffer = ns.push(sbuffer, message)
-	s.sbuffer = sbuffer
+	ns.push(sbuffer, message)
 	if not s.delim then	--non suspend read
 		assert(not s.co)
 		return
@@ -125,7 +126,7 @@ function socket.close(fd)
 	if s.so then
 		core.wakeup(s.so)
 	end
-	ns.clear(s.sbuffer)
+	ns.free(s.sbuffer)
 	socket_pool[fd] = nil
 	core.close(fd, TAG)
 end

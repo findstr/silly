@@ -16,10 +16,10 @@ return function()
 
 	local sb
 	local fd = 3
-
-	sb = ns.tpush(sb, fd, "hello")
-	sb = ns.tpush(sb, fd, "a")
-	sb = ns.tpush(sb, fd, "\rworld\ntail\r\n")
+	sb = ns.new(fd)
+	ns.tpush(sb, fd, "hello")
+	ns.tpush(sb, fd, "a")
+	ns.tpush(sb, fd, "\rworld\ntail\r\n")
 
 	local data = ns.read(sb, 1)
 	print("read 1 byte:", data)

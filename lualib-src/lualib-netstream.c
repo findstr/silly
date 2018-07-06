@@ -34,22 +34,26 @@ struct node_buffer {
 };
 
 static int
-free_pool(struct lua_State *L)
+free_pool(lua_State *L)
 {
-	int i;
-	struct node *n = (struct node *)luaL_checkudata(L, 1, "nodepool");
+	struct node *n, *end;
+	n = (struct node *)luaL_checkudata(L, 1, "nodepool");
 	int sz = lua_rawlen(L, 1);
 	assert(sz % sizeof(struct node) == 0);
 	sz /= sizeof(struct node);
-	for (i = 0; i < sz; i++) {
-		if (n[i].buff)
-			silly_free(n[i].buff);
+	end = n + sz;
+	while (n < end) {
+		if (n->buff) {
+			silly_free(n->buff);
+			n->buff = NULL;
+		}
+		++n;
 	}
 	return 0;
 }
 
 static struct node *
-new_pool(struct lua_State *L, int n)
+new_pool(lua_State *L, int n)
 {
 	int i;
 	struct node *free;
@@ -67,7 +71,7 @@ new_pool(struct lua_State *L, int n)
 }
 
 static struct node *
-new_node(struct lua_State *L)
+new_node(lua_State *L)
 {
 	lua_rawgeti(L, POOL, 1);
 	struct node *free;
@@ -105,6 +109,13 @@ append_node(struct node_buffer *nb, struct node *n)
 	return ;
 }
 
+//'remove_node'may be called by 'lfree' which may be called in
+//'nodebuffer'.__gc, and 'nodebuffer'.__gc may called before
+//'nodepool'.__gc, so 'nodebuffer'.__gc should set the n->buff as 'null'
+//after it free n->buff. In lua GC circle, one circle call __gc function
+//and next circle really clear the memory of object,
+//so even 'nodebuffer'.__gc free the n->buff, the pointer 'n' is sitll valid
+
 static void
 remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 {
@@ -114,7 +125,6 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 	nb->offset = 0;
 	if (nb->head == NULL)
 		nb->tail = &nb->head;
-	assert(n->buff);
 	silly_free(n->buff);
 	n->buff = NULL;
 	lua_rawgeti(L, POOL, 1);
@@ -131,11 +141,8 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 	return ;
 }
 
-//@input
-//	node buffer
-
 static int
-lclear(struct lua_State *L)
+lfree(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB))
@@ -147,44 +154,46 @@ lclear(struct lua_State *L)
 	return 0;
 }
 
+static int
+lnew(lua_State *L)
+{
+	struct node_buffer *nb;
+	nb = (struct node_buffer *)lua_newuserdata(L, sizeof(*nb));
+	nb->sid = luaL_checkinteger(L, 1);
+	nb->offset = 0;
+	nb->size = 0;
+	nb->head = NULL;
+	nb->tail = &nb->head;
+	if (luaL_newmetatable(L, "nodebuffer")) {
+		lua_pushvalue(L, POOL);
+		lua_pushcclosure(L, lfree, 1);
+		lua_setfield(L, -2, "__gc");
+	}
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
 
 //@input
 //	node, silly_message_socket
 //@return
 //	node buffer
 
-static int
-push(struct lua_State *L, int sid, char *data, int sz)
+static void
+push(lua_State *L, int sid, char *data, int sz)
 {
 	struct node_buffer *nb;
 	struct node *new = new_node(L);
 	new->size = sz;
 	new->buff = data;
-	if (lua_isnil(L, NB)) {
-		nb = (struct node_buffer *)lua_newuserdata(L, sizeof(struct node_buffer));
-		nb->sid = sid;
-		nb->offset = 0;
-		nb->size = 0;
-		nb->head = NULL;
-		nb->tail = &nb->head;
-		if (luaL_newmetatable(L, "nodebuffer")) {
-			lua_pushvalue(L, POOL);
-			lua_pushcclosure(L, lclear, 1);
-			lua_setfield(L, -2, "__gc");
-		}
-		lua_setmetatable(L, -2);
-		lua_replace(L, 1);
-	} else {
-		nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
-		assert(nb->sid == sid);
-	}
+	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
+	assert(nb->sid == sid);
 	append_node(nb, new);
-	lua_settop(L, 1);
-	return 1;
+	return ;
 }
 
 static int
-pushstring(struct lua_State *L, struct node_buffer *nb, int sz)
+pushstring(lua_State *L, struct node_buffer *nb, int sz)
 {
 	assert(sz >= 0);
 	struct node *n = nb->head;
@@ -274,7 +283,7 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 }
 
 static int
-lreadall(struct lua_State *L)
+lreadall(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, 1)) {
@@ -299,7 +308,7 @@ lreadall(struct lua_State *L)
 //@return
 //	string or nil
 static int
-lread(struct lua_State *L)
+lread(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB)) {
@@ -327,7 +336,7 @@ lread(struct lua_State *L)
 //@return
 //	string or nil
 static int
-lreadline(struct lua_State *L)
+lreadline(lua_State *L)
 {
 	int readn;
 	const char *delim;
@@ -359,15 +368,17 @@ lpush(lua_State *L)
 		//prevent silly_work free the msg->data
 		//it will be exist until it be read out
 		msg->data = NULL;
-		return push(L, msg->sid, str, msg->ud);
+		push(L, msg->sid, str, msg->ud);
+		break;
 	case SILLY_SACCEPT:
 	case SILLY_SCLOSE:
 	case SILLY_SCONNECTED:
 	default:
 		silly_log("lmessage unspport:%d\n", msg->type);
 		assert(!"never come here");
-		return 1;
+		break;
 	}
+	return 0;
 }
 
 static int
@@ -398,19 +409,21 @@ tpush(lua_State *L)
 	const char *src = luaL_checklstring(L, 3, &sz);
 	void *dat = silly_malloc(sz);
 	memcpy(dat, src, sz);
-	return push(L, fd, dat, sz);
+	push(L, fd, dat, sz);
+	return 0;
 }
 
 int luaopen_sys_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
+		{"new", lnew},
+		{"free", lfree},
 		{"push", lpush},
-		{"tpush", tpush},
-		{"clear", lclear},
 		{"read", lread},
 		{"readline", lreadline},
 		{"readall", lreadall},
 		{"todata", ltodata},
+		{"tpush", tpush},
 		{NULL, NULL},
 	};
 
