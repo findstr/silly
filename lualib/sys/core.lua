@@ -6,6 +6,7 @@ local assert = assert
 local xpcall = xpcall
 local tostring = tostring
 local tonumber = tonumber
+local smatch = string.match
 local sformat = string.format
 local tremove = table.remove
 local tpack = table.pack
@@ -211,27 +212,23 @@ local socket_dispatch = {}
 local socket_tag = {}
 local socket_connect = {}
 
+local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)"
+
+core.ntop = silly.ntop
+
 function core.tag(fd)
 	return socket_tag[fd] or "[no value]"
 end
 
-function core.listen(port, dispatch, tag)
-	assert(port)
+function core.listen(addr, dispatch, backlog, tag)
+	assert(addr)
 	assert(dispatch)
-	local ip, port, backlog = port:match("([0-9%.]*):([0-9]+):?([0-9]*)")
+	local ip, port = smatch(addr, ip_pattern)
 	if ip == "" then
-		ip = "0.0.0.0"
+		ip = "0::0"
 	end
-	if backlog == "" then
+	if not backlog then
 		backlog = 256 --this constant come from linux kernel comment
-	else
-		backlog = tonumber(backlog)
-		assert(backlog > 0, "backlog need large than 0")
-	end
-	port = tonumber(port)
-	if port == 0 then
-		core_log("[sys.core] listen invaild port", port)
-		return nil
 	end
 	local id = silly.listen(ip, port, backlog);
 	if id < 0 then
@@ -243,17 +240,12 @@ function core.listen(port, dispatch, tag)
 	return id
 end
 
-function core.bind(port, dispatch, tag)
-	assert(port)
+function core.bind(addr, dispatch, tag)
+	assert(addr)
 	assert(dispatch)
-	local ip, port = port:match("([0-9%.]*):([0-9]+)")
+	local ip, port = smatch(addr, ip_pattern)
 	if ip == "" then
-		ip = "0.0.0.0"
-	end
-	port = tonumber(port)
-	if port == 0 then
-		core_log("[sys.core] listen invaild port", port)
-		return nil
+		ip = "0::0"
 	end
 	local id = silly.bind(ip, port);
 	if id < 0 then
@@ -266,13 +258,13 @@ function core.bind(port, dispatch, tag)
 
 end
 
-local function doconnect(ip, dispatch, bind, dofunc, tag)
-	assert(ip)
+local function doconnect(addr, dispatch, bind, dofunc, tag)
+	assert(addr)
 	assert(dispatch)
-	local ip, port = ip:match("([0-9%.]*):([0-9]+)")
+	local ip, port = smatch(addr, ip_pattern)
 	assert(ip and port)
 	bind = bind or ":0"
-	local bip, bport = bind:match("([0-9%.]*):([0-9]+)")
+	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
 	local fd = dofunc(ip, port, bip, bport)
 	if fd < 0 then

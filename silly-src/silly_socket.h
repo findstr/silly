@@ -11,16 +11,19 @@ int silly_socket_init();
 void silly_socket_exit();
 void silly_socket_terminate();
 
-int silly_socket_listen(const char *ip, uint16_t port, int backlog);
-int silly_socket_connect(const char *addr, int port, const char *bindip, int bindport);
+int silly_socket_listen(const char *ip, const char *port, int backlog);
+int silly_socket_connect(const char *ip, const char *port,
+		const char *bindip, const char *bindport);
+int silly_socket_udpbind(const char *ip, const char *port);
+int silly_socket_udpconnect(const char *ip, const char *port,
+		const char *bindip, const char *bindport);
+int silly_socket_salen(const void *data);
+const char *silly_socket_ntop(const void *data, int *size);
 
-int silly_socket_udpbind(const char *ip, uint16_t port);
-int silly_socket_udpconnect(const char *addr, int port, const char *bindip, int bindport);
-const char *silly_socket_udpaddress(const char *data, size_t *addrlen);
-
-int silly_socket_send(int sid, uint8_t *buff, size_t sz, silly_finalizer_t finalizer);
-int silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const char *addr, size_t addrlen, silly_finalizer_t finalizer);
-
+int silly_socket_send(int sid, uint8_t *buff, size_t sz,
+	silly_finalizer_t finalizer);
+int silly_socket_udpsend(int sid, uint8_t *buff, size_t sz,
+	const uint8_t *addr, size_t addrlen, silly_finalizer_t finalizer);
 int silly_socket_close(int sid);
 
 int silly_socket_poll();

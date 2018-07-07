@@ -2,7 +2,7 @@ local core = require "sys.core"
 local np = require "sys.netpacket"
 local proto = require "sampleproto"
 local M = {}
-
+local NIL = {}
 function M.decode(proto, d, sz)
 	local str = core.tostring(d, sz)
 	np.drop(d)

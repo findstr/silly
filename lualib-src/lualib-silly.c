@@ -61,8 +61,8 @@ dispatch(lua_State *L, struct silly_message *sm)
 		args += 2;
 		break;
 	case SILLY_SUDP:
-		addr = (const char *)tosocket(sm)->data + tosocket(sm)->ud;
-		addr = silly_socket_udpaddress(addr, &addrlen);
+		addr = (char *)tosocket(sm)->data + tosocket(sm)->ud;
+		addrlen = silly_socket_salen(addr);
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		lua_pushinteger(L, tosocket(sm)->ud);
@@ -227,18 +227,21 @@ ldispatch(lua_State *L)
 	return 0;
 }
 
+typedef int (connect_t)(const char *ip, const char *port,
+		const char *bip, const char *bport);
+
 static int
-socketconnect(lua_State *L, int (*connect)(const char *ip, int port, const char *bindip, int bindport))
+socketconnect(lua_State *L, connect_t *connect)
 {
 	int err;
-	int port;
-	int bport;
 	const char *ip;
+	const char *port;
 	const char *bip;
+	const char *bport;
 	ip = luaL_checkstring(L, 1);
-	port = luaL_checkinteger(L, 2);
+	port = luaL_checkstring(L, 2);
 	bip = luaL_checkstring(L, 3);
-	bport = luaL_checkinteger(L, 4);
+	bport = luaL_checkstring(L, 4);
 	err = connect(ip, port, bip, bport);
 	lua_pushinteger(L, err);
 	return 1;
@@ -254,7 +257,7 @@ static int
 ltcplisten(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
-	int port = luaL_checkinteger(L, 2);
+	const char *port = luaL_checkstring(L, 2);
 	int backlog = luaL_checkinteger(L, 3);
 	int err = silly_socket_listen(ip, port, backlog);
 	lua_pushinteger(L, err);
@@ -408,7 +411,7 @@ static int
 ludpbind(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
-	int port = luaL_checkinteger(L, 2);
+	const char *port = luaL_checkstring(L, 2);
 	int err = silly_socket_udpbind(ip, port);
 	lua_pushinteger(L, err);
 	return 1;
@@ -422,7 +425,7 @@ ludpsend(lua_State *L)
 	int sid;
 	size_t size;
 	uint8_t *buff;
-	const char *addr = NULL;
+	const uint8_t *addr = NULL;
 	size_t addrlen = 0;
 	sid = luaL_checkinteger(L, 1);
 	int type = lua_type(L, 2);
@@ -444,11 +447,25 @@ ludpsend(lua_State *L)
 			lua_typename(L, 2));
 	}
 	if (lua_type(L, idx) != LUA_TNIL)
-		addr = luaL_checklstring(L, idx, &addrlen);
+		addr = (const uint8_t *)luaL_checklstring(L, idx, &addrlen);
 	err = silly_socket_udpsend(sid, buff, size, addr, addrlen, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }
+
+static int
+lntop(lua_State *L)
+{
+	int size;
+	const char *addr;
+	const char *str;
+	addr = luaL_checkstring(L, 1);
+	str = silly_socket_ntop((uint8_t *)addr, &size);
+	lua_pushlstring(L, str, size);
+	return 1;
+}
+
+
 
 static int
 lclose(lua_State *L)
@@ -563,6 +580,7 @@ luaopen_sys_silly(lua_State *L)
 		{"bind", ludpbind},
 		{"udp", ludpconnect},
 		{"udpsend", ludpsend},
+		{"ntop", lntop},
 		{"close", lclose},
 		//probe
 		{"version", lversion},

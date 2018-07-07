@@ -87,10 +87,10 @@ local function socket_dispatch(type, fd, message, ...)
 	assert(EVENT[type])(fd, message, ...)
 end
 
-function socket.listen(port, disp)
+function socket.listen(port, disp, backlog)
 	assert(port)
 	assert(disp)
-	local portid = core.listen(port, socket_dispatch, TAG)
+	local portid = core.listen(port, socket_dispatch, backlog, TAG)
 	if portid then
 		socket_pool[portid] = {
 			fd = portid,
@@ -199,10 +199,10 @@ local function udp_dispatch(type, fd, message, _, addr)
 	local cb = assert(socket_pool[fd]).callback
 	if type == "udp" then
 		data = ns.todata(message)
+		cb(data, addr)
 	elseif type == "close" then
 		socket_pool[fd] = nil
 	end
-	assert(socket_pool[fd]).callback(data, addr)
 end
 
 function socket.bind(addr, callback)

@@ -80,7 +80,7 @@ msgserver.multicast = function(self, fd, data, sz)
 end
 
 function msgserver.start(self)
-	local fd = core.listen(self.addr, self.callback, TAG)
+	local fd = core.listen(self.addr, self.callback, self.backlog, TAG)
 	self.fd = fd
 	return fd
 end

@@ -121,17 +121,6 @@ local function _dump(data)
         return concat(bytes, " ")
 end
 
-
-local function _dumphex(data)
-        local len = #data
-        local bytes = new_tab(len, 0)
-        for i = 1, len do
-            bytes[i] = tohex(strbyte(data, i), 2)
-        end
-        return concat(bytes, " ")
-end
-
-
 local function _compute_token(password, scramble)
         if password == "" then
             return ""
@@ -440,7 +429,7 @@ local function _recv_field_packet(self)
 end
 
 local function _mysql_login(self, opts)
-        return function (sfifo)
+        return function (sock)
                 local packet, typ, err = _recv_packet(self)
                 if not packet then
                     return false, false, err
@@ -518,12 +507,12 @@ local function _mysql_login(self, opts)
                 local use_ssl = opts.ssl or ssl_verify
 
                 if use_ssl then
-                    if band(capabilities, CLIENT_SSL) == 0 then
+                    if capabilities & CLIENT_SSL == 0 then
                         return false, false, "ssl disabled on server"
                     end
 
                     -- send a SSL Request Packet
-                    local req = _set_byte4(bor(client_flags, CLIENT_SSL))
+                    local req = _set_byte4(client_flags | CLIENT_SSL)
                                 .. _set_byte4(self._max_packet_size)
                                 .. "\0" -- TODO: add support for charset encoding
                                 .. strrep("\0", 23)

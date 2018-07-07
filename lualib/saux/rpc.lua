@@ -128,7 +128,7 @@ function server.listen(self)
 		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(config.addr, callback, TAG)
+	local fd = core.listen(config.addr, callback, config.backlog, TAG)
 	self.fd = fd
 	return fd
 end
