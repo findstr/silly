@@ -262,7 +262,7 @@ local function doconnect(addr, dispatch, bind, dofunc, tag)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
-	assert(ip and port)
+	assert(ip and port, addr)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)

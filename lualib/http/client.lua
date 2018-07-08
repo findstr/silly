@@ -60,12 +60,8 @@ end
 local function process(uri, method, header, body)
 	local ip, io_do
 	local scheme, host, port, path, default = parseurl(uri)
-	if dns.isdomain(host) then
-		ip = dns.query(host)
-	else
-		ip = host
-	end
-	assert(ip)
+	ip = dns.resolve(host, "A")
+	assert(ip, host)
 	if scheme == "https" then
 		io_do = ssl
 	elseif scheme == "http" then

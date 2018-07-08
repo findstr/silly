@@ -5,13 +5,13 @@ local testaux = require "testaux"
 
 return function()
 	dns.server("223.5.5.5:53")
-	local ip = dns.query("smtp.sina.com.cn")
-	testaux.assertneq(ip, nil, "dns query ip")
+	local ip = dns.resolve("smtp.sina.com.cn")
+	testaux.assertneq(ip, nil, "dns resolve ip")
 	local fd = socket.connect(string.format("%s:%s", ip, 25))
-	testaux.assertneq(fd, nil, "dns query ip validate")
+	testaux.assertneq(fd, nil, "dns resolve ip validate")
 	local l = socket.readline(fd)
-	testaux.assertneq(l, nil, "dns query ip validate")
+	testaux.assertneq(l, nil, "dns resolve ip validate")
 	local f = l:find("220")
-	testaux.assertneq(f, nil, "dns query ip validate")
+	testaux.assertneq(f, nil, "dns resolve ip validate")
 end
 

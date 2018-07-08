@@ -201,6 +201,7 @@ local function udp_dispatch(type, fd, message, _, addr)
 		data = ns.todata(message)
 		cb(data, addr)
 	elseif type == "close" then
+		cb()
 		socket_pool[fd] = nil
 	end
 end

@@ -1,7 +1,8 @@
-local socket = require "sys.socket"
 local core = require "sys.core"
-
+local socket = require "sys.socket"
+local assert = assert
 local sub = string.sub
+local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
 local format = string.format
@@ -9,18 +10,19 @@ local match = string.match
 local gmatch = string.gmatch
 
 local dns = {}
-local dns_server = "192.168.1.1:53"
-local domain_cache = {}
+local A = 1
+local CNAME = 5
+local AAAA = 28
+local name_cache = {}
 local wait_coroutine = {}
 local weakmt = {__mode = "kv"}
-local connectfd = -1
 local session = 0
+local dns_server
+local connectfd
 
-setmetatable(domain_cache, weakmt)
+setmetatable(name_cache, weakmt)
 
-local function timenow()
-	return math.floor(core.monotonic() / 1000)
-end
+local timenow = core.monotonicsec
 
 --[[
 	ID:16
@@ -46,20 +48,25 @@ end
 
 local buildformat = ">I2I2I2I2I2I2zI2I2"
 
-local function formatdomain(domain)
-	local n = ""
-	for k in gmatch(domain, "([^%.]+)") do
-		n = n .. pack("<I1", #k) .. k
+local function formatname(name)
+	local i = 0
+	local n = {}
+	for k in gmatch(name, "([^%.]+)") do
+		i = i + 1
+		n[i] = pack(">I1", #k) .. k
 	end
-	return n
+	return concat(n)
 end
 
-local function build_request(domain)
+local function question(name, typ)
 	session = session + 1
-	local req = {
-		ID = session,
-
-		--[[
+	if typ == "AAAA" then
+		typ = AAAA
+	else
+		typ = A
+	end
+	local ID = session
+	--[[ FLAG
 		QR = 0,
 		OPCODE = 0, (4bit)
 		AA = 0,
@@ -68,26 +75,21 @@ local function build_request(domain)
 		RA = 0,
 		--3 bit zero
 		RCCODE = 0,
-		]]--
-		FLAG = 0x0100,
-
-		QDCOUNT = 1,
-		ANCOUNT = 0,
-		NSCOUNT = 0,
-		ARCOUNT = 0,
-
-		QNAME = formatdomain(domain),
-		QTYPE = 1,
-		QCLASS = 1,
-	}
-
-	return req.ID, pack(buildformat,
-			req.ID, req.FLAG,
-			req.QDCOUNT, req.ANCOUNT,
-			req.NSCOUNT, req.ARCOUNT,
-			req.QNAME,
-			req.QTYPE, req.QCLASS
-			)
+	]]--
+	local FLAG = 0x0100
+	local QDCOUNT = 1
+	local ANCOUNT = 0
+	local NSCOUNT = 0
+	local ARCOUNT = 0
+	local QNAME = formatname(name)
+	local QTYPE = typ
+	local QCLASS = 1
+	return ID, pack(buildformat,
+			ID, FLAG,
+			QDCOUNT, ANCOUNT,
+			NSCOUNT, ARCOUNT,
+			QNAME,
+			QTYPE, QCLASS)
 end
 
 local function parsename(init, dat, pos, ptr)
@@ -115,67 +117,65 @@ local function parsename(init, dat, pos, ptr)
 	end
 end
 
-local function desc(dat, pos, n)
+local function answer(dat, pos, n)
 	for i = 1, n do
-		local ptr, qtype, qclass, ttl, rdlen, offset= unpack(">I2I2I2I4I2", dat, pos)
-		if qtype == 5 then --cname
+		local ptr, qtype, qclass, ttl, rdlen, offset
+			= unpack(">I2I2I2I4I2", dat, pos)
+		if qtype == A then
+			local src = parsename("", dat, pos)
+			pos = offset + rdlen
+			local d1, d2, d3, d4 =
+				unpack(">I1I1I1I1", dat, offset)
+			name_cache[src] = {
+				TTL = timenow() + ttl,
+				TYPE = "A",
+				A = format("%d.%d.%d.%d", d1, d2, d3, d4),
+			}
+		elseif qtype == CNAME then
 			local src = parsename("", dat, pos)
 			local cname = parsename("", dat, offset)
 			pos = offset + rdlen
-			domain_cache[src] = {
-				ttl = timenow() + ttl,
-				type = "cname",
-				addr = cname,
+			name_cache[src] = {
+				TTL = timenow() + ttl,
+				TYPE = "CNAME",
+				CNAME = cname,
 			}
-		elseif qtype == 1 then --ip
+		elseif qtype == AAAA then
 			local src = parsename("", dat, pos)
 			pos = offset + rdlen
-			local seg1, seg2, seg3, seg4 = unpack("<I1I1I1I1", dat, offset)
-			domain_cache[src] = {
-				ttl = timenow() + ttl,
-				type = "ip",
-				addr = format("%d.%d.%d.%d", seg1, seg2, seg3, seg4),
+			local x1, x2, x3, x4, x5, x6, x7, x8 =
+				unpack(">I2I2I2I2I2I2I2I2", dat, offset)
+			name_cache[src] = {
+				TTL = timenow() + ttl,
+				TYPE = "AAAA",
+				AAAA = format("%x:%x:%x:%x:%x%x:%x:%x",
+					x1, x2, x3, x4, x5, x6, x7, x8),
 			}
 		end
 	end
 end
 
-local function callback(msg, addr)
-	local res = {}
+local function callback(msg, _)
 	local pos
-	if not msg then --udp closed
-		connectfd = -1
-		return
-	end
-	res.ID, res.FLAG,
-	res.QDCOUNT, res.ANCOUNT,
-	res.NSCOUNT, res.ARCOUNT,
-	res.QNAME,
-	res.QTYPE, res.QCLASS, pos = unpack(buildformat, msg)
-	desc(msg, pos, res.ANCOUNT)
-	local co = wait_coroutine[res.ID]
-	if not co then --already timeout
-		return
-	end
-	wait_coroutine[res.ID] = nil
-	core.wakeup(co, true)
-end
-
-local query_request
-
-local function query(domain, timeout)
-	local d = domain_cache[domain]
-	if not d then
-		return nil
-	end
-	if d.ttl < timenow() then
-		domain_cache[domain] = nil
-		return nil
-	end
-	if d.type == "cname" then
-		return query_request(d.addr, timeout)
-	else
-		return d.addr
+	if msg then
+		local ID, FLAG,
+		QDCOUNT, ANCOUNT,
+		NSCOUNT, ARCOUNT,
+		QNAME,
+		QTYPE, QCLASS, pos = unpack(buildformat, msg)
+		answer(msg, pos, ANCOUNT)
+		local co = wait_coroutine[ID]
+		if not co then --already timeout
+			return
+		end
+		wait_coroutine[ID] = nil
+		core.wakeup(co, ANCOUNT > 0)
+	else --udp closed
+		for k, co in pairs(wait_coroutine) do
+			core.wakeup(co, false)
+			wait_coroutine[k] = nil
+		end
+		connectfd = nil
 	end
 end
 
@@ -194,55 +194,108 @@ local function suspend(session, timeout)
 	return core.wait()
 end
 
-local function checkconnect()
-	if connectfd >= 0 then
-		return connectfd
+local function connectserver()
+	if not dns_server then
+		local f = io.open("/etc/resolv.conf", "r")
+		for l in f:lines() do
+			dns_server = l:match("^%s*nameserver%s+([^%s]+)")
+			if dns_server then
+				dns_server = format("%s:53", dns_server)
+				break
+			end
+		end
 	end
-	connectfd = socket.udp(dns_server, callback)
-	return connectfd
+	assert(dns_server)
+	return socket.udp(dns_server, callback)
 end
 
-function query_request(domain, timeout)
-	local res = query(domain)
-	if res then
-		return res
+local function query(name, typ, timeout)
+	if not connectfd then
+		connectfd = connectserver()
 	end
-	timeout = timeout or 1000
-	local s, r = build_request(domain)
-	local fd = checkconnect()
-	local i = 1
-	assert(fd > 0)
+	assert(connectfd > 0)
+	local retry = 1
+	local s, r = question(name, typ)
+	--RFC 1123 #page-76, the default timeout
+	--should be less than 5 seconds
+	timeout = timeout or 5000
 	while true do
-		local ok = socket.udpwrite(fd, r)
+		local ok = socket.udpwrite(connectfd, r)
 		if not ok then
-			return nil
+			return false
 		end
 		local ok = suspend(s, timeout)
 		if ok then
-			return query(domain, timeout)
+			return ok
 		end
-		i = i + 1
-		if i > 3 then
-			return nil
+		retry = retry + 1
+		if retry > 3 then
+			return false
 		end
-		core.sleep(timeout * i)
+		core.sleep(timeout * retry)
 	end
 end
 
---all query use one udp connecction, so need no close
-dns.query = query_request
+local function lookup(name)
+	local d
+	local now = timenow()
+	for i = 1, 100 do
+		d = name_cache[name]
+		if not d then
+			return nil, name
+		end
+		if d.TTL < now then
+			name_cache[name] = nil
+			return nil, name
+		end
+		if d.TYPE == "CNAME" then
+			name = d.CNAME
+		else
+			return d
+		end
+	end
+	return nil, name
+end
 
-function dns.isdomain(addr)
-	local s1, s2, s3, s4 = match(addr, "(%d+).(%d+).(%d+).(%d+)")
-	if s1 and s2 and s3 and s4 then
+local function isname(name)
+	local right = name:match("([%x])", #name)
+	if right then
 		return false
 	end
 	return true
 end
 
+function dns.resolve(name, typ, timeout)
+	if not isname(name) then
+		return name
+	end
+	local d , cname = lookup(name)
+	if not d then
+		for i = 1, 100 do
+			local res = query(cname, typ, timeout)
+			if not res then
+				return
+			end
+			d, cname = lookup(cname)
+			if not cname then
+				goto FIND
+			end
+		end
+		return
+	end
+	::FIND::
+	if typ then
+		return d[typ], typ
+	else
+		return d.A or d.AAAA, d.TYPE
+	end
+end
+
 function dns.server(ip)
 	dns_server = ip
 end
+
+dns.isname = isname
 
 return dns
 
