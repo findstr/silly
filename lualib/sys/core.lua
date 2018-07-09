@@ -258,7 +258,7 @@ function core.bind(addr, dispatch, tag)
 
 end
 
-local function doconnect(addr, dispatch, bind, dofunc, tag)
+function core.connect(addr, dispatch, bind, tag)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -266,7 +266,7 @@ local function doconnect(addr, dispatch, bind, dofunc, tag)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = dofunc(ip, port, bip, bport)
+	local fd = silly.connect(ip, port, bip, bport)
 	if fd < 0 then
 		return nil
 	end
@@ -280,15 +280,22 @@ local function doconnect(addr, dispatch, bind, dofunc, tag)
 	socket_dispatch[fd] = assert(dispatch)
 	socket_tag[fd]= tag
 	return fd
-
 end
 
-function core.connect(ip, dispatch, bind, tag)
-	return doconnect(ip, dispatch, bind, silly.connect, tag)
-end
-
-function core.udp(ip, dispatch, bind, tag)
-	return doconnect(ip, dispatch, bind, silly.udp, tag)
+function core.udp(addr, dispatch, bind, tag)
+	assert(addr)
+	assert(dispatch)
+	local ip, port = smatch(addr, ip_pattern)
+	assert(ip and port, addr)
+	bind = bind or ":0"
+	local bip, bport = smatch(bind, ip_pattern)
+	assert(bip and bport)
+	local fd = silly.udp(ip, port, bip, bport)
+	if fd >= 0 then
+		socket_dispatch[fd] = dispatch
+		socket_tag[fd]= tag
+	end
+	return fd
 end
 
 function core.close(fd, tag)

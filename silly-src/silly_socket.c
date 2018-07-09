@@ -134,41 +134,6 @@ socketpool_init(struct silly_socket *ss)
 	return ;
 }
 
-static struct socket*
-allocsocket(struct silly_socket *ss, enum stype type, int protocol)
-{
-	int i;
-	int id;
-	assert(
-		protocol == PROTOCOL_TCP ||
-		protocol == PROTOCOL_UDP ||
-		protocol == PROTOCOL_PIPE
-		);
-	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
-		id = atomic_add_return(&ss->reserveid, 1);
-		if (unlikely(id < 0)) {
-			id = id & 0x7fffffff;
-			atomic_and_return(&ss->reserveid, 0x7fffffff);
-		}
-
-		struct socket *s = &ss->socketpool[HASH(id)];
-		if (s->type == STYPE_RESERVE) {
-			if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
-				assert(s->wlhead == NULL);
-				assert(s->wltail == &s->wlhead);
-				s->protocol = protocol;
-				s->presize = MIN_READBUF_LEN;
-				s->sid = id;
-				s->fd = -1;
-				s->wloffset = 0;
-				return s;
-			}
-		}
-	}
-	silly_log("[socket] allocsocket fail, find no empty entry\n");
-	return NULL;
-}
-
 static inline void
 wlist_append(struct socket *s, uint8_t *buf, size_t size,
 		silly_finalizer_t finalizer)
@@ -232,57 +197,57 @@ wlist_empty(struct socket *s)
 	return s->wlhead == NULL ? 1 : 0;
 }
 
+static struct socket*
+allocsocket(struct silly_socket *ss, int fd, enum stype type, int protocol)
+{
+	int i;
+	int id;
+	assert(
+		protocol == PROTOCOL_TCP ||
+		protocol == PROTOCOL_UDP ||
+		protocol == PROTOCOL_PIPE);
+	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+		id = atomic_add_return(&ss->reserveid, 1);
+		if (unlikely(id < 0)) {
+			id = id & 0x7fffffff;
+			atomic_and_return(&ss->reserveid, 0x7fffffff);
+		}
+		struct socket *s = &ss->socketpool[HASH(id)];
+		if (s->type == STYPE_RESERVE) {
+			if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
+				assert(s->wlhead == NULL);
+				assert(s->wltail == &s->wlhead);
+				s->protocol = protocol;
+				s->presize = MIN_READBUF_LEN;
+				s->sid = id;
+				s->fd = fd;
+				s->wloffset = 0;
+				return s;
+			}
+		}
+	}
+	silly_log("[socket] allocsocket fail, find no empty entry\n");
+	return NULL;
+}
+
+
 static inline void
 freesocket(struct silly_socket *ss, struct socket *s)
 {
-	(void)ss;
+	if (unlikely(s->type == STYPE_RESERVE)) {
+		const char *fmt = "[socket] freesocket sid:%d error type:%d\n";
+		silly_log(fmt, s->sid, s->type);
+		return ;
+	}
+	if (s->fd >= 0) {
+		sp_del(ss->spfd, s->fd);
+		close(s->fd);
+		s->fd = -1;
+	}
 	wlist_free(s);
 	assert(s->wlhead == NULL);
 	atomic_barrier();
 	s->type = STYPE_RESERVE;
-}
-
-static struct socket *
-newsocket(struct silly_socket *ss, struct socket *s, int fd, enum stype type,
-	void (* report)(struct silly_socket *ss, struct socket *s, int err))
-{
-	int err;
-	if (s == NULL)
-		s = allocsocket(ss, type, PROTOCOL_TCP);
-	if (unlikely(s == NULL)) {
-		close(fd);
-		return NULL;
-	}
-	assert(s->type == type || s->type == STYPE_ALLOCED);
-	assert(s->presize == MIN_READBUF_LEN);
-	assert(fd >= 0);
-	assert(s->fd == -1);
-	s->fd = fd;
-	s->type = type;
-	err = sp_add(ss->spfd, fd, s);
-	if (unlikely(err < 0)) {
-		silly_log("[socket] newsocket %s\n", strerror(errno));
-		if (report)
-			report(ss, s, errno);
-		close(fd);
-		freesocket(ss, s);
-		return NULL;
-	}
-	return s;
-}
-
-static void
-delsocket(struct silly_socket *ss, struct socket *s)
-{
-	if (unlikely(s->type == STYPE_RESERVE)) {
-		const char *fmt = "[socket] delsocket sid:%d error type:%d\n";
-		silly_log(fmt, s->sid, s->type);
-		return ;
-	}
-	sp_del(ss->spfd, s->fd);
-	close(s->fd);
-	freesocket(ss, s);
-	return ;
 }
 
 static void
@@ -371,7 +336,7 @@ ntop(struct silly_socket *ss, union sockaddr_full *addr)
 static void
 report_accept(struct silly_socket *ss, struct socket *listen)
 {
-	int fd;
+	int err, fd;
 	struct socket *s;
 	union sockaddr_full addr;
 	struct silly_message_socket *sa;
@@ -396,9 +361,16 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 #endif
 	keepalive(fd);
 	nodelay(fd);
-	s = newsocket(ss, NULL, fd, STYPE_SOCKET, NULL);
-	if (unlikely(s == NULL))
-		return;
+	s = allocsocket(ss, fd, STYPE_SOCKET, PROTOCOL_TCP);
+	if (unlikely(s == NULL)) {
+		close(fd);
+		return ;
+	}
+	err = sp_add(ss->spfd, fd, s);
+	if (err < 0) {
+		freesocket(ss, s);
+		return ;
+	}
 	int namelen = ntop(ss, &addr);
 	sa = silly_malloc(sizeof(*sa) + namelen);
 	sa->type = SILLY_SACCEPT;
@@ -447,39 +419,40 @@ report_data(struct silly_socket *ss, struct socket *s, int type, uint8_t *data, 
 };
 
 static inline int
-checkconnected(int fd)
+checkconnected(struct silly_socket *ss, struct socket *s)
 {
-	int ret;
-	int err;
+	int ret, err;
 	socklen_t errlen = sizeof(err);
-	ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+	assert(s->fd >= 0);
+	ret = getsockopt(s->fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
 	if (unlikely(ret < 0)) {
 		silly_log("[socket] checkconnected:%s\n", strerror(errno));
-		return ret;
+		goto err;
 	}
 	if (unlikely(err != 0)) {
 		silly_log("[socket] checkconnected:%s\n", strerror(err));
-		return -1;
+		goto err;
 	}
+	if (wlist_empty(s))
+		sp_write_enable(ss->spfd, s->fd, s, 0);
 	return 0;
+err:
+	//occurs error
+	report_close(ss, s, errno);
+	freesocket(ss, s);
+	return -1;
 }
 
 static void
 report_connected(struct silly_socket *ss, struct socket *s)
 {
-	int err;
-	struct silly_message_socket *sc;
-	err = checkconnected(s->fd);
-	if (unlikely(err < 0)) {	//check ok
-		report_close(ss, s, errno);
-		delsocket(ss, s);
+
+	if (checkconnected(ss, s) < 0)
 		return ;
-	}
+	struct silly_message_socket *sc;
 	sc = silly_malloc(sizeof(*sc));
 	sc->type = SILLY_SCONNECTED;
 	sc->sid = s->sid;
-	if (wlist_empty(s))
-		sp_write_enable(ss->spfd, s->fd, s, 0);
 	silly_worker_push(tocommon(sc));
 	return ;
 }
@@ -606,7 +579,7 @@ forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 		silly_free(buf);
 		if (sz < 0) {
 			report_close(ss, s, errno);
-			delsocket(ss, s);
+			freesocket(ss, s);
 			return -1;
 		}
 		return 0;
@@ -662,7 +635,7 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 		sz = sendn(s->fd, w->buf + s->wloffset, w->size - s->wloffset);
 		if (unlikely(sz < 0)) {
 			report_close(ss, s, errno);
-			delsocket(ss, s);
+			freesocket(ss, s);
 			return ;
 		}
 		s->wloffset += sz;
@@ -678,7 +651,7 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 			s->wltail = &s->wlhead;
 			sp_write_enable(ss->spfd, s->fd, s, 0);
 			if (s->type == STYPE_HALFCLOSE)
-				delsocket(ss, s);
+				freesocket(ss, s);
 		}
 	}
 	return ;
@@ -705,7 +678,7 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 			s->wltail = &s->wlhead;
 			sp_write_enable(ss->spfd, s->fd, s, 0);
 			if (s->type == STYPE_HALFCLOSE)
-				delsocket(ss, s);
+				freesocket(ss, s);
 		}
 	}
 	return ;
@@ -721,14 +694,12 @@ struct cmdlisten {	//'L/B' -> listen or bind
 struct cmdconnect {	//'C' -> tcp connect
 	cmdcommon;
 	int sid;
-	int fd;
 	union sockaddr_full addr;
 };
 
 struct cmdopen {	//'O' -> udp connect
 	cmdcommon;
 	int sid;
-	int fd;
 };
 
 struct cmdkick {	//'K' --> close
@@ -879,14 +850,13 @@ silly_socket_listen(const char *ip, const char *port, int backlog)
 	fd = dolisten(ip, port, backlog);
 	if (unlikely(fd < 0))
 		return fd;
-	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_TCP);
+	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
 		silly_log("[socket] listen %s:%d:%d allocsocket fail\n",
 			ip, port, backlog);
 		close(fd);
 		return -1;
 	}
-	s->fd = fd;
 	cmd.type = 'L';
 	cmd.sid = s->sid;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd, sizeof(cmd));
@@ -911,24 +881,21 @@ silly_socket_udpbind(const char *ip, const char *port)
 	if (unlikely(err < 0))
 		goto end;
 	nonblock(fd);
-	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_UDP);
+	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (unlikely(s == NULL)) {
-		silly_log("[socket] udplisten %s:%d allocsocket fail\n",
+		silly_log("[socket] udpbind %s:%d allocsocket fail\n",
 			ip, port);
 		goto end;
 	}
 	freeaddrinfo(info);
-	s->fd = fd;
 	cmd.type = 'B';
 	cmd.sid = s->sid;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd, sizeof(cmd));
 	return s->sid;
 end:
-	freeaddrinfo(info);
 	if (fd >= 0)
 		close(fd);
-	if (s != NULL)
-		freesocket(SSOCKET, s);
+	freeaddrinfo(info);
 	silly_log("[socket] udplisten error:%s\n", strerror(errno));
 	return -1;
 }
@@ -993,15 +960,14 @@ silly_socket_connect(const char *ip, const char *port,
 	fd = socket(info->ai_family, SOCK_STREAM, 0);
 	if (unlikely(fd < 0))
 		goto end;
-	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_TCP);
-	if (unlikely(s == NULL))
-		goto end;
 	err = bindfd(fd, IPPROTO_TCP, bindip, bindport);
 	if (unlikely(err < 0))
 		goto end;
+	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
+	if (unlikely(s == NULL))
+		goto end;
 	cmd.type = 'C';
 	cmd.sid = s->sid;
-	cmd.fd = fd;
 	memcpy(&cmd.addr, info->ai_addr, info->ai_addrlen);
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd, sizeof(cmd));
 	freeaddrinfo(info);
@@ -1009,8 +975,6 @@ silly_socket_connect(const char *ip, const char *port,
 end:
 	if (fd >= 0)
 		close(fd);
-	if (s != NULL)
-		freesocket(SSOCKET, s);
 	freeaddrinfo(info);
 	return -1;
 }
@@ -1024,9 +988,10 @@ tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	int sid = cmd->sid;
 	union sockaddr_full *addr;
 	s =  &ss->socketpool[HASH(sid)];
+	assert(s->fd >= 0);
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
-	fd = cmd->fd;
+	fd = s->fd;
 	nonblock(fd);
 	keepalive(fd);
 	nodelay(fd);
@@ -1034,20 +999,29 @@ tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	err = connect(fd, &addr->sa, SA_LEN(addr->sa));
 	if (unlikely(err == -1 && errno != EINPROGRESS)) {	//error
 		const char *fmt = "[socket] connect %s,errno:%d\n";
-		close(fd);
 		report_close(ss, s, errno);
 		freesocket(ss, s);
 		ntop(ss,  addr);
 		silly_log(fmt, ss->namebuf, errno);
 		return ;
 	} else if (err == 0) {	//connect
-		s = newsocket(ss, s, fd, STYPE_SOCKET, report_close);
-		if (likely(s != NULL))
+		s->type = STYPE_SOCKET;
+		err = sp_add(ss->spfd, fd, s);
+		if (unlikely(err < 0)) {
+			report_close(ss, s, errno);
+			freesocket(ss, s);
+		} else {
 			report_connected(ss, s);
+		}
 	} else {	//block
-		s = newsocket(ss, s, fd, STYPE_CONNECTING, report_close);
-		if (likely(s != NULL))
-			sp_write_enable(ss->spfd, s->fd, s, 1);
+		s->type = STYPE_CONNECTING;
+		err = sp_add(ss->spfd, fd, s);
+		if (unlikely(err < 0)) {
+			report_close(ss, s, errno);
+			freesocket(ss, s);
+		} else {
+			sp_write_enable(ss->spfd, fd, s, 1);
+		}
 	}
 	return ;
 }
@@ -1073,24 +1047,22 @@ silly_socket_udpconnect(const char *ip, const char *port,
 	err = bindfd(fd, IPPROTO_UDP, bindip, bindport);
 	if (unlikely(err < 0))
 		goto end;
-	s = allocsocket(SSOCKET, STYPE_ALLOCED, PROTOCOL_UDP);
-	if (unlikely(s == NULL))
-		goto end;
 	//udp connect will return immediately
 	err = connect(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0))
 		goto end;
+	s = allocsocket(SSOCKET, fd, STYPE_SOCKET, PROTOCOL_UDP);
+	if (unlikely(s == NULL))
+		goto end;
+	assert(s->type == STYPE_SOCKET);
 	cmd.type = 'O';
 	cmd.sid = s->sid;
-	cmd.fd = fd;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd, sizeof(cmd));
 	freeaddrinfo(info);
 	return s->sid;
 end:
 	if (fd >= 0)
 		close(fd);
-	if (s != NULL)
-		freesocket(SSOCKET, s);
 	freeaddrinfo(info);
 	silly_log(fmt, ip, port, errno);
 	return -1;
@@ -1099,13 +1071,18 @@ end:
 static void
 tryudpconnect(struct silly_socket *ss, struct cmdopen *cmd)
 {
+	int err;
 	int sid = cmd->sid;
 	struct socket *s =  &ss->socketpool[HASH(sid)];
 	assert(s->sid == sid);
-	assert(s->type == STYPE_ALLOCED);
-	s = newsocket(ss, s, cmd->fd, STYPE_SOCKET, report_close);
-	if (likely(s != NULL))
-		report_connected(ss, s);
+	assert(s->fd >= 0);
+	assert(s->type == STYPE_SOCKET);
+	assert(s->protocol == PROTOCOL_UDP);
+	err = sp_add(ss->spfd, s->fd, s);
+	if (unlikely(err < 0)) {
+		report_close(ss, s, errno);
+		freesocket(ss, s);
+	}
 	return ;
 }
 
@@ -1152,7 +1129,7 @@ tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 	if (s == NULL)
 		return -1;
 	if (wlist_empty(s)) { //already send all the data, directly close it
-		delsocket(ss, s);
+		freesocket(ss, s);
 		return 0;
 	} else {
 		s->type = STYPE_HALFCLOSE;
@@ -1232,7 +1209,7 @@ trysend(struct silly_socket *ss, struct cmdsend *cmd)
 		if (n < 0) {
 			finalizer(data);
 			report_close(ss, s, errno);
-			delsocket(ss, s);
+			freesocket(ss, s);
 			return -1;
 		} else if ((size_t)n < sz) {
 			s->wloffset = n;
@@ -1431,7 +1408,7 @@ silly_socket_poll()
 
 		if (SP_ERR(e)) {
 			report_close(ss, s, 0);
-			delsocket(ss, s);
+			freesocket(ss, s);
 			continue;
 		}
 		if (SP_READ(e)) {
@@ -1483,7 +1460,7 @@ silly_socket_init()
 	spfd = sp_create(EVENT_SIZE);
 	if (unlikely(spfd == SP_INVALID))
 		goto end;
-	s = allocsocket(ss, STYPE_CTRL, PROTOCOL_PIPE);
+	s = allocsocket(ss, -1, STYPE_CTRL, PROTOCOL_PIPE);
 	assert(s);
 	//use the pipe and not the socketpair because
 	//the pipe will be automatic
