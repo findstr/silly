@@ -14,6 +14,7 @@ local tunpack = table.unpack
 local traceback = debug.traceback
 
 local core_log = silly.log
+local cocreate_ = coroutine.create
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
@@ -54,7 +55,7 @@ local function cocreate(f)
 		coresume(co, "STARTUP", f)
 		return co
 	end
-	co = coroutine.create(cocall)
+	co = cocreate_(cocall)
 	coresume(co)	--wakeup the new coroutine
 	coresume(co, "STARTUP", f)	 --pass the function handler
 	return co

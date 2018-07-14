@@ -46,25 +46,28 @@ local timenow = core.monotonicsec
 	QCLASS:16	0x01 -> IN
 ]]--
 
-local buildformat = ">I2I2I2I2I2I2zI2I2"
+local parseformat  = ">I2I2I2I2I2I2zI2I2"
+local headerformat = ">I2I2I2I2I2I2"
 
-local function formatname(name)
-	local i = 0
-	local n = {}
+local function QNAME(name, n)
+	local i = #n
 	for k in gmatch(name, "([^%.]+)") do
 		i = i + 1
-		n[i] = pack(">I1", #k) .. k
+		n[i] = pack(">I1", #k)
+		i = i + 1
+		n[i] = k
 	end
-	return concat(n)
+	i = i + 1
+	n[i] = '\0'
 end
 
 local function question(name, typ)
-	session = session + 1
 	if typ == "AAAA" then
 		typ = AAAA
 	else
 		typ = A
 	end
+	session = session + 1
 	local ID = session
 	--[[ FLAG
 		QR = 0,
@@ -81,70 +84,79 @@ local function question(name, typ)
 	local ANCOUNT = 0
 	local NSCOUNT = 0
 	local ARCOUNT = 0
-	local QNAME = formatname(name)
 	local QTYPE = typ
 	local QCLASS = 1
-	return ID, pack(buildformat,
+	local dat = {
+		pack(headerformat,
 			ID, FLAG,
 			QDCOUNT, ANCOUNT,
-			NSCOUNT, ARCOUNT,
-			QNAME,
-			QTYPE, QCLASS)
+			NSCOUNT, ARCOUNT)
+	}
+	QNAME(name, dat)
+	dat[#dat + 1] = pack(">I2I2", QTYPE, QCLASS)
+	return ID, concat(dat)
 end
 
-local function parsename(init, dat, pos, ptr)
-	if ptr and ptr > 0xc000 then --ptr
-		pos = ptr & 0x3fff
-		return parsename(init, dat, pos + 1, nil)
-	else	--normal
-		local i = pos
-		while i < #dat do
-			local n = unpack(">I1", dat, i)
-			if n >= 0xc0 then
-				n = unpack(">I2", dat, i)
-				i = i + 2
-				return parsename(init, dat, i, n)
-			elseif n == 0x00 then
-				break
-			else
-				i = i + 1
-				init = init .. sub(dat, i, i + n - 1) .. "."
-				i = i + n;
-			end
-		end
-		init = sub(init, 1, -2)
-		return init
+local function readptr(init, dat, pos)
+	local n, pos = unpack(">I1", dat, pos)
+	if n >= 0xc0 then
+		n = n & 0x3f
+		local l, pos = unpack(">I1", dat, pos)
+		n = n  << 8 | l
+		return readptr(init, dat, n + 1)
+	elseif n > 0 then
+		local nxt = pos + n
+		init[#init + 1] = sub(dat, pos, nxt - 1)
+		init[#init + 1] = "."
+		return readptr(init, dat, nxt)
+	else
+		return
 	end
+end
+
+local function readname(dat, i)
+	local tbl = {}
+	while true do	--first
+		local n, j = unpack(">I1", dat, i)
+		if n >= 0xc0 then
+			readptr(tbl, dat, i)
+			i = i + 2
+			break
+		elseif n == 0 then
+			i = j
+			break
+		end
+		tbl[#tbl + 1] = sub(dat, j, i + n)
+		tbl[#tbl + 1] = "."
+		i = j + n
+	end
+	tbl[#tbl] = nil
+	return concat(tbl), i
 end
 
 local function answer(dat, pos, n)
 	for i = 1, n do
-		local ptr, qtype, qclass, ttl, rdlen, offset
-			= unpack(">I2I2I2I4I2", dat, pos)
+		local src, pos = readname(dat, pos)
+		local qtype, qclass, ttl, rdlen, pos
+			= unpack(">I2I2I4I2", dat, pos)
 		if qtype == A then
-			local src = parsename("", dat, pos)
-			pos = offset + rdlen
 			local d1, d2, d3, d4 =
-				unpack(">I1I1I1I1", dat, offset)
+				unpack(">I1I1I1I1", dat, pos)
 			name_cache[src] = {
 				TTL = timenow() + ttl,
 				TYPE = "A",
 				A = format("%d.%d.%d.%d", d1, d2, d3, d4),
 			}
 		elseif qtype == CNAME then
-			local src = parsename("", dat, pos)
-			local cname = parsename("", dat, offset)
-			pos = offset + rdlen
+			local cname = readname(dat, pos)
 			name_cache[src] = {
 				TTL = timenow() + ttl,
 				TYPE = "CNAME",
 				CNAME = cname,
 			}
 		elseif qtype == AAAA then
-			local src = parsename("", dat, pos)
-			pos = offset + rdlen
 			local x1, x2, x3, x4, x5, x6, x7, x8 =
-				unpack(">I2I2I2I2I2I2I2I2", dat, offset)
+				unpack(">I2I2I2I2I2I2I2I2", dat, pos)
 			name_cache[src] = {
 				TTL = timenow() + ttl,
 				TYPE = "AAAA",
@@ -162,7 +174,7 @@ local function callback(msg, _)
 		QDCOUNT, ANCOUNT,
 		NSCOUNT, ARCOUNT,
 		QNAME,
-		QTYPE, QCLASS, pos = unpack(buildformat, msg)
+		QTYPE, QCLASS, pos = unpack(parseformat, msg)
 		answer(msg, pos, ANCOUNT)
 		local co = wait_coroutine[ID]
 		if not co then --already timeout
