@@ -372,12 +372,13 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 		return ;
 	}
 	int namelen = ntop(ss, &addr);
-	sa = silly_malloc(sizeof(*sa) + namelen);
+	sa = silly_malloc(sizeof(*sa) + namelen + 1);
 	sa->type = SILLY_SACCEPT;
 	sa->sid = s->sid;
 	sa->ud = listen->sid;
 	sa->data = (uint8_t *)(sa + 1);
-	memcpy(sa->data, ss->namebuf, namelen);
+	*sa->data = namelen;
+	memcpy(sa->data + 1, ss->namebuf, namelen);
 	silly_worker_push(tocommon(sa));
 	return ;
 }

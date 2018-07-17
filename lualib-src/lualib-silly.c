@@ -44,10 +44,12 @@ dispatch(lua_State *L, struct silly_message *sm)
 		args += 2;
 		break;
 	case SILLY_SACCEPT:
+		addrlen = *tosocket(sm)->data;
+		addr = (char *)tosocket(sm)->data + 1;
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		lua_pushinteger(L, tosocket(sm)->ud);
-		lua_pushstring(L, (char *)tosocket(sm)->data);
+		lua_pushlstring(L, addr, addrlen);
 		args += 4;
 		break;
 	case SILLY_SCONNECTED:
