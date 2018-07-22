@@ -13,6 +13,8 @@
 
 #endif
 
+//(1 << 16) = 65536
+#define SOCKET_MAX_EXP		(16)
 //timer resolution = (1000 / TIMER_RESOLUTION)
 #define TIMER_RESOLUTION	(10)
 #define TIMER_ACCURACY		(50 * 1000)	//us

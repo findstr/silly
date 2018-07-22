@@ -34,12 +34,12 @@
 #define EVENT_SIZE (128)
 #define CMDBUF_SIZE (8 * sizeof(struct cmdpacket))
 #define MAX_UDP_PACKET (512)
-#define MAX_SOCKET_COUNT (1 << 16)	//65536
+#define MAX_SOCKET_COUNT (1 << SOCKET_MAX_EXP)
 #define MIN_READBUF_LEN (64)
 #define NAMELEN	(INET6_ADDRSTRLEN + 8)	//[ipv6]:port
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-#define HASH(sid) (sid % MAX_SOCKET_COUNT)
+#define HASH(sid) (sid & (MAX_SOCKET_COUNT - 1))
 
 #define PROTOCOL_TCP 1
 #define PROTOCOL_UDP 2
