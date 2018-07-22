@@ -3,7 +3,6 @@ local netssl = require "sys.netssl.c"
 local type = type
 local assert = assert
 
-local TAG = "ssl"
 local socket_pool = {}
 
 local ssl = {}
@@ -92,7 +91,7 @@ local function suspend(s)
 end
 
 function ssl.connect(ip, bind)
-	local fd = core.connect(ip, socket_dispatch, bind, TAG)
+	local fd = core.connect(ip, socket_dispatch, bind)
 	if not fd then
 		return nil
 	end
@@ -121,7 +120,7 @@ function ssl.close(fd)
 		core.wakeup(s.so, false)
 	end
 	socket_pool[fd] = nil
-	core.close(fd, TAG)
+	core.close(fd)
 end
 
 function ssl.read(fd, n)

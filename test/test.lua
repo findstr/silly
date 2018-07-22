@@ -1,14 +1,13 @@
 local core = require "sys.core"
 
 local modules = {
-	"testtag",
+	"testtimer",
 	"testsocket",
-	"testmulticast",
 	"testdns",
 	"testrpc",
 	"testudp",
 	"testwakeup",
-	"testtimer",
+	"testmulticast",
 	"testnetstream",
 	"testnetpacket",
 	"testchannel",

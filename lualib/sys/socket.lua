@@ -10,7 +10,6 @@ local EVENT = {}
 
 local type = type
 local assert = assert
-local TAG = "socket"
 
 local function new_socket(fd)
 	local s = {
@@ -90,7 +89,7 @@ end
 function socket.listen(port, disp, backlog)
 	assert(port)
 	assert(disp)
-	local portid = core.listen(port, socket_dispatch, backlog, TAG)
+	local portid = core.listen(port, socket_dispatch, backlog)
 	if portid then
 		socket_pool[portid] = {
 			fd = portid,
@@ -102,7 +101,7 @@ function socket.listen(port, disp, backlog)
 end
 
 function socket.connect(ip, bind)
-	local fd = core.connect(ip, socket_dispatch, bind, TAG)
+	local fd = core.connect(ip, socket_dispatch, bind)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -128,7 +127,7 @@ function socket.close(fd)
 	end
 	ns.free(s.sbuffer)
 	socket_pool[fd] = nil
-	core.close(fd, TAG)
+	core.close(fd)
 end
 
 local function suspend(s)
@@ -207,7 +206,7 @@ local function udp_dispatch(type, fd, message, _, addr)
 end
 
 function socket.bind(addr, callback)
-	local fd = core.bind(addr, udp_dispatch, TAG)
+	local fd = core.bind(addr, udp_dispatch)
 	if fd  then
 		new_udp(fd, callback)
 	end
@@ -215,7 +214,7 @@ function socket.bind(addr, callback)
 end
 
 function socket.udp(addr, callback, bindip)
-	local fd = core.udp(addr, udp_dispatch, bindip, TAG)
+	local fd = core.udp(addr, udp_dispatch, bindip)
 	if fd  then
 		new_udp(fd, callback)
 	end

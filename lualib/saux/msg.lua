@@ -2,9 +2,6 @@ local core = require "sys.core"
 local np = require "sys.netpacket"
 local pairs = pairs
 local assert = assert
-
-local TAG = "saux.msg"
-
 local msg = {}
 local msgserver = {}
 local msgclient = {}
@@ -16,7 +13,7 @@ local function gc(obj)
 	if obj.fd < 0 then
 		return
 	end
-	core.close(obj.fd, TAG)
+	core.close(obj.fd)
 	obj.fd = false
 end
 
@@ -35,7 +32,7 @@ local function servercb(sc, config)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
 			core.log("[msg] EVENT.accept", err)
-			core.close(fd, TAG)
+			core.close(fd)
 		end
 	end
 
@@ -80,7 +77,7 @@ msgserver.multicast = function(self, fd, data, sz)
 end
 
 function msgserver.start(self)
-	local fd = core.listen(self.addr, self.callback, self.backlog, TAG)
+	local fd = core.listen(self.addr, self.callback, self.backlog)
 	self.fd = fd
 	return fd
 end
@@ -90,7 +87,7 @@ function msgserver.stop(self)
 end
 
 function msgserver.close(self, fd)
-	core.close(fd, TAG)
+	core.close(fd)
 end
 
 -----client
@@ -151,7 +148,7 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local fd = core.connect(self.addr, self.callback, nil, TAG)
+		local fd = core.connect(self.addr, self.callback)
 		if not fd then
 			self.fd = false
 		else

@@ -48,7 +48,7 @@ return function()
 	local idx = 0
 	print("-----test basic-----")
 	testbasic()
-	print("-----test cocurrent-----")
+	print("-----test cocurrent:", testcount)
 	db:del("foo")
 	for i = 1, testcount do
 		core.fork(function()
@@ -59,6 +59,7 @@ return function()
 			testaux.asserteq(ok, true, "INCR foo")
 			testaux.asserteq(id, get, "INCR foo")
 			finish = finish + 1
+			print("----finish:", finish)
 		end)
 		core.sleep(math.random(1, 10))
 	end

@@ -4,7 +4,6 @@ local dns = require "sys.dns"
 local testaux = require "testaux"
 
 return function()
-	dns.server("223.5.5.5:53")
 	local ip = dns.resolve("smtp.sina.com.cn")
 	testaux.assertneq(ip, nil, "dns resolve ip")
 	local fd = socket.connect(string.format("%s:%s", ip, 25))

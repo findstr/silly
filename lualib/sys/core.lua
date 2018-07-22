@@ -13,11 +13,63 @@ local tpack = table.pack
 local tunpack = table.unpack
 local traceback = debug.traceback
 
-local core_log = silly.log
+--coroutine
 local cocreate_ = coroutine.create
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
+--misc
+local core_log = silly.log
+core.log = core_log
+core.exit = silly.exit
+core.tostring = silly.tostring
+core.genid = silly.genid
+--env
+core.envget = silly.getenv
+core.envset = silly.setenv
+--socket
+local socket_listen = silly.listen
+local socket_bind = silly.bind
+local socket_connect = silly.connect
+local socket_udp = silly.udp
+local socket_close = silly.close
+core.packmulti = silly.packmulti
+core.freemulti = silly.freemulti
+core.multicast = silly.multicast
+core.write = silly.send
+core.udpwrite = silly.udpsend
+core.ntop = silly.ntop
+--timer
+local silly_timeout = silly.timeout
+core.now = silly.timenow
+core.monotonic = silly.timemonotonic
+core.monotonicsec = silly.timemonotonicsec
+--debug interface
+core.memused = silly.memused
+core.memrss = silly.memrss
+core.msgsize = silly.msgsize
+core.cpuinfo = silly.cpuinfo
+core.getpid = silly.getpid
+--const
+core.allocator = silly.memallocator()
+core.version = silly.version()
+core.pollapi = silly.pollapi()
+core.timerrs = silly.timerresolution()
+
+local function errmsg(msg)
+	return traceback("error: " .. tostring(msg), 2)
+end
+
+local function core_pcall(f, ...)
+	return xpcall(f, errmsg, ...)
+end
+
+function core.error(errmsg)
+	core_log(errmsg)
+	core_log(traceback())
+end
+
+core.pcall = core_pcall
 function core.running()
 	local co = corunning()
 	return co
@@ -42,7 +94,7 @@ local function cocall()
 			core_log(traceback())
 			return
 		end
-		local ok, err = core.pcall(func, coyield())
+		local ok, err = core_pcall(func, coyield())
 		if ok == false then
 			core_log("[sys.core] call", err)
 		end
@@ -59,46 +111,6 @@ local function cocreate(f)
 	coresume(co)	--wakeup the new coroutine
 	coresume(co, "STARTUP", f)	 --pass the function handler
 	return co
-end
---env
-core.envget = silly.getenv
-core.envset = silly.setenv
---socket
-core.packmulti = silly.packmulti
-core.freemulti = silly.freemulti
-core.multicast = silly.multicast
-core.write = silly.send
-core.udpwrite = silly.udpsend
-core.log = core_log
-core.exit = silly.exit
-core.tostring = silly.tostring
-core.genid = silly.genid
-core.now = silly.timenow
-core.monotonic = silly.timemonotonic
-core.monotonicsec = silly.timemonotonicsec
---debug interface
-core.memused = silly.memused
-core.memrss = silly.memrss
-core.msgsize = silly.msgsize
-core.cpuinfo = silly.cpuinfo
-core.getpid = silly.getpid
---const
-core.allocator = silly.memallocator()
-core.version = silly.version()
-core.pollapi = silly.pollapi()
-core.timerrs = silly.timerresolution()
-
-local function errmsg(msg)
-	return traceback("error: " .. tostring(msg), 2)
-end
-
-core.pcall = function(f, ...)
-	return xpcall(f, errmsg, ...)
-end
-
-function core.error(errmsg)
-	core_log(errmsg)
-	core_log(traceback())
 end
 
 local wakeup_co_queue = {}
@@ -188,7 +200,7 @@ end
 
 function core.sleep(ms)
 	local co = corunning()
-	local session = silly.timeout(ms)
+	local session = silly_timeout(ms)
 	sleep_session_co[session] = co
 	sleep_co_session[co] = session
 	waitresume(co, coyield("SLEEP"))
@@ -196,7 +208,7 @@ end
 
 function core.timeout(ms, func)
 	local co = cocreate(func)
-	local session = silly.timeout(ms)
+	local session = silly_timeout(ms)
 	sleep_session_co[session] = co
 	sleep_co_session[co] = session
 	return session
@@ -210,18 +222,11 @@ end
 
 --socket
 local socket_dispatch = {}
-local socket_tag = {}
-local socket_connect = {}
+local socket_connecting = {}
 
 local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)"
 
-core.ntop = silly.ntop
-
-function core.tag(fd)
-	return socket_tag[fd] or "[no value]"
-end
-
-function core.listen(addr, dispatch, backlog, tag)
+function core.listen(addr, dispatch, backlog)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -231,35 +236,33 @@ function core.listen(addr, dispatch, backlog, tag)
 	if not backlog then
 		backlog = 256 --this constant come from linux kernel comment
 	end
-	local id = silly.listen(ip, port, backlog);
+	local id = socket_listen(ip, port, backlog);
 	if id < 0 then
 		core_log("[sys.core] listen", port, "error", id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
-	socket_tag[id] = tag
 	return id
 end
 
-function core.bind(addr, dispatch, tag)
+function core.bind(addr, dispatch)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
 	if ip == "" then
 		ip = "0::0"
 	end
-	local id = silly.bind(ip, port);
+	local id = socket_bind(ip, port);
 	if id < 0 then
 		core_log("[sys.core] udpbind", port, "error",  id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
-	socket_tag[id] = tag
 	return id
 
 end
 
-function core.connect(addr, dispatch, bind, tag)
+function core.connect(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -267,23 +270,22 @@ function core.connect(addr, dispatch, bind, tag)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = silly.connect(ip, port, bip, bport)
+	local fd = socket_connect(ip, port, bip, bport)
 	if fd < 0 then
 		return nil
 	end
-	assert(socket_connect[fd] == nil)
-	socket_connect[fd] = corunning()
+	assert(socket_connecting[fd] == nil)
+	socket_connecting[fd] = corunning()
 	local ok = core.wait()
-	socket_connect[fd] = nil
+	socket_connecting[fd] = nil
 	if ok ~= true then
 		return nil
 	end
 	socket_dispatch[fd] = assert(dispatch)
-	socket_tag[fd]= tag
 	return fd
 end
 
-function core.udp(addr, dispatch, bind, tag)
+function core.udp(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -291,28 +293,21 @@ function core.udp(addr, dispatch, bind, tag)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = silly.udp(ip, port, bip, bport)
+	local fd = socket_udp(ip, port, bip, bport)
 	if fd >= 0 then
 		socket_dispatch[fd] = dispatch
-		socket_tag[fd]= tag
 	end
 	return fd
 end
 
-function core.close(fd, tag)
+function core.close(fd)
 	local sc = socket_dispatch[fd]
 	if sc == nil then
 		return false
 	end
-	local t = socket_tag[fd]
-	if t and t ~= tag then
-		error(sformat([[incorrect tag, "%s" exptected, got "%s"]],
-			t, tag or "nil"))
-	end
 	socket_dispatch[fd] = nil
-	socket_tag[fd] = nil
-	assert(socket_connect[fd] == nil)
-	silly.close(fd)
+	assert(socket_connecting[fd] == nil)
+	socket_close(fd)
 end
 
 --the message handler can't be yield
@@ -336,31 +331,28 @@ end
 
 function MSG.accept(fd, _, portid, addr)
 	assert(socket_dispatch[fd] == nil)
-	assert(socket_connect[fd] == nil)
-	assert(socket_dispatch[portid], portid)
-	socket_dispatch[fd] = assert(socket_dispatch[portid])
-	socket_tag[fd] = socket_tag[portid]
-	return socket_dispatch[fd]
+	assert(socket_connecting[fd] == nil)
+	local cb = socket_dispatch[portid]
+	assert(cb, portid)
+	socket_dispatch[fd] = cb
+	return cb
 end
 
 function MSG.close(fd)
-	local co = socket_connect[fd]
+	local co = socket_connecting[fd]
 	if co then	--connect fail
 		core.wakeup(co, false)
 		return nil;
 	end
-	local sd = socket_dispatch[fd]
-	if sd == nil then	--have already closed
-		return nil;
+	local d = socket_dispatch[fd]
+	if d then	--is connecting
+		socket_dispatch[fd] = nil
 	end
-	local d = socket_dispatch[fd];
-	socket_dispatch[fd] = nil
-	socket_tag[fd] = nil
 	return d
 end
 
 function MSG.connected(fd)
-	local co = socket_connect[fd]
+	local co = socket_connecting[fd]
 	if co == nil then	--have already closed
 		assert(socket_dispatch[fd] == nil)
 		return
@@ -385,7 +377,7 @@ local function dispatch(type, fd, message, ...)
 	--may run other coroutine here(like connected)
 	local dispatch = assert(MSG[type], type)(fd, message, ...)
 	--check if the socket has closed
-	if dispatch then     --have ready close
+	if dispatch then
 		local co = cocreate(dispatch)
 		waityield(co, coresume(co, type, fd, message, ...))
 	end

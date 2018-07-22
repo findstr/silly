@@ -1,7 +1,6 @@
 local core = require "sys.core"
 local np = require "sys.netpacket"
 local zproto = require "zproto"
-local TAG = "saux.rpc"
 local type = type
 local pairs = pairs
 local assert = assert
@@ -50,7 +49,7 @@ local function gc(obj)
 	if obj.fd < 0 then
 		return
 	end
-	core.close(obj.fd, TAG)
+	core.close(obj.fd)
 	obj.fd = false
 end
 
@@ -71,7 +70,7 @@ function server.listen(self)
 		if not ok then
 			core.log("[rpc.server] EVENT.accept", err)
 			np.clear(queue, fd)
-			core.close(fd, TAG)
+			core.close(fd)
 		end
 	end
 
@@ -128,7 +127,7 @@ function server.listen(self)
 		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(config.addr, callback, config.backlog, TAG)
+	local fd = core.listen(config.addr, callback, config.backlog)
 	self.fd = fd
 	return fd
 end
@@ -232,7 +231,7 @@ local function doconnect(self)
 		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.connect(config.addr, callback, nil, TAG)
+	return core.connect(config.addr, callback)
 end
 
 --return true/false
