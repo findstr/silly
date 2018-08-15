@@ -160,7 +160,7 @@ local function checkconnect(self)
 		local co = core.running()
 		local t = self.connectqueue
 		t[#t + 1] = co
-		core.wait()
+		core.wait(co)
 		return self.fd and self.fd > 0
 	end
 end

@@ -171,16 +171,16 @@ function core.fork(func)
 	return co
 end
 
-function core.wait()
-	local co = corunning()
+function core.wait(co)
+	co = co or corunning()
 	assert(sleep_co_session[co] == nil)
 	assert(wait_co_status[co] == nil)
 	wait_co_status[co] = "WAIT"
 	return waitresume(co, coyield("WAIT"))
 end
 
-function core.wait2()
-	local res = core.wait()
+function core.wait2(co)
+	local res = core.wait(co)
 	if not res then
 		return
 	end
@@ -275,8 +275,9 @@ function core.connect(addr, dispatch, bind)
 		return nil
 	end
 	assert(socket_connecting[fd] == nil)
-	socket_connecting[fd] = corunning()
-	local ok = core.wait()
+	local co = corunning()
+	socket_connecting[fd] = co
+	local ok = core.wait(co)
 	socket_connecting[fd] = nil
 	if ok ~= true then
 		return nil

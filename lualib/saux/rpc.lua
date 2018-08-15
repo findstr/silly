@@ -253,7 +253,7 @@ local function checkconnect(self)
 		local co = core.running()
 		local t = self.connectqueue
 		t[#t + 1] = co
-		core.wait()
+		core.wait(co)
 		return self.fd and self.fd > 0
 	end
 end
@@ -274,7 +274,7 @@ local function waitfor(self, session)
 	end
 	t[#t + 1] = session
 	self.waitpool[session] = co
-	local body = core.wait()
+	local body = core.wait(co)
 	local ackcmd = self.ackcmd
 	local cmd = ackcmd[session]
 	ackcmd[session] = nil

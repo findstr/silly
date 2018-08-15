@@ -26,6 +26,6 @@ return function()
 		core.timeout(100 + n, f)
 	end
 	WAIT = core.running()
-	core.wait()
+	core.wait(WAIT)
 end
 

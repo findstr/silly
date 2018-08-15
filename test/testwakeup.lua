@@ -6,7 +6,8 @@ local last = nil
 
 local function wrap(str, i)
 	return function()
-		core.wait()
+		local co = core.running()
+		core.wait(co)
 		testaux.asserteq(nxt, i, "wakeup validate sequence")
 		nxt = i + 1
 	end

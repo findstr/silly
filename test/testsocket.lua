@@ -55,7 +55,7 @@ return function()
 		end
 	end
 	WAIT = core.running()
-	core.wait()
+	core.wait(WAIT)
 	testaux.asserteq(recv_nr, send_nr, "test socket send type count")
 	testaux.asserteq(recv_sum, send_sum, "test socket send checksum")
 	socket.close(listenfd)

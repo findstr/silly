@@ -86,8 +86,9 @@ end
 
 local function suspend(s)
 	assert(not s.co)
-	s.co = core.running()
-	return core.wait()
+	local co = core.running()
+	s.co = co
+	return core.wait(co)
 end
 
 function ssl.connect(ip, bind)

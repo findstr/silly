@@ -19,7 +19,7 @@ local function testbasic()
 	local err
 	db, err= redis:connect{
 		addr = "127.0.0.1:6379",
-		db = 10,
+		db = 11,
 	}
 	db:flushdb()
 	asserteq("PING",true, "PONG\r\n", db:ping())
