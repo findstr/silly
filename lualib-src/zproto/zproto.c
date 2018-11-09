@@ -25,9 +25,6 @@
 	longjmp(l->exception, 1);\
 }
 
-typedef uint16_t hdr_t;
-typedef uint32_t len_t;
-
 struct zproto_field {
 	int tag;
 	int type;
@@ -36,67 +33,88 @@ struct zproto_field {
 	struct zproto_field *mapkey;
 };
 
+struct starray {
+	int count;
+	struct zproto_struct *buf[1];
+};
+
 struct zproto_struct {
 	int tag;
 	int basetag;
 	int iscontinue;
 	int fieldcount;
 	const char *name;
-	struct zproto_struct *next;
-	struct zproto_struct *child;
+	struct starray *child;
 	struct zproto_field **fields;
 };
 
 struct zproto {
-	struct chunk *chunk;
-	struct zproto_struct *root;
+	union chunk *chunk;
+	struct starray *root;
+	struct starray *namecache;
+	struct starray *tagcache;
 };
 
-struct chunk {
-	struct chunk *next;
+union alignment {
+	void *p;
+	int n;
+};
+
+union chunk {
+	union alignment _;
+	union chunk *next;
 };
 
 struct memory {
 	int size;
 	char *ptr;
-	struct chunk *chunk;
+	union chunk *chunk;
 };
 
-struct fieldbuf {
+struct lexfieldbuf {
 	int count;
 	int capacity;
 	struct zproto_field **fields;
 };
 
-struct structnode {
-	struct zproto_struct *child;
-	struct structnode *parent;
+struct lexstruct {
+	int childn;
+	struct zproto_struct *st;
+	struct lexstruct *next;
+	struct lexstruct *child;
+	struct lexstruct *parent;
+	struct lexstruct *allnext;
 };
 
 struct lexstate {
 	int line;
 	int maxtag;
+	int structhastag;
 	const char *data;
 	jmp_buf exception;
 	struct memory mem;
-	struct fieldbuf buf;
+	struct lexfieldbuf buf;
+	struct lexstruct *freestruct;
+	struct lexstruct *allstruct;
 	struct zproto_parser *p;
 };
+
+#define ALIGN_MASK	(sizeof(union alignment) - 1)
 
 static void *
 memory_alloc(struct memory *m, size_t sz)
 {
-	sz = (sz + 7) & (~7);	//align to 8 for performance
+	sz = (sz + ALIGN_MASK) & (~ALIGN_MASK); //align to 8 for performance
 	if (m->size < (int)sz) {
 		void *p;
 		int need;
-		struct chunk *chunk;
+		union chunk *chunk;
 		need = (sz + sizeof(*chunk));
 		if (need > CHUNK_SIZE)
 			need = ((need- 1) / CHUNK_SIZE + 1) * CHUNK_SIZE;
 		else
 			need = CHUNK_SIZE;
-		chunk = (struct chunk *)malloc(need);
+		chunk = (union chunk *)malloc(need);
 		need -= sizeof(*chunk);
 		chunk->next = m->chunk;
 		m->chunk = chunk;
@@ -123,9 +141,9 @@ memory_dupstr(struct memory *m, char *str)
 }
 
 static void
-memory_free(struct chunk *c)
+memory_free(union chunk *c)
 {
-	struct chunk *tmp;
+	union chunk *tmp;
 	while (c) {
 		tmp = c;
 		c = c->next;
@@ -152,7 +170,7 @@ zproto_free(struct zproto *z)
 static void
 lex_init(struct lexstate *l)
 {
-	struct fieldbuf *buf;
+	struct lexfieldbuf *buf;
 	memset(l, 0, sizeof(*l));
 	l->line = 1;
 	buf = &l->buf;
@@ -165,13 +183,20 @@ lex_init(struct lexstate *l)
 static void
 lex_free(struct lexstate *l)
 {
+	//free struct node
+	struct lexstruct *ptr = l->allstruct;
+	while (ptr) {
+		struct lexstruct *tmp = ptr;
+		ptr = ptr->allnext;
+		free(tmp);
+	}
 	free(l->buf.fields);
 }
 
 static void
 lex_pushfield(struct lexstate *l, struct zproto_field *f)
 {
-	struct fieldbuf *buf = &l->buf;
+	struct lexfieldbuf *buf = &l->buf;
 	if (buf->count >= buf->capacity) {
 		size_t newsz;
 		buf->capacity *= 2;
@@ -182,16 +207,88 @@ lex_pushfield(struct lexstate *l, struct zproto_field *f)
 	return ;
 }
 
-static void skipspace(struct lexstate *l);
+static struct lexstruct *
+lex_newstruct(struct lexstate *l)
+{
+	struct lexstruct *st;
+	if (l->freestruct) {
+		st = l->freestruct;
+		l->freestruct = st->next;
+	} else {
+		st = (struct lexstruct *)malloc(sizeof(*st));
+		st->allnext = l->allstruct;
+		l->allstruct = st;
+	}
+	st->childn = 0;
+	st->st = NULL;
+	st->next = st->child = st->parent = NULL;
+	return st;
+}
+
+static void
+lex_freestruct(struct lexstate *l, struct lexstruct *st)
+{
+	st->next = l->freestruct;
+	l->freestruct = st;
+}
+
+static struct starray *
+lex_collapse(struct lexstate *l, int count, struct lexstruct *ptr)
+{
+	int i = 0;
+	struct starray *arr;
+	int size = sizeof(*arr) + (int)sizeof(arr->buf[0]) * (count - 1);
+	arr = memory_alloc(&l->mem, size);
+	while (ptr != NULL) {
+		arr->buf[i++] = ptr->st;
+		ptr = ptr->next;
+	}
+	assert(i == count);
+	arr->count = i;
+	return arr;
+}
+
+static struct starray *
+lex_clonearray(struct lexstate *l, const struct starray *arr)
+{
+	struct starray *ptr;
+	int size = sizeof(*arr) + (int)sizeof(arr->buf[0]) * (arr->count - 1);
+	ptr = memory_alloc(&l->mem, size);
+	memcpy(ptr, arr, size);
+	return ptr;
+}
+
+static void
+lex_mergefield(struct lexstate *l, struct zproto_struct *st)
+{
+	int i, count;
+	struct lexfieldbuf *buf = &l->buf;
+	count = buf->count;
+	if (count == 0)
+		return ;
+	st->fieldcount = count;
+	st->fields = memory_alloc(&l->mem, count * sizeof(st->fields[0]));
+	memset(st->fields, 0, sizeof(st->fields[0]) * count);
+	st->basetag = buf->fields[0]->tag;
+	if ((l->maxtag - st->basetag + 1) == count) //continue tag define
+		st->iscontinue = 1;
+	for (i = 0; i < count; i++)
+		st->fields[i] = buf->fields[i];
+	//clear buffer
+	buf->count = 0;
+	return ;
+}
+
+static void lex_skipspace(struct lexstate *l);
 
 static int
-eos(struct lexstate *l)
+lex_eos(struct lexstate *l)
 {
 	return *l->data == 0 ? 1 : 0;
 }
 
 static void
-nextline(struct lexstate *l)
+lex_nextline(struct lexstate *l)
 {
 	const char *n = l->data;
 	while (*n != '\n' && *n)
@@ -200,12 +297,12 @@ nextline(struct lexstate *l)
 		n++;
 	l->line++;
 	l->data = n;
-	skipspace(l);
+	lex_skipspace(l);
 	return ;
 }
 
 static void
-skipspace(struct lexstate *l)
+lex_skipspace(struct lexstate *l)
 {
 	const char *n = l->data;
 	while (isspace(*n)) {
@@ -215,12 +312,12 @@ skipspace(struct lexstate *l)
 	}
 	l->data = n;
 	if (*n == '#')
-		nextline(l);
+		lex_nextline(l);
 	return ;
 }
 
 static void
-readstring(struct lexstate *l, char *token, int tokensz)
+lex_readlstring(struct lexstate *l, char *token, int tokensz)
 {
 	char *tokenend;
 	const char *str;
@@ -236,7 +333,7 @@ readstring(struct lexstate *l, char *token, int tokensz)
 }
 
 static void
-readdigit(struct lexstate *l, char *token, int tokensz)
+lex_readdigit(struct lexstate *l, char *token, int tokensz)
 {
 	int n;
 	char *tokenend;
@@ -264,10 +361,10 @@ readdigit(struct lexstate *l, char *token, int tokensz)
 }
 
 static int
-lookhead(struct lexstate *l)
+lex_lookahead(struct lexstate *l)
 {
 	int ch, type;
-	skipspace(l);
+	lex_skipspace(l);
 	ch = *l->data;
 	switch (ch) {
 	case '{':
@@ -291,20 +388,20 @@ lookhead(struct lexstate *l)
 }
 
 static void
-nexttoken(struct lexstate *l, int expect, char *token, int tokensz)
+lex_nexttoken(struct lexstate *l, int expect, char *token, int tokensz)
 {
 	char buff[TOKEN_SIZE];
-	int type = lookhead(l);
+	int type = lex_lookahead(l);
 	if (type != expect) {
 		token = buff;
 		tokensz = ARRAYSIZE(buff);
 	}
 	switch (type) {
 	case TOKEN_STRING:
-		readstring(l, token, tokensz);
+		lex_readlstring(l, token, tokensz);
 		break;
 	case TOKEN_DIGIT:
-		readdigit(l, token, tokensz);
+		lex_readdigit(l, token, tokensz);
 		break;
 	case '\0':
 		break;
@@ -343,13 +440,13 @@ nexttoken(struct lexstate *l, int expect, char *token, int tokensz)
 }
 
 static struct zproto_struct *
-findrecord(struct structnode *node, const char *name)
+lex_findstruct(struct lexstruct *node, const char *name)
 {
-	struct zproto_struct *tmp;
+	struct lexstruct *tmp;
 	for (;;) {//recursive
 		for (tmp = node->child; tmp; tmp = tmp->next) {
-			if (strcmp(tmp->name, name) == 0)
-				return tmp;
+			if (strcmp(tmp->st->name, name) == 0)
+				return tmp->st;
 		}
 		node = node->parent;
 		if (node == NULL)
@@ -359,7 +456,7 @@ findrecord(struct structnode *node, const char *name)
 }
 
 static struct zproto_field *
-findfield(struct zproto_struct *st, const char *name)
+lex_findfield(struct zproto_struct *st, const char *name)
 {
 	int i;
 	struct zproto_field *f;
@@ -372,24 +469,24 @@ findfield(struct zproto_struct *st, const char *name)
 }
 
 static void
-uniquerecord(struct lexstate *l, struct structnode *parent,
+lex_uniquestruct(struct lexstate *l, struct lexstruct *parent,
 		const char *name, int tag)
 {
-	struct zproto_struct *tmp;
+	struct lexstruct *tmp;
 	for (tmp = parent->child; tmp; tmp = tmp->next) {
-		if (strcmp(tmp->name, name) == 0)
+		if (strcmp(tmp->st->name, name) == 0)
 			THROW(l, "already define a struct '%s'\n", name);
-		if (tmp->tag != 0 && tmp->tag == tag)
+		if (tmp->st->tag != 0 && tmp->st->tag == tag)
 			THROW(l, "already define a protocol tag '%d'\n", tag);
 	}
 	return;
 }
 
 static void
-uniquefield(struct lexstate *l, const char *name, int tag)
+lex_uniquefield(struct lexstate *l, const char *name, int tag)
 {
 	int i;
-	struct fieldbuf *buf;
+	struct lexfieldbuf *buf;
 	if (tag <= 0)
 		THROW(l, "tag must great then 0\n");
 	if (tag > 65535)
@@ -406,58 +503,44 @@ uniquefield(struct lexstate *l, const char *name, int tag)
 }
 
 static int
-typeint(struct lexstate *l, struct structnode *node,
-		const char *type, struct zproto_struct **seminfo)
+lex_typeint(struct lexstate *l, struct lexstruct *node,
+	const char *type, struct zproto_struct **seminfo)
 {
-	int typen;
+	size_t i;
+	static struct {
+		const char *name;
+		int type;
+	} types[] = {
+		{"integer", ZPROTO_INTEGER},
+		{"uinteger", ZPROTO_UINTEGER},
+		{"long", ZPROTO_LONG},
+		{"ulong", ZPROTO_ULONG},
+		{"short", ZPROTO_SHORT},
+		{"ushort", ZPROTO_USHORT},
+		{"byte", ZPROTO_BYTE},
+		{"ubyte", ZPROTO_UBYTE},
+		{"string", ZPROTO_STRING},
+		{"blob", ZPROTO_BLOB},
+		{"boolean", ZPROTO_BOOLEAN},
+		{"float", ZPROTO_FLOAT},
+	};
 	*seminfo = NULL;
-	if (strcmp(type, "boolean") == 0) {
-		typen = ZPROTO_BOOLEAN;
-	} else if (strcmp(type, "integer") == 0) {
-		typen = ZPROTO_INTEGER;
-	} else if (strcmp(type, "long") == 0) {
-		typen = ZPROTO_LONG;
-	} else if (strcmp(type, "float") == 0) {
-		typen = ZPROTO_FLOAT;
-	} else if (strcmp(type, "string") == 0) {
-		typen = ZPROTO_STRING;
-	} else {
-		*seminfo = findrecord(node, type);
-		if (*seminfo == NULL)
-			THROW(l, "nonexist struct '%s'\n", type);
-		typen = ZPROTO_STRUCT;
+	for (i = 0; i < sizeof(types)/sizeof(types[0]); i++) {
+		if (strcmp(type, types[i].name) == 0)
+			return types[i].type;
 	}
-	return typen;
-
+	*seminfo = lex_findstruct(node, type);
+	if (*seminfo == NULL)
+		THROW(l, "nonexist struct '%s'\n", type);
+	return ZPROTO_STRUCT;
 }
 
-static void
-mergefield(struct lexstate *l, struct zproto_struct *st)
-{
-	int i, count;
-	struct fieldbuf *buf = &l->buf;
-	count = buf->count;
-	if (count == 0)
-		return ;
-	st->fieldcount = count;
-	st->fields = memory_alloc(&l->mem, count * sizeof(st->fields[0]));
-	memset(st->fields, 0, sizeof(st->fields[0]) * count);
-	st->basetag = buf->fields[0]->tag;
-	if ((l->maxtag - st->basetag + 1) == count) //continue tag define
-		st->iscontinue = 1;
-	for (i = 0; i < count; i++)
-		st->fields[i] = buf->fields[i];
-	//clear buffer
-	buf->count = 0;
-	return ;
-}
-
-#define NEXT_TOKEN(l, tk) nexttoken(l, tk, NULL, 0)
-#define NEXT_DIGIT(l, buf) nexttoken(l, TOKEN_DIGIT, (buf), ARRAYSIZE(buf))
-#define NEXT_STRING(l, buf) nexttoken(l, TOKEN_STRING, (buf), ARRAYSIZE(buf))
+#define NEXT_TOKEN(l, tk) lex_nexttoken(l, tk, NULL, 0)
+#define NEXT_DIGIT(l, buf) lex_nexttoken(l, TOKEN_DIGIT, (buf), ARRAYSIZE(buf))
+#define NEXT_STRING(l, buf) lex_nexttoken(l, TOKEN_STRING, (buf), ARRAYSIZE(buf))
 
 static void
-field(struct lexstate *l, struct structnode *node)
+lex_field(struct lexstate *l, struct lexstruct *node)
 {
 	int tag, ahead;
 	const char *fmt;
@@ -475,17 +558,23 @@ field(struct lexstate *l, struct structnode *node)
 	NEXT_TOKEN(l, ':');
 	//type name
 	NEXT_STRING(l, type);
-	f->type = typeint(l, node, type, &f->seminfo);
+	f->type = lex_typeint(l, node, type, &f->seminfo);
 	//[mapkey]
-	ahead = lookhead(l);
+	ahead = lex_lookahead(l);
 	if (ahead == '[') {	//is a array ?
+		int type = f->type;
 		NEXT_TOKEN(l, '[');
 		f->type |= ZPROTO_ARRAY;
-		ahead = lookhead(l);
-		if (ahead != ']') //just only a map array ?
+		ahead = lex_lookahead(l);
+		if (ahead != ']') { //just only a map array ?
 			NEXT_STRING(l, mapkey);
-		else
+		} else {
 			mapkey[0] = 0;
+			if (type == ZPROTO_UBYTE) //ubyte[] is blob type
+				f->type = ZPROTO_BLOB;
+			else if (type == ZPROTO_BYTE) // byte[] is string byte
+				f->type = ZPROTO_STRING;
+		}
 		NEXT_TOKEN(l, ']');
 	} else {
 		mapkey[0] = 0;
@@ -493,7 +582,7 @@ field(struct lexstate *l, struct structnode *node)
 	//tag
 	NEXT_DIGIT(l, strtag);
 	tag = strtoul(strtag, NULL, 0);
-	uniquefield(l, name, tag);
+	lex_uniquefield(l, name, tag);
 	l->maxtag = tag;
 	lex_pushfield(l, f);
 	f->mapkey = NULL;
@@ -504,7 +593,7 @@ field(struct lexstate *l, struct structnode *node)
 	//map index can only be struct array
 	if ((f->type & ZPROTO_TYPE) != ZPROTO_STRUCT)
 		THROW(l, "only struct array can be specify map index\n");
-	key = findfield(f->seminfo, mapkey);
+	key = lex_findfield(f->seminfo, mapkey);
 	if (key == NULL) {
 		fmt = "struct %s has no field '%s'\n";
 		THROW(l, fmt, f->seminfo->name, mapkey);
@@ -521,53 +610,82 @@ field(struct lexstate *l, struct structnode *node)
 	return ;
 }
 
-static struct zproto_struct *
-record(struct lexstate *l, struct structnode *parent, int protocol)
+static struct lexstruct *
+lex_struct(struct lexstate *l, struct lexstruct *parent, int protocol)
 {
-	int tag, ahead;
-	struct structnode node;
+	int tag, ahead, count = 0;
+	struct lexstruct *node;
 	char name[TOKEN_SIZE];
-	struct zproto_struct **next;
+	struct lexstruct **next;
 	struct zproto_struct *newst;
 	NEXT_STRING(l, name);
-	if (protocol != 0 && lookhead(l) == TOKEN_DIGIT) {
+	if (protocol != 0 && lex_lookahead(l) == TOKEN_DIGIT) {
 		char digit[TOKEN_SIZE];
 		NEXT_DIGIT(l, digit);
 		tag = strtoul(digit, NULL, 0);
+		l->structhastag = 1;
 	} else {
 		tag = 0;
 	}
-	uniquerecord(l, parent, name, tag);
+	lex_uniquestruct(l, parent, name, tag);
 	NEXT_TOKEN(l, '{');
-	ahead = lookhead(l);
-	node.parent = parent;
-	node.child = NULL;
-	next = &node.child;
-	while (ahead == TOKEN_STRING) { //child record
-		struct zproto_struct *st;
-		st = record(l, &node, 0);
-		if (st == NULL)
+	ahead = lex_lookahead(l);
+	node = lex_newstruct(l);
+	node->parent = parent;
+	node->child = NULL;
+	next = &node->child;
+	while (ahead == TOKEN_STRING) { //child struct
+		struct lexstruct *lst;
+		lst = lex_struct(l, node, 0);
+		if (lst == NULL)
 			THROW(l, "broken struct '%s'\n", name);
-		*next = st;
-		next = &st->next;
-		ahead = lookhead(l);
+		*next = lst;
+		next = &lst->next;
+		ahead = lex_lookahead(l);
+		++count;
 	}
 	//delay create zproto_struct for more cache-friendly
 	newst = (struct zproto_struct *)memory_alloc(&l->mem, sizeof(*newst));
 	memset(newst, 0, sizeof(*newst));
+	node->st = newst;
 	newst->name = memory_dupstr(&l->mem, name);
 	newst->tag = tag;
-	newst->child = node.child;
+	newst->child = lex_collapse(l, count, node->child);
 	assert(l->buf.count == 0);
 	l->maxtag = 0;
 	while (ahead == '.') {
-		field(l, &node);
-		ahead = lookhead(l);
+		lex_field(l, node);
+		ahead = lex_lookahead(l);
 	}
 	NEXT_TOKEN(l, '}');
-	mergefield(l, newst);
-	skipspace(l);
-	return newst;
+	lex_mergefield(l, newst);
+	lex_skipspace(l);
+	if (node->child) {
+		lex_freestruct(l, node->child);
+		node->child = NULL;
+	}
+	return node;
+}
+
+static int
+compn(const void *a, const void *b)
+{
+	struct zproto_struct **sta, **stb;
+	sta = (struct zproto_struct **)a;
+	stb = (struct zproto_struct **)b;
+	return strcmp((*sta)->name, (*stb)->name);
+}
+
+static int
+compt(const void *a, const void *b)
+{
+	int ta = (*(struct zproto_struct **)a)->tag;
+	int tb = (*(struct zproto_struct **)b)->tag;
+	if (ta < tb)
+		return -1;
+	if (ta > tb)
+		return 1;
+	return 0;
 }
 
 int
@@ -575,25 +693,40 @@ zproto_parse(struct zproto_parser *p, const char *data)
 {
 	struct zproto *z;
 	struct lexstate l;
-	struct zproto_struct *st;
-	struct zproto_struct **next;
+	struct lexstruct *lst;
+	struct lexstruct **next;
 	lex_init(&l);
 	l.data = data;
 	l.p = p;
 	TRY(l) {
-		struct structnode node;
-		node.parent = NULL;
-		node.child = NULL;
-		next = &node.child;
+		int count = 0;
+		struct starray *arr, *nc, *tc;
+		struct lexstruct root;
+		root.parent = NULL;
+		root.child = NULL;
+		next = &root.child;
 		do {
-			st = record(&l, &node, 1);
-			*next = st;
-			next = &st->next;
-		} while (eos(&l) == 0);
-		z = zproto_create();
+			lst = lex_struct(&l, &root, 1);
+			*next = lst;
+			next = &lst->next;
+			++count;
+		} while (lex_eos(&l) == 0);
+		arr = lex_collapse(&l, count, root.child);
+		//create some cache
+		nc = lex_clonearray(&l, arr);
+		qsort(nc->buf, nc->count, sizeof(nc->buf[0]), compn);
+		if (l.structhastag) {
+			tc = lex_clonearray(&l, arr);
+			qsort(tc->buf, tc->count, sizeof(tc->buf[0]), compt);
+		} else {
+			tc = NULL;
+		}
+		//all success, now create zproto
+		p->z = z = zproto_create();
+		z->root = arr;
+		z->namecache = nc;
+		z->tagcache = tc;
 		z->chunk = l.mem.chunk;
-		z->root = node.child;
-		p->z = z;
 		lex_free(&l);
 		return 0;
 	}
@@ -641,22 +774,40 @@ end:
 struct zproto_struct *
 zproto_query(struct zproto *z, const char *name)
 {
-	struct zproto_struct *r;
-	for (r = z->root; r; r = r->next) {
-		if (strcmp(r->name, name) == 0)
-			return r;
+	struct starray *root = z->namecache;
+	int start = 0, end = root->count;
+	while (start < end) {
+		int mid = (start + end) / 2;
+		struct zproto_struct *st = root->buf[mid];
+		int ret = strcmp(name, st->name);
+		if (ret < 0)
+			end = mid;
+		else if (ret > 0)
+			start = mid + 1;
+		else
+			return st;
 	}
-
 	return NULL;
 }
 
 struct zproto_struct *
 zproto_querytag(struct zproto *z, int tag)
 {
-	struct zproto_struct *r;
-	for (r = z->root; r; r = r->next) {
-		if (r->tag == tag)
-			return r;
+	int start, end;
+	struct starray *root = z->tagcache;
+	if (root == NULL)
+		return NULL;
+	start = 0;
+	end = root->count;
+	while (start < end) {
+		int mid = (start + end) / 2;
+		struct zproto_struct *st = root->buf[mid];
+		if (tag < st->tag)
+			end = mid;
+		else if (tag > st->tag)
+			start = mid + 1;
+		else
+			return st;
 	}
 	return NULL;
 }
@@ -673,24 +824,17 @@ zproto_name(struct zproto_struct *st)
 	return st->name;
 }
 
-
-struct zproto_struct *
-zproto_next(struct zproto *z, struct zproto_struct *st)
+struct zproto_struct *const*
+zproto_child(struct zproto *z, struct zproto_struct *st, int *count)
 {
-	if (st == NULL)
-		st = z->root;
-	else
-		st = st->next;
-	return st;
-}
-
-struct zproto_struct *
-zproto_child(struct zproto *z, struct zproto_struct *st)
-{
-	if (st == NULL)
-		return z->root;
-	else
-		return st->child;
+	struct starray *child;
+	child = st == NULL ? z->root : st->child;
+	if (child) {
+		*count = child->count;
+		return child->buf;
+	}
+	*count = 0;
+	return NULL;
 }
 
 static inline void
@@ -755,43 +899,144 @@ queryfield(struct zproto_struct *st, int tag)
 	return NULL;
 }
 
-#define CHECK_OOM(sz, need)    \
+static inline int
+marshal_uint16(uint8_t *buff, uint32_t v)
+{
+	buff[0] = v & 0xff;
+	buff[1] = (v >> 8) & 0xff;
+	return 2;
+}
+
+static inline uint32_t
+unmarshal_uint16(const uint8_t *buff)
+{
+	return (buff[0] | (buff[1] << 8));
+}
+
+static inline int
+marshal_uint32(uint8_t *buff, uint32_t v)
+{
+	buff[0] = v & 0xff;
+	buff[1] = (v >> 8) & 0xff;
+	buff[2] = (v >> 16) & 0xff;
+	buff[3] = (v >> 24) & 0xff;
+	return 4;
+}
+
+static inline uint32_t
+unmarshal_uint32(const uint8_t *buff)
+{
+	return (buff[0] | (buff[1] << 8) | (buff[2] << 16) | (buff[3] << 24));
+}
+
+static inline int
+marshal_uint64(uint8_t *buff, uint64_t v)
+{
+	buff[0] = v & 0xff;
+	buff[1] = (v >> 8) & 0xff;
+	buff[2] = (v >> 16) & 0xff;
+	buff[3] = (v >> 24) & 0xff;
+	buff[4] = (v >> 32) & 0xff;
+	buff[5] = (v >> 40) & 0xff;
+	buff[6] = (v >> 48) & 0xff;
+	buff[7] = (v >> 56) & 0xff;
+	return 8;
+}
+
+static inline uint64_t
+unmarshal_uint64(const uint8_t *buff)
+{
+	uint64_t v;
+	v = unmarshal_uint32(buff + 4);
+	v <<= 32;
+	v |= unmarshal_uint32(buff);
+	return v;
+}
+
+
+#define SIZEOF_TAG	2
+#define SIZEOF_LEN	4
+
+static inline int
+marshal_tag(uint8_t *buff, uint32_t v)
+{
+	return marshal_uint16(buff, v);
+}
+
+static inline uint32_t
+unmarshal_tag(const uint8_t *buff)
+{
+	return unmarshal_uint16(buff);
+}
+
+static inline int
+marshal_len(uint8_t *buff, uint32_t v)
+{
+	return marshal_uint32(buff, v);
+}
+
+static inline uint32_t
+unmarshal_len(const uint8_t *buff)
+{
+	return unmarshal_uint32(buff);
+}
+
+#define CHECK_OOM(sz, need)\
 	if (sz < (int)(need))\
 		return ZPROTO_OOM;
+
+#define ENCODE_INTEGER(bit)\
+	args->buff = (uint8_t *)&u.u##bit;\
+	args->buffsz = sizeof(uint##bit##_t);\
+	sz = cb(args);\
+	if (sz < 0)\
+		return sz;\
+	return marshal_uint##bit(buff, u.u##bit);
 
 static int
 encode_field(struct zproto_args *args, zproto_cb_t cb)
 {
 	int sz;
-	len_t *len;
-	switch (args->type) {
+	uint8_t *buff;
+	union {
+		uint16_t u16;
+		uint32_t u32;
+		uint64_t u64;
+	} u;
+	CHECK_OOM(args->buffsz, sizeof(uint64_t));
+	buff = args->buff;
+	switch(args->type) {
 	case ZPROTO_BOOLEAN:
-		CHECK_OOM(args->buffsz, sizeof(uint8_t))
-		return cb(args);
-	case ZPROTO_INTEGER:
-	case ZPROTO_FLOAT:
-		CHECK_OOM(args->buffsz, sizeof(int32_t))
-		return cb(args);
-	case ZPROTO_LONG:
-		CHECK_OOM(args->buffsz, sizeof(int64_t));
-		return cb(args);
-	case ZPROTO_STRING:
-		CHECK_OOM(args->buffsz, sizeof(len_t))
-		len = (len_t *)args->buff;
-		args->buff += sizeof(len_t);
-		args->buffsz -= sizeof(len_t);
+	case ZPROTO_BYTE:
+	case ZPROTO_UBYTE:
+		args->buffsz = sizeof(uint8_t);
 		sz = cb(args);
 		if (sz < 0)
 			return sz;
-		*len = sz;
-		sz += sizeof(len_t);
-		return sz;
+		return sizeof(uint8_t);
+	case ZPROTO_SHORT:
+	case ZPROTO_USHORT:
+		ENCODE_INTEGER(16)
+	case ZPROTO_INTEGER:
+	case ZPROTO_UINTEGER:
+		ENCODE_INTEGER(32)
+	case ZPROTO_LONG:
+	case ZPROTO_ULONG:
+		ENCODE_INTEGER(64)
+	case ZPROTO_FLOAT:
+		ENCODE_INTEGER(32)
+	case ZPROTO_BLOB:
+	case ZPROTO_STRING:
+		CHECK_OOM(args->buffsz, SIZEOF_LEN);
+		args->buff += SIZEOF_LEN;
+		args->buffsz -= SIZEOF_LEN;
+		sz = cb(args);
+		if (sz < 0)
+			return sz;
+		marshal_len(buff, sz);
+		return (SIZEOF_LEN + sz);
 	case ZPROTO_STRUCT:
-		CHECK_OOM(args->buffsz, sizeof(hdr_t))
 		return cb(args);
-	default:
-		assert(!"unkown field type");
-		break;
 	}
 	return ZPROTO_ERROR;
 }
@@ -800,15 +1045,13 @@ static int
 encode_array(struct zproto_args *args, zproto_cb_t cb)
 {
 	int err;
-	len_t *len;
+	uint8_t *len, *buff;
 	int buffsz = args->buffsz;
-	uint8_t *buff = args->buff;
-	uint8_t *start = buff;
-
-	CHECK_OOM(buffsz, sizeof(len_t))
-	len = (len_t *)buff;
-	buff += sizeof(len_t);
-	buffsz -= sizeof(len_t);
+	CHECK_OOM(buffsz, SIZEOF_LEN);
+	buff = args->buff;
+	len = buff;
+	buff += SIZEOF_LEN;
+	buffsz -= SIZEOF_LEN;
 	args->idx = 0;
 	for (;;) {
 		args->buffsz = buffsz;
@@ -824,33 +1067,30 @@ encode_array(struct zproto_args *args, zproto_cb_t cb)
 		return err;
 	if (args->len == -1)	//if len is negtive, the array field nonexist
 		return ZPROTO_NOFIELD;
-	*len = args->idx;
-	return buff - start;
+	marshal_len(len, args->idx);
+	return buff - len;
 }
 
 
 int
 zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, void *ud)
 {
-	int i;
-	int err;
-	len_t *total;
-	hdr_t *len;
-	hdr_t *tag;
-	uint8_t *body;
+	uint32_t datasize;
+	int i, err, lasttag;
 	struct zproto_field **fields;
-	int last = st->basetag - 1; //tag now
-	int fcnt = st->fieldcount; //field count
-	int hdrsz= (fcnt + 1) * sizeof(hdr_t) + sizeof(len_t);
+	uint8_t *len, *tagcount, *tag, *body;
+	int fieldcount = st->fieldcount; //field count
+	int hdrsz= SIZEOF_LEN + (fieldcount + 1) * SIZEOF_TAG;
 	CHECK_OOM(sz, hdrsz);
 	fields = st->fields;
-	total = (len_t *)buff;
-	len = (hdr_t *)(total + 1);
-	tag = len + 1;
+	len = buff;
+	tagcount = (len + SIZEOF_LEN);
+	tag = tagcount + SIZEOF_TAG;
 	buff += hdrsz;
 	sz -= hdrsz;
 	body = buff;
-	for (i = 0; i < fcnt; i++) {
+	lasttag = st->basetag - 1; //tag begin
+	for (i = 0; i < fieldcount ; i++) {
 		struct zproto_field *f;
 		struct zproto_args args;
 		f = fields[i];
@@ -873,61 +1113,73 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 		assert(sz >= err);
 		buff += err;
 		sz -= err;
-		assert(f->tag >= last + 1);
-		*tag = (f->tag - last - 1);
-		tag++;
-		last = f->tag;
+		assert(f->tag >= lasttag + 1);
+		marshal_tag(tag, f->tag - lasttag - 1);
+		tag += SIZEOF_TAG;
+		lasttag = f->tag;
 	}
-	*len = (tag - len) - 1; //length used one byte
-	if ((uintptr_t)tag != (uintptr_t)body)
+	//length used one slot
+	marshal_tag(tagcount, (tag - tagcount) / SIZEOF_TAG - 1);
+	if (tag != body)
 		memmove(tag, body, buff - body);
-	*total = (buff - body) + ((uint8_t *)tag - (uint8_t *)len);
-	return sizeof(len_t) + *total;
+	datasize = (tag - tagcount) + (buff - body);
+	marshal_len(len, datasize);
+	return SIZEOF_LEN + datasize;
 }
-
 
 
 #define CHECK_VALID(sz, need)	\
 	if (sz < (int)(need))\
 		return ZPROTO_ERROR;
 
+#define DECODE_INTEGER(bit)\
+	CHECK_VALID(args->buffsz, sizeof(uint##bit##_t))\
+	u.u##bit= unmarshal_uint##bit(args->buff);\
+	args->buff = (uint8_t *)&u.u##bit;\
+	args->buffsz = sizeof(uint##bit##_t);\
+	cb(args);\
+	return sizeof(uint##bit##_t);
+
 static int
 decode_field(struct zproto_args *args, zproto_cb_t cb)
 {
-	int sz;
-	len_t len;
-	switch (args->type) {
+	uint32_t len;
+	union {
+		uint16_t u16;
+		uint32_t u32;
+		uint64_t u64;
+	} u;
+	switch(args->type) {
 	case ZPROTO_BOOLEAN:
-		CHECK_VALID(args->buffsz, sizeof(uint8_t))
+	case ZPROTO_BYTE:
+	case ZPROTO_UBYTE:
+		CHECK_VALID(args->buffsz, sizeof(uint8_t));
 		args->buffsz = sizeof(uint8_t);
-		return cb(args);
+		cb(args);
+		return sizeof(uint8_t);
+	case ZPROTO_SHORT:
+	case ZPROTO_USHORT:
+		DECODE_INTEGER(16)
 	case ZPROTO_INTEGER:
-	case ZPROTO_FLOAT:
-		CHECK_VALID(args->buffsz, sizeof(int32_t))
-		args->buffsz = sizeof(int32_t);
-		return cb(args);
+	case ZPROTO_UINTEGER:
+		DECODE_INTEGER(32)
 	case ZPROTO_LONG:
-		CHECK_VALID(args->buffsz, sizeof(int64_t))
-		args->buffsz = sizeof(int64_t);
-		return cb(args);
+	case ZPROTO_ULONG:
+		DECODE_INTEGER(64)
+	case ZPROTO_FLOAT:
+		DECODE_INTEGER(32)
+	case ZPROTO_BLOB:
 	case ZPROTO_STRING:
-		CHECK_VALID(args->buffsz, sizeof(len_t))
-		len = *(len_t *)args->buff;
-		args->buff += sizeof(len_t);
-		args->buffsz -= sizeof(len_t);
+		CHECK_VALID(args->buffsz, SIZEOF_LEN);
+		len = unmarshal_len(args->buff);
+		args->buff += SIZEOF_LEN;
+		args->buffsz -= SIZEOF_LEN;
 		CHECK_VALID(args->buffsz, len)
 		args->buffsz = len;
-		sz = cb(args);
-		if (sz < 0)
-			return sz;
-		sz += sizeof(len_t);
-		return sz;
+		cb(args);
+		return SIZEOF_LEN + len;
 	case ZPROTO_STRUCT:
-		CHECK_VALID(args->buffsz, sizeof(hdr_t))
 		return cb(args);
-	default:
-		assert(!"unkown field type");
-		break;
 	}
 	return ZPROTO_ERROR;
 }
@@ -935,17 +1187,15 @@ decode_field(struct zproto_args *args, zproto_cb_t cb)
 static int
 decode_array(struct zproto_args *args, zproto_cb_t cb)
 {
-	int i;
-	int err;
-	int len;
-	uint8_t *buff;
+	int err, i, len;
 	uint8_t *start;
-	int buffsz;
-	CHECK_VALID(args->buffsz, sizeof(len_t))
-	start = args->buff;
-	len = *(len_t *)args->buff;
-	buff = args->buff + sizeof(len_t);
-	buffsz = args->buffsz - sizeof(len_t);
+	uint8_t *buff = args->buff;
+	int buffsz = args->buffsz;
+	CHECK_VALID(buffsz, SIZEOF_LEN);
+	start = buff;
+	len = unmarshal_len(buff);
+	buff += SIZEOF_LEN;
+	buffsz -= SIZEOF_LEN;
 	args->idx = 0;
 	args->len = len;
 	if (len == 0) { //empty array
@@ -970,42 +1220,39 @@ decode_array(struct zproto_args *args, zproto_cb_t cb)
 }
 
 int
-zproto_decode(struct zproto_struct *st, const uint8_t *buff, int sz, zproto_cb_t cb, void *ud)
+zproto_decode(struct zproto_struct *st,
+	const uint8_t *buff, int size,
+	zproto_cb_t cb, void *ud)
 {
-	int i;
-	int err;
-	int last;
-	len_t total;
-	hdr_t len;
-	hdr_t *tag;
-	int	hdrsz;
-
-	CHECK_VALID(sz, sizeof(hdr_t) + sizeof(len_t))    //header size
-	last = st->basetag - 1; //tag now
-	total = *(len_t *)buff;
-	buff += sizeof(len_t);
-	sz -= sizeof(len_t);
-	CHECK_VALID(sz, total)
-	sz = total;
-	len = *(hdr_t *)buff;
-	buff += sizeof(hdr_t);
-	sz -=  sizeof(hdr_t);
-	hdrsz = len * sizeof(hdr_t);
-	CHECK_VALID(sz, hdrsz)
-	tag = (hdr_t *)buff;
-	buff += hdrsz;
-	sz -= hdrsz;
-
-	for (i = 0; i < len; i++) {
+	const uint8_t *tagptr;
+	int len, tagcount;
+	int headsize, i, err, lasttag;
+	CHECK_VALID(size, SIZEOF_LEN + SIZEOF_TAG) //header size
+	len = unmarshal_len(buff);
+	buff += SIZEOF_LEN;
+	size -= SIZEOF_LEN;
+	CHECK_VALID(size, len)
+	size = len;
+	tagcount = unmarshal_tag(buff);
+	buff += SIZEOF_TAG;
+	size -= SIZEOF_TAG;
+	headsize = SIZEOF_TAG * tagcount;
+	CHECK_VALID(size, headsize)
+	tagptr = buff;
+	buff += headsize;
+	size -= headsize;
+	lasttag = st->basetag - 1; //tag now
+	for (i = 0; i < tagcount; i++) {
 		struct zproto_field *f;
 		struct zproto_args args;
-		int t = *tag + last + 1;
+		int t = unmarshal_tag(tagptr);
+		t += lasttag + 1;
 		f = queryfield(st, t);
 		if (f == NULL)
 			break;
 		fill_args(&args, f, ud);
 		args.buff = (uint8_t *)buff;
-		args.buffsz = sz;
+		args.buffsz = size;
 		if (f->type & ZPROTO_ARRAY)
 			err = decode_array(&args, cb);
 		else
@@ -1014,11 +1261,11 @@ zproto_decode(struct zproto_struct *st, const uint8_t *buff, int sz, zproto_cb_t
 			return err;
 		assert(err > 0);
 		buff += err;
-		sz -= err;
-		tag++;
-		last = t;
+		size -= err;
+		lasttag = t;
+		tagptr += SIZEOF_TAG;
 	}
-	return total + sizeof(len_t);
+	return SIZEOF_LEN + len;
 }
 
 //////////encode/decode
@@ -1253,9 +1500,10 @@ dump_struct(struct zproto_struct *st, int level)
 void
 zproto_dump(struct zproto *z)
 {
-	struct zproto_struct *st;
-	for (st = z->root; st; st = st->next)
-		dump_struct(st, 0);
+	int i;
+	struct starray *root = z->root;
+	for (i = 0; i < root->count; i++)
+		dump_struct(root->buf[i], 0);
 	return ;
 }
 

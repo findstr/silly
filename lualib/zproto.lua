@@ -47,23 +47,19 @@ end
 local function query(self, typ)
 	local itype
 	local proto
-	assert(type(typ) == "number" or type(typ) == "string")
 	if type(typ) == "number" then
 		itype = true
-		assert(typ > 0, "protocol must be large then 0")
 		proto = self.tcache[typ]
 	elseif type(typ) == "string" then
-		assert(#typ <= 32, "type name length less then 32 will be more effective")
 		itype = false
 		proto = self.ncache[typ]
+	else
+		assert(false, "typ must be 'number' or 'string'")
 	end
 	if proto then
 		return proto
 	end
-
-	assert(self.proto)
 	local proto, tag = engine.query(self.proto, typ)
-	assert(proto, typ)
 	if itype then
 		self.tcache[typ] = proto
 	else
@@ -75,19 +71,15 @@ end
 
 function zproto:encode(typ, packet)
 	local record = query(self, typ)
-	assert(typ, "packet type nil")
-	assert(packet, "packet body nil")
 	return engine.encode(record, packet)
 end
 
 function zproto:tag(typ)
-	assert(type(typ) == "string")
 	local tag = self.nametag[typ]
 	if not tag then
 		query(self, typ)
 		tag = self.nametag[typ]
 	end
-	assert(tag > 0, "only can query proto")
 	return tag
 end
 

@@ -4,12 +4,21 @@
 #include <stdint.h>
 #include <setjmp.h>
 
-#define ZPROTO_BOOLEAN (1)
-#define ZPROTO_INTEGER (2)
-#define ZPROTO_LONG (3)
-#define ZPROTO_FLOAT (4)
-#define ZPROTO_STRING (5)
-#define ZPROTO_STRUCT (6)
+enum {
+	ZPROTO_BOOLEAN,
+	ZPROTO_BYTE,
+	ZPROTO_UBYTE,
+	ZPROTO_SHORT,
+	ZPROTO_USHORT,
+	ZPROTO_INTEGER,
+	ZPROTO_UINTEGER,
+	ZPROTO_LONG,
+	ZPROTO_ULONG,
+	ZPROTO_FLOAT,
+	ZPROTO_STRING,
+	ZPROTO_BLOB,
+	ZPROTO_STRUCT,
+};
 
 #define ZPROTO_OOM (-1)
 #define ZPROTO_NOFIELD (-2)
@@ -53,8 +62,7 @@ int zproto_tag(struct zproto_struct *st);
 const char *zproto_name(struct zproto_struct *st);
 
 //travel
-struct zproto_struct *zproto_next(struct zproto *z, struct zproto_struct *st);
-struct zproto_struct *zproto_child(struct zproto *z, struct zproto_struct *st);
+struct zproto_struct *const*zproto_child(struct zproto *z, struct zproto_struct *st, int *count);
 void zproto_travel(struct zproto_struct *st, zproto_cb_t cb, void *ud);
 
 int zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, void *ud);
