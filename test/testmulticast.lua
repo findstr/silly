@@ -30,8 +30,8 @@ return function()
 			np.drop(d)
 		end
 	}
-	local ok = server:start()
-	testaux.asserteq(not not ok, true, "multicast test start")
+	local ok = server:listen()
+	testaux.asserteq(not not ok, true, "multicast test listen")
 
 	local inst
 	for i = 1, 10 do
