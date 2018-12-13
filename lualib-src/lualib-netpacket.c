@@ -247,12 +247,11 @@ static const char *
 getbuffer(lua_State *L, int n, size_t *sz)
 {
 	if (lua_type(L, n) == LUA_TSTRING) {
-		return luaL_checklstring(L, n, sz);
+		return lua_tolstring(L, n, sz);
 	} else {
 		*sz = luaL_checkinteger(L, n + 1);
 		return lua_touserdata(L, n);
 	}
-
 	return NULL;
 }
 

@@ -292,26 +292,37 @@ finalizermulti(void *buff)
 static int
 lpackmulti(lua_State *L)
 {
-	int size;
+	size_t size;
+	uint8_t *buf;
 	int refcount;
-	uint8_t *buff;
+	int stk, type;
 	struct multicasthdr *hdr;
-	buff = lua_touserdata(L, 1);
-	size = luaL_checkinteger(L, 2);
-	refcount = luaL_checkinteger(L, 3);
+	type = lua_type(L, 1);
+	if (type == LUA_TSTRING) {
+		stk = 2;
+		buf = (uint8_t *)lua_tolstring(L, 1, &size);
+	} else {
+		stk = 3;
+		buf = lua_touserdata(L, 1);
+		size = luaL_checkinteger(L, 2);
+	}
+	refcount = luaL_checkinteger(L, stk);
 	hdr = (struct multicasthdr *)silly_malloc(size + MULTICAST_SIZE);
-	memcpy(hdr->data, buff, size);
+	memcpy(hdr->data, buf, size);
+	if (type != LUA_TSTRING)
+		silly_free(buf);
 	hdr->mask = 'M';
 	hdr->ref = refcount;
 	lua_pushlightuserdata(L, &hdr->data);
-	return 1;
+	lua_pushinteger(L, size);
+	return 2;
 }
 
 static int
 lfreemulti(lua_State *L)
 {
-	uint8_t *buff = lua_touserdata(L, 1);
-	finalizermulti(buff);
+	uint8_t *buf = lua_touserdata(L, 1);
+	finalizermulti(buf);
 	return 0;
 }
 

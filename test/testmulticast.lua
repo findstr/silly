@@ -26,7 +26,6 @@ return function()
 				testaux.assertneq(fd, nil, "multicast test send")
 				testaux.asserteq(ok, true, "multicast test send")
 			end
-			np.drop(p)
 			np.drop(d)
 		end
 	}

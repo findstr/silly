@@ -6,8 +6,8 @@
 
 ## Depend
 
-- sudo apt-get install libreadline-dev(debain)
-- yum install readline-devel(centos)
+- sudo apt-get install libreadline-dev(Debian)
+- yum install readline-devel(Centos)
 
 ## Build
 
