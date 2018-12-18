@@ -16,30 +16,32 @@ lrandomkey(lua_State *L)
 	for (i = 0; i < 8; i++)
 		buff[i] = random() % 26 + 'a';
 	lua_pushlstring(L, buff, 8);
-
 	return 1;
 }
 
 #define	AESBUFF_LEN (512)
 #define AESKEY_LEN (32)
+#define AES128_KEY (16)
+#define AES192_KEY (24)
+#define AES256_KEY (32)
 #define AESGROUP_LEN (16)
 #define	AESGROUP_LEN_POWER (4)
 #define AESIV ((uint32_t *)("!*^$~)_+=-)(87^$#Dfhjklmnb<>,k./;KJl"))
 
 static void
-aes_encode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
+aes_encode(const uint8_t *key, int keybits,
+	const uint32_t *iv,
+	const uint8_t *src, uint8_t *dst, int sz)
 {
 	int i;
 	int group;
 	int last;
-	const uint32_t *iv;
 	uint8_t tail[AESGROUP_LEN];
 	aes_context ctx;
 	group = sz >> AESGROUP_LEN_POWER;
 	last = sz & (AESGROUP_LEN - 1);
 	//CBC
-	iv = AESIV;
-	aes_set_key(&ctx, key, AESKEY_LEN * 8);
+	aes_set_key(&ctx, key, keybits);
 	for (i = 0; i < group; i++) {
 		const uint32_t *from = (uint32_t *)src;
 		uint32_t *to = (uint32_t *)dst;
@@ -48,7 +50,7 @@ aes_encode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
 		to[2] = from[2] ^ iv[2];
 		to[3] = from[3] ^ iv[3];
 		aes_encrypt(&ctx, dst, dst);
-		iv = (uint32_t *)dst;
+		iv = (const uint32_t *)dst;
 		src += AESGROUP_LEN;
 		dst += AESGROUP_LEN;
 	}
@@ -62,61 +64,61 @@ aes_encode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
 }
 
 static void
-aes_decode(uint8_t key[AESKEY_LEN], const uint8_t *src, uint8_t *dst, int sz)
+aes_decode(const uint8_t *key, int keybits,
+	const uint32_t *iv,
+	const uint8_t *src, uint8_t *dst, int sz)
 {
 	int i;
 	int last;
 	int group;
 	uint32_t *ptr32;
-	const uint32_t *iv;
+	const uint32_t *ivptr;
 	uint8_t tail[AESGROUP_LEN];
 	aes_context ctx;
 	src += sz;
 	dst += sz;
 	group = sz >> AESGROUP_LEN_POWER;
 	last = sz & (AESGROUP_LEN - 1);
-	aes_set_key(&ctx, key, AESKEY_LEN * 8);
+	aes_set_key(&ctx, key, keybits);
 	//OFB
 	if (last != 0) {
 		src = src - last;
 		dst = dst - last;
-		iv = group == 0 ? AESIV : (uint32_t *)(src - AESGROUP_LEN);
-		aes_encrypt(&ctx, (const uint8_t *)iv, tail);
+		ivptr = group == 0 ? iv : (uint32_t *)(src - AESGROUP_LEN);
+		aes_encrypt(&ctx, (const uint8_t *)ivptr, tail);
 		for (i = 0; i < last; i++)
 			dst[i] = src[i] ^ tail[i];
 	}
 	if (group == 0)
 		return ;
+	//CBC
 	src -= AESGROUP_LEN;
 	dst -= AESGROUP_LEN;
 	while (group > 1) {
-		iv = (uint32_t *)(src - AESGROUP_LEN);
+		ivptr = (uint32_t *)(src - AESGROUP_LEN);
 		aes_decrypt(&ctx, src, dst);
 		ptr32 = (uint32_t *)dst;
-		ptr32[0] = ptr32[0] ^ iv[0];
-		ptr32[1] = ptr32[1] ^ iv[1];
-		ptr32[2] = ptr32[2] ^ iv[2];
-		ptr32[3] = ptr32[3] ^ iv[3];
-		src = (uint8_t *)iv;
+		ptr32[0] = ptr32[0] ^ ivptr[0];
+		ptr32[1] = ptr32[1] ^ ivptr[1];
+		ptr32[2] = ptr32[2] ^ ivptr[2];
+		ptr32[3] = ptr32[3] ^ ivptr[3];
+		src = (uint8_t *)ivptr;
 		dst -= AESGROUP_LEN;
 		--group;
 	}
-	iv = AESIV;
 	aes_decrypt(&ctx, src, dst);
 	ptr32 = (uint32_t *)dst;
 	ptr32[0] = ptr32[0] ^ iv[0];
 	ptr32[1] = ptr32[1] ^ iv[1];
 	ptr32[2] = ptr32[2] ^ iv[2];
 	ptr32[3] = ptr32[3] ^ iv[3];
-
 	return ;
 }
 
 typedef void (* aes_func_t)(
-				uint8_t key[AESKEY_LEN],
-				const uint8_t *src,
-				uint8_t *dst,
-				int sz);
+	const uint8_t *key, int keybits,
+	const uint32_t *iv,
+	const uint8_t *src, uint8_t *dst,int sz);
 
 static inline uint8_t *
 aes_getbuffer(lua_State *L, size_t need)
@@ -133,22 +135,58 @@ aes_getbuffer(lua_State *L, size_t need)
 	return data;
 }
 
+static inline const uint32_t *
+aes_getiv(lua_State *L, int idx, uint8_t group[AESGROUP_LEN])
+{
+	size_t size;
+	const uint8_t *iv;
+	int type = lua_type(L, idx);
+	if (type != LUA_TSTRING) {
+		return AESIV;
+	} else {
+		iv = (const uint8_t *)luaL_checklstring(L, idx, &size);
+		if (size < AESGROUP_LEN) {
+			memset(group, 0, AESGROUP_LEN * sizeof(uint8_t));
+			memcpy(group, iv, size);
+			return (const uint32_t *)group;
+		} else {
+			return (const uint32_t *)iv;
+		}
+	}
+}
+
 static inline int
 aes_do(lua_State *L, aes_func_t func)
 {
-	uint8_t key[AESKEY_LEN];
 	int data_type;
-	size_t key_sz;
+	uint8_t *keyptr;
+	const uint32_t *ivptr;
+	size_t key_size, key_bits;
 	const uint8_t *key_text;
-	key_text = (uint8_t *)luaL_checklstring(L, 1, &key_sz);
-	if (key_sz > AESKEY_LEN) {
+	uint8_t keybuf[AES256_KEY];
+	uint8_t ivbuf[AESGROUP_LEN];
+	key_text = (uint8_t *)luaL_checklstring(L, 1, &key_size);
+	keyptr = keybuf;
+	if (key_size > AES256_KEY) {
 		sha256_context ctx;
 		sha256_starts(&ctx);
-		sha256_update(&ctx, key_text, key_sz);
-		sha256_finish(&ctx, key);
+		sha256_update(&ctx, key_text, key_size);
+		sha256_finish(&ctx, keybuf);
+		key_bits = 256;
 	} else {
-		memset(key, 0, sizeof(key));
-		memcpy(key, key_text, key_sz);
+		switch (key_size) {
+		case 16: //aes-128
+		case 24: //aes-192
+		case 32: //aes-256
+			memcpy(keybuf, key_text, key_size);
+			break;
+		default:
+			memset(keybuf, 0, sizeof(keybuf));
+			memcpy(keybuf, key_text, key_size);
+			key_size = AES256_KEY;
+			break;
+		}
+		key_bits = key_size * 8;
 	}
 	data_type = lua_type(L, 2);
 	if (data_type == LUA_TSTRING) {
@@ -156,14 +194,16 @@ aes_do(lua_State *L, aes_func_t func)
 		size_t datasz;
 		const uint8_t *data;
 		data = (const uint8_t *)luaL_checklstring(L, 2, &datasz);
+		ivptr = aes_getiv(L, 3, ivbuf);
 		recv = aes_getbuffer(L, datasz);
-		func(key, data, recv, datasz);
+		func(keyptr, key_bits, ivptr, data, recv, datasz);
 		lua_pushlstring(L, (char *)recv, datasz);
 		return 1;
 	} else if (data_type == LUA_TLIGHTUSERDATA) {
 		uint8_t *data = (uint8_t *)lua_touserdata(L, 2);
 		size_t data_sz = luaL_checkinteger(L, 3);
-		func(key, data, data, data_sz);
+		ivptr = aes_getiv(L, 4, ivbuf);
+		func(keyptr, key_bits, ivptr, data, data, data_sz);
 		return 2;
 	} else {
 		return luaL_error(L, "Invalid content");
@@ -299,7 +339,7 @@ lbase64decode(lua_State *L)
 	size_t sz;
 	src = luaL_checklstring(L, 1, &sz);
 	if (sz % 4 != 0)
-		return luaL_error(L, "base64decode invalie param");
+		return luaL_error(L, "base64decode invalid param");
 	if (sz == 0) {
 		lua_pushliteral(L, "");
 		return 1;
