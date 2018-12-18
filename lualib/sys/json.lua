@@ -23,8 +23,22 @@ end
 local function encodenumber(n)
 	return tostring(n)
 end
+
+local escape = {
+	['"'] = '\\"',
+	['\\'] = '\\\\',
+	['/'] = '\\/',
+}
+
+local unescape = {}
+do
+	for k, v in pairs(escape) do
+		unescape[v] = k
+	end
+end
+
 local function encodestring(s)
-	s = gsub(s, '"', '\\"')
+	s = gsub(s, '["\\/]', escape)
 	return format('"%s"', s)
 end
 local function encodeobj(obj)
@@ -62,7 +76,7 @@ end
 local function decodestr(str, i)
 	local _, n = find(str, '[^\\]"', i)
 	local s = sub(str, i + 1, n - 1)
-	return gsub(s, '\\"', '"'), n + 1
+	return gsub(s, '(\\["\\/])', unescape), n + 1
 end
 local function decodebool(str, i)
 	local n = find(str, "[%s,}]", i)
