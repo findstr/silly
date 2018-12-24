@@ -97,11 +97,14 @@ local function parseuri(str)
 end
 
 local function httpwrite(fd, status, header, body)
+	if not header then
+		header = {}
+	end
+	body = body or ""
 	insert(header, 1, format("HTTP/1.1 %d %s", status, http_err_msg[status]))
 	insert(header, format("Content-Length: %d", #body))
 	local tmp = concat(header, "\r\n")
-	tmp = tmp .. "\r\n\r\n"
-	tmp = tmp .. body
+	tmp = tmp .. "\r\n\r\n" .. body
 	write(fd, tmp)
 end
 
