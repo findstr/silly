@@ -137,7 +137,7 @@ llog(lua_State *L)
 			silly_log_raw("%s ", lua_tostring(L, i));
 			break;
 		case LUA_TNUMBER:
-			silly_log_raw("%d ", (int)lua_tointeger(L, i));
+			silly_log_raw(LUA_INTEGER_FMT" ", lua_tointeger(L, i));
 			break;
 		case LUA_TBOOLEAN:
 			silly_log_raw("%s ",
