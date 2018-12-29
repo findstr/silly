@@ -42,6 +42,7 @@ core.ntop = silly.ntop
 --timer
 local silly_timeout = silly.timeout
 core.now = silly.timenow
+core.nowsec = silly.timenowsec
 core.monotonic = silly.timemonotonic
 core.monotonicsec = silly.timemonotonicsec
 --debug interface

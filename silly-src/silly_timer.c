@@ -87,6 +87,13 @@ silly_timer_now()
 	return T->clocktime * TIMER_RESOLUTION;
 }
 
+time_t
+silly_timer_nowsec()
+{
+	int scale = 1000 / TIMER_RESOLUTION;
+	return T->clocktime / scale;
+}
+
 uint64_t
 silly_timer_monotonic()
 {

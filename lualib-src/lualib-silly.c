@@ -205,6 +205,14 @@ ltimenow(lua_State *L)
 }
 
 static int
+ltimenowsec(lua_State *L)
+{
+	uint64_t now = silly_timer_nowsec();
+	lua_pushinteger(L, now);
+	return 1;
+}
+
+static int
 ltimemonotonic(lua_State *L)
 {
 	uint64_t monotonic = silly_timer_monotonic();
@@ -581,6 +589,7 @@ luaopen_sys_silly(lua_State *L)
 		//timer
 		{"timeout", ltimeout},
 		{"timenow", ltimenow},
+		{"timenowsec", ltimenowsec},
 		{"timemonotonic", ltimemonotonic},
 		{"timemonotonicsec", ltimemonotonicsec},
 		//socket
