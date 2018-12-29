@@ -89,6 +89,15 @@ local function decodebool(str, i)
 		assert(false, k)
 	end
 end
+local function decodenull(str, i)
+	local n = find(str, "[%s,}]", i)
+	local k = sub(str, i, n - 1)
+	if k == "null" then
+		return nil, n
+	else
+		assert(false, k)
+	end
+end
 local function decodenumber(str, i)
 	local n = find(str, "[%s,}]", i)
 	local k = sub(str, i, n - 1)
@@ -150,11 +159,12 @@ local function decodearr(str, i)
 end
 
 decode_func = {
-	[0x7b] = decodeobj,
-	[0x5b] = decodearr,
-	[0x22] = decodestr,
-	[0x66] = decodebool,
-	[0x74] = decodebool,
+	[0x7b] = decodeobj, --'{'
+	[0x5b] = decodearr, --'['
+	[0x22] = decodestr, --'"'
+	[0x66] = decodebool,--'f'
+	[0x74] = decodebool,--'t'
+	[0x6e] = decodenull,--'n'
 }
 for i = 0x30, 0x39 do
 	decode_func[i] = decodenumber
