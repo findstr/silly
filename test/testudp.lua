@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local socket = require "sys.socket"
-local crypt = require "sys.crypt"
+local crypto = require "sys.crypto"
 local testaux = require "testaux"
 
 local server_fd
@@ -24,7 +24,7 @@ return function()
 	client_fd = socket.udp("127.0.0.1:8989", udp_client)
 	testaux.asserteq(not client_fd, false, "udp bridge")
 	for i = 1, 20 do
-		local d = crypt.randomkey()
+		local d = crypto.randomkey()
 		queue[i] = d
 		socket.udpwrite(client_fd, d)
 		core.sleep(150)

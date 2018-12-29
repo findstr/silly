@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local rpc = require "saux.rpc"
-local crypt = require "sys.crypt"
+local crypto = require "sys.crypto"
 local testaux = require "testaux"
 local zproto = require "zproto"
 
@@ -51,7 +51,7 @@ local function request(fd, index)
 			local test = {
 				name = "hello",
 				age = index,
-				rand = crypt.randomkey(),
+				rand = crypto.randomkey(),
 			}
 			local body, ack = client:call("test", test)
 			if not body then

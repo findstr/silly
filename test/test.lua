@@ -11,7 +11,7 @@ local modules = {
 	"testnetstream",
 	"testnetpacket",
 	"testchannel",
-	"testcrypt",
+	"testcrypto",
 	"testhttp",
 	"testredis",
 	"testmysql",

@@ -2,7 +2,7 @@
 
 
 local sfifo = require "sys.socketdispatch"
-local crypt = require "sys.crypt"
+local crypto = require "sys.crypto"
 local sub = string.sub
 local strbyte = string.byte
 local strchar = string.char
@@ -11,7 +11,7 @@ local strpack = string.pack
 local strunpack = string.unpack
 local format = string.format
 local strrep = string.rep
-local sha1 = crypt.sha1
+local sha1 = crypto.sha1
 local concat = table.concat
 local unpack = unpack
 local setmetatable = setmetatable
