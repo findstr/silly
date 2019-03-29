@@ -1491,7 +1491,7 @@ end:
 	if (fd[0] >= 0)
 		close(fd[0]);
 	if (fd[1] >= 0)
-		close(fd[0]);
+		close(fd[1]);
 	if (ss)
 		silly_free(ss);
 
@@ -1506,7 +1506,6 @@ void silly_socket_exit()
 	close(SSOCKET->reservefd);
 	close(SSOCKET->ctrlsendfd);
 	close(SSOCKET->ctrlrecvfd);
-
 	struct socket *s = &SSOCKET->socketpool[0];
 	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
 		enum stype type = s->type;
@@ -1515,6 +1514,7 @@ void silly_socket_exit()
 			type == STYPE_HALFCLOSE) {
 			close(s->fd);
 		}
+		++s;
 	}
 	silly_free(SSOCKET->cmdbuf);
 	silly_free(SSOCKET->eventbuf);
