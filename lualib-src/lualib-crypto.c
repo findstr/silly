@@ -230,7 +230,7 @@ dict(int n)
 	return dict[n];
 }
 
-static int
+static unsigned int
 undict(int ch)
 {
 	int v;
@@ -252,33 +252,33 @@ undict(int ch)
 static void
 numtochar(char *dst, const char *src, int sz)
 {
-	int n = 0;
+	unsigned int n = 0;
 	switch (sz) {
 	default:
 		/* fall through */
 	case 3:
-		n |= src[2];
+		n |= (uint8_t)src[2];
 		/* fall through */
 	case 2:
-		n |= src[1] << 8;
+		n |= (uint8_t)src[1] << 8;
 		/* fall through */
 	case 1:
-		n |= src[0] << 16;
+		n |= (uint8_t)src[0] << 16;
 		break;
 	case 0:
 		assert(0);
 		break;
 	}
 	dst[3] = dict(n & 0x3f);
-	dst[2] = dict((n & (0x3f << 6)) >> 6);
-	dst[1] = dict((n & (0x3f << 12)) >> 12);
-	dst[0] = dict((n & (0x3f << 18)) >> 18);
+	dst[2] = dict((n >> 6) & 0x3f);
+	dst[1] = dict((n >> 12) & 0x3f);
+	dst[0] = dict((n >> 18) & 0x3f);
 }
 
 static void
 chartonum(char *dst, size_t sz, const char *src)
 {
-	int n = 0;
+	unsigned int n = 0;
 	n |= undict(src[3]);
 	n |= undict(src[2]) << 6;
 	n |= undict(src[1]) << 12;
