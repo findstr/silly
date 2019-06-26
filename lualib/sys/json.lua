@@ -175,7 +175,12 @@ function json.encode(obj)
 	return encodeobj(obj)
 end
 function json.decode(str)
-	local ok, obj, i = pcall(decodeobj, str, 1)
+	local i = skipspace(str, i)
+	local cb = decode_func[str:byte(i)]
+	if not cb then
+		return nil, " invalid json"
+	end
+	local ok, obj, i = pcall(cb, str, i)
 	if not ok then
 		return nil, obj
 	end
