@@ -4,9 +4,34 @@
 #include <string.h>
 #include <lua.h>
 #include <lauxlib.h>
-#include "lsha1.h"
+#include "md5.h"
 #include "sha256.h"
 #include "aes.h"
+#include "lsha1.h"
+
+char num_to_char[] = "0123456789abcdef";
+
+static int
+lmd5(lua_State *L)
+{
+	size_t sz;
+	uint8_t out[16];
+	char str[2*16];
+	const uint8_t *dat;
+	unsigned i = 0, j = 0;
+	struct MD5Context ctx;
+	dat = (const uint8_t *)luaL_checklstring(L, 1, &sz);
+	MD5Init(&ctx);
+	MD5Update(&ctx, dat, sz);
+	MD5Final(out, &ctx);
+	while (i < sizeof(out)) {
+		unsigned char n = out[i++];
+		str[j++] = num_to_char[n >> 4];
+		str[j++] = num_to_char[n & 0xf];
+	}
+	lua_pushlstring(L, str, j);
+	return 1;
+}
 
 static int
 lrandomkey(lua_State *L)
@@ -377,9 +402,10 @@ int
 luaopen_sys_crypto(lua_State *L)
 {
 	luaL_Reg tbl[] = {
+		{"md5", lmd5},
 		{"sha1", lsha1},
-		{"randomkey", lrandomkey},
 		{"hmac", lhmac_sha1},
+		{"randomkey", lrandomkey},
 		{"aesencode", laesencode},
 		{"aesdecode", laesdecode},
 		{"base64encode", lbase64encode},
