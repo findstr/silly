@@ -24,7 +24,7 @@ return function()
 	client_fd = socket.udp("127.0.0.1:8989", udp_client)
 	testaux.asserteq(not client_fd, false, "udp bridge")
 	for i = 1, 20 do
-		local d = crypto.randomkey()
+		local d = crypto.randomkey(8)
 		queue[i] = d
 		socket.udpwrite(client_fd, d)
 		core.sleep(150)

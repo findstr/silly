@@ -37,10 +37,12 @@ static int
 lrandomkey(lua_State *L)
 {
 	int i;
-	char buff[8];
-	for (i = 0; i < 8; i++)
-		buff[i] = random() % 26 + 'a';
-	lua_pushlstring(L, buff, 8);
+	luaL_Buffer b;
+	int n = luaL_checkinteger(L, 1);
+	luaL_buffinitsize(L, &b, n);
+	for (i = 0; i < n; i++)
+		luaL_addchar(&b, random() % 26 + 'a');
+	luaL_pushresult(&b);
 	return 1;
 }
 

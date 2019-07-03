@@ -51,7 +51,7 @@ local function request(fd, index)
 			local test = {
 				name = "hello",
 				age = index,
-				rand = crypto.randomkey(),
+				rand = crypto.randomkey(8),
 			}
 			local body, ack = client:call("test", test)
 			if not body then
