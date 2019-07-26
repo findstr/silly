@@ -43,13 +43,17 @@ silly_worker_dispatch()
 	struct silly_message *msg;
 	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
-	while (msg) {
+	if (msg == NULL) {
+		lua_gc(W->L, LUA_GCSTEP, 100);
+		return ;
+	}
+	do {
 		assert(W->callback);
 		W->callback(W->L, msg);
 		tmp = msg;
 		msg = msg->next;
 		silly_message_free(tmp);
-	}
+	} while (msg);
 	return ;
 }
 
