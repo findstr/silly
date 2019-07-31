@@ -159,12 +159,13 @@ local function decodearr(str, i)
 end
 
 decode_func = {
-	[0x7b] = decodeobj, --'{'
-	[0x5b] = decodearr, --'['
-	[0x22] = decodestr, --'"'
-	[0x66] = decodebool,--'f'
-	[0x74] = decodebool,--'t'
-	[0x6e] = decodenull,--'n'
+	[0x7b] = decodeobj,	--'{'
+	[0x5b] = decodearr,	--'['
+	[0x22] = decodestr,	--'"'
+	[0x66] = decodebool,	--'f'
+	[0x74] = decodebool,	--'t'
+	[0x6e] = decodenull,	--'n'
+	[0x2d] = decodenumber,	--'-'
 }
 for i = 0x30, 0x39 do
 	decode_func[i] = decodenumber

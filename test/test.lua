@@ -1,6 +1,7 @@
 local core = require "sys.core"
 
 local modules = {
+	"testjson",
 	"testtimer",
 	"testsocket",
 	"testdns",
