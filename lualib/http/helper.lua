@@ -4,6 +4,7 @@ local char = string.char
 local insert = table.insert
 local concat = table.concat
 local tonumber = tonumber
+local type = type
 
 local helper = {}
 
@@ -22,11 +23,23 @@ function helper.htmlunescape(html)
 	return html
 end
 
-function helper.urlencode(url)
-	url = gsub(url, "([^0-9a-zA-Z$-_%.+!*(),])", function(n)
-		local s = format("%%%02X", n:byte(1))
-		return s
+local function encode(val)
+	return gsub(val, "([^0-9a-zA-Z$_%.!*(),-])", function(n)
+		return format("%%%02X", n:byte(1))
 	end)
+end
+
+function helper.urlencode(val)
+	if type(val) == "table" then
+		local buf = {}
+		for k, v in pairs(val) do
+			v = encode(v)
+			buf[#buf+1] = string.format("%s=%s", k, v)
+		end
+		return concat(buf, "&")
+	else
+		return encode(val)
+	end
 	return url
 end
 

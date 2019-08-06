@@ -101,19 +101,22 @@ local function httpwrite(fd, status, header, body)
 		header = {}
 	end
 	body = body or ""
-	insert(header, 1, format("HTTP/1.1 %d %s", status, http_err_msg[status]))
+	local msg = http_err_msg[status]
+	insert(header, 1, format("HTTP/1.1 %d %s", status, msg))
 	insert(header, format("Content-Length: %d", #body))
 	local tmp = concat(header, "\r\n")
 	tmp = tmp .. "\r\n\r\n" .. body
 	write(fd, tmp)
 end
 
+local fmt_urlencoded = "application/x-www-form-urlencoded"
 
 local function httpd(fd, handler)
 	socket.limit(fd, 1024 * 512)
 	local pcall = core.pcall
+	local recv = stream.readrequest
 	while true do
-		local status, first, header, body = stream.readrequest(fd, readline, read)
+		local status, first, header, body = recv(fd, readline, read)
 		if not status then	--disconnected
 			return
 		end
@@ -123,7 +126,8 @@ local function httpd(fd, handler)
 			return
 		end
 		--request line
-		local method, uri, ver = first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
+		local method, uri, ver =
+			first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
 		assert(method and uri and ver)
 		header.method = method
 		header.version = ver
@@ -133,19 +137,19 @@ local function httpd(fd, handler)
 			socket.close(fd)
 			return
 		end
-		if header["Content-Type"] == "application/x-www-form-urlencoded" then
+		if header["content-type"] == fmt_urlencoded then
 			for k, v in gmatch(body, "(%w+)=(%w+)") do
 				header.form[k] = v
 			end
 			body = ""
 		end
-		local ok, err = pcall(handler, fd, header, body)
+		local ok, err = core.pcall(handler, fd, header, body)
 		if not ok then
 			core.log(err)
 			socket.close(fd)
 			return
 		end
-		if header["Connection"] == "close" then
+		if header["connection"] == "close" then
 			socket.close(fd)
 			return
 		end

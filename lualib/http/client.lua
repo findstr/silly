@@ -2,6 +2,7 @@ local core = require "sys.core"
 local socket = require "sys.socket"
 local ssl = require "sys.netssl"
 local stream = require "http.stream"
+local helper = require "http.helper"
 local dns = require "sys.dns"
 local assert = assert
 local tonumber = tonumber
@@ -85,7 +86,15 @@ local function process(uri, method, header, body)
 	return status, header, body, ver
 end
 
-function client.GET(uri, header)
+function client.GET(uri, header, param)
+	if param then
+		local buf = helper.urlencode(param)
+		if uri:find("?", 1, true) then
+			uri = uri .. "&" .. buf
+		else
+			uri = uri .. "?" .. buf
+		end
+	end
 	return process(uri, "GET", header)
 end
 
