@@ -87,17 +87,17 @@ local copool = {}
 local weakmt = {__mode="kv"}
 setmetatable(copool, weakmt)
 
-local function cocall()
+local function cocall(ret, func)
 	while true do
-		local ret, func = coyield("EXIT")
+		local ok, err = core_pcall(func, coyield())
+		if ok == false then
+			core_log("[sys.core] call", err)
+		end
+		ret, func = coyield("EXIT")
 		if ret ~= "STARTUP" then
 			core_log("[sys.core] create coroutine fail", ret)
 			core_log(traceback())
 			return
-		end
-		local ok, err = core_pcall(func, coyield())
-		if ok == false then
-			core_log("[sys.core] call", err)
 		end
 	end
 end
@@ -109,8 +109,7 @@ local function cocreate(f)
 		return co
 	end
 	co = cocreate_(cocall)
-	coresume(co)	--wakeup the new coroutine
-	coresume(co, "STARTUP", f)	 --pass the function handler
+	coresume(co, "STARTUP", f) --pass the function handler
 	return co
 end
 
