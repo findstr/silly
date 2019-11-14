@@ -21,6 +21,7 @@
 
 struct {
 	int running;
+	int exitstatus;
 	int workerstatus; /* 0:sleep 1:running -1:dead */
 	const struct silly_config *conf;
 	pthread_mutex_t mutex;
@@ -124,7 +125,7 @@ signal_init()
 	return 0;
 }
 
-void
+int
 silly_run(const struct silly_config *config)
 {
 	int i;
@@ -132,6 +133,7 @@ silly_run(const struct silly_config *config)
 	pthread_t pid[3];
 	R.running = 1;
 	R.conf = config;
+	R.exitstatus = 0;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
 	silly_daemon_start(config);
@@ -161,13 +163,13 @@ silly_run(const struct silly_config *config)
 	silly_timer_exit();
 	silly_socket_exit();
 	silly_log("%s has already exit...\n", config->selfname);
-	return ;
+	return R.exitstatus;
 }
 
 void
-silly_exit()
+silly_exit(int status)
 {
 	R.running = 0;
+	R.exitstatus = status;
 }
-
 

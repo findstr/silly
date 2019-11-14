@@ -119,8 +119,9 @@ lsetenv(lua_State *L)
 static int
 lexit(lua_State *L)
 {
-	(void)L;
-	silly_exit();
+	int status;
+	status = luaL_optinteger(L, 1, 0);
+	silly_exit(status);
 	return 0;
 }
 

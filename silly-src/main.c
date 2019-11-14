@@ -227,6 +227,7 @@ selfname(const char *path)
 
 int main(int argc, char *argv[])
 {
+	int status;
 	struct silly_config config;
 	if (argc != 2) {
 		printf("USAGE:%s <config file>\n", argv[0]);
@@ -236,9 +237,10 @@ int main(int argc, char *argv[])
 	config.selfname = selfname(argv[0]);
 	initenv(config.selfname, argv[1]);
 	parseconfig(&config);
-	silly_run(&config);
+	status = silly_run(&config);
 	silly_env_exit();
 	silly_log("%s exit, leak memory size:%zu\n",
 		argv[0], silly_memused());
-	return 0;
+	return status;
 }
+
