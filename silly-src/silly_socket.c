@@ -11,7 +11,6 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/types.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 
 #include "silly.h"
@@ -930,7 +929,7 @@ tryudpbind(struct silly_socket *ss, struct cmdlisten *cmd)
 	int sid = cmd->sid;
 	s = &ss->socketpool[HASH(sid)];
 	assert(s->sid == sid);
-	assert(s->type = STYPE_ALLOCED);
+	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
 	if (unlikely(err < 0)) {
 		silly_log("[socket] tryudpbind error:%s\n", strerror(errno));
@@ -1173,7 +1172,7 @@ silly_socket_udpsend(int sid, uint8_t *buf, size_t sz,
 		finalizer(buf);
 		return -1;
 	}
-	assert(s->protocol = PROTOCOL_UDP);
+	assert(s->protocol == PROTOCOL_UDP);
 	assert(s->type == STYPE_UDPBIND || s->type == STYPE_SOCKET);
 	if (unlikely(s->type == STYPE_UDPBIND && addr == NULL)) {
 		finalizer(buf);
