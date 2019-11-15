@@ -32,33 +32,33 @@ function testaux.checksum(acc, str)
 	return acc
 end
 
-local function perror(str, a, b)
+local function perror(str, a, b, op)
 	a = a or "(nil)"
 	b = b or "(nil)"
-	print(string.format("%s fail(data1:%s:data2:%s)", str, a, b))
+	print(string.format('ASSERT "%s" FAIL "%s"%s"%s")', str, a, op, b))
 	print("\r\n" .. debug.traceback())
-	core.exit()
+	core.exit(1)
 end
 
 function testaux.asserteq(a, b, str)
 	if a == b then
 		return
 	end
-	perror(str, a, b)
+	perror(str, a, b, "==")
 end
 
 function testaux.assertneq(a, b, str)
 	if a ~= b then
 		return
 	end
-	perror(str, a, b)
+	perror(str, a, b, "~=")
 end
 
 function testaux.assertle(a, b, str)
 	if a <= b then
 		return
 	end
-	perror(str, a, b)
+	perror(str, a, b, "<=")
 end
 
 

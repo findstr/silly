@@ -1,4 +1,5 @@
 local json = require "sys.json"
+local testaux = require "testaux"
 
 local obj = {
 	[1] = {
@@ -22,7 +23,9 @@ return function()
 		local s = obj[i]
 		local d = res[i]
 		for k, v in pairs(s) do
-			assert(s[i] == d[i])
+			testaux.asserteq(s[k], d[k],
+				string.format("obj[%s].%s == obj[%s].%s",
+				i, k, i, k))
 		end
 	end
 end

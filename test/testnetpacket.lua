@@ -23,7 +23,7 @@ end
 local function buildpacket()
 	local len = math.random(1, 30)
 	local raw = testaux.randomdata(len)
-	assert(#raw == len)
+	testaux.asserteq(#raw, len, "random packet length")
 	local pk = string.pack(">I2", #raw) .. string.pack("<c" .. #raw, raw)
 	return raw, pk
 end
@@ -52,8 +52,8 @@ local function pushbroken(sid, pk)
 	local pk2 = pk:sub(1, #pk - 1)
 	randompush(sid, pk2)
 	local fd, data = popdata()
-	assert(not fd)
-	assert(not data)
+	testaux.assertneq(fd, nil, "fd ~= nil")
+	testaux.assertneq(data, nil, "fd ~= nil")
 end
 
 local function testpacket(push)
