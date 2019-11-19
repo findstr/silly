@@ -1129,7 +1129,7 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 
 
 #define CHECK_VALID(sz, need)	\
-	if (sz < (int)(need))\
+	if ((size_t)sz < (need))\
 		return ZPROTO_ERROR;
 
 #define DECODE_INTEGER(bit)\
@@ -1225,8 +1225,8 @@ zproto_decode(struct zproto_struct *st,
 	zproto_cb_t cb, void *ud)
 {
 	const uint8_t *tagptr;
-	int len, tagcount;
-	int headsize, i, err, lasttag;
+	size_t len, headsize;
+	int i, err, tagcount, lasttag;
 	CHECK_VALID(size, SIZEOF_LEN + SIZEOF_TAG) //header size
 	len = unmarshal_len(buff);
 	buff += SIZEOF_LEN;

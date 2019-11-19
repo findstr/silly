@@ -88,12 +88,12 @@ function zproto:decode(typ, data, sz, offset)
 	return engine.decode(record, data, sz, offset)
 end
 
-function zproto:pack(data, sz)
-	return engine.pack(data, sz)
+function zproto:pack(data, sz, offset)
+	return engine.pack(data, sz, offset)
 end
 
-function zproto:unpack(data, sz)
-	return engine.unpack(data, sz);
+function zproto:unpack(data, sz, offset)
+	return engine.unpack(data, sz, offset);
 end
 
 return zproto
