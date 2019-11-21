@@ -22,7 +22,7 @@ local mt = {
 --the function of process response insert into d.funcqueue
 function dispatch:create(config)
 	local d = {
-		socket = false,
+		sock = false,
 		status = CLOSE,
 		dispatchco = false,
 		connectqueue = {},
@@ -67,6 +67,7 @@ end
 --this function will be run the indepedent coroutine
 local function dispatch_response(self)
 	return function ()
+		local pcall = core.pcall
 		local waitqueue = self.waitqueue
 		local funcqueue = self.funcqueue
 		local result_data = self.result_data
@@ -74,7 +75,7 @@ local function dispatch_response(self)
 			local co = tremove(waitqueue, 1)
 			local func = tremove(funcqueue, 1)
 			if func and co then
-				local ok, status, data  = core.pcall(func, self)
+				local ok, status, data  = pcall(func, self)
 				if ok then
 					result_data[co] = data
 					core.wakeup(co, status)
@@ -212,8 +213,8 @@ function dispatch:request(cmd, response)
 end
 
 local function read_write_wrapper(func)
-	return function (self, ...)
-		return func(self.sock, ...)
+	return function (self, p)
+		return func(self.sock, p)
 	end
 end
 
