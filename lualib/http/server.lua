@@ -1,5 +1,6 @@
 local core = require "sys.core"
 local socket = require "sys.socket"
+local tls = require "sys.tls"
 local stream = require "http.stream"
 
 local assert = assert
@@ -10,11 +11,6 @@ local format = string.format
 local gmatch = string.gmatch
 local insert = table.insert
 local concat = table.concat
-
-local listen = socket.listen
-local readline = socket.readline
-local read = socket.read
-local write = socket.write
 
 local http_err_msg = {
 	[100] = "Continue",
@@ -96,7 +92,7 @@ local function parseuri(str)
 	return uri, form
 end
 
-local function httpwrite(fd, status, header, body)
+local function httpwrite(sock, status, header, body)
 	if not header then
 		header = {}
 	end
@@ -106,64 +102,78 @@ local function httpwrite(fd, status, header, body)
 	insert(header, format("Content-Length: %d", #body))
 	local tmp = concat(header, "\r\n")
 	tmp = tmp .. "\r\n\r\n" .. body
-	write(fd, tmp)
+	sock:write(tmp)
 end
 
 local fmt_urlencoded = "application/x-www-form-urlencoded"
 
-local function httpd(fd, handler)
-	socket.limit(fd, 1024 * 512)
-	local pcall = core.pcall
-	local recv = stream.readrequest
-	while true do
-		local status, first, header, body = recv(fd, readline, read)
-		if not status then	--disconnected
-			return
-		end
-		if status ~= 200 then
-			httpwrite(status, {}, "")
-			socket.close(fd)
-			return
-		end
-		--request line
-		local method, uri, ver =
-			first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
-		assert(method and uri and ver)
-		header.method = method
-		header.version = ver
-		header.uri, header.form = parseuri(uri)
-		if tonumber(ver) > 1.1 then
-			httpwrite(505, {}, "")
-			socket.close(fd)
-			return
-		end
-		if header["content-type"] == fmt_urlencoded then
-			for k, v in gmatch(body, "(%w+)=(%w+)") do
-				header.form[k] = v
+local function httpd(scheme, handler)
+	return function(fd, addr)
+		local pcall = core.pcall
+		local sock = stream.accept(scheme, fd)
+		local recv = sock.recvrequest
+		while true do
+			local first, res = recv(sock)
+			if not first then	--disconnected
+				break
 			end
-			body = ""
+			if res.status ~= 200 then
+				httpwrite(sock, res.status, {}, "")
+				break
+			end
+			--request line
+			local method, uri, ver =
+				first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
+			assert(method and uri and ver)
+			res.method = method
+			res.version = ver
+			res.uri, res.form = parseuri(uri)
+			if tonumber(ver) > 1.1 then
+				httpwrite(sock, 505, {}, "")
+				break
+			end
+			local header = res.header
+			if header["content-type"] == fmt_urlencoded then
+				local form = res.form
+				for k, v in gmatch(res.body, "(%w+)=(%w+)") do
+					form[k] = v
+				end
+				res.body = ""
+			end
+			local ok, err = pcall(handler, res)
+			if not ok then
+				core.log(err)
+				break
+			end
+			if header["connection"] == "close" then
+				break
+			end
 		end
-		local ok, err = core.pcall(handler, fd, header, body)
-		if not ok then
-			core.log(err)
-			socket.close(fd)
-			return
-		end
-		if header["connection"] == "close" then
-			socket.close(fd)
-			return
-		end
+		sock:close()
 	end
 end
 
 local server = {
-	listen = function (port, handler)
-		local h = function(fd)
-			httpd(fd, handler)
+	write = httpwrite,
+	listen = function (conf)
+		local fds = {nil, nil}
+		local handler = conf.handler
+		local port = conf.port
+		if port then
+			local fd = socket.listen(port, httpd("http", handler))
+			fds[1] = stream.accept("http", fd)
 		end
-		listen(port, h)
-	end,
-	write = httpwrite
+		if conf.tls_port then
+			local fd = tls.listen {
+				disp = httpd("https", handler),
+				port = conf.tls_port,
+				key = conf.tls_key,
+				cert = conf.tls_cert,
+			}
+			fds[#fds + 1] = stream.accept("https", fd)
+		end
+		return table.unpack(fds)
+	end
 }
 
 return server

@@ -1,10 +1,11 @@
 local server = require "http.server"
 local client = require "http.client"
+local json = require "sys.json"
 local testaux = require "testaux"
 local write = server.write
 local dispatch = {}
 
-dispatch["/"] = function(fd, reqeust, body)
+dispatch["/"] = function(req)
 	local body = [[
 		<html>
 			<head>Hello Stupid</head>
@@ -18,48 +19,49 @@ dispatch["/"] = function(fd, reqeust, body)
 	]]
 	local head = {
 		"Content-Type: text/html",
-		}
-
-	write(fd, 200, head, body)
+	}
+	write(req.sock, 200, head, body)
 end
 
 local content = ""
 
-dispatch["/download"] = function(fd, request, body)
-	write(fd, 200, {"Content-Type: text/plain"}, content)
+dispatch["/download"] = function(req)
+	write(req.sock, 200, {"Content-Type: text/plain"}, content)
 end
 
-dispatch["/upload"] = function(fd, request, body)
-	if request.form.Hello then
-		content = request.form.Hello
+dispatch["/upload"] = function(req)
+	if req.form.Hello then
+		content = req.form.Hello
 	end
 	local body = "Upload"
 	local head = {
 		"Content-Type: text/plain",
 		}
-	write(fd, 200, head, body)
+	write(req.sock, 200, head, body)
 end
 
-
-server.listen(":8080", function(fd, request, body)
-	local c = dispatch[request.uri]
-	if c then
-		c(fd, request, body)
-	else
-		print("Unsupport uri", request.uri)
-		write(fd, 404, {"Content-Type: text/plain"}, "404 Page Not Found")
-	end
-end)
-
-
---client part
-
 return function()
-	local status, head, body = client.POST("http://127.0.0.1:8080/upload",
-				{"Content-Type: application/x-www-form-urlencoded"},
-				"Hello=findstr&")
-	local status, head, body = client.GET("http://127.0.0.1:8080/download")
-	testaux.asserteq(body, "findstr", "http GET data validate")
-	testaux.asserteq(status, 200, "http GET status validate")
+	local sock = server.listen {
+		port = ":8080",
+		handler = function(req)
+			local c = dispatch[req.uri]
+			if c then
+				c(req)
+			else
+				print("Unsupport uri", req.uri)
+				write(req.sock, 404,
+					{"Content-Type: text/plain"},
+					"404 Page Not Found")
+			end
+		end
+	}
+	local res = client.POST("http://127.0.0.1:8080/upload",
+			{"Content-Type: application/x-www-form-urlencoded"},
+			"Hello=findstr&")
+	local res = client.GET("http://127.0.0.1:8080/download")
+	print(json.encode(res))
+	testaux.asserteq(res.body, "findstr", "http GET data validate")
+	testaux.asserteq(res.status, 200, "http GET status validate")
+	sock:close()
 end
 

@@ -1,9 +1,6 @@
 local core = require "sys.core"
-local socket = require "sys.socket"
-local ssl = require "sys.netssl"
 local stream = require "http.stream"
 local helper = require "http.helper"
-local dns = require "sys.dns"
 local assert = assert
 local tonumber = tonumber
 local format = string.format
@@ -31,7 +28,7 @@ local function parseurl(url)
 	return scheme, host, port, path, default
 end
 
-local function send_request(io_do, fd, method, host, abs, header, body)
+local function send_request(sock, method, host, abs, header, body)
 	local tmp
 	insert(header, 1, format("%s %s HTTP/1.1", method, abs))
 	insert(header, format("Host: %s", host))
@@ -41,65 +38,67 @@ local function send_request(io_do, fd, method, host, abs, header, body)
 	insert(header, "")
 	insert(header, body)
 	tmp = concat(header, "\r\n")
-	io_do.write(fd, tmp)
+	sock:write(tmp)
 end
 
-local function recv_response(io_do, fd)
-	local readl = io_do.readline
-	local readn = io_do.read
-	local status, first, header, body = stream.readrequest(fd, readl, readn)
-	if not status then	--disconnected
-		return nil
-	end
-	if status ~= 200 then
-		return status
-	end
-	local ver, status= first:match("HTTP/([%d|.]+)%s+(%d+)")
-	return tonumber(status), header, body, ver
-end
-
-local function process(uri, method, header, body)
-	local ip, io_do
+local function process(method, uri, header, body)
 	local scheme, host, port, path, default = parseurl(uri)
-	ip = dns.resolve(host, "A")
-	assert(ip, host)
-	if scheme == "https" then
-		io_do = ssl
-	elseif scheme == "http" then
-		io_do = socket
-	end
-	if not default then
-		host = format("%s:%s", host, port)
-	end
-	ip = format("%s:%s", ip, port)
-	local fd = io_do.connect(ip)
-	if not fd then
-		return 599
+	local sock = stream.connect(scheme, host, port)
+	if not sock then
+		return nil
 	end
 	if not header then
 		header = {}
 	end
 	body = body or ""
-	send_request(io_do, fd, method, host, path, header, body)
-	local status, header, body, ver = recv_response(io_do, fd)
-	io_do.close(fd)
-	return status, header, body, ver
+	if not default then
+		host = format("%s:%s", host, port)
+	end
+	send_request(sock, method, host, path, header, body)
+	local first, res = sock:recvrequest()
+	if not first then	--disconnected
+		return nil
+	end
+	if res.status ~= 200 then
+		return res
+	end
+	local ver, status= first:match("HTTP/([%d|.]+)%s+(%d+)")
+	res.version = ver
+	res.status = tonumber(status)
+	return res
 end
 
-function client.GET(uri, header, param)
-	if param then
-		local buf = helper.urlencode(param)
+local function request(method, uri, header, data)
+	if method == 'GET' and data then
+		local buf = helper.urlencode(data)
 		if uri:find("?", 1, true) then
 			uri = uri .. "&" .. buf
 		else
 			uri = uri .. "?" .. buf
 		end
+		data = nil
 	end
-	return process(uri, "GET", header)
+	return process(method, uri, header, data)
+end
+
+client.request = request
+
+function client.GET(uri, header, param)
+	local res = request("GET", uri, header, param)
+	if res then
+		res.sock:close()
+		res.sock = nil
+	end
+	return res
 end
 
 function client.POST(uri, header, body)
-	return process(uri, "POST", header, body)
+	local res = request("POST", uri, header, body)
+	if res then
+		res.sock:close()
+		res.sock = nil
+	end
+	return res
 end
 
 return client

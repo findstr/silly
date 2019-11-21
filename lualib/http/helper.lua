@@ -50,8 +50,6 @@ function helper.urldecode(url)
 	return url
 end
 
-
-
 function helper.setcookie(header, cookie)
 	local c = header['Set-Cookie']
 	if c then

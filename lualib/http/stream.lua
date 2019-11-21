@@ -1,10 +1,14 @@
 local socket = require "sys.socket"
+local dns = require "sys.dns"
+local tls = require "sys.tls"
 local tonumber = tonumber
-local stream = {}
+local format = string.format
+local setmetatable = setmetatable
+local M = {}
 
-local function readheader(fd, readl)
+local function readheader(sock)
 	local header = {}
-	local tmp = readl(fd, "\r\n")
+	local tmp = sock:readline()
 	if not tmp then
 		return nil
 	end
@@ -16,7 +20,7 @@ local function readheader(fd, readl)
 		else
 			header[k] = v
 		end
-		tmp = readl(fd, "\r\n")
+		tmp = sock:readline()
 		if not tmp then
 			return nil
 		end
@@ -24,7 +28,7 @@ local function readheader(fd, readl)
 	return header
 end
 
-local function read_body(hdr, fd, readl, readn)
+local function read_body(hdr, sock)
 	local body
 	local encoding = hdr["transfer-encoding"]
 	if encoding then
@@ -33,34 +37,34 @@ local function read_body(hdr, fd, readl, readn)
 		end
 		body = ""
 		while true do
-			local n = readl(fd, "\r\n")
+			local n = sock:readline()
 			local sz = tonumber(n, 16)
 			if not sz or sz == 0 then
 				break
 			end
-			body = body .. readn(fd, sz)
-			readl(fd, "\r\n")
+			body = body .. sock:read(sz)
+			sock:readline()
 		end
 	else
 		local len = hdr["content-length"]
 		if len then
 			local len = tonumber(len)
-			body = readn(fd, len)
+			body = sock:read(len)
 		end
 	end
 	return 200, body
 
 end
 
-local function read_multipart_formdata(boundary, fd, readl, readn)
+local function read_multipart_formdata(boundary, sock)
 	local files = {}
 	local boundary_start = "--" .. boundary
 	local trunc = -#boundary_start-1-2
-	local l = readl(fd, "\r\n")
+	local l = sock:readline()
 	repeat
-		local hdr = readheader(fd, readl)
-		local body = readl(fd, boundary_start)
-		local term = readl(fd, "\r\n")
+		local hdr = readheader(sock)
+		local body = sock:readline(boundary_start)
+		local term = sock:readline("\r\n")
 		files[#files + 1] = {
 			header = hdr,
 			content = body:sub(1, trunc)
@@ -69,22 +73,103 @@ local function read_multipart_formdata(boundary, fd, readl, readn)
 	return 200, files
 end
 
-function stream.readrequest(fd, readl, readn)
+local function recv_request(sock)
 	local status, body
-	local first = readl(fd, "\r\n")
-	local header = readheader(fd, readl)
+	local first = sock:readline()
+	local header = readheader(sock)
 	if not header then
 		return
 	end
 	local typ = header["content-type"]
 	if typ and typ:find("multipart/form-data", 1, true) then
 		local bd = typ:match("boundary=([%w-]+)")
-		status, body = read_multipart_formdata(bd, fd, readl, readn)
+		status, body = read_multipart_formdata(bd, sock)
 	else
-		status, body = read_body(header, fd, readl, readn)
+		status, body = read_body(header, sock)
 	end
-	return status, first, header, body
+	local res = {
+		sock = sock,
+		status = status,
+		header = header,
+		body = body,
+	}
+	return first, res
 end
 
-return stream
+local function wrap_one(func)
+	return function(self, x)
+		return func(self[1], x)
+	end
+end
+
+local function wrap_close(func)
+	return function(self, x)
+		local fd = self[1]
+		if fd then
+			func(fd)
+			self[1] = nil
+		end
+	end
+end
+
+
+local function gc(self)
+	self:close()
+end
+
+local tls_mt = {
+	close = wrap_close(tls.close),
+	read = wrap_one(tls.read),
+	write = wrap_one(tls.write),
+	readline = wrap_one(tls.readline),
+	recvrequest = recv_request,
+	__gc = gc
+}
+
+local socket_mt = {
+	close = wrap_close(socket.close),
+	read = wrap_one(socket.read),
+	write = wrap_one(socket.write),
+	readline = wrap_one(socket.readline),
+	recvrequest = recv_request,
+	__gc = gc
+}
+
+tls_mt.__index = tls_mt
+socket_mt.__index = socket_mt
+
+local scheme_io = {
+	["https"] = tls_mt,
+	["wss"] = socket_mt,
+	["http"] = socket_mt,
+	["ws"] = socket_mt,
+}
+
+local scheme_connect = {
+	["https"] = tls.connect,
+	["wss"] = tls.connect,
+	["http"] = socket.connect,
+	["ws"] = socket.connect,
+}
+
+function M.accept(scheme, fd)
+	--NOTE: use `{fd}` but not `{fd=fd}`
+	--because array cost less memory
+	return setmetatable({fd}, scheme_io[scheme])
+end
+
+function M.connect(scheme, host, port)
+	local ip = dns.resolve(host, "A")
+	assert(ip, host)
+	ip = format("%s:%s", ip, port)
+	local fd = scheme_connect[scheme](ip)
+	if not fd then
+		return nil
+	end
+	--NOTE: use `{fd}` but not `{fd=fd}`
+	--because array cost less memory
+	return setmetatable({fd}, scheme_io[scheme])
+end
+
+return M
 
