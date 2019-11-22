@@ -9,7 +9,6 @@ local function gen_closure(n)
 	return function ()
 		local delta = core.now() - now
 		delta = math.abs(delta - 100 - n)
-		print("delta:", delta)
 		--precise is 50ms
 		testaux.assertle(delta, 100, "timer check delta")
 		total = total - 1

@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local testaux = require "testaux"
 
 local modules = {
 	"testjson",
@@ -36,6 +37,7 @@ core.start(function()
 	for k, v in ipairs(modules) do
 		M = v .. ":"
 		print("=========start=========")
+		testaux.module(v)
 		assert(entry[k])()
 		print("======success==========")
 	end

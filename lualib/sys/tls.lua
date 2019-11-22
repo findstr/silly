@@ -1,5 +1,6 @@
 local core = require "sys.core"
 local type = type
+local concat = table.concat
 local assert = assert
 
 local socket_pool = {}
@@ -12,16 +13,26 @@ local client_ctx
 
 local function new_socket(fd, ctx)
 	local s = {
+		nil,
 		fd = fd,
 		delim = false,
 		co = false,
-		ssl = false
+		ssl = tls.open(ctx, fd),
+		closing = false,
 	}
-	s.ssl = tls.open(ctx, fd)
-	assert(socket_pool[fd] == nil,
-		"new_socket incorrect" .. fd .. "not be closed")
 	socket_pool[fd] = s
 	return s
+end
+
+local function del_socket(s)
+	tls.close(s.ssl)
+	socket_pool[s.fd] = nil
+end
+
+local function wakeup(s, dat)
+	local co = s.co
+	s.co = false
+	core.wakeup(co, dat)
 end
 
 local function suspend(s)
@@ -34,7 +45,7 @@ end
 local function handshake(s)
 	local ok = tls.handshake(s.ssl)
 	if ok then
-		return fd
+		return ok
 	end
 	s.delim = "~"
 	return suspend(s)
@@ -59,12 +70,11 @@ function EVENT.close(fd, _, errno)
 	if s == nil then
 		return
 	end
+	s.closing = true
 	if s.co then
-		local co = s.co
-		s.co = false
-		core.wakeup(co, false)
+		wakeup(s, false)
+		del_socket(s)
 	end
-	socket_pool[fd] = nil
 end
 
 function EVENT.data(fd, message)
@@ -72,43 +82,41 @@ function EVENT.data(fd, message)
 	if not s then
 		return
 	end
+	local delim = s.delim
 	tls.message(s.ssl, message)
-	if not s.delim then	--non suspend read
-		assert(not s.co)
+	if not delim then	--non suspend read
 		return
 	end
-	if type(s.delim) == "number" then
-		assert(s.co)
-		local dat = tls.read(s.ssl, s.delim)
+	if type(delim) == "number" then
+		local dat = tls.read(s.ssl, delim)
 		if dat then
-			local co = s.co
-			s.co = false
-			s.delim = false
-			core.wakeup(co, dat)
+			local n = delim - #dat
+			if n == 0 then
+				s.delim = false
+			else
+				s.delim = n
+			end
+			wakeup(s, dat)
 		end
-	elseif s.delim == "\n" then
-		assert(s.co)
-		local dat = tls.readline(s.ssl)
-		if dat then
-			local co = s.co
-			s.co = false
-			s.delim = false
-			core.wakeup(co, dat)
+	elseif delim == "\n" then
+		local dat, ok = tls.readline(s.ssl)
+		if dat ~= "" then
+			if ok then
+				s.delim = false
+			end
+			wakeup(s, dat)
 		end
-	elseif s.delim == "~" then
-		assert(s.co)
+	elseif delim == "~" then
 		local ok = tls.handshake(s.ssl)
 		if ok then
-			local co = s.co
-			s.co = false
 			s.delim = false
-			core.wakeup(co, true)
+			wakeup(s, true)
 		end
 	end
 end
 
 local function socket_dispatch(type, fd, message, ...)
-	assert(EVENT[type])(fd, message, ...)
+	EVENT[type](fd, message, ...)
 end
 
 
@@ -117,7 +125,6 @@ local function connect_normal(ip, bind)
 	if not fd then
 		return nil
 	end
-	assert(fd >= 0)
 	local s = new_socket(fd, client_ctx)
 	local ok = handshake(s)
 	if ok then
@@ -140,7 +147,7 @@ function M.listen(conf)
 	assert(conf.disp)
 	local portid = core.listen(conf.port, socket_dispatch, conf.backlog)
 	if not portid then
-		return
+		return nil
 	end
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
@@ -156,60 +163,82 @@ end
 function M.close(fd)
 	local s = socket_pool[fd]
 	if s == nil then
-		return
+		return false
 	end
-	if s.so then
-		core.wakeup(s.so, false)
+	if s.co then
+		wakeup(s, false)
 	end
-	tls.close(s.ssl)
-	socket_pool[fd] = nil
+	del_socket(s)
 	core.close(fd)
+	return true
 end
 
 function M.read(fd, n)
 	local s = socket_pool[fd]
 	if not s then
-		return nil
+		return false
 	end
-	if n <= 0 then
-		return ""
+	local d = tls.read(s.ssl, n)
+	if #d == n then
+		return d
 	end
-	local r = tls.read(s.ssl, n)
-	if r then
-		return r
+	if s.closing then
+		del_socket(s)
+		return false
 	end
 	s.delim = n
-	local ok = suspend(s)
-	if not ok then	--occurs error
-		return nil
+	while s.delim do
+		local r = suspend(s)
+		if not r then
+			return false
+		end
+		d = d .. r
 	end
-	return ok
+	return d
 end
+
+function M.readall(fd)
+	local s = socket_pool[fd]
+	if not s then
+		return false
+	end
+	local r = tls.readall(s.ssl)
+	if r == "" and s.closing then
+		del_socket(s)
+		return false
+	end
+	return r
+end
+
 
 function M.readline(fd)
 	local s = socket_pool[fd]
 	if not s then
-		return nil
+		return false
 	end
-	local r = tls.readline(s.ssl)
-	if r then
-		return r
+	local d, ok
+	d, ok = tls.readline(s.ssl)
+	if ok then
+		return d
 	end
 	s.delim = "\n"
-	local ok = suspend(s)
-	if not ok then	--occurs error
-		return nil
+	while s.delim do
+		local r
+		r, ok = suspend(s)
+		if not r then
+			return false
+		end
+		d = d .. r
 	end
-	return ok
+	return d
 end
 
 function M.write(fd, str)
 	local s = socket_pool[fd]
-	if not s then
+	if not s or s.closing then
 		return false, "already closed"
 	end
-	tls.write(s.ssl, str)
-	return true
+	return tls.write(s.ssl, str)
 end
 
 return M

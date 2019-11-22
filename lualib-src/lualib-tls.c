@@ -179,23 +179,45 @@ ltls_open(lua_State *L)
 static int
 ltls_read(lua_State *L)
 {
-	struct tls *tls;
 	char *ptr;
+	int size, last;
+	struct tls *tls;
 	luaL_Buffer buf;
-	int ret, size, pending;
 	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
-	size = luaL_checkinteger(L, 2);
-	pending = SSL_pending(tls->ssl);
-	if (pending < size) {
-		lua_pushnil(L);
-		return 1;
-	}
+	last = size = luaL_checkinteger(L, 2);
 	ptr = luaL_buffinitsize(L, &buf, size);
-	ret = SSL_read(tls->ssl, ptr, size);
-	assert(ret == size);
-	luaL_pushresultsize(&buf, size);
+	while (last > 0) {
+		int ret = SSL_read(tls->ssl, ptr, last);
+		if (ret <= 0)
+			break;
+		ptr += ret;
+		last -= ret;
+	}
+	luaL_pushresultsize(&buf, size - last);
 	return 1;
 }
+
+static int
+ltls_readall(lua_State *L)
+{
+	char *ptr;
+	struct tls *tls;
+	luaL_Buffer buf;
+	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
+	luaL_buffinit(L, &buf);
+	for (;;) {
+		int ret;
+		ptr = luaL_prepbuffsize(&buf, 1024);
+		ret = SSL_read(tls->ssl, ptr, 1024);
+		if (ret <= 0)
+			break;
+		luaL_addsize(&buf, ret);
+	}
+	luaL_pushresult(&buf);
+	return 1;
+}
+
+
 
 static int
 ltls_readline(lua_State *L)
@@ -212,25 +234,26 @@ ltls_readline(lua_State *L)
 		luaL_addchar(&buf, c);
 		if (c == '\n') {
 			luaL_pushresult(&buf);
-			return 1;
+			lua_pushboolean(L, 1);
+			return 2;
 		}
 	}
-	lua_pushnil(L);
-	return 1;
+	luaL_pushresult(&buf);
+	lua_pushboolean(L, 0);
+	return 2;
 }
 
-static void
+static int
 flushwrite(struct tls *tls)
 {
 	int sz;
 	uint8_t *dat;
 	sz = BIO_pending(tls->out_bio);
 	if (sz <= 0)
-		return ;
+		return -1;
 	dat = ssl_malloc(sz);
 	BIO_read(tls->out_bio, dat, sz);
-	silly_socket_send(tls->fd, dat, sz, NULL);
-	return ;
+	return silly_socket_send(tls->fd, dat, sz, NULL);
 }
 
 static int
@@ -242,8 +265,8 @@ ltls_write(lua_State *L)
 	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
 	str = luaL_checklstring(L, 2, &sz);
 	SSL_write(tls->ssl, str, sz);
-	flushwrite(tls);
-	return 0;
+	lua_pushboolean(L, flushwrite(tls) >= 0);
+	return 1;
 }
 
 static int
@@ -312,6 +335,7 @@ luaopen_sys_tls_tls(lua_State *L)
 		{"close", ltls_free},
 		{"read", ltls_read},
 		{"write", ltls_write},
+		{"readall", ltls_readall},
 		{"readline", ltls_readline},
 		{"handshake", ltls_handshake},
 		{"message", ltls_message},

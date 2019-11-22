@@ -3,7 +3,7 @@ local c = require "test.aux.c"
 local type = type
 local format = string.format
 local testaux = {}
-
+local m = ""
 local rand = math.random
 
 local meta_str = "abcdefghijklmnopqrstuvwxyz"
@@ -53,9 +53,9 @@ function testaux.asserteq(a, b, str)
 	a = escape(a)
 	b = escape(b)
 	if a == b then
-		print(format('SUCCESS\t"%s"\t"%s" == "%s"', str, a, b))
+		print(format('%s\tSUCCESS\t"%s"\t"%s" == "%s"', m, str, a, b))
 	else
-		print(format('FAIL\t"%s"\t"%s" == "%s"', str, a, b))
+		print(format('%s\tFAIL\t"%s"\t"%s" == "%s"', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
@@ -65,9 +65,9 @@ function testaux.assertneq(a, b, str)
 	a = escape(a)
 	b = escape(b)
 	if a ~= b then
-		print(format('SUCCESS\t"%s"\t"%s" ~= "%s"', str, a, b))
+		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
 	else
-		print(format('SUCCESS\t"%s"\t"%s" ~= "%s"', str, a, b))
+		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
@@ -77,14 +77,17 @@ function testaux.assertle(a, b, str)
 	a = escape(a)
 	b = escape(b)
 	if a <= b then
-		print(format('SUCCESS\t"%s"\t "%s" <= "%s"', str, a, b))
+		print(format('SUCCESS\t"%s"\t "%s" <= "%s"', m, str, a, b))
 	else
-		print(format('FAIL\t"%s"\t"%s" <= "%s"', str, a, b))
+		print(format('FAIL\t"%s"\t"%s" <= "%s"', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
 end
 
+function testaux.module(name)
+	m = name
+end
 
 return testaux
 
