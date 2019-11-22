@@ -151,12 +151,8 @@ function M.listen(conf)
 	end
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
-	socket_pool[portid] = {
-		fd = portid,
-		disp = conf.disp,
-		co = false,
-		ctx = ctx.server(conf.cert, conf.key, conf.ciphers),
-	}
+	local c = ctx.server(conf.cert, conf.key, conf.ciphers)
+	new_socket(portid, c).ctx = c
 	return portid
 end
 
