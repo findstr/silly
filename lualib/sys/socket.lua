@@ -17,10 +17,29 @@ local function new_socket(fd)
 		delim = false,
 		co = false,
 		limit = 65535,
+		closing = false,
 		sbuffer = ns.new(fd),
 	}
 	assert(not socket_pool[fd], "new_socket fd already connected")
 	socket_pool[fd] = s
+end
+
+local function del_socket(s)
+	ns.free(s.sbuffer)
+	socket_pool[s.fd] = nil
+end
+
+local function suspend(s)
+	assert(not s.co)
+	local co = core.running()
+	s.co = co
+	return core.wait(co)
+end
+
+local function wakeup(s, dat)
+	local co = s.co
+	s.co = false
+	core.wakeup(co, dat)
 end
 
 function EVENT.accept(fd, _, portid, addr)
@@ -38,14 +57,12 @@ function EVENT.close(fd, _, errno)
 	if s == nil then
 		return
 	end
+	s.closing = true
 	assert(s.callback == nil)
-	ns.free(s.sbuffer)
 	if s.co then
-		local co = s.co
-		s.co = false
-		core.wakeup(co)
+		wakeup(s, false)
+		del_socket(s)
 	end
-	socket_pool[fd] = nil
 end
 
 function EVENT.data(fd, message)
@@ -53,37 +70,33 @@ function EVENT.data(fd, message)
 	if not s then
 		return
 	end
-	assert(s.callback == nil)
 	local sbuffer = s.sbuffer
-	ns.push(sbuffer, message)
-	if not s.delim then	--non suspend read
-		assert(not s.co)
-		return
-	end
+	local size = ns.push(sbuffer, message)
 	local delim = s.delim
-	if type(delim) == "number" then
-		assert(s.co)
-		local dat = ns.read(sbuffer, delim)
-		if dat then
-			local co = s.co
-			s.co = false
+	local typ = type(delim)
+	if typ == "number" then
+		if size >= delim then
+			local dat = ns.read(sbuffer, delim)
 			s.delim = false
-			core.wakeup(co, dat)
+			wakeup(s, dat)
 		end
-	elseif type(delim) == "string" then
-		assert(s.co)
-		local dat = ns.readline(sbuffer, delim)
-		if dat then
-			local co = s.co
-			s.co = false
-			s.delim = false
-			core.wakeup(co, dat)
+	else
+		if typ == "string" then
+			local dat = ns.readline(sbuffer, delim)
+			if dat then
+				s.delim = false
+				wakeup(s, dat)
+				return
+			end
+		end
+		if size > s.limit then
+			socket.close(fd)
 		end
 	end
 end
 
-local function socket_dispatch(type, fd, message, ...)
-	assert(EVENT[type])(fd, message, ...)
+local function socket_dispatch(typ, fd, message, ...)
+	EVENT[typ](fd, message, ...)
 end
 
 function socket.listen(port, disp, backlog)
@@ -120,32 +133,28 @@ end
 function socket.close(fd)
 	local s = socket_pool[fd]
 	if s == nil then
-		return
+		return false
 	end
-	if s.so then
-		core.wakeup(s.so)
+	if s.co then
+		wakeup(s, false)
 	end
-	ns.free(s.sbuffer)
-	socket_pool[fd] = nil
+	del_socket(s)
 	core.close(fd)
+	return true
 end
-
-local function suspend(s)
-	assert(not s.co)
-	local co = core.running()
-	s.co = co
-	return core.wait(co)
-end
-
 
 function socket.read(fd, n)
 	local s = socket_pool[fd]
 	if not s then
-		return nil
+		return false
 	end
 	local r = ns.read(s.sbuffer, n)
 	if r then
 		return r
+	end
+	if s.closing then
+		del_socket(s)
+		return false
 	end
 	s.delim = n
 	return suspend(s)
@@ -154,29 +163,37 @@ end
 function socket.readall(fd)
 	local s = socket_pool[fd]
 	if not s then
-		return nil
+		return false
 	end
-	return ns.readall(s.sbuffer)
+	local r = ns.readall(s.sbuffer)
+	if r == "" and s.closing then
+		del_socket(s)
+		return false
+	end
+	return r
 end
 
 function socket.readline(fd, delim)
 	delim = delim or "\n"
 	local s = socket_pool[fd]
 	if not s then
-		return nil
+		return false
 	end
 	local r = ns.readline(s.sbuffer, delim)
 	if r then
 		return r
 	end
-
+	if s.closing then
+		del_socket(s)
+		return false
+	end
 	s.delim = delim
 	return suspend(s)
 end
 
 function socket.write(fd, str)
 	local s = socket_pool[fd]
-	if not s then
+	if not s or s.closing then
 		return false, "already closed"
 	end
 	return core.write(fd, str)

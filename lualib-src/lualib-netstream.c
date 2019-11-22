@@ -179,7 +179,7 @@ lnew(lua_State *L)
 //@return
 //	node buffer
 
-static void
+static int
 push(lua_State *L, int sid, char *data, int sz)
 {
 	struct node_buffer *nb;
@@ -189,7 +189,7 @@ push(lua_State *L, int sid, char *data, int sz)
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
 	assert(nb->sid == sid);
 	append_node(nb, new);
-	return ;
+	return nb->size;
 }
 
 static int
@@ -360,6 +360,7 @@ lreadline(lua_State *L)
 static int
 lpush(lua_State *L)
 {
+	int size;
 	char *str;
 	struct silly_message_socket *msg = tosocket(lua_touserdata(L, NB + 1));
 	switch (msg->type) {
@@ -368,17 +369,19 @@ lpush(lua_State *L)
 		//prevent silly_work free the msg->data
 		//it will be exist until it be read out
 		msg->data = NULL;
-		push(L, msg->sid, str, msg->ud);
+		size = push(L, msg->sid, str, msg->ud);
 		break;
 	case SILLY_SACCEPT:
 	case SILLY_SCLOSE:
 	case SILLY_SCONNECTED:
 	default:
+		size = 0;
 		silly_log("lmessage unspport:%d\n", msg->type);
 		assert(!"never come here");
 		break;
 	}
-	return 0;
+	lua_pushinteger(L, size);
+	return 1;
 }
 
 static int

@@ -1,5 +1,7 @@
 local core = require "sys.core"
 local c = require "test.aux.c"
+local type = type
+local format = string.format
 local testaux = {}
 
 local rand = math.random
@@ -17,6 +19,21 @@ for k, v in pairs(c) do
 	testaux[k] = v
 end
 
+local function escape(a)
+	if type(a) == "string" then
+		return a:gsub("([\x0d\x0a])", function(s)
+			local c = s:byte(1)
+			if c == 0x0d then
+				return "\\r"
+			else
+				return "\\n"
+			end
+		end)
+	else
+		return a
+	end
+end
+
 function testaux.randomdata(sz)
 	local tbl = {}
 	for i = 1, sz do
@@ -32,33 +49,40 @@ function testaux.checksum(acc, str)
 	return acc
 end
 
-local function perror(str, a, b, op)
-	a = a or "(nil)"
-	b = b or "(nil)"
-	print(string.format('ASSERT "%s" FAIL "%s"%s"%s")', str, a, op, b))
-	print("\r\n" .. debug.traceback())
-	core.exit(1)
-end
-
 function testaux.asserteq(a, b, str)
+	a = escape(a)
+	b = escape(b)
 	if a == b then
-		return
+		print(format('SUCCESS\t"%s"\t"%s" == "%s"', str, a, b))
+	else
+		print(format('FAIL\t"%s"\t"%s" == "%s"', str, a, b))
+		print(debug.traceback(1))
+		core.exit(1)
 	end
-	perror(str, a, b, "==")
 end
 
 function testaux.assertneq(a, b, str)
+	a = escape(a)
+	b = escape(b)
 	if a ~= b then
-		return
+		print(format('SUCCESS\t"%s"\t"%s" ~= "%s"', str, a, b))
+	else
+		print(format('SUCCESS\t"%s"\t"%s" ~= "%s"', str, a, b))
+		print(debug.traceback(1))
+		core.exit(1)
 	end
-	perror(str, a, b, "~=")
 end
 
 function testaux.assertle(a, b, str)
+	a = escape(a)
+	b = escape(b)
 	if a <= b then
-		return
+		print(format('SUCCESS\t"%s"\t "%s" <= "%s"', str, a, b))
+	else
+		print(format('FAIL\t"%s"\t"%s" <= "%s"', str, a, b))
+		print(debug.traceback(1))
+		core.exit(1)
 	end
-	perror(str, a, b, "<=")
 end
 
 
