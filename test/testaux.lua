@@ -77,9 +77,9 @@ function testaux.assertle(a, b, str)
 	a = escape(a)
 	b = escape(b)
 	if a <= b then
-		print(format('SUCCESS\t"%s"\t "%s" <= "%s"', m, str, a, b))
+		print(format('%s\tSUCCESS\t"%s"\t "%s" <= "%s"', m, str, a, b))
 	else
-		print(format('FAIL\t"%s"\t"%s" <= "%s"', m, str, a, b))
+		print(format('%s\tFAIL\t"%s"\t"%s" <= "%s"', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end

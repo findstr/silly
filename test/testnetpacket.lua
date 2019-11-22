@@ -51,9 +51,6 @@ end
 local function pushbroken(sid, pk)
 	local pk2 = pk:sub(1, #pk - 1)
 	randompush(sid, pk2)
-	local fd, data = popdata()
-	testaux.assertneq(fd, nil, "fd ~= nil")
-	testaux.assertneq(data, nil, "fd ~= nil")
 end
 
 local function testpacket(push)

@@ -9,8 +9,7 @@ return function()
 		password="root",
 	}
 	db:connect()
-	local status, res = db:query("show databases;")
-	print("mysql show databases;", status)
-	testaux.asserteq(res[1].Database, "information_schema", "mysql query showdatabases;")
+	local status, res = db:query("select 0;")
+	testaux.asserteq(res[1]["0"], "0", "select 0;")
 end
 

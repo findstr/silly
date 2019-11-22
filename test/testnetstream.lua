@@ -21,20 +21,16 @@ return function()
 	ns.tpush(sb, fd, "\rworld\ntail\r\n")
 
 	local data = ns.read(sb, 1)
-	print("read 1 byte:", data)
-	testaux.asserteq(data, "a", "data == 'a'")
+	testaux.asserteq(data, "h", "data == 'a'")
 
 	data = ns.readline(sb, "a\r")
-	print("read line terminated by 'a\\r'", data)
-	testaux.asserteq(data, "elloa\r", "data == 'elloa\r'")
+	testaux.asserteq(data, "elloa\r", 'ns.readline(sb, "a\r")')
 
 	data = ns.readline(sb, "\n")
-	print("read line terminated by '\\n'", data)
-	testaux.asserteq(data, "world\n", "data == 'world\n'")
+	testaux.asserteq(data, "world\n", 'ns.readline(sb, "\n")')
 
 	data = ns.readline(sb, "\r\n")
-	print("read line terminated by '\\r\\n'", data)
-	testaux.asserteq(data, "tail\r\n", "data == 'tail\r\n'")
+	testaux.asserteq(data, "tail\r\n", 'ns.readline(sb, "\r\n")')
 
 	local push = {}
 	for i = 1, 2 * 1024 * 64 do
