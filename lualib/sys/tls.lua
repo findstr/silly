@@ -152,7 +152,9 @@ function M.listen(conf)
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
 	local c = ctx.server(conf.cert, conf.key, conf.ciphers)
-	new_socket(portid, c).ctx = c
+	local s = new_socket(portid, c)
+	s.ctx = c
+	s.disp = conf.disp
 	return portid
 end
 

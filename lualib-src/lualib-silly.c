@@ -468,7 +468,7 @@ ludpsend(lua_State *L)
 		return luaL_error(L, "netstream.pack unsupport:%s",
 			lua_typename(L, 2));
 	}
-	if (lua_type(L, idx) != LUA_TNIL)
+	if (!lua_isnoneornil(L, idx))
 		addr = (const uint8_t *)luaL_checklstring(L, idx, &addrlen);
 	err = silly_socket_udpsend(sid, buff, size, addr, addrlen, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);

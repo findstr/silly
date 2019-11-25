@@ -41,7 +41,7 @@ dispatch["/upload"] = function(req)
 end
 
 return function()
-	local sock = server.listen {
+	server.listen {
 		port = ":8080",
 		handler = function(req)
 			local c = dispatch[req.uri]
@@ -62,6 +62,5 @@ return function()
 	print(json.encode(res))
 	testaux.asserteq(res.body, "findstr", "http GET data validate")
 	testaux.asserteq(res.status, 200, "http GET status validate")
-	sock:close()
 end
 

@@ -67,7 +67,7 @@ function testaux.assertneq(a, b, str)
 	if a ~= b then
 		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
 	else
-		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
+		print(format('%s\tFAIL\t"%s"\t"%s" ~= "%s"', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end

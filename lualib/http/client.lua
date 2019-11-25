@@ -9,18 +9,23 @@ local insert = table.insert
 local concat = table.concat
 local client = {}
 local http_agent = format("User-Agent: Silly/%s", core.version)
+
+local default_port = {
+	["https"] = "443",
+	["wss"] = "443",
+	["http"] = "80",
+	["ws"] = "80",
+}
+
 local function parseurl(url)
 	local default = false
-	local scheme, host, port, path= match(url, "(http[s]-)://([^:/]+):?(%d*)(.*)")
+	local scheme, host, port, path= match(url, "^([^:]+)://([^:/]+):?(%d*)(.*)")
 	if path == "" then
 		path = "/"
 	end
 	if port == "" then
-		if scheme == "https" then
-			port = "443"
-		elseif scheme == "http" then
-			port = "80"
-		else
+		port = default_port[scheme]
+		if not port then
 			assert(false, "unsupport parse url scheme:" .. scheme)
 		end
 		default = true
@@ -34,7 +39,6 @@ local function send_request(sock, method, host, abs, header, body)
 	insert(header, format("Host: %s", host))
 	insert(header, format("Content-Length: %d", #body))
 	insert(header, http_agent)
-	insert(header, "Connection: keep-alive")
 	insert(header, "")
 	insert(header, body)
 	tmp = concat(header, "\r\n")

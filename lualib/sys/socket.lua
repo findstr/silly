@@ -20,7 +20,6 @@ local function new_socket(fd)
 		closing = false,
 		sbuffer = ns.new(fd),
 	}
-	assert(not socket_pool[fd], "new_socket fd already connected")
 	socket_pool[fd] = s
 end
 
@@ -58,7 +57,6 @@ function EVENT.close(fd, _, errno)
 		return
 	end
 	s.closing = true
-	assert(s.callback == nil)
 	if s.co then
 		wakeup(s, false)
 		del_socket(s)
@@ -191,13 +189,7 @@ function socket.readline(fd, delim)
 	return suspend(s)
 end
 
-function socket.write(fd, str)
-	local s = socket_pool[fd]
-	if not s or s.closing then
-		return false, "already closed"
-	end
-	return core.write(fd, str)
-end
+socket.write = core.write
 
 ---------udp
 local function new_udp(fd, callback)
@@ -205,21 +197,21 @@ local function new_udp(fd, callback)
 		fd = fd,
 		callback = callback,
 	}
-	assert(not socket_pool[fd], "new_udp fd already connected")
 	socket_pool[fd] = s
 end
 
 --udp client can be closed(because it use connect)
-local function udp_dispatch(type, fd, message, _, addr)
+local function udp_dispatch(typ, fd, message, _, addr)
 	local data
-	assert(type == "udp" or type == "close")
-	local cb = assert(socket_pool[fd]).callback
-	if type == "udp" then
+	local cb = socket_pool[fd].callback
+	if typ == "udp" then
 		data = ns.todata(message)
 		cb(data, addr)
-	elseif type == "close" then
+	elseif typ == "close" then
 		cb()
 		socket_pool[fd] = nil
+	else
+		assert(false, "type must be 'udp' or 'close'")
 	end
 end
 
@@ -239,12 +231,7 @@ function socket.udp(addr, callback, bindip)
 	return fd
 end
 
-function socket.udpwrite(fd, str, addr)
-	if not socket_pool[fd] then
-		return false
-	end
-	return core.udpwrite(fd, str, addr)
-end
+socket.udpwrite = core.udpwrite
 
 return socket
 

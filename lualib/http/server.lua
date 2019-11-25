@@ -102,7 +102,7 @@ local function httpwrite(sock, status, header, body)
 	insert(header, format("Content-Length: %d", #body))
 	local tmp = concat(header, "\r\n")
 	tmp = tmp .. "\r\n\r\n" .. body
-	sock:write(tmp)
+	return sock:write(tmp)
 end
 
 local fmt_urlencoded = "application/x-www-form-urlencoded"
@@ -156,23 +156,21 @@ end
 local server = {
 	write = httpwrite,
 	listen = function (conf)
-		local fds = {nil, nil}
+		local fd1, fd2
 		local handler = conf.handler
 		local port = conf.port
 		if port then
-			local fd = socket.listen(port, httpd("http", handler))
-			fds[1] = stream.accept("http", fd)
+			fd1 = socket.listen(port, httpd("http", handler))
 		end
 		if conf.tls_port then
-			local fd = tls.listen {
+			fd2 = tls.listen {
 				disp = httpd("https", handler),
 				port = conf.tls_port,
 				key = conf.tls_key,
 				cert = conf.tls_cert,
 			}
-			fds[#fds + 1] = stream.accept("https", fd)
 		end
-		return table.unpack(fds)
+		return fd1, fd2
 	end
 }
 

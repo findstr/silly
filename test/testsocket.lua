@@ -4,7 +4,7 @@ local tls = require "sys.tls"
 local testaux = require "testaux"
 
 local listen_cb
-local listenfd = socket.listen(":100001", function(fd, addr)
+local listenfd = socket.listen(":10001", function(fd, addr)
 	if listen_cb then
 		listen_cb(fd)
 		listen_cb = nil
@@ -14,7 +14,7 @@ local listenfd = socket.listen(":100001", function(fd, addr)
 end)
 
 local tlsfd = tls.listen {
-	port = ":100002",
+	port = ":10002",
 	cert = "test/cert.pem",
 	key = "test/key.pem",
 	disp = function(fd, addr)
@@ -304,12 +304,12 @@ end
 return function()
 	IO = socket
 	testaux.module("socet")
-	test_read(":100001")
-	test_close(":100001")
+	test_read(":10001")
+	test_close(":10001")
 	IO = tls
 	testaux.module("tls")
 	IO.limit = function() end
-	test_read(":100002")
-	test_close(":100002")
+	test_read(":10002")
+	test_close(":10002")
 end
 

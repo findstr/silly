@@ -18,7 +18,7 @@ PLATS=linux macosx
 platform:
 	@echo "'make PLATFORM' where PLATFORM is one of these:"
 	@echo "$(PLATS)"
-CCFLAG = -g -O2 -Wall -Wextra
+CCFLAG = -g3 -O2 -Wall -Wextra
 LDFLAG := -lm -ldl
 
 linux:CCFLAG += -D__linux__

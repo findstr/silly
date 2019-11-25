@@ -53,7 +53,6 @@ local function read_body(hdr, sock)
 		end
 	end
 	return 200, body
-
 end
 
 local function read_multipart_formdata(boundary, sock)
@@ -98,20 +97,26 @@ end
 
 local function wrap_one(func)
 	return function(self, x)
-		return func(self[1], x)
-	end
-end
-
-local function wrap_close(func)
-	return function(self, x)
 		local fd = self[1]
 		if fd then
-			func(fd)
-			self[1] = nil
+			return func(fd, x)
+		else
+			return false
 		end
 	end
 end
 
+local function wrap_close(func)
+	return function(self)
+		local ok = false
+		local fd = self[1]
+		if fd then
+			ok = func(fd)
+			self[1] = nil
+		end
+		return ok
+	end
+end
 
 local function gc(self)
 	self:close()
@@ -123,7 +128,8 @@ local tls_mt = {
 	write = wrap_one(tls.write),
 	readline = wrap_one(tls.readline),
 	recvrequest = recv_request,
-	__gc = gc
+	__gc = gc,
+	__index = nil,
 }
 
 local socket_mt = {
@@ -132,7 +138,8 @@ local socket_mt = {
 	write = wrap_one(socket.write),
 	readline = wrap_one(socket.readline),
 	recvrequest = recv_request,
-	__gc = gc
+	__gc = gc,
+	__index = nil,
 }
 
 tls_mt.__index = tls_mt
@@ -140,7 +147,7 @@ socket_mt.__index = socket_mt
 
 local scheme_io = {
 	["https"] = tls_mt,
-	["wss"] = socket_mt,
+	["wss"] = tls_mt,
 	["http"] = socket_mt,
 	["ws"] = socket_mt,
 }

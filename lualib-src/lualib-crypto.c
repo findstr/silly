@@ -34,6 +34,28 @@ lmd5(lua_State *L)
 }
 
 static int
+lxor(lua_State *L)
+{
+	size_t i;
+	const char *key;
+	size_t key_len;
+	const char *dat;
+	size_t dat_len;
+	luaL_Buffer b;
+	key = luaL_checklstring(L, 1, &key_len);
+	dat = luaL_checklstring(L, 2, &dat_len);
+	luaL_buffinitsize(L, &b, dat_len);
+	luaL_argcheck(L, key_len > 0, 1, "crypto.xor key can't be empty");
+	for (i = 0; i < dat_len; i++) {
+		uint8_t k = key[i % key_len];
+		uint8_t c = (uint8_t)dat[i] ^ k;
+		luaL_addchar(&b, c);
+	}
+	luaL_pushresult(&b);
+	return 1;
+}
+
+static int
 lrandomkey(lua_State *L)
 {
 	int i;
@@ -405,6 +427,7 @@ luaopen_sys_crypto(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"md5", lmd5},
+		{"xor", lxor},
 		{"sha1", lsha1},
 		{"hmac", lhmac_sha1},
 		{"randomkey", lrandomkey},

@@ -17,6 +17,7 @@ local modules = {
 	"testhttp",
 	"testredis",
 	"testmysql",
+	"testwebsocket",
 }
 
 local M = ""

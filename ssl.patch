@@ -2,7 +2,7 @@ diff --git a/Makefile b/Makefile
 index 2b98cac..ec07d6a 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -82,7 +82,7 @@ $(LUACLIB_PATH):
+@@ -87,7 +87,7 @@ $(LUACLIB_PATH):
  	mkdir $(LUACLIB_PATH)
 
  $(LUACLIB_PATH)/sys.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
