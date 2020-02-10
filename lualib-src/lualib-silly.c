@@ -487,8 +487,6 @@ lntop(lua_State *L)
 	return 1;
 }
 
-
-
 static int
 lclose(lua_State *L)
 {
@@ -497,6 +495,24 @@ lclose(lua_State *L)
 	sid = luaL_checkinteger(L, 1);
 	err = silly_socket_close(sid);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
+	return 1;
+}
+
+static int
+lreadctrl(lua_State *L)
+{
+	int sid = luaL_checkinteger(L, 1);
+	int ctrl = lua_toboolean(L, 2);
+	silly_socket_readctrl(sid, ctrl);
+	return 0;
+}
+
+static int
+lsendsize(lua_State *L)
+{
+	int sid = luaL_checkinteger(L, 1);
+	int size = silly_socket_sendsize(sid);
+	lua_pushinteger(L, size);
 	return 1;
 }
 
@@ -605,6 +621,8 @@ luaopen_sys_silly(lua_State *L)
 		{"udpsend", ludpsend},
 		{"ntop", lntop},
 		{"close", lclose},
+		{"readctrl", lreadctrl},
+		{"sendsize", lsendsize},
 		//probe
 		{"version", lversion},
 		{"memused", lmemused},

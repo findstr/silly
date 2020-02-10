@@ -1,7 +1,7 @@
 #ifndef _SILLY_CONF_H
 #define _SILLY_CONF_H
 
-#define USE_JEMALLOC
+//#define USE_JEMALLOC
 
 #ifdef __linux__
 

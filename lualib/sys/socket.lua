@@ -16,7 +16,6 @@ local function new_socket(fd)
 		fd = fd,
 		delim = false,
 		co = false,
-		limit = 65535,
 		closing = false,
 		sbuffer = ns.new(fd),
 	}
@@ -87,9 +86,6 @@ function EVENT.data(fd, message)
 				return
 			end
 		end
-		if size > s.limit then
-			socket.close(fd)
-		end
 	end
 end
 
@@ -125,7 +121,7 @@ function socket.limit(fd, limit)
 	if s == nil then
 		return false
 	end
-	s.limit = limit
+	return ns.limit(s.sbuffer, limit)
 end
 
 function socket.close(fd)
@@ -158,12 +154,12 @@ function socket.read(fd, n)
 	return suspend(s)
 end
 
-function socket.readall(fd)
+function socket.readall(fd, max)
 	local s = socket_pool[fd]
 	if not s then
 		return false
 	end
-	local r = ns.readall(s.sbuffer)
+	local r = ns.readall(s.sbuffer, max)
 	if r == "" and s.closing then
 		del_socket(s)
 		return false
@@ -189,7 +185,16 @@ function socket.readline(fd, delim)
 	return suspend(s)
 end
 
+function socket.recvsize(fd)
+	local s = socket_pool[fd]
+	if not s then
+		return 0
+	end
+	return ns.size(s.sbuffer)
+end
+
 socket.write = core.write
+socket.sendsize = core.sendsize
 
 ---------udp
 local function new_udp(fd, callback)

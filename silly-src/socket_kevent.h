@@ -3,6 +3,9 @@
 
 #include <sys/event.h>
 
+#define SP_IN        (1U)
+#define SP_OUT       (2U)
+
 #define SP_READ(e)   (e->filter == EVFILT_READ)
 #define SP_WRITE(e)  (e->filter == EVFILT_WRITE)
 #define SP_ERR(e)    ((e->filter != EVFILT_READ) && (e->filter != EVFILT_WRITE))
@@ -45,16 +48,18 @@ sp_del(sp_t sp, int fd)
 	return 0;
 }
 
-static inline int
-sp_write_enable(sp_t sp, int fd, void *ud, int enable)
-{
-	struct kevent event[1];
-	int ctrl = enable ? EV_ENABLE : EV_DISABLE;
-	(void)ud;
 
-	EV_SET(&event[0], fd, EVFILT_WRITE, ctrl, 0, 0, ud);
-	return kevent(sp, event, 1, NULL, 0, NULL);
+static inline int
+sp_ctrl(sp_t sp, int fd, void *ud, int flag)
+{
+	#define bit(n, flag)	(((n) & flag) ? EV_ENABLE : EV_DISABLE)
+	struct kevent events[2];
+	EV_SET(&events[0], fd, EVFILT_READ, bit(flag, SP_IN), 0, 0, ud);
+	EV_SET(&events[1], fd, EVFILT_WRITE, bit(flag, SP_OUT), 0, 0, ud);
+	return kevent(sp, events, 2, NULL, 0, NULL);
+	#undef bit
 }
+
 
 static inline int
 sp_add(sp_t sp, int fd, void *ud)
@@ -72,11 +77,9 @@ sp_add(sp_t sp, int fd, void *ud)
 		EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, ud);
 		kevent(sp, event, 1, NULL, 0, NULL);
 	}
-
-	ret = sp_write_enable(sp, fd, ud, 0);
+	ret = sp_ctrl(sp, fd, ud, SP_IN);
 	if (ret == -1)
 		sp_del(sp, fd);
-
 	return ret;
 }
 

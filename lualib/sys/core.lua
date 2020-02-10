@@ -33,12 +33,17 @@ local socket_bind = silly.bind
 local socket_connect = silly.connect
 local socket_udp = silly.udp
 local socket_close = silly.close
+local socket_readctrl = silly.readctrl
 core.packmulti = silly.packmulti
 core.freemulti = silly.freemulti
 core.multicast = silly.multicast
 core.write = silly.send
 core.udpwrite = silly.udpsend
 core.ntop = silly.ntop
+core.sendsize = silly.sendsize
+core.readctrl = function (sid, ctrl)
+	return socket_readctrl(sid, ctrl == "enable")
+end
 --timer
 local silly_timeout = silly.timeout
 core.now = silly.timenow

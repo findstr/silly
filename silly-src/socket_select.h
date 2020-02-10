@@ -22,6 +22,9 @@
 #define SP_ERR(e)    (e->rwstatus & SP_ER_FLAG)
 #define SP_UD(e)     (e->ud)
 
+#define SP_IN        SP_RD_FLAG
+#define SP_OUT       SP_WR_FLAG
+
 typedef struct sp_event {
 	int fd;
 	int rwctrl; /* 0x01 --> read, 0x02 --> write */
@@ -38,6 +41,7 @@ static inline sp_t
 sp_create(int nr)
 {
 	int i;
+	(void)nr;
 	sp_t sp = silly_malloc(sizeof(struct sp_poll));
 	for (i = 0; i < SP_MAX; i++) {
 		sp->event[i].fd = -1;
@@ -63,10 +67,10 @@ sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 	fd_set rfds;
 	fd_set wfds;
 	fd_set efds;
+	(void)cnt;
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
 	FD_ZERO(&efds);
-
 	for (i = 0; i < SP_MAX; i++) {
 		int fd = sp->event[i].fd;
 		if (fd > max)
@@ -128,20 +132,19 @@ sp_del(sp_t sp, int fd)
 }
 
 static inline int
-sp_write_enable(sp_t sp, int fd, void *ud, int enable)
+sp_ctrl(sp_t sp, int fd, void *ud, int flag)
 {
 	int i;
 	for (i = 0; i < SP_MAX; i++) {
-		if (sp->event[i].fd < 0) {
-			assert(sp->event[i].fd == fd);
-			if (enable)
-				sp->event[i].rwctrl |= SP_WR_FLAG;
-			else
-				sp->event[i].rwctrl &= ~SP_WR_FLAG;
+		int s = sp->event[i].fd;
+		if (s == fd) {
+			sp->event[i].ud = ud;
+			sp->event[i].rwctrl = flag;
 			return 0;
 		}
 	}
 	return -1;
+
 }
 
 #endif

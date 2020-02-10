@@ -35,7 +35,7 @@ local function test_read(port)
 
 	local WAIT
 	listen_cb = function(fd)
-		IO.limit(fd, 1024*1024*1024)
+		IO.limit(fd, 8*1024*1024)
 		while true do
 			local n = IO.readline(fd)
 			assert(n,n)
@@ -60,7 +60,7 @@ local function test_read(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	IO.limit(fd, 1024 * 1024 * 1024)
+	IO.limit(fd, 8 * 1024 * 1024)
 	assert(fd >= 0)
 	local start = 8
 	local total = 32 * 1024 * 1024
@@ -283,7 +283,6 @@ local function test_close(port)
 	print("CASE8")
 	listen_cb = function(fd, addr)
 		local ok = IO.write(fd, "po")
-		testaux.asserteq(ok, true, "server write `po`")
 		core.sleep(200)
 		local ok = IO.write(fd, "ng")
 		testaux.asserteq(ok, false, "server write `ng`")

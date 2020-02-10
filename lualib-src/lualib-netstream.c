@@ -7,6 +7,7 @@
 
 #include "silly.h"
 #include "silly_log.h"
+#include "silly_socket.h"
 #include "silly_malloc.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -29,6 +30,7 @@ struct node_buffer {
 	int sid;
 	int size;
 	int offset;
+	int limit;
 	struct node *head;
 	struct node **tail;
 };
@@ -163,6 +165,7 @@ lnew(lua_State *L)
 	nb->offset = 0;
 	nb->size = 0;
 	nb->head = NULL;
+	nb->limit = 32*1024*1024;
 	nb->tail = &nb->head;
 	if (luaL_newmetatable(L, "nodebuffer")) {
 		lua_pushvalue(L, POOL);
@@ -182,13 +185,18 @@ lnew(lua_State *L)
 static int
 push(lua_State *L, int sid, char *data, int sz)
 {
+	int oldsize, limit;
 	struct node_buffer *nb;
 	struct node *new = new_node(L);
 	new->size = sz;
 	new->buff = data;
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
 	assert(nb->sid == sid);
+	limit = nb->limit;
+	oldsize = nb->size;
 	append_node(nb, new);
+	if (oldsize < limit && nb->size >= limit)
+		silly_socket_readctrl(nb->sid, 0);
 	return nb->size;
 }
 
@@ -285,19 +293,27 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 static int
 lreadall(lua_State *L)
 {
+	int readsize, sz;
 	struct node_buffer *nb;
 	if (lua_isnil(L, 1)) {
 		lua_pushliteral(L, "");
 		return 1;
 	}
-	nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
-	assert(nb);
-	if (nb->size > 0) {
-		int sz = nb->size;
+	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
+	readsize = luaL_optinteger(L, NB+1, INT_MAX);
+	sz = nb->size;
+	if (sz == 0) {
+		lua_pushliteral(L, "");
+	} else if (readsize >= sz) {
 		nb->size = 0;
+		if (sz >= nb->limit)
+			silly_socket_readctrl(nb->sid, 1);
 		pushstring(L, nb, sz);
 	} else {
-		lua_pushliteral(L, "");
+		nb->size = sz - readsize;
+		if (sz >= nb->limit && nb->size < nb->limit)
+			silly_socket_readctrl(nb->sid, 1);
+		pushstring(L, nb, readsize);
 	}
 	return 1;
 }
@@ -310,6 +326,7 @@ lreadall(lua_State *L)
 static int
 lread(lua_State *L)
 {
+	int oldsize, limit;
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB)) {
 		lua_pushnil(L);
@@ -325,7 +342,11 @@ lread(lua_State *L)
 		lua_pushnil(L);
 		return 1;
 	}
-	nb->size -= readn;
+	limit = nb->limit;
+	oldsize = nb->size;
+	nb->size = oldsize - readn;
+	if (oldsize >= limit && nb->size < limit)
+		silly_socket_readctrl(nb->sid, 1);
 	return pushstring(L, nb, readn);
 }
 
@@ -338,10 +359,10 @@ lread(lua_State *L)
 static int
 lreadline(lua_State *L)
 {
-	int readn;
 	const char *delim;
 	size_t delim_len;
 	struct node_buffer *nb;
+	int readn, oldsize, limit;
 	if (lua_isnil(L, NB)) {
 		lua_pushnil(L);
 		return 1;
@@ -353,9 +374,51 @@ lreadline(lua_State *L)
 		lua_pushnil(L);
 		return 1;
 	}
-	nb->size -= readn;
+	limit = nb->limit;
+	oldsize = nb->size;
+	nb->size = oldsize - readn;
+	if (oldsize >= limit && nb->size < limit)
+		silly_socket_readctrl(nb->sid, 1);
 	return pushstring(L, nb, readn);
 }
+
+//@input
+//	node buffer
+//@return
+//	buff size
+static int
+lsize(lua_State *L)
+{
+	struct node_buffer *nb;
+	if (lua_isnil(L, NB)) {
+		lua_pushinteger(L, 0);
+	} else {
+		nb = luaL_checkudata(L, NB, "nodebuffer");
+		lua_pushinteger(L, nb->size);
+	}
+	return 1;
+}
+
+//@input
+// node buffer
+//@return
+//	previously limit
+static int
+llimit(lua_State *L)
+{
+	int prev, limit;
+	struct node_buffer *nb;
+	if (lua_isnil(L, NB)) {
+		return -1;
+	}
+	nb = luaL_checkudata(L, NB, "nodebuffer");
+	limit = luaL_checkinteger(L, NB+1);
+	prev = nb->limit;
+	nb->limit = limit;
+	lua_pushinteger(L, prev);
+	return 1;
+}
+
 
 static int
 lpush(lua_State *L)
@@ -423,6 +486,8 @@ int luaopen_sys_netstream(lua_State *L)
 		{"free", lfree},
 		{"push", lpush},
 		{"read", lread},
+		{"size", lsize},
+		{"limit", llimit},
 		{"readline", lreadline},
 		{"readall", lreadall},
 		{"todata", ltodata},

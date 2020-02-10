@@ -4,6 +4,7 @@ local testaux = require "testaux"
 local modules = {
 	"testjson",
 	"testtimer",
+	"testreadenable",
 	"testsocket",
 	"testdns",
 	"testrpc",
@@ -15,9 +16,9 @@ local modules = {
 	"testchannel",
 	"testcrypto",
 	"testhttp",
+	"testwebsocket",
 	"testredis",
 	"testmysql",
-	"testwebsocket",
 }
 
 local M = ""

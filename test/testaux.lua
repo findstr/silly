@@ -1,6 +1,7 @@
 local core = require "sys.core"
 local c = require "test.aux.c"
 local type = type
+local tostring = tostring
 local format = string.format
 local testaux = {}
 local m = ""
@@ -49,10 +50,20 @@ function testaux.checksum(acc, str)
 	return acc
 end
 
+local function tostringx(a, len)
+	a = tostring(a)
+	if #a > len then
+		a = a:sub(1, len) .. "..."
+	end
+	return a
+end
+
 function testaux.asserteq(a, b, str)
-	a = escape(a)
-	b = escape(b)
-	if a == b then
+	local aa = escape(a)
+	local bb = escape(b)
+	a = tostringx(aa, 30)
+	b = tostringx(bb, 30)
+	if aa == bb then
 		print(format('%s\tSUCCESS\t"%s"\t"%s" == "%s"', m, str, a, b))
 	else
 		print(format('%s\tFAIL\t"%s"\t"%s" == "%s"', m, str, a, b))
@@ -62,9 +73,11 @@ function testaux.asserteq(a, b, str)
 end
 
 function testaux.assertneq(a, b, str)
-	a = escape(a)
-	b = escape(b)
-	if a ~= b then
+	local aa = escape(a)
+	local bb = escape(b)
+	a = tostringx(aa, 30)
+	b = tostringx(bb, 30)
+	if aa ~= bb then
 		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
 	else
 		print(format('%s\tFAIL\t"%s"\t"%s" ~= "%s"', m, str, a, b))
@@ -74,9 +87,11 @@ function testaux.assertneq(a, b, str)
 end
 
 function testaux.assertle(a, b, str)
-	a = escape(a)
-	b = escape(b)
-	if a <= b then
+	local aa = escape(a)
+	local bb = escape(b)
+	a = tostringx(aa, 30)
+	b = tostringx(bb, 30)
+	if aa <= bb then
 		print(format('%s\tSUCCESS\t"%s"\t "%s" <= "%s"', m, str, a, b))
 	else
 		print(format('%s\tFAIL\t"%s"\t"%s" <= "%s"', m, str, a, b))

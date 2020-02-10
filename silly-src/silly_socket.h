@@ -17,8 +17,12 @@ int silly_socket_connect(const char *ip, const char *port,
 int silly_socket_udpbind(const char *ip, const char *port);
 int silly_socket_udpconnect(const char *ip, const char *port,
 		const char *bindip, const char *bindport);
+
 int silly_socket_salen(const void *data);
 const char *silly_socket_ntop(const void *data, int *size);
+
+void silly_socket_readctrl(int sid, int ctrl);
+int silly_socket_sendsize(int sid);
 
 int silly_socket_send(int sid, uint8_t *buff, size_t sz,
 	silly_finalizer_t finalizer);
