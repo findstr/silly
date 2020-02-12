@@ -480,10 +480,10 @@ lntop(lua_State *L)
 {
 	int size;
 	const char *addr;
-	const char *str;
+	char name[SOCKET_NAMELEN];
 	addr = luaL_checkstring(L, 1);
-	str = silly_socket_ntop((uint8_t *)addr, &size);
-	lua_pushlstring(L, str, size);
+	size = silly_socket_ntop((uint8_t *)addr, name);
+	lua_pushlstring(L, name, size);
 	return 1;
 }
 
@@ -583,6 +583,54 @@ lpollapi(lua_State *L)
 	return 1;
 }
 
+static inline void
+table_set_int(lua_State *L, int table, const char *k, int v)
+{
+	lua_pushinteger(L, v);
+	lua_setfield(L, table-1, k);
+}
+
+static inline void
+table_set_str(lua_State *L, int table, const char *k, const char *v)
+{
+	lua_pushstring(L, v);
+	lua_setfield(L, table-1, k);
+}
+
+static int
+lnetinfo(lua_State *L)
+{
+	struct silly_netinfo info;
+	silly_socket_netinfo(&info);
+	lua_newtable(L);
+	table_set_int(L, -1, "tcplisten", info.tcplisten);
+	table_set_int(L, -1, "udpbind", info.udpbind);
+	table_set_int(L, -1, "connecting", info.connecting);
+	table_set_int(L, -1, "udpclient", info.udpclient);
+	table_set_int(L, -1, "tcpclient", info.tcpclient);
+	table_set_int(L, -1, "tcphalfclose", info.tcphalfclose);
+	table_set_int(L, -1, "sendsize", info.sendsize);
+	return 1;
+}
+
+static int
+lsocketinfo(lua_State *L)
+{
+	int sid;
+	struct silly_socketinfo info;
+	sid = luaL_checkinteger(L, 1);
+	silly_socket_socketinfo(sid, &info);
+	lua_newtable(L);
+	table_set_int(L, -1, "fd", info.sid);
+	table_set_int(L, -1, "os_fd", info.fd);
+	table_set_int(L, -1, "sendsize", info.sendsize);
+	table_set_str(L, -1, "type", info.type);
+	table_set_str(L, -1, "protocol", info.protocol);
+	table_set_str(L, -1, "localaddr", info.localaddr);
+	table_set_str(L, -1, "remoteaddr", info.remoteaddr);
+	return 1;
+}
+
 static int
 ltimerresolution(lua_State *L)
 {
@@ -631,6 +679,8 @@ luaopen_sys_silly(lua_State *L)
 		{"msgsize", lmsgsize},
 		{"cpuinfo", lcpuinfo},
 		{"pollapi", lpollapi},
+		{"netinfo", lnetinfo},
+		{"socketinfo", lsocketinfo},
 		{"timerresolution", ltimerresolution},
 		//end
 		{NULL, NULL},

@@ -8,7 +8,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <netdb.h>
-#include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -35,7 +34,6 @@
 #define MAX_UDP_PACKET (512)
 #define MAX_SOCKET_COUNT (1 << SOCKET_MAX_EXP)
 #define MIN_READBUF_LEN (64)
-#define NAMELEN	(INET6_ADDRSTRLEN + 8)	//[ipv6]:port
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 #define HASH(sid) (sid & (MAX_SOCKET_COUNT - 1))
@@ -53,6 +51,24 @@ enum stype {
 	STYPE_HALFCLOSE,	//socket is closed
 	STYPE_CONNECTING,	//socket is connecting, if success it will be STYPE_SOCKET
 	STYPE_CTRL,		//pipe cmd type
+};
+
+static const char *protocol_name[] = {
+	"INVALID",
+	"TCP",
+	"UDP",
+	"PIPE",
+};
+
+static const char *stype_name[] = {
+	"RESERVE",
+	"ALLOCED",
+	"LISTEN",
+	"UDPBIND",
+	"SOCKET",
+	"HALFCLOSE",
+	"CONNECTING",
+	"CTRL",
 };
 
 //replace 'sockaddr_storage' with this struct,
@@ -109,7 +125,6 @@ struct silly_socket {
 	uint8_t *cmdbuf;
 	//reserve id(for socket fd remap)
 	int reserveid;
-	char namebuf[NAMELEN];
 };
 
 //for read one complete packet once system call, fix the packet length
@@ -372,11 +387,11 @@ keepalive(int fd)
 }
 
 static int
-ntop(struct silly_socket *ss, union sockaddr_full *addr)
+ntop(union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
 {
 	uint16_t port;
 	int namelen, family;
-	char *buf = ss->namebuf;
+	char *buf = namebuf;
 	family = addr->sa.sa_family;
 	if (family == AF_INET) {
 		port = addr->v4.sin_port;
@@ -391,7 +406,7 @@ ntop(struct silly_socket *ss, union sockaddr_full *addr)
 		buf[namelen++] = ']';
 	}
 	port = ntohs(port);
-	namelen += snprintf(&buf[namelen], NAMELEN - namelen, ":%d", port);
+	namelen += snprintf(&buf[namelen], SOCKET_NAMELEN - namelen, ":%d", port);
 	return namelen;
 }
 
@@ -439,6 +454,7 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 	union sockaddr_full addr;
 	struct silly_message_socket *sa;
 	socklen_t len = sizeof(addr);
+	char namebuf[SOCKET_NAMELEN];
 #ifndef USE_ACCEPT4
 	fd = accept(listen->fd, &addr.sa, &len);
 #else
@@ -469,14 +485,14 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 		freesocket(ss, s);
 		return ;
 	}
-	int namelen = ntop(ss, &addr);
+	int namelen = ntop(&addr, namebuf);
 	sa = silly_malloc(sizeof(*sa) + namelen + 1);
 	sa->type = SILLY_SACCEPT;
 	sa->sid = s->sid;
 	sa->ud = listen->sid;
 	sa->data = (uint8_t *)(sa + 1);
 	*sa->data = namelen;
-	memcpy(sa->data + 1, ss->namebuf, namelen);
+	memcpy(sa->data + 1, namebuf, namelen);
 	silly_worker_push(tocommon(sa));
 	return ;
 }
@@ -741,13 +757,12 @@ silly_socket_salen(const void *data)
 	return SA_LEN(addr->sa);
 }
 
-const char *
-silly_socket_ntop(const void *data, int *size)
+int
+silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN])
 {
 	union sockaddr_full *addr;
 	addr = (union sockaddr_full *)data;
-	*size = ntop(SSOCKET, addr);
-	return SSOCKET->namebuf;
+	return ntop(addr, name);
 }
 
 void
@@ -1068,11 +1083,12 @@ tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	addr = &cmd->addr;
 	err = connect(fd, &addr->sa, SA_LEN(addr->sa));
 	if (unlikely(err == -1 && errno != EINPROGRESS)) {	//error
+		char namebuf[SOCKET_NAMELEN];
 		const char *fmt = "[socket] connect %s,errno:%d\n";
 		report_close(ss, s, errno);
 		freesocket(ss, s);
-		ntop(ss,  addr);
-		silly_log(fmt, ss->namebuf, errno);
+		ntop(addr, namebuf);
+		silly_log(fmt, namebuf, errno);
 		return ;
 	} else if (err == 0) {	//connect
 		s->type = STYPE_SOCKET;
@@ -1602,4 +1618,71 @@ silly_socket_pollapi()
 {
 	return SOCKET_POLL_API;
 }
+
+void
+silly_socket_netinfo(struct silly_netinfo *info)
+{
+	int i;
+	struct socket *s;
+	s = &SSOCKET->socketpool[0];
+	memset(info, 0, sizeof(*info));
+	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+		enum stype type = s->type;
+		switch (type) {
+		case STYPE_SOCKET:
+			if (s->protocol == PROTOCOL_TCP)
+				++info->tcpclient;
+			else if (s->protocol == PROTOCOL_UDP)
+				++info->udpclient;
+			info->sendsize += silly_socket_sendsize(s->sid);
+			break;
+		case STYPE_HALFCLOSE:
+			++info->tcphalfclose;
+			break;
+		case STYPE_LISTEN:
+			++info->tcplisten;
+			break;
+		case STYPE_UDPBIND:
+			++info->udpbind;
+			break;
+		default:
+			break;
+		}
+		++s;
+	}
+}
+
+void
+silly_socket_socketinfo(int sid, struct silly_socketinfo *info)
+{
+	struct socket *s;
+	s = &SSOCKET->socketpool[HASH(sid)];
+	memset(info, 0, sizeof(*info));
+	info->sid = s->sid;
+	info->fd = s->fd;
+	info->type = stype_name[s->type];
+	info->protocol = protocol_name[s->protocol];
+	if (s->fd >= 0 && s->protocol != PROTOCOL_PIPE) {
+		int namelen;
+		socklen_t len;
+		union sockaddr_full addr;
+		char namebuf[SOCKET_NAMELEN];
+		len = sizeof(addr);
+		getsockname(s->fd, (struct sockaddr *)&addr, &len);
+		namelen = ntop(&addr, namebuf);
+		memcpy(info->localaddr, namebuf, namelen);
+		if (s->type != STYPE_LISTEN) {
+			len = sizeof(addr);
+			getpeername(s->fd, (struct sockaddr *)&addr, &len);
+			namelen = ntop(&addr, namebuf);
+			memcpy((void *)info->remoteaddr, namebuf, namelen);
+		} else {
+			info->remoteaddr[0] = '*';
+			info->remoteaddr[1] = '.';
+			info->remoteaddr[2] = '*';
+		}
+	}
+	return ;
+}
+
 

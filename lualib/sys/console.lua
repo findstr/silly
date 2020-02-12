@@ -22,10 +22,12 @@ local desc = {
 "HELP: List command description [HELP]",
 "PING: Test connection alive [PING <text>]",
 "GC: Performs a full garbage-collection cycle. [GC]",
-"INFO: Show all information of server, include MINFO,QINFO,CPUINFO,...[INFO]",
+"INFO: Show all information of server, include CPUINFO,MINFO,QINFO,NETINFO,...[INFO]",
 "MINFO: Show memory infomation [MINFO <kb|mb>]",
 "QINFO: Show framework message queue size[QINFO]",
+"NETINFO: Show network info[NETINFO]",
 "CPUINFO: Show system time and user time statistics [CPUINFO]",
+"SOCKET: Show socket detail information[SOCKET]",
 "PATCH: Hot patch the code [PATCH <fixfile> <modulename> <funcname> ...]",
 "DEBUG: Enter Debug mode",
 }
@@ -85,6 +87,11 @@ function console.gc()
 	return format("Lua Mem Used:%.2f KiB", collectgarbage("count"))
 end
 
+function console.cpuinfo()
+	local sys, usr = core.cpuinfo()
+	return format("#CPU\r\ncpu_sys:%.2fs\r\ncpu_user:%.2fs", sys, usr)
+end
+
 function console.minfo(_, fmt)
 	local tbl = {}
 	local sz = core.memused()
@@ -121,9 +128,25 @@ function console.qinfo()
 	return format("#Message\r\nmessage pending:%d", sz)
 end
 
-function console.cpuinfo()
-	local sys, usr = core.cpuinfo()
-	return format("#CPU\r\ncpu_sys:%.2fs\r\ncpu_user:%.2fs", sys, usr)
+function console.netinfo()
+	local info = core.netinfo()
+	local a = format("#NET\ntcp_listen:%s\ntcp_client:%s\n\z
+		tcp_connecting:%s\ntcp_halfclose:%s\n", info.tcplisten,
+		info.tcpclient, info.connecting, info.tcphalfclose)
+	local b = format("udp_bind:%s\nudp_client:%s\n", info.udpbind, info.udpclient)
+	local c = format("send_buffer_size:%s\n", info.sendsize)
+	return a .. b .. c
+end
+
+function console.socket(_, fd)
+	local info = core.socketinfo(fd)
+	local a, b = format("#Socket\nfd:%s\nos_fd:%s\ntype:%s\n\z
+		protocol:%s\nsendsize:%s\n", info.fd, info.os_fd,
+		info.type, info.protocol, info.sendsize), ""
+	if info.localaddr ~= "" then
+		b = info.localaddr .. "<->" .. info.remoteaddr
+	end
+	return a .. b .. "\n"
 end
 
 function console.info()
@@ -141,6 +164,8 @@ function console.info()
 	insert(tbl, console.qinfo())
 	insert(tbl, NULL)
 	insert(tbl, console.minfo("MB"))
+	insert(tbl, NULL)
+	insert(tbl, console.netinfo())
 	return concat(tbl, "\r\n")
 end
 

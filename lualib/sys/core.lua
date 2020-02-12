@@ -56,6 +56,8 @@ core.memrss = silly.memrss
 core.msgsize = silly.msgsize
 core.cpuinfo = silly.cpuinfo
 core.getpid = silly.getpid
+core.netinfo = silly.netinfo
+core.socketinfo = silly.socketinfo
 --const
 core.allocator = silly.memallocator()
 core.version = silly.version()

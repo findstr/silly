@@ -1,11 +1,33 @@
-#ifndef _EVENT_H
-#define _EVENT_H
+#ifndef _SILLY_SOCKET_H
+#define _SILLY_SOCKET_H
 
 #include <stdint.h>
+#include <arpa/inet.h>
 //sid == socket number, it will be remap in silly_socket, not a real socket fd
+
+#define SOCKET_NAMELEN	(INET6_ADDRSTRLEN + 8 + 1)	//[ipv6]:port
 
 typedef void (*silly_finalizer_t)(void *ptr);
 
+struct silly_netinfo {
+	int tcplisten;
+	int udpbind;
+	int connecting;
+	int udpclient;
+	int tcpclient;
+	int tcphalfclose;
+	size_t sendsize;
+};
+
+struct silly_socketinfo {
+	int sid;
+	int fd;
+	const char *type;
+	const char *protocol;
+	size_t sendsize;
+	char localaddr[SOCKET_NAMELEN];
+	char remoteaddr[SOCKET_NAMELEN];
+};
 
 int silly_socket_init();
 void silly_socket_exit();
@@ -19,7 +41,7 @@ int silly_socket_udpconnect(const char *ip, const char *port,
 		const char *bindip, const char *bindport);
 
 int silly_socket_salen(const void *data);
-const char *silly_socket_ntop(const void *data, int *size);
+int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN]);
 
 void silly_socket_readctrl(int sid, int ctrl);
 int silly_socket_sendsize(int sid);
@@ -33,6 +55,9 @@ int silly_socket_close(int sid);
 int silly_socket_poll();
 
 const char *silly_socket_pollapi();
+
+void silly_socket_netinfo(struct silly_netinfo *net);
+void silly_socket_socketinfo(int sid, struct silly_socketinfo*info);
 
 #endif
 
