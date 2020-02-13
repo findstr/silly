@@ -71,7 +71,8 @@ thread_worker(void *arg)
 		silly_worker_dispatch();
 		//allow spurious wakeup, it's harmless
 		R.workerstatus = 0;
-		pthread_cond_wait(&R.cond, &R.mutex);
+		if (silly_worker_msgsize() == 0) //double check
+			pthread_cond_wait(&R.cond, &R.mutex);
 		R.workerstatus = 1;
 	}
 	pthread_mutex_unlock(&R.mutex);

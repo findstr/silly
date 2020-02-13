@@ -48,11 +48,14 @@ silly_worker_dispatch()
 		return ;
 	}
 	do {
-		assert(W->callback);
-		W->callback(W->L, msg);
-		tmp = msg;
-		msg = msg->next;
-		silly_message_free(tmp);
+		do {
+			assert(W->callback);
+			W->callback(W->L, msg);
+			tmp = msg;
+			msg = msg->next;
+			silly_message_free(tmp);
+		} while (msg);
+		msg = silly_queue_pop(W->queue);
 	} while (msg);
 	return ;
 }
