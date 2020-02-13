@@ -171,6 +171,20 @@ function M.close(fd)
 	return true
 end
 
+local function readuntil(s, d)
+	local buf = {d}
+	while s.delim do
+		local r = suspend(s)
+		if not r then
+			return false
+		end
+		if r ~= "" then
+			buf[#buf+1] = r
+		end
+	end
+	return concat(buf)
+end
+
 function M.read(fd, n)
 	local s = socket_pool[fd]
 	if not s then
@@ -184,15 +198,8 @@ function M.read(fd, n)
 		del_socket(s)
 		return false
 	end
-	s.delim = n
-	while s.delim do
-		local r = suspend(s)
-		if not r then
-			return false
-		end
-		d = d .. r
-	end
-	return d
+	s.delim = n - #d
+	return readuntil(s, d)
 end
 
 function M.readall(fd)
@@ -220,15 +227,7 @@ function M.readline(fd)
 		return d
 	end
 	s.delim = "\n"
-	while s.delim do
-		local r
-		r, ok = suspend(s)
-		if not r then
-			return false
-		end
-		d = d .. r
-	end
-	return d
+	return readuntil(s, d)
 end
 
 function M.write(fd, str)
