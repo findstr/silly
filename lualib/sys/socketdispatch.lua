@@ -24,6 +24,7 @@ function dispatch:create(config)
 	local d = {
 		sock = false,
 		status = CLOSE,
+		responseco = false,
 		dispatchco = false,
 		connectqueue = {},
 		waitqueue = {},
@@ -58,9 +59,12 @@ local function doclose(self)
 	assert(self.sock >= 0)
 	socket.close(self.sock)
 	self.sock = false
-	self.dispatchco = false
 	self.status = CLOSE;
-	wakeup_all(self, false, "disconnected")
+	local co = self.responseco
+	if co then
+		self.responseco = nil
+		core.wakeup(co)
+	end
 end
 
 
@@ -71,7 +75,7 @@ local function dispatch_response(self)
 		local waitqueue = self.waitqueue
 		local funcqueue = self.funcqueue
 		local result_data = self.result_data
-		while true do
+		while self.sock do
 			local co = tremove(waitqueue, 1)
 			local func = tremove(funcqueue, 1)
 			if func and co then
@@ -83,14 +87,16 @@ local function dispatch_response(self)
 					result_data[co] = status
 					core.wakeup(co, false)
 					doclose(self)
-					return
+					break
 				end
 			else
 				local co = core.running()
-				self.dispatchco = co
+				self.responseco = co
 				core.wait(co)
 			end
 		end
+		self.dispatchco = false
+		wakeup_all(self, false, "disconnected")
 	end
 end
 
@@ -100,9 +106,9 @@ local function waitfor_response(self, response)
 	local funcqueue = self.funcqueue
 	waitqueue[#waitqueue + 1] = co
 	funcqueue[#funcqueue + 1] = response
-	if self.dispatchco then     --the first request
-		local co = self.dispatchco
-		self.dispatchco = nil
+	if self.responseco then     --the first request
+		local co = self.responseco
+		self.responseco = nil
 		core.wakeup(co)
 	end
 	local status = core.wait(co)
@@ -143,10 +149,10 @@ local function tryconnect(self)
 	end
 	local res
 	if status == CLOSE then
-		local err
+		local err, sock
 		self.status = CONNECTING;
-		self.sock = socket.connect(self.addr)
-		if not self.sock then
+		sock = socket.connect(self.addr)
+		if not sock then
 			res = false
 			self.status = CLOSE
 			err = "socketdispatch connect fail"
@@ -155,15 +161,19 @@ local function tryconnect(self)
 			self.status = CONNECTED;
 		end
 		if res then
-			assert(self.dispatchco == false)
-			core.fork(dispatch_response(self))
+			--wait for responseco exit
+			while self.dispatchco do
+				core.sleep(0)
+			end
+			self.sock = sock
 			local auth = self.auth
+			self.dispatchco = core.fork(dispatch_response(self))
 			if auth then
 				local ok, msg
 				ok, res, msg = core.pcall(auth, self)
 				if not ok then
+					res = false
 					err = res
-					res = err
 					doclose(self)
 				elseif not res then
 					err = msg
