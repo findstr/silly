@@ -7,6 +7,7 @@
 local crypto = require "sys.crypto"
 local dispatch = require "sys.socketdispatch"
 
+local tinsert = table.insert
 local sub = string.sub
 local strgsub = string.gsub
 local strformat = string.format
@@ -16,9 +17,12 @@ local strrep = string.rep
 local strunpack = string.unpack
 local strpack = string.pack
 local sha1 = crypto.sha1
-local setmetatable = setmetatable
+local type = type
 local error = error
+local pairs = pairs
+local select = select
 local tonumber = tonumber
+local setmetatable = setmetatable
 local tointeger = math.tointeger
 
 local _M = {_VERSION = "0.14"}
@@ -687,14 +691,14 @@ local function read_prepare_result(self, sock)
 	if resp.param_count > 0 then
 		local param = _recv_field_packet(self, sock)
 		while param do
-			table.insert(resp.params, param)
+			tinsert(resp.params, param)
 			param = _recv_field_packet(self, sock)
 		end
 	end
 	if resp.field_count > 0 then
 		local field = _recv_field_packet(self, sock)
 		while field do
-			table.insert(resp.fields, field)
+			tinsert(resp.fields, field)
 			field = _recv_field_packet(self, sock)
 		end
 	end
@@ -723,7 +727,7 @@ local function _get_datetime(data, pos)
 	local value
 	len, pos = _from_length_coded_bin(data, pos)
 	if len == 7 then
-		year, month, day, hour, minute, second, pos = string.unpack("<I2BBBBB", data, pos)
+		year, month, day, hour, minute, second, pos = strunpack("<I2BBBBB", data, pos)
 		value = strformat("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second)
 	else
 		value = "2017-09-09 20:08:09"
@@ -843,7 +847,7 @@ local function read_execute_result(self, sock)
 			break
 			--error( strformat("errno:%d, msg:%s,sqlstate:%s",errno,msg,sqlstate))
 		end
-		table.insert(cols, col)
+		tinsert(cols, col)
 	end
 
 	--没有记录集返回
@@ -867,7 +871,7 @@ local function read_execute_result(self, sock)
 		if not col then
 			break
 		end
-		table.insert(rows, row)
+		tinsert(rows, row)
 	end
 
 	return rows
