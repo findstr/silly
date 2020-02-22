@@ -212,6 +212,9 @@ local function connectserver()
 		for l in f:lines() do
 			dns_server = l:match("^%s*nameserver%s+([^%s]+)")
 			if dns_server then
+				if dns_server:find(':') then
+					dns_server = '[' .. dns_server .. ']'
+				end
 				dns_server = format("%s:53", dns_server)
 				break
 			end
