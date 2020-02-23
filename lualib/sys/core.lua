@@ -231,7 +231,7 @@ end
 local socket_dispatch = {}
 local socket_connecting = {}
 
-local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)"
+local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)$"
 
 function core.listen(addr, dispatch, backlog)
 	assert(addr)
