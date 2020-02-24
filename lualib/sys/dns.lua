@@ -20,8 +20,6 @@ local session = 0
 local dns_server
 local connectfd
 
-setmetatable(name_cache, weakmt)
-
 local timenow = core.monotonicsec
 
 --[[
