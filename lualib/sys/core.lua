@@ -304,8 +304,10 @@ function core.udp(addr, dispatch, bind)
 	local fd = socket_udp(ip, port, bip, bport)
 	if fd >= 0 then
 		socket_dispatch[fd] = dispatch
+		return fd
+	else
+		return nil
 	end
-	return fd
 end
 
 function core.close(fd)
