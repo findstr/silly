@@ -15,15 +15,18 @@ local dispatch = {}
 local mt = {
 	__index = dispatch,
 	__gc = function(tbl)
-		tbl:close()
+		if tbl.sock then
+			socket.close(tbl.sock)
+		end
 	end
 }
 
 --the function of process response insert into d.funcqueue
 function dispatch:create(config)
 	local d = {
-		sock = false,
+		sock = nil,
 		status = CLOSE,
+		authco = nil,
 		responseco = false,
 		dispatchco = false,
 		connectqueue = {},
@@ -53,12 +56,12 @@ local function wakeup_all(self, ret, err)
 end
 
 local function doclose(self)
-	if (self.status == CLOSE) then
+	if self.status == CLOSE then
 		return
 	end
-	assert(self.sock >= 0)
+	assert(self.sock)
 	socket.close(self.sock)
-	self.sock = false
+	self.sock = nil
 	self.status = CLOSE;
 	local co = self.responseco
 	if co then
@@ -142,50 +145,56 @@ end
 local function tryconnect(self)
 	local status = self.status
 	if status == CONNECTED then
-		return true;
+		return true
 	end
 	if status == FINAL then
 		return false, "already closed"
 	end
-	local res
 	if status == CLOSE then
-		local err, sock
+		local err, sock, res
 		self.status = CONNECTING;
 		sock = socket.connect(self.addr)
-		if not sock then
-			res = false
-			self.status = CLOSE
-			err = "socketdispatch connect fail"
-		else
-			res = true
-			self.status = CONNECTED;
-		end
-		if res then
+		if sock then
+			self.sock = sock
 			--wait for responseco exit
 			while self.dispatchco do
 				core.sleep(0)
 			end
-			self.sock = sock
 			local auth = self.auth
 			self.dispatchco = core.fork(dispatch_response(self))
 			if auth then
 				local ok, msg
+				self.authco = core.running()
 				ok, res, msg = core.pcall(auth, self)
+				self.authco = nil
 				if not ok then
 					res = false
 					err = res
 					doclose(self)
 				elseif not res then
+					res = false
 					err = msg
 					doclose(self)
 				end
+			else
+				res = true
 			end
-			assert(#self.funcqueue == 0)
-			assert(#self.waitqueue == 0)
+			if res then
+				self.status = CONNECTED;
+				assert(#self.funcqueue == 0)
+				assert(#self.waitqueue == 0)
+			end
+		else
+			res = false
+			self.status = CLOSE
+			err = "socketdispatch connect fail"
 		end
 		wakeup_conn(self, res, err)
 		return res, err
 	elseif status == CONNECTING then
+		if self.authco == core.running() then
+			return true
+		end
 		return waitfor_connect(self)
 	else
 		core.error("[socketdispatch] incorrect call at status:" .. self.status)
@@ -205,7 +214,7 @@ function dispatch:close()
 	return
 end
 
--- the respose function will be called in the socketfifo coroutine
+-- the respose function will be called in the `dispatchco` coroutine
 function dispatch:request(cmd, response)
 	local ok, err = tryconnect(self)
 	if not ok then
