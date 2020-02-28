@@ -1,9 +1,7 @@
 #include <stdio.h>
-#include "atomic.h"
 #include "spinlock.h"
 #include "silly.h"
 #include "silly_malloc.h"
-
 #include "silly_queue.h"
 
 struct silly_queue {
@@ -57,12 +55,14 @@ silly_queue_free(struct silly_queue *q)
 int
 silly_queue_push(struct silly_queue *q, struct silly_message *msg)
 {
+	int n;
 	msg->next = NULL;
 	lock(q);
 	*q->tail = msg;
 	q->tail = &msg->next;
+	n = ++q->size;
 	unlock(q);
-	return atomic_add_return(&q->size, 1);
+	return n;
 }
 
 
@@ -81,8 +81,8 @@ silly_queue_pop(struct silly_queue *q)
 	msg = q->head;
 	q->head = NULL;
 	q->tail = &q->head;
+	q->size = 0;
 	unlock(q);
-	atomic_xor(&q->size, q->size);
 	return msg;
 }
 
