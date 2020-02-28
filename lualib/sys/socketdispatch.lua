@@ -3,7 +3,6 @@ local core = require "sys.core"
 
 local pairs = pairs
 local assert = assert
-local tremove = table.remove
 
 local CONNECTING   = 1
 local CONNECTED    = 2
@@ -29,6 +28,8 @@ function dispatch:create(config)
 		authco = nil,
 		responseco = false,
 		dispatchco = false,
+		waithead = 0,
+		waittail = 0,
 		connectqueue = {},
 		waitqueue = {},
 		funcqueue = {},	--process response, return
@@ -45,14 +46,20 @@ local function wakeup_all(self, ret, err)
 	local waitqueue = self.waitqueue
 	local funcqueue = self.funcqueue
 	local result_data = self.result_data
-	local co = tremove(waitqueue, 1)
-	tremove(funcqueue, 1)
+	local idx = self.waithead + 1
+	self.waithead = idx
+	local co = waitqueue[idx]
+	funcqueue[idx] = nil
 	while co do
+		waitqueue[idx] = nil
 		result_data[co] = err
 		core.wakeup(co, ret)
-		co = tremove(waitqueue, 1)
-		tremove(funcqueue, 1)
+		idx = idx + 1
+		co = waitqueue[idx]
+		funcqueue[idx] = nil
 	end
+	self.waithead = 0
+	self.waittail = 0
 end
 
 local function doclose(self)
@@ -79,9 +86,13 @@ local function dispatch_response(self)
 		local funcqueue = self.funcqueue
 		local result_data = self.result_data
 		while self.sock do
-			local co = tremove(waitqueue, 1)
-			local func = tremove(funcqueue, 1)
+			local idx = self.waithead + 1
+			local co = waitqueue[idx]
+			local func = funcqueue[idx]
 			if func and co then
+				self.waithead = idx
+				waitqueue[idx] = nil
+				funcqueue[idx] = nil
 				local ok, status, data  = pcall(func, self)
 				if ok then
 					result_data[co] = data
@@ -95,6 +106,8 @@ local function dispatch_response(self)
 			else
 				local co = core.running()
 				self.responseco = co
+				self.waithead = 0
+				self.waittail = 0
 				core.wait(co)
 			end
 		end
@@ -107,8 +120,10 @@ local function waitfor_response(self, response)
 	local co = core.running()
 	local waitqueue = self.waitqueue
 	local funcqueue = self.funcqueue
-	waitqueue[#waitqueue + 1] = co
-	funcqueue[#funcqueue + 1] = response
+	local idx = self.waittail + 1
+	self.waittail = idx
+	waitqueue[idx] = co
+	funcqueue[idx] = response
 	if self.responseco then     --the first request
 		local co = self.responseco
 		self.responseco = nil
@@ -181,8 +196,8 @@ local function tryconnect(self)
 			end
 			if res then
 				self.status = CONNECTED;
-				assert(#self.funcqueue == 0)
-				assert(#self.waitqueue == 0)
+				assert(self.waittail == 0)
+				assert(self.waithead == 0)
 			end
 		else
 			res = false
