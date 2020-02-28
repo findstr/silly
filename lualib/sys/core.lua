@@ -1,6 +1,7 @@
 local silly = require "sys.silly"
 
 local core = {}
+local next = next
 local error = error
 local assert = assert
 local xpcall = xpcall
@@ -110,8 +111,9 @@ local function cocall(ret, func)
 end
 
 local function cocreate(f)
-	local co = tremove(copool)
+	local k, co = next(copool)
 	if co then
+		copool[k] = nil
 		coresume(co, "STARTUP", f)
 		return co
 	end
