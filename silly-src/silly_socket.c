@@ -1172,35 +1172,23 @@ tryudpconnect(struct silly_socket *ss, struct cmdopen *cmd)
 	return ;
 }
 
-
-static inline struct socket *
-checksocket(struct silly_socket *ss, int sid)
-{
-	struct socket *s = &ss->socketpool[HASH(sid)];
-	if (unlikely(s->sid != sid)) {
-		silly_log("[socket] checksocket invalid sid\n");
-		return NULL;
-	}
-	switch (s->type) {
-	case STYPE_LISTEN:
-	case STYPE_SOCKET:
-	case STYPE_UDPBIND:
-		return s;
-	default:
-		silly_log("[socket] checksocket sid:%d unsupport type:%d\n",
-			s->sid, s->type);
-		return NULL;
-	}
-	return NULL;
-}
-
 int
 silly_socket_close(int sid)
 {
+	int type;
 	struct cmdkick cmd;
-	struct socket *s = checksocket(SSOCKET, sid);
-	if (s == NULL)
+	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+	if (unlikely(s->sid != sid)) {
+		silly_log("[socket] silly_socket_close incorrect "
+			"socket %d:%d\n", sid, s->sid);
 		return -1;
+	}
+	type = s->type;
+	if (unlikely(type == STYPE_CTRL || type == STYPE_RESERVE)) {
+		silly_log("[socket] silly_socket_close "
+			"unsupport type %d:%d\n", sid, type);
+		return -1;
+	}
 	cmd.type = 'K';
 	cmd.sid = sid;
 	pipe_blockwrite(SSOCKET->ctrlsendfd, &cmd, sizeof(cmd));
@@ -1210,10 +1198,20 @@ silly_socket_close(int sid)
 static int
 tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 {
-	struct socket *s;
-	s = checksocket(ss, cmd->sid);
-	if (s == NULL)
+	int type;
+	int sid = cmd->sid;
+	struct socket *s = &ss->socketpool[HASH(sid)];
+	if (unlikely(s->sid != sid)) {
+		silly_log("[socket] tryclose incorrect "
+			"socket %d:%d\n", sid, s->sid);
 		return -1;
+	}
+	type = s->type;
+	if (unlikely(type == STYPE_CTRL || type == STYPE_RESERVE)) {
+		silly_log("[socket] tryclose unsupport "
+			"type %d:%d\n", sid, type);
+		return -1;
+	}
 	if (wlist_empty(s)) { //already send all the data, directly close it
 		freesocket(ss, s);
 		return 0;
@@ -1226,11 +1224,22 @@ tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 int
 silly_socket_send(int sid, uint8_t *buf, size_t sz, silly_finalizer_t finalizer)
 {
+	int type;
 	struct cmdsend cmd;
-	struct socket *s = checksocket(SSOCKET, sid);
+	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
 	finalizer = finalizer ? finalizer : silly_free;
-	if (unlikely(s == NULL)) {
+	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(buf);
+		silly_log("[socket] silly_socket_send invalid sid:%d\n");
+		return -1;
+	}
+	type = s->type;
+	if (unlikely(!(type == STYPE_SOCKET ||
+		type == STYPE_CONNECTING ||
+		type == STYPE_ALLOCED))) {
+		finalizer(buf);
+		silly_log("[socket] silly_socket_send incorrect type "
+			"sid:%d type:%d\n", sid, type);
 		return -1;
 	}
 	if (unlikely(sz == 0)) {
@@ -1251,16 +1260,25 @@ silly_socket_udpsend(int sid, uint8_t *buf, size_t sz,
 	const uint8_t *addr, size_t addrlen,
 	silly_finalizer_t finalizer)
 {
+	int type;
 	struct cmdudpsend cmd;
-	struct socket *s = checksocket(SSOCKET, sid);
+	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
 	finalizer = finalizer ? finalizer : silly_free;
-	if (s == NULL) {
+	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(buf);
+		silly_log("[socket] silly_socket_send invalid sid:%d\n");
 		return -1;
 	}
-	assert(s->protocol == PROTOCOL_UDP);
-	assert(s->type == STYPE_UDPBIND || s->type == STYPE_SOCKET);
-	if (unlikely(s->type == STYPE_UDPBIND && addr == NULL)) {
+	type = s->type;
+	if (unlikely(!(type == STYPE_SOCKET ||
+		type == STYPE_UDPBIND ||
+		type == STYPE_ALLOCED))) {
+		finalizer(buf);
+		silly_log("[socket] silly_socket_send incorrect type "
+			"sid:%d type:%d\n", sid, type);
+		return -1;
+	}
+	if (unlikely(type == STYPE_UDPBIND && addr == NULL)) {
 		finalizer(buf);
 		silly_log("[socket] udpsend udpbind must specify dest addr\n");
 		return -1;
@@ -1278,19 +1296,27 @@ silly_socket_udpsend(int sid, uint8_t *buf, size_t sz,
 	return 0;
 }
 
-
 static int
 trysend(struct silly_socket *ss, struct cmdsend *cmd)
 {
-	struct socket *s = checksocket(ss, cmd->sid);
+	int sid = cmd->sid;
 	uint8_t *data = cmd->data;
 	size_t sz = cmd->size;
 	silly_finalizer_t finalizer = cmd->finalizer;
-	if (s == NULL) {
+	struct socket *s = &ss->socketpool[HASH(sid)];
+	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(data);
+		silly_log("[socket] trysend incorrect socket "
+			"sid:%d:%d type:%d\n", sid, s->sid, s->protocol);
 		return 0;
 	}
-	if (wlist_empty(s)) {//try send
+	if (unlikely(s->type != STYPE_SOCKET && s->type != STYPE_CONNECTING)) {
+		finalizer(data);
+		silly_log("[socket] trysend incorrect type "
+			"sid:%d type:%d\n", sid, s->type);
+		return 0;
+	}
+	if (wlist_empty(s) && s->type == STYPE_SOCKET) {//try send
 		ssize_t n = sendn(s->fd, data, sz);
 		if (n < 0) {
 			finalizer(data);
@@ -1314,19 +1340,27 @@ trysend(struct silly_socket *ss, struct cmdsend *cmd)
 static int
 tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 {
-	uint8_t *data;
 	size_t size;
+	uint8_t *data;
+	int sid = cmd->send.sid;
 	union sockaddr_full *addr;
 	silly_finalizer_t finalizer;
-	struct socket *s = checksocket(ss, cmd->send.sid);
 	finalizer = cmd->send.finalizer;
 	data = cmd->send.data;
-	if (s == NULL) {
+	struct socket *s = &ss->socketpool[HASH(sid)];
+	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(data);
+		silly_log("[socket] tryudpsend incorrect socket "
+			"sid:%d:%d type:%d\n", sid, s->sid, s->protocol);
+		return 0;
+	}
+	if (unlikely(s->type != STYPE_SOCKET && s->type != STYPE_UDPBIND)) {
+		finalizer(data);
+		silly_log("[socket] tryudpsend incorrect type "
+			"sid:%d type:%d\n", sid, s->type);
 		return 0;
 	}
 	size = cmd->send.size;
-	assert(s->protocol == PROTOCOL_UDP);
 	if (s->type == STYPE_UDPBIND) {
 		//only udp server need address
 		addr = &cmd->addr;
@@ -1341,6 +1375,7 @@ tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 		}
 		assert(n == -2);	//EAGAIN
 		wlist_appendudp(s, data, size, finalizer, addr);
+		write_enable(ss, s, 1);
 	} else {
 		wlist_appendudp(s, data, size, finalizer, addr);
 	}
