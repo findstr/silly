@@ -165,7 +165,7 @@ lnew(lua_State *L)
 	nb->offset = 0;
 	nb->size = 0;
 	nb->head = NULL;
-	nb->limit = 32*1024*1024;
+	nb->limit = INT_MAX;
 	nb->tail = &nb->head;
 	if (luaL_newmetatable(L, "nodebuffer")) {
 		lua_pushvalue(L, POOL);
