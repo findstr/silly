@@ -554,6 +554,8 @@ read_enable(struct silly_socket *ss, struct cmdreadctrl *cmd)
 	int sid = cmd->sid;
 	int enable = cmd->ctrl;
 	s =  &ss->socketpool[HASH(sid)];
+	if (s->reading == enable)
+		return ;
 	s->reading = enable;
 	flag = wlist_empty(s) ? 0 : SP_OUT;
 	if (enable != 0)
@@ -772,8 +774,6 @@ silly_socket_readctrl(int sid, int flag)
 	struct cmdreadctrl cmd;
 	s = &SSOCKET->socketpool[HASH(sid)];
 	if (s->type != STYPE_SOCKET)
-		return ;
-	if (s->reading == flag)
 		return ;
 	cmd.type = 'R';
 	cmd.sid = sid;
