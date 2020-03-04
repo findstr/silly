@@ -206,7 +206,7 @@ local function new_udp(fd, callback)
 end
 
 --udp client can be closed(because it use connect)
-local function udp_dispatch(typ, fd, message, _, addr)
+local function udp_dispatch(typ, fd, message, addr)
 	local data
 	local cb = socket_pool[fd].callback
 	if typ == "udp" then

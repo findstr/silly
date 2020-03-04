@@ -67,9 +67,8 @@ dispatch(lua_State *L, struct silly_message *sm)
 		addrlen = silly_socket_salen(addr);
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, tosocket(sm)->ud);
 		lua_pushlstring(L, addr, addrlen);
-		args += 4;
+		args += 3;
 		break;
 	case SILLY_SCLOSE:
 		lua_pushinteger(L, tosocket(sm)->sid);
