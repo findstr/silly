@@ -138,7 +138,6 @@ local function httpd(scheme, handler)
 				for k, v in gmatch(res.body, "(%w+)=(%w+)") do
 					form[k] = v
 				end
-				res.body = ""
 			end
 			local ok, err = pcall(handler, res)
 			if not ok then
