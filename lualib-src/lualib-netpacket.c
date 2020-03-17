@@ -16,6 +16,9 @@
 
 #define min(a, b)		((a) > (b) ? (b) : (a))
 
+typedef uint32_t cmd_t;
+typedef uint32_t session_t;
+
 struct packet {
 	int fd;
 	int size;
@@ -71,7 +74,6 @@ get_incomplete(struct netpacket *p, int fd)
 		}
 		i = i->next;
 	}
-
 	return NULL;
 }
 
@@ -164,7 +166,6 @@ push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 		ic->buff = NULL;
 		ic->psize = 0;
 		ic->rsize = -2;
-
 		if (size >= 2) {
 			ic->psize = (*buff << 8) | *(buff + 1);
 			ic->rsize = min(ic->psize, size - 2);
@@ -195,7 +196,6 @@ push(lua_State *L, int sid, uint8_t *data, int data_size)
 	int n;
 	int left;
 	uint8_t *d;
-
 	left = data_size;
 	d = data;
 	do {
@@ -219,58 +219,170 @@ clear_incomplete(lua_State *L, int sid)
 	return ;
 }
 
-static int
-lpop(lua_State *L)
+static inline const char *
+getbuffer(lua_State *L, int *stk, size_t *sz)
 {
-	int t;
-	struct packet *pk;
-	struct netpacket *p;
-	p = luaL_checkudata(L, 1, "netpacket");
-	assert(p->head < p->cap);
-	assert(p->tail < p->cap);
-	if (p->tail == p->head) {	//empty
-		lua_pushnil(L);
-		lua_pushnil(L);
-		lua_pushnil(L);
-	} else {
-		t = p->tail;
-		p->tail = (p->tail + 1) % p->cap;
-		pk = &p->queue[t];
-		lua_pushinteger(L, pk->fd);
-		lua_pushlightuserdata(L, pk->buff);
-		lua_pushinteger(L, pk->size);
-	}
-	return 3;
-}
-
-static const char *
-getbuffer(lua_State *L, int n, size_t *sz)
-{
+	int n = *stk;
 	if (lua_type(L, n) == LUA_TSTRING) {
+		*stk = n + 1;
 		return lua_tolstring(L, n, sz);
 	} else {
+		*stk = n + 2;
 		*sz = luaL_checkinteger(L, n + 1);
 		return lua_touserdata(L, n);
 	}
 	return NULL;
 }
 
+static inline struct packet *
+pop_packet(lua_State *L)
+{
+	struct netpacket *p;
+	p = luaL_checkudata(L, 1, "netpacket");
+	assert(p->head < p->cap);
+	assert(p->tail < p->cap);
+	if (p->tail == p->head) {	//empty
+		return NULL;
+	} else {
+		int t = p->tail;
+		p->tail = (p->tail + 1) % p->cap;
+		return &p->queue[t];
+	}
+}
+
+static int
+lpop(lua_State *L)
+{
+	struct packet *pk = pop_packet(L);
+	if (pk == NULL)
+		return 0;
+	lua_pushinteger(L, pk->fd);
+	lua_pushlightuserdata(L, pk->buff);
+	lua_pushinteger(L, pk->size);
+	return 3;
+}
+
 static int
 lpack(lua_State *L)
 {
-	const char *str;
+	uint8_t *p;
+	int stk = 1;
 	size_t size;
-	char *p;
-	str = getbuffer(L, 1, &size);
-	assert(size < (unsigned short)-1);
-
-	p = silly_malloc(size + 2);
-	*((unsigned short *)p) = htons(size);
+	const char *str;
+	str = getbuffer(L, &stk, &size);
+	if (size > USHRT_MAX)
+		luaL_error(L, "netpacket.pack data large then:%d\n", USHRT_MAX);
+	p = silly_malloc(2 + size);
+	p[0] = (size >> 8) & 0xff;
+	p[1] = size & 0xff;
 	memcpy(p + 2, str, size);
-
 	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, size + 2);
+	lua_pushinteger(L, 2 + size);
+	return 2;
+}
 
+static int
+lmsgpop(lua_State *L)
+{
+	int size;
+	char *buf;
+	cmd_t cmd;
+	struct packet *pk = pop_packet(L);
+	if (pk == NULL)
+		return 0;
+	size = pk->size - sizeof(cmd_t);
+	buf = pk->buff;
+	if (size < 0)
+		return 0;
+	//WARN: pointer cast may not align, can't cross platform
+	cmd = *(cmd_t *)(buf + size);
+	lua_pushinteger(L, pk->fd);
+	lua_pushlightuserdata(L, buf);
+	lua_pushinteger(L, size);
+	lua_pushinteger(L, cmd);
+	return 4;
+}
+
+static int
+lmsgpack(lua_State *L)
+{
+	uint8_t *p;
+	const char *str;
+	size_t size, body;
+	int cmd, stk = 1;
+	str = getbuffer(L, &stk, &size);
+	if (size > (USHRT_MAX - sizeof(cmd_t))) {
+		luaL_error(L, "netpacket.pack data large then:%d\n",
+			USHRT_MAX - sizeof(cmd_t));
+	}
+	cmd = luaL_checkinteger(L, stk);
+	body = size + sizeof(cmd_t);
+	p = silly_malloc(2 + body);
+	p[0] = (body >> 8) & 0xff;
+	p[1] = body & 0xff;
+	memcpy(p + 2, str, size);
+	//WARN: pointer cast may not align, can't cross platform
+	*(cmd_t *)&p[size+2] = cmd;
+	lua_pushlightuserdata(L, p);
+	lua_pushinteger(L, 2 + body);
+	return 2;
+}
+
+struct rpc_cookie {
+	cmd_t cmd;
+	session_t session;
+};
+
+static int
+lrpcpop(lua_State *L)
+{
+	int size;
+	char *buf;
+	struct rpc_cookie *rpc;
+	struct packet *pk = pop_packet(L);
+	if (pk == NULL)
+		return 0;
+	size = pk->size - sizeof(struct rpc_cookie);
+	buf = pk->buff;
+	if (size < 0)
+		return 0;
+	//WARN: pointer cast may not align, can't cross platform
+	rpc = (struct rpc_cookie *)(buf + size);
+	lua_pushinteger(L, pk->fd);
+	lua_pushlightuserdata(L, buf);
+	lua_pushinteger(L, size);
+	lua_pushinteger(L, rpc->cmd);
+	lua_pushinteger(L, rpc->session);
+	return 5;
+}
+
+static int
+lrpcpack(lua_State *L)
+{
+	cmd_t cmd;
+	uint8_t *p;
+	const char *str;
+	size_t size, body;
+	struct rpc_cookie *rpc;
+	int session, stk = 1;
+	str = getbuffer(L, &stk, &size);
+	if (size > (USHRT_MAX - sizeof(struct rpc_cookie))) {
+		luaL_error(L, "netpacket.pack data large then:%d\n",
+			USHRT_MAX - sizeof(struct rpc_cookie));
+	}
+	cmd = luaL_checkinteger(L, stk);
+	session = luaL_checkinteger(L, stk+1);
+	body = size + sizeof(struct rpc_cookie);
+	p = silly_malloc(2 + body);
+	p[0] = (body >> 8) & 0xff;
+	p[1] = body & 0xff;
+	memcpy(p + 2, str, size);
+	//WARN: pointer cast may not align, can't cross platform
+	rpc = (struct rpc_cookie *)&p[2 + size];
+	rpc->cmd = cmd;
+	rpc->session = session;
+	lua_pushlightuserdata(L, p);
+	lua_pushinteger(L, 2 + body);
 	return 2;
 }
 
@@ -356,6 +468,10 @@ int luaopen_sys_netpacket(lua_State *L)
 		{"create", lcreate},
 		{"pop", lpop},
 		{"pack", lpack},
+		{"msgpop", lmsgpop},
+		{"msgpack", lmsgpack},
+		{"rpcpop", lrpcpop},
+		{"rpcpack", lrpcpack},
 		{"clear", lclear},
 		{"tostring", ltostring},
 		{"drop", ldrop},

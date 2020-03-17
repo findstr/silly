@@ -3,10 +3,8 @@ local proto = require "sampleproto"
 local wire = require "wire"
 local msg = require "saux.msg"
 
-local decode = wire.decode
-local encode = wire.encode
-
 local client = msg.createclient {
+	proto = proto,
 	addr = core.envget "sampled_port",
 	accept = function(fd, addr)
 		core.log("accept", addr)
@@ -14,10 +12,9 @@ local client = msg.createclient {
 	close = function(fd, errno)
 		core.log("close", fd, errno)
 	end,
-	data = function(fd, d, sz)
-		local cmd, dat = decode(proto, d, sz)
+	data = function(fd, cmd, obj)
 		core.log("read", cmd)
-		for k, v in pairs(dat) do
+		for k, v in pairs(obj) do
 			core.log(k, v)
 		end
 	end
@@ -25,15 +22,15 @@ local client = msg.createclient {
 
 local function oneuser()
 	local fd = client:connect()
-	local ok = client:send(encode(proto, "r_hello", {
+	local ok = client:send("r_hello", {
 		val = "client"
-	}))
+	})
 	core.log("send r_hello", ok)
-	local ok = client:send(encode(proto, "r_sum", {
+	local ok = client:send("r_sum", {
 		val1 = 1,
 		val2 = 3,
 		suffix = "client"
-	}))
+	})
 	core.log("send r_sum", ok)
 	core.sleep(100)
 	client:close()

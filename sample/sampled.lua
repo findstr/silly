@@ -11,18 +11,10 @@ local rpcclient
 local MSG = {}
 local NIL = {}
 
-local encode = wire.encode
-local decode = wire.decode
-
-local function send(fd, cmd, ack)
-	local dat = encode(sampleproto, cmd, ack)
-	return server:send(fd, dat)
-end
-
 MSG[sampleproto:tag("r_hello")] = function(fd, cmd, data)
 	core.log(data.val)
 	data.val = data.val .. "sample"
-	local ok = send(fd, "a_hello", data)
+	local ok = server:send(fd, "a_hello", data)
 	core.log("send:", ok)
 	return
 end
@@ -31,7 +23,7 @@ MSG[sampleproto:tag("r_sum")] = function(fd, cmd, data)
 	local rrpc_sum = data
 	data.suffix = data.suffix .. "sampled"
 	local res = rpcclient:call("rrpc_sum", rrpc_sum)
-	local ok = send(fd, "a_sum", res)
+	local ok = server:send(fd, "a_sum", res)
 	core.log("a_sum", fd, ok)
 end
 
@@ -46,6 +38,7 @@ rpcclient = rpc.createclient {
 }
 
 server = msg.createserver {
+	proto = require "sampleproto",
 	addr = core.envget("sampled_port"),
 	accept = function(fd, addr)
 		core.log("accept", addr)
@@ -53,9 +46,8 @@ server = msg.createserver {
 	close = function(fd, errno)
 		core.log("close", fd, errno)
 	end,
-	data = function(fd, d, sz)
-		local cmd, data = decode(sampleproto, d, sz)
-		assert(MSG[cmd])(fd, cmd, data)
+	data = function(fd, cmd, obj)
+		assert(MSG[cmd])(fd, cmd, obj)
 	end
 }
 
