@@ -76,14 +76,25 @@ end
 
 local function sendmsg(self, fd, cmd, data)
 	local proto = self.proto
-	local dat = proto:encode(cmd, data)
 	if type(cmd) == "string" then
 		cmd = proto:tag(cmd)
 	end
+	local dat = proto:encode(cmd, data)
 	return core.write(fd, np.msgpack(dat, cmd))
 end
 
 msgserver.send = sendmsg
+msgserver.multipack = function(self, cmd, dat, n)
+	local proto = self.proto
+	if type(cmd) == "string" then
+		cmd = proto:tag(cmd)
+	end
+	local dat = proto:encode(cmd, dat)
+	local dat, sz = np.msgpack(dat, cmd)
+	dat, sz = core.multipack(dat, sz, n)
+	return dat, sz
+end
+
 msgserver.multicast = function(self, fd, data, sz)
 	return core.multicast(fd, data, sz)
 end

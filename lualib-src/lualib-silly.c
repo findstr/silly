@@ -285,7 +285,7 @@ struct multicasthdr {
 #define	MULTICAST_SIZE offsetof(struct multicasthdr, data)
 
 static void
-finalizermulti(void *buff)
+multifinalizer(void *buff)
 {
 	struct multicasthdr *hdr;
 	uint8_t *ptr = (uint8_t *)buff;
@@ -298,7 +298,7 @@ finalizermulti(void *buff)
 }
 
 static int
-lpackmulti(lua_State *L)
+lmultipack(lua_State *L)
 {
 	size_t size;
 	uint8_t *buf;
@@ -327,10 +327,10 @@ lpackmulti(lua_State *L)
 }
 
 static int
-lfreemulti(lua_State *L)
+lmultifree(lua_State *L)
 {
 	uint8_t *buf = lua_touserdata(L, 1);
-	finalizermulti(buf);
+	multifinalizer(buf);
 	return 0;
 }
 
@@ -417,7 +417,7 @@ ltcpmulticast(lua_State *L)
 	sid = luaL_checkinteger(L, 1);
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
-	err = silly_socket_send(sid, buff, size, finalizermulti);
+	err = silly_socket_send(sid, buff, size, multifinalizer);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }
@@ -659,8 +659,8 @@ luaopen_sys_silly(lua_State *L)
 		//socket
 		{"connect", ltcpconnect},
 		{"listen", ltcplisten},
-		{"packmulti", lpackmulti},
-		{"freemulti", lfreemulti},
+		{"multipack", lmultipack},
+		{"multifree", lmultifree},
 		{"send", ltcpsend},
 		{"multicast", ltcpmulticast},
 		{"bind", ludpbind},
