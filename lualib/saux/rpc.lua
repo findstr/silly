@@ -90,9 +90,9 @@ function server.listen(self)
 		core.fork(EVENT.data)
 		while true do
 			--parse
-			local str = proto:unpack(d, sz)
+			local str, sz = proto:unpack(d, sz, true)
 			np.drop(d)
-			local body = proto:decode(cmd, str)
+			local body = proto:decode(cmd, str, sz)
 			if not body then
 				core.log("[rpc.server] decode body fail",
 					session, cmd)
@@ -107,9 +107,9 @@ function server.listen(self)
 			if type(cmd) == "string" then
 				cmd = proto:tag(cmd)
 			end
-			local bodydat = proto:encode(cmd, res)
-			bodydat = proto:pack(bodydat)
-			core.write(fd, np.rpcpack(bodydat, cmd, session))
+			local bodydat, sz = proto:encode(cmd, res, true)
+			bodydat, sz = proto:pack(bodydat, sz, true)
+			core.write(fd, np.rpcpack(bodydat, sz, cmd, session))
 			--next
 			fd, d, sz, cmd, session = np.rpcpop(queue)
 			if not fd then
@@ -193,9 +193,9 @@ local function doconnect(self)
 		end
 		core.fork(EVENT.data)
 		while true do
-			local str = proto:unpack(d, sz)
+			local str, sz = proto:unpack(d, sz, true)
 			np.drop(d)
-			local body = proto:decode(cmd, str)
+			local body = proto:decode(cmd, str, sz)
 			if not body then
 				core.log("[rpc.client] parse body fail", session, cmd)
 				return
@@ -279,9 +279,9 @@ function client.call(self, cmd, body)
 	local proto = self.proto
 	local cmd = proto:tag(cmd)
 	local session = core.genid()
-	body = proto:encode(cmd, body)
-	body = proto:pack(body)
-	core.write(self.fd, np.rpcpack(body, cmd, session))
+	local body, sz = proto:encode(cmd, body, true)
+	body, sz = proto:pack(body, sz, true)
+	core.write(self.fd, np.rpcpack(body, sz, cmd, session))
 	return waitfor(self, session)
 end
 

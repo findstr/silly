@@ -320,20 +320,24 @@ resizebuffer(lua_State *L, size_t sz)
 static int
 lencode(lua_State *L)
 {
-	int sz;
-	int top;
 	uint8_t *data;
 	size_t datasz;
+	int sz, top, raw = 0;
 	struct zproto_struct *st;
 	struct lencode_ud ud;
 	st = (struct zproto_struct *)lua_touserdata(L, 1);
 	if (st == NULL)
 		return luaL_error(L, "encode: 'struct' is null");
+	top = lua_gettop(L);
+	if (top >= 3) {
+		raw = lua_toboolean(L, 3);
+		lua_pop(L, 1);
+		--top;
+	}
 	lua_checkstack(L, MAX_RECURSIVE * 3 + 8);
 	ud.level = 0;
 	ud.L = L;
 	data = funcbuffer(L, &datasz);
-	top = lua_gettop(L);
 	for (;;) {
 		sz = zproto_encode(st, data, datasz, encode_table, &ud);
 		if (sz == ZPROTO_OOM) {
@@ -342,16 +346,19 @@ lencode(lua_State *L)
 			data = resizebuffer(L, datasz);
 			continue;
 		}
-		assert(sz > 0);
 		break;
 	}
 	lua_settop(L, top);
-	if (sz > 0) {
-		lua_pushlstring(L, (char *)data, sz);
+	if (sz <= 0) {
+		return 0;
+	}else if(raw == 1) {
+		lua_pushlightuserdata(L, data);
+		lua_pushinteger(L, sz);
+		return 2;
 	} else {
-		lua_pushnil(L);
+		lua_pushlstring(L, (char *)data, sz);
+		return 1;
 	}
-	return 1;
 }
 
 struct ldecode_ud {
@@ -485,11 +492,11 @@ decode_table(struct zproto_args *args)
 	return sz;
 }
 
-static const void *
-get_buffer(lua_State *L, int n, size_t *sz)
+static inline const void *
+get_buffer(lua_State *L, int *stk, size_t *sz)
 {
-	size_t offset;
 	const char *ptr;
+	int n = *stk;
 	if (lua_type(L, n) == LUA_TSTRING) {
 		ptr = luaL_checklstring(L, n, sz);
 		++n;
@@ -498,28 +505,22 @@ get_buffer(lua_State *L, int n, size_t *sz)
 		*sz = luaL_checkinteger(L, n + 1);
 		n = n + 2;
 	}
-	offset = luaL_optinteger(L, n, 0);
-	if (offset != 0) {
-		luaL_argcheck(L, offset < *sz, n, "offset out of buffer");
-		ptr += offset;
-		*sz -= offset;
-	}
+	*stk = n;
 	return ptr;
 }
 
 static int
 ldecode(lua_State *L)
 {
-	int err;
-	int top;
-	struct ldecode_ud ud;
 	size_t datasz;
 	const uint8_t *data;
+	int err, top, stk = 2;
+	struct ldecode_ud ud;
 	struct zproto_struct *st = lua_touserdata(L, 1);
 	if (st == NULL)
 		return luaL_error(L, "decode: 'struct' is null");
 	lua_checkstack(L, MAX_RECURSIVE * 3 + 8);
-	data = (uint8_t *)get_buffer(L, 2, &datasz);
+	data = (uint8_t *)get_buffer(L, &stk, &datasz);
 	lua_newtable(L);
 	top = lua_gettop(L);
 	ud.L = L;
@@ -539,12 +540,12 @@ ldecode(lua_State *L)
 static int
 lpack(lua_State *L)
 {
-	int	sz;
-	size_t	dstsz;
-	size_t	srcsz;
 	uint8_t *dst;
+	int sz, raw, stk = 1;
+	size_t	srcsz, dstsz;
 	const uint8_t *src;
-	src = get_buffer(L, 1, &srcsz);
+	src = get_buffer(L, &stk, &srcsz);
+	raw = lua_toboolean(L, stk);
 	dst = funcbuffer(L, &dstsz);
 	for (;;) {
 		sz = zproto_pack(src, srcsz, dst, dstsz);
@@ -557,19 +558,25 @@ lpack(lua_State *L)
 		break;
 	}
 	assert(sz > 0);
-	lua_pushlstring(L, (char *)dst, sz);
-	return 1;
+	if (raw == 1) {
+		lua_pushlightuserdata(L, dst);
+		lua_pushinteger(L, sz);
+		return 2;
+	} else {
+		lua_pushlstring(L, (char *)dst, sz);
+		return 1;
+	}
 }
 
 static int
 lunpack(lua_State *L)
 {
-	int sz;
-	size_t dstsz;
-	size_t srcsz;
 	uint8_t *dst;
+	int sz, raw, stk = 1;
+	size_t srcsz, dstsz;
 	const uint8_t *src;
-	src = get_buffer(L, 1, &srcsz);
+	src = get_buffer(L, &stk, &srcsz);
+	raw = lua_toboolean(L, stk);
 	dst = funcbuffer(L, &dstsz);
 	for (;;) {
 		sz = zproto_unpack(src, srcsz, dst, dstsz);
@@ -580,11 +587,16 @@ lunpack(lua_State *L)
 		}
 		break;
 	}
-	if (sz < 0)
-		lua_pushnil(L);
-	else
+	if (sz < 0) {
+		return 0;
+	} else if (raw == 1) {
+		lua_pushlightuserdata(L, dst);
+		lua_pushinteger(L, sz);
+		return 2;
+	} else {
 		lua_pushlstring(L, (char *)dst, sz);
-	return 1;
+		return 1;
+	}
 }
 
 #define BUFFSIZE (128)

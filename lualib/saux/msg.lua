@@ -79,8 +79,8 @@ local function sendmsg(self, fd, cmd, data)
 	if type(cmd) == "string" then
 		cmd = proto:tag(cmd)
 	end
-	local dat = proto:encode(cmd, data)
-	return core.write(fd, np.msgpack(dat, cmd))
+	local dat, sz = proto:encode(cmd, data, true)
+	return core.write(fd, np.msgpack(dat, sz, cmd))
 end
 
 msgserver.send = sendmsg
@@ -89,8 +89,8 @@ msgserver.multipack = function(self, cmd, dat, n)
 	if type(cmd) == "string" then
 		cmd = proto:tag(cmd)
 	end
-	local dat = proto:encode(cmd, dat)
-	local dat, sz = np.msgpack(dat, cmd)
+	local dat, sz = proto:encode(cmd, dat, true)
+	local dat, sz = np.msgpack(dat, sz, cmd)
 	dat, sz = core.multipack(dat, sz, n)
 	return dat, sz
 end
