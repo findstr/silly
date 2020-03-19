@@ -65,7 +65,7 @@ local function question(name, typ)
 	else
 		typ = A
 	end
-	session = session + 1
+	session = session % 65535 + 1
 	local ID = session
 	--[[ FLAG
 		QR = 0,
