@@ -46,11 +46,12 @@ local function gc(obj)
 	if not obj.fd then
 		return
 	end
-	if obj.fd < 0 then
+	local fd = obj.fd
+	obj.fd = false
+	if fd < 0 then
 		return
 	end
-	core.close(obj.fd)
-	obj.fd = false
+	core.close(fd)
 end
 
 -----------server
@@ -135,9 +136,34 @@ end
 local client = {}
 local clientmt = {__index = client, __gc = gc}
 
+local function clientwakeupall(self)
+	local timeout = self.timeout
+	local waitpool = self.waitpool
+	local ackcmd = self.ackcmd
+	for _, wk in pairs(timeout) do
+		for k, v in pairs(wk) do
+			local co = waitpool[v]
+			if co then
+				core.log("[rpc.client] wakeupall session", v)
+				ackcmd[v] = "closed"
+				core.wakeup(co)
+				waitpool[v] = nil
+			end
+			wk[k] = nil
+		end
+	end
+end
+
 local function clienttimer(self)
 	local wheel
+	if self.hastimer then
+		return
+	end
 	wheel = function()
+		if self.closed then
+			self.hastimer = false
+			return
+		end
 		core.timeout(1000, wheel)
 		local idx = self.nowwheel + 1
 		idx = idx % self.totalwheel
@@ -173,9 +199,9 @@ end
 
 local function doconnect(self)
 	local EVENT = {}
-	local config = self.config
-	local close = config.close
-	local proto = config.proto
+	local addr  = self.__addr
+	local close = self.__close
+	local proto = self.__proto
 	local queue = np.create()
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close, fd, errno)
@@ -221,13 +247,16 @@ local function doconnect(self)
 		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.connect(config.addr, callback)
+	return core.connect(addr, callback)
 end
 
 --return true/false
 local function checkconnect(self)
        if self.fd and self.fd >= 0 then
 		return self.fd
+	end
+	if self.closed then
+		return false
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
@@ -274,9 +303,9 @@ end
 function client.call(self, cmd, body)
 	local ok = checkconnect(self)
 	if not ok then
-		return ok
+		return ok, "closed"
 	end
-	local proto = self.proto
+	local proto = self.__proto
 	local cmd = proto:tag(cmd)
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
@@ -286,7 +315,17 @@ function client.call(self, cmd, body)
 end
 
 function client.close(self)
+	self.closed = true
+	clientwakeupall(self)
 	gc(self)
+end
+
+function client.changehost(self, addr)
+	checkconnect(self)
+	self:close()
+	self.closed = false
+	self.__addr = addr
+	clienttimer(self)
 end
 
 -----rpc
@@ -294,15 +333,18 @@ function rpc.createclient(config)
 	local totalwheel = math.floor((config.timeout + 999) / 1000)
 	local obj = {
 		fd = false,	--false disconnected, -1 conncting, >=0 conncted
+		closed = false,
+		hastimer = false,
 		connectqueue = {},
 		timeout = {},
 		waitpool = {},
 		ackcmd = {},
 		nowwheel = 0,
-		proto = config.proto,
 		totalwheel = totalwheel,
 		timeoutwheel = totalwheel - 1,
-		config = config,
+		__addr = config.addr,
+		__proto = config.proto,
+		__close = config.close,
 	}
 	setmetatable(obj, clientmt)
 	clienttimer(obj)
