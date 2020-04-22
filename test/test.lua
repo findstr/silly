@@ -9,6 +9,7 @@ local modules = {
 	"testrpc",
 	"testudp",
 	"testwakeup",
+	"testwaitgroup",
 	"testmulticast",
 	"testnetstream",
 	"testnetpacket",
