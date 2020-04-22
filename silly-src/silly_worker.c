@@ -127,6 +127,13 @@ lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	}
 }
 
+static int
+ltraceback(lua_State *L)
+{
+	luaL_traceback(L, L, NULL, 1);
+	return 1;
+}
+
 void
 silly_worker_start(const struct silly_config *config)
 {
@@ -141,8 +148,9 @@ silly_worker_start(const struct silly_config *config)
 		exit(-1);
 	}
 	lua_gc(L, LUA_GCRESTART, 0);
+	lua_pushcfunction(L, ltraceback);
 	err = luaL_loadfile(L, config->bootstrap);
-	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 0))) {
+	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 1))) {
 		silly_log("silly worker call %s fail,%s\n",
 			config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
