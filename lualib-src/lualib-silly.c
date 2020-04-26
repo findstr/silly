@@ -357,26 +357,26 @@ static inline void *
 tablebuffer(lua_State *L, int idx, size_t *size)
 {
 	int i;
-	size_t n;
 	const char *str;
 	char *p, *current;
 	size_t total = 0;
-	int top = lua_gettop(L);
-	int count = lua_rawlen(L, idx);
-	lua_checkstack(L, count);
-	for (i = 1; i <= count; i++) {
-		lua_rawgeti(L, idx, i);
+	for (i = 1; lua_rawgeti(L, idx, i) != LUA_TNIL; i++) {
+		size_t n;
 		luaL_checklstring(L, -1, &n);
 		total += n;
+		lua_pop(L, 1);
 	}
+	lua_pop(L, 1);
 	current = p = silly_malloc(total);
-	for (i = top + 1; i <= count + top; i++) {
-		str = lua_tolstring(L, i, &n);
+	for (i = 1; lua_rawgeti(L, idx, i) != LUA_TNIL; i++) {
+		size_t n;
+		str = lua_tolstring(L, -1, &n);
 		memcpy(current, str, n);
 		current += n;
+		lua_pop(L, 1);
 	}
+	lua_pop(L, 1);
 	*size = total;
-	lua_settop(L, top);
 	return p;
 }
 
