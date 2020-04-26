@@ -50,38 +50,39 @@ function server.listen(self)
 	end
 
 	function EVENT.data()
-		local fd, d, sz, cmd, session = np.rpcpop(queue)
+		local fd, buf, size, cmd, session = np.rpcpop(queue)
 		if not fd then
 			return
 		end
 		core.fork(EVENT.data)
 		while true do
+			local dat
 			--parse
-			local str, sz = proto:unpack(d, sz, true)
-			np.drop(d)
-			local body = proto:decode(cmd, str, sz)
+			dat, size = proto:unpack(buf, size, true)
+			np.drop(buf)
+			local body = proto:decode(cmd, dat, size)
 			if not body then
 				core.log("[rpc.server] decode body fail",
 					session, cmd)
 				return
 			end
-			local ok, cmd, res = core.pcall(call, body, cmd, fd)
+			local ok, ret, res = core.pcall(call, body, cmd, fd)
 			if not ok then
 				core.log("[rpc.server] call error", cmd)
 				return
 			end
-			if not cmd then
+			if not ret then
 				return
 			end
 			--ack
-			if type(cmd) == "string" then
-				cmd = proto:tag(cmd)
+			if type(ret) == "string" then
+				ret = proto:tag(ret)
 			end
-			local bodydat, sz = proto:encode(cmd, res, true)
+			local bodydat, sz = proto:encode(ret, res, true)
 			bodydat, sz = proto:pack(bodydat, sz, true)
-			core.write(fd, np.rpcpack(bodydat, sz, cmd, session))
+			core.write(fd, np.rpcpack(bodydat, sz, ret, session))
 			--next
-			fd, d, sz, cmd, session = np.rpcpop(queue)
+			fd, buf, size, cmd, session = np.rpcpop(queue)
 			if not fd then
 				return
 			end
