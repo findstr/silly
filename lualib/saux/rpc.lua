@@ -6,6 +6,7 @@ local pairs = pairs
 local assert = assert
 local pack = string.pack
 local unpack = string.unpack
+local queue = np.create()
 
 local rpc = {}
 
@@ -31,7 +32,6 @@ function server.listen(self)
 	local close = assert(self.close, "close")
 	local call = assert(self.call, "call")
 	local proto = self.proto
-	local queue = np.create()
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept, fd, addr)
 		if not ok then
@@ -90,7 +90,7 @@ function server.listen(self)
 
 	end
 	local callback = function(type, fd, message, ...)
-		queue = np.message(queue, message)
+		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
 	local fd = core.listen(self.addr, callback, self.backlog)
@@ -172,7 +172,6 @@ local function doconnect(self)
 	local addr  = self.__addr
 	local close = self.__close
 	local proto = self.__proto
-	local queue = np.create()
 	function EVENT.close(fd, errno)
 		if close then
 			local ok, err = core.pcall(close, fd, errno)
@@ -216,7 +215,7 @@ local function doconnect(self)
 	end
 
 	local callback = function(type, fd, message, ...)
-		queue = np.message(queue, message)
+		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
 	return core.connect(addr, callback)

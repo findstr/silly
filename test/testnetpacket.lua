@@ -30,7 +30,7 @@ end
 
 local function justpush(sid, pk)
 	local msg = testaux.newdatamsg(sid, pk)
-	BUFF = np.message(BUFF, msg)
+	np.message(BUFF, msg)
 end
 
 local function randompush(sid, pk)
@@ -53,10 +53,37 @@ local function pushbroken(sid, pk)
 	randompush(sid, pk2)
 end
 
+local function testhashconflict_part1()
+	local dat = "\x00\x101234567812345678"
+	local part1 = dat:sub(1, 7)
+	justpush(0, part1)
+	justpush(2048, part1)
+	justpush(4096, part1)
+	justpush(8192, part1)
+end
+
+local function testhashconflict_part2()
+	local dat = "\x00\x101234567812345678"
+	local part2 = dat:sub(8, -1)
+	justpush(2048, part2)
+	justpush(4096, part2)
+	justpush(8192, part2)
+	justpush(0, part2)
+	local fd, data = popdata()
+	testaux.asserteq(fd, 2048, "netpacket first packet")
+	local fd, data = popdata()
+	testaux.asserteq(fd, 4096, "netpacket first packet")
+	local fd, data = popdata()
+	testaux.asserteq(fd, 8192, "netpacket first packet")
+	local fd, data = popdata()
+	testaux.asserteq(fd, 0, "netpacket first packet")
+
+end
+
 local function testpacket(push)
 	print("--------testpacket-----------")
 	local raw, pk = buildpacket()
-	local sid = math.random(1, 65535)
+	local sid = math.random(8193, 65535)
 	push(sid, pk)
 	local fd, data = popdata()
 	testaux.asserteq(sid, fd, "netpacket test fd")
@@ -69,7 +96,7 @@ end
 local function testclear()
 	print("--------testclear-----------")
 	local raw, pk = buildpacket()
-	local sid = math.random(1, 65535)
+	local sid = math.random(8193, 65535)
 	pushbroken(sid, pk)
 	local fd, data = popdata()
 	testaux.asserteq(fd, nil, "netpacket broken test fd")
@@ -100,7 +127,7 @@ local function testexpand()
 	print("begin push complete data")
 	for i = 1, total do
 		local raw, pk = buildpacket()
-		local sid = math.random(2, 65535)
+		local sid = math.random(8193, 65535)
 		queue[#queue + 1] = {
 			fd = sid,
 			raw = raw,
@@ -121,10 +148,12 @@ end
 return function()
 	collectgarbage("collect")
 	BUFF = np.create()
+	testhashconflict_part1()
 	testpacket(justpush)
 	testpacket(randompush)
 	testclear()
 	testexpand()
+	testhashconflict_part2()
 	BUFF = nil
 	collectgarbage("collect")
 end

@@ -30,7 +30,7 @@ struct incomplete {
 	int rsize;
 	int psize;
 	uint8_t *buff;
-	struct incomplete *prev;
+	struct incomplete **prev;
 	struct incomplete *next;
 };
 
@@ -38,8 +38,8 @@ struct netpacket {
 	int cap;			//default DEFAULT_QUEUE_SIZE
 	int head;
 	int tail;
+	struct packet *queue;
 	struct incomplete *hash[HASH_SIZE];
-	struct packet queue[DEFAULT_QUEUE_SIZE];	//for more effective gc
 };
 
 static int
@@ -48,6 +48,7 @@ lcreate(lua_State *L)
 	struct netpacket *r = lua_newuserdata(L, sizeof(struct netpacket));
 	memset(r, 0, sizeof(*r));
 	r->cap = DEFAULT_QUEUE_SIZE;
+	r->queue = silly_malloc(r->cap * sizeof(r->queue[0]));
 	luaL_getmetatable(L, "netpacket");
 	lua_setmetatable(L, -2);
 	return 1;
@@ -62,14 +63,14 @@ get_netpacket(lua_State *L)
 static struct incomplete *
 get_incomplete(struct netpacket *p, int fd)
 {
+	int idx = HASH(fd);
 	struct incomplete *i;
-	i = p->hash[HASH(fd)];
+	i = p->hash[idx];
 	while (i) {
 		if (i->fd == fd) {
-			if (i->prev == NULL)
-				p->hash[HASH(fd)] = i->next;
-			else
-				i->prev->next = i->next;
+			*i->prev = i->next;
+			if (i->next != NULL)
+				i->next->prev = i->prev;
 			return i;
 		}
 		i = i->next;
@@ -80,32 +81,36 @@ get_incomplete(struct netpacket *p, int fd)
 static void
 put_incomplete(struct netpacket *p, struct incomplete *ic)
 {
+	int idx = HASH(ic->fd);
 	struct incomplete *i;
-	i = p->hash[HASH(ic->fd)];
+	i = p->hash[idx];
 	ic->next = i;
-	ic->prev = NULL;
+	ic->prev = &p->hash[idx];
 	p->hash[HASH(ic->fd)] = ic;
+	if (i != NULL)
+		i->prev = &ic->next;
+	return ;
 }
 
 static void
-expand_queue(lua_State *L, struct netpacket *p)
+expand_queue(lua_State *L, struct netpacket *np)
 {
-	int i, h;
-	struct netpacket *new = lua_newuserdata(L, sizeof(struct netpacket) + sizeof(struct packet) * p->cap);
-	new->cap = p->cap + DEFAULT_QUEUE_SIZE;
-	new->head = p->cap;
-	new->tail = 0;
-	memcpy(new->hash, p->hash, sizeof(new->hash));
-	memset(p->hash, 0, sizeof(p->hash));
-	h = p->tail;
-	for (i = 0; i < p->cap; i++) {
-		new->queue[i] = p->queue[h % p->cap];
+	int i, h, count;
+	struct packet *queue, *newqueue;
+	queue = np->queue;
+	h = np->tail;
+	count = np->cap;
+	np->cap += DEFAULT_QUEUE_SIZE;
+	np->queue = newqueue = silly_malloc(np->cap * sizeof(np->queue[0]));
+	np->tail = 0;
+	np->head = count;
+	for (i = 0; i < count; i++) {
+		newqueue[i] = queue[h % count];
 		++h;
 	}
+	silly_free(queue);
 	luaL_getmetatable(L, "netpacket");
 	lua_setmetatable(L, -2);
-	p->head = p->tail = 0;
-	lua_replace(L, 1);
 	return ;
 }
 
@@ -128,7 +133,6 @@ push_complete(lua_State *L, struct netpacket *p, struct incomplete *ic)
 		silly_log("packet queue full\n");
 		expand_queue(L, p);
 	}
-
 	return ;
 }
 
@@ -431,17 +435,17 @@ lmessage(lua_State *L)
 	switch (sm->type) {
 	case SILLY_SDATA:
 		push(L, sm->sid, sm->data, sm->ud);
-		return 1;
+		return 0;
 	case SILLY_SCLOSE:
 		clear_incomplete(L, sm->sid);
-		return 1;
+		return 0;
 	case SILLY_SACCEPT:
 	case SILLY_SCONNECTED:
-		return 1;
+		return 0;
 	default:
 		silly_log("lmessage unspport:%d\n", sm->type);
 		assert(!"never come here");
-		return 1;
+		return 0;
 	}
 }
 
@@ -459,6 +463,8 @@ packet_gc(lua_State *L)
 			silly_free(t);
 		}
 	}
+	silly_free(pk->queue);
+	pk->queue = NULL;
 	return 0;
 }
 

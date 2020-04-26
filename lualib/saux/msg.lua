@@ -6,6 +6,7 @@ local type = type
 local msg = {}
 local msgserver = {}
 local msgclient = {}
+local queue = np.create()
 
 local function gc(obj)
 	if not obj.fd then
@@ -23,7 +24,6 @@ local clientmt = {__index = msgclient, __gc = gc}
 
 local function event_callback(proto, accept_cb, close_cb, data_cb)
 	local EVENT = {}
-	local queue = np.create()
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
@@ -57,7 +57,7 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 		end
 	end
 	return function (type, fd, message, ...)
-		queue = np.message(queue, message)
+		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
 end
@@ -69,7 +69,7 @@ local function servercb(sc, conf)
 	local data_cb = assert(conf.data, "servercb data")
 
 	return function (type, fd, message, ...)
-		queue = np.message(queue, message)
+		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
 end
