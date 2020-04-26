@@ -68,7 +68,7 @@ function server.listen(self)
 			end
 			local ok, ret, res = core.pcall(call, body, cmd, fd)
 			if not ok then
-				core.log("[rpc.server] call error", cmd)
+				core.log("[rpc.server] call error", ret)
 				return
 			end
 			if not ret then
