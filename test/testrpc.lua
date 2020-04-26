@@ -23,7 +23,7 @@ local server = rpc.createserver {
 		--print("close", fd, errno)
 	end,
 
-	call = function(fd, cmd, msg)
+	call = function(msg, cmd, fd)
 		--print("rpc recive", fd, cmd, msg.name, msg.age, msg.rand)
 		core.sleep(100)
 		return cmd, msg

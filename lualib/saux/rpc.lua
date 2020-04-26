@@ -6,39 +6,6 @@ local pairs = pairs
 local assert = assert
 local pack = string.pack
 local unpack = string.unpack
---[[
-rpc.listen {
-	addr = ip:port:backlog
-	proto = the proto instance
-	accept = function(fd, addr)
-		@fd
-			new socket fd come int
-		@addr
-			ip:port of new socket
-		@return
-			no return
-	end,
-	close = function(fd, errno)
-		@fd
-			the fd which closed by client
-			or occurs errors
-		@errno
-			close errno, if normal is 0
-		@return
-			no return
-	end,
-	call = function(fd, cmd, data)
-		@fd
-			socket fd
-		@cmd
-			data type
-		@data
-			a table parsed from zproto
-		@return
-			cmd, result table
-	end
-}
-]]--
 
 local rpc = {}
 
@@ -60,11 +27,10 @@ local servermt = {__index = server}
 
 function server.listen(self)
 	local EVENT = {}
-	local config = self.config
-	local accept = assert(config.accept, "accept")
-	local close = assert(config.close, "close")
-	local call = assert(config.call, "call")
-	local proto = config.proto
+	local accept = assert(self.accept, "accept")
+	local close = assert(self.close, "close")
+	local call = assert(self.call, "call")
+	local proto = self.proto
 	local queue = np.create()
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept, fd, addr)
@@ -99,9 +65,12 @@ function server.listen(self)
 					session, cmd)
 				return
 			end
-			local ok, cmd, res = core.pcall(call, fd, cmd, body)
-			if not ok or not cmd then
-				core.log("[rpc.server] dispatch socket", cmd)
+			local ok, cmd, res = core.pcall(call, body, cmd, fd)
+			if not ok then
+				core.log("[rpc.server] call error", cmd)
+				return
+			end
+			if not cmd then
 				return
 			end
 			--ack
@@ -123,7 +92,7 @@ function server.listen(self)
 		queue = np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(config.addr, callback, config.backlog)
+	local fd = core.listen(self.addr, callback, self.backlog)
 	self.fd = fd
 	return fd
 end
@@ -204,9 +173,11 @@ local function doconnect(self)
 	local proto = self.__proto
 	local queue = np.create()
 	function EVENT.close(fd, errno)
-		local ok, err = core.pcall(close, fd, errno)
-		if not ok then
-			core.log("[rpc.client] EVENT.close", err)
+		if close then
+			local ok, err = core.pcall(close, fd, errno)
+			if not ok then
+				core.log("[rpc.client] EVENT.close", err)
+			end
 		end
 		self.fd = nil
 		np.clear(queue, fd)
@@ -300,6 +271,19 @@ local function waitfor(self, session)
 	return body, cmd
 end
 
+function client.send(self, cmd, body)
+	local ok = checkconnect(self)
+	if not ok then
+		return ok, "closed"
+	end
+	local proto = self.__proto
+	local cmd = proto:tag(cmd)
+	local session = core.genid()
+	local body, sz = proto:encode(cmd, body, true)
+	body, sz = proto:pack(body, sz, true)
+	return core.write(self.fd, np.rpcpack(body, sz, cmd, session))
+end
+
 function client.call(self, cmd, body)
 	local ok = checkconnect(self)
 	if not ok then
@@ -353,7 +337,12 @@ end
 
 function rpc.createserver(config)
 	local obj = {
-		config = config
+		addr = config.addr,
+		backlog = config.backlog,
+		proto = config.proto,
+		accept = config.accept,
+		close = config.close,
+		call = config.call,
 	}
 	setmetatable(obj, servermt)
 	return obj
