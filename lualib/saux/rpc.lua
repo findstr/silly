@@ -190,7 +190,8 @@ local function doconnect(self)
 		end
 		core.fork(EVENT.data)
 		while true do
-			local str, sz = proto:unpack(d, sz, true)
+			local str
+			str, sz = proto:unpack(d, sz, true)
 			np.drop(d)
 			local body = proto:decode(cmd, str, sz)
 			if not body then
@@ -209,7 +210,7 @@ local function doconnect(self)
 			--next
 			fd, d, sz, cmd, session = np.rpcpop(queue)
 			if not fd then
-				return
+				break
 			end
 		end
 	end
