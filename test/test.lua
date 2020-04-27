@@ -19,6 +19,7 @@ local modules = {
 	"testwebsocket",
 	"testredis",
 	"testmysql",
+	"testexit",
 }
 
 local M = ""
@@ -43,7 +44,6 @@ core.start(function()
 		assert(entry[k])()
 		print("======success==========")
 	end
-	core.exit()
 end)
 
 

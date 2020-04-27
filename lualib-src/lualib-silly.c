@@ -29,11 +29,10 @@ dispatch(lua_State *L, struct silly_message *sm)
 	const char *addr;
 	size_t addrlen;
 	lua_pushlightuserdata(L, dispatch);
-	lua_gettable(L, LUA_REGISTRYINDEX);
-	type = lua_type(L, -1);
+	type = lua_gettable(L, LUA_REGISTRYINDEX);
 	if (unlikely(type != LUA_TFUNCTION)) {
 		silly_log("[silly.core] callback need function"
-			"but got:%d\n", type);
+			"but got:%s\n", lua_typename(L, type));
 		return ;
 	}
 	lua_pushinteger(L, sm->type);

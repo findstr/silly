@@ -22,7 +22,6 @@ local coresume = coroutine.resume
 --misc
 local core_log = silly.log
 core.log = core_log
-core.exit = silly.exit
 core.tostring = silly.tostring
 core.genid = silly.genid
 --env
@@ -131,6 +130,14 @@ local sleep_co_session = {}
 local sleep_session_co = {}
 
 local dispatch_wakeup
+
+core.exit = function(status)
+	silly.dispatch(function() end)
+	wakeup_co_queue = {}
+	wakeup_co_param = {}
+	silly.exit(status)
+	coyield()
+end
 
 function dispatch_wakeup()
 	while true do
