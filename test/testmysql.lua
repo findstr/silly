@@ -4,7 +4,7 @@ local testaux = require "testaux"
 
 return function()
 	local db = mysql.create {
-		host="127.0.0.1:3306",
+		addr ="127.0.0.1:3306",
 		user="root",
 		password="root",
 	}
