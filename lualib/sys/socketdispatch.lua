@@ -163,7 +163,7 @@ local function tryconnect(self)
 		return true
 	end
 	if status == FINAL then
-		return false, "already closed"
+		return false, "final close"
 	end
 	if status == CLOSE then
 		local err, sock, res
@@ -202,7 +202,7 @@ local function tryconnect(self)
 		else
 			res = false
 			self.status = CLOSE
-			err = "socketdispatch connect fail"
+			err = "connect fail"
 		end
 		wakeup_conn(self, res, err)
 		return res, err
@@ -238,7 +238,7 @@ function dispatch:request(cmd, response)
 	local ok = socket.write(self.sock, cmd)
 	if not ok then
 		doclose(self)
-		return nil
+		return false, "closed"
 	end
 	if not response then
 		return
