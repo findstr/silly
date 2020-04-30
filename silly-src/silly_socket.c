@@ -934,7 +934,7 @@ silly_socket_listen(const char *ip, const char *port, int backlog)
 	struct cmdlisten cmd;
 	fd = dolisten(ip, port, backlog);
 	if (unlikely(fd < 0))
-		return fd;
+		return -errno;
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
 		silly_log("[socket] listen %s:%d:%d allocsocket fail\n",

@@ -93,9 +93,9 @@ function server.listen(self)
 		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd = core.listen(self.addr, callback, self.backlog)
+	local fd, errno = core.listen(self.addr, callback, self.backlog)
 	self.fd = fd
-	return fd
+	return fd, errno
 end
 
 function server.close(self)

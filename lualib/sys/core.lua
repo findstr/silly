@@ -225,8 +225,9 @@ function core.listen(addr, dispatch, backlog)
 	end
 	local id = socket_listen(ip, port, backlog);
 	if id < 0 then
-		core_log("[sys.core] listen", port, "error", id)
-		return nil
+		local errno = -id
+		core_log("[sys.core] listen", port, "error", errno)
+		return nil, errno
 	end
 	socket_dispatch[id] = dispatch
 	return id
