@@ -26,7 +26,7 @@ end
 local server = {}
 local servermt = {__index = server}
 
-function server.listen(self)
+function server_listen(self)
 	local EVENT = {}
 	local accept = assert(self.accept, "accept")
 	local close = assert(self.close, "close")
@@ -249,10 +249,6 @@ local function checkconnect(self)
 	end
 end
 
-function client.connect(self)
-	return checkconnect(self)
-end
-
 local function waitfor(self, session)
 	local co = core.running()
 	local expire = self.timeoutwheel + self.nowwheel
@@ -314,7 +310,7 @@ function client.changehost(self, addr)
 end
 
 -----rpc
-function rpc.createclient(config)
+function rpc.connect(config)
 	local totalwheel = math.floor((config.timeout + 999) / 1000)
 	local obj = {
 		fd = false,	--false disconnected, -1 conncting, >=0 conncted
@@ -333,10 +329,11 @@ function rpc.createclient(config)
 	}
 	setmetatable(obj, clientmt)
 	clienttimer(obj)
+	checkconnect(obj)
 	return obj
 end
 
-function rpc.createserver(config)
+function rpc.listen(config)
 	local obj = {
 		addr = config.addr,
 		backlog = config.backlog,
@@ -346,6 +343,10 @@ function rpc.createserver(config)
 		call = config.call,
 	}
 	setmetatable(obj, servermt)
+	local ok, errno = server_listen(obj)
+	if not ok then
+		return nil, errno
+	end
 	return obj
 end
 

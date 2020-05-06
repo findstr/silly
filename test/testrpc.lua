@@ -32,7 +32,7 @@ end
 
 local case = case_one
 
-local server = rpc.createserver {
+local server = rpc.listen {
 	addr = ":8989",
 	proto = logic,
 	accept = function(fd, addr)
@@ -46,17 +46,7 @@ local server = rpc.createserver {
 	end
 }
 
-local client = rpc.createclient {
-	addr = "127.0.0.1:8989",
-	proto = logic,
-	timeout = 5000,
-	close = function(fd, errno)
-	end,
-}
-
-local function server_part()
-	server:listen()
-end
+local client
 
 local function request(fd, index, count, cmd)
 	return function()
@@ -74,7 +64,13 @@ local function request(fd, index, count, cmd)
 end
 
 local function client_part()
-	client:connect()
+	client = rpc.connect {
+		addr = "127.0.0.1:8989",
+		proto = logic,
+		timeout = 5000,
+		close = function(fd, errno)
+		end,
+	}
 	local wg = waitgroup:create()
 	case = case_one
 	for i = 1, 2 do
@@ -97,7 +93,6 @@ local function client_part()
 end
 
 return function()
-	server_part()
 	client_part()
 	client:close()
 	server:close()
