@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local ns = require "sys.netstream"
-
+local assert = assert
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
 local socket_pool = {}
@@ -19,6 +19,7 @@ local function new_socket(fd)
 		closing = false,
 		sbuffer = ns.new(fd),
 	}
+	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 end
 
