@@ -129,6 +129,7 @@ local function clienttimer(self)
 	if self.hastimer then
 		return
 	end
+	self.hastimer = true
 	wheel = function()
 		if self.closed then
 			self.hastimer = false
