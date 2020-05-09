@@ -16,7 +16,7 @@ local client = {}
 local recv = {}
 
 return function()
-	server = msg.createserver {
+	server = msg.listen {
 		proto = logic,
 		addr = "127.0.0.1:8002",
 		accept = function(fd, addr)
@@ -35,12 +35,11 @@ return function()
 			end
 		end
 	}
-	local ok = server:listen()
-	testaux.asserteq(not not ok, true, "multicast test listen")
+	testaux.asserteq(not not server, true, "multicast test listen")
 
 	local inst
 	for i = 1, 10 do
-		inst = msg.createclient {
+		inst = msg.connect {
 			proto = logic,
 			addr = "127.0.0.1:8002",
 			data = function(fd, cmd, obj)
@@ -51,8 +50,6 @@ return function()
 
 			end
 		}
-		local ok = inst:connect()
-		testaux.asserteq(ok > 0, true, "multicast connect success")
 		client[i] = inst
 	end
 	inst:send("test", {str = "testmulticast"})

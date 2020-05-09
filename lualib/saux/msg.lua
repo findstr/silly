@@ -157,13 +157,7 @@ function msgclient.send(self, cmd, data)
 	return sendmsg(self, fd, cmd, data)
 end
 
-function msgclient.connect(self)
-	local fd = checkconnect(self)
-	return fd
-end
-
-
-function msg.createclient(conf)
+function msg.connect(conf)
 	local obj = {
 		fd = false,
 		callback = false,
@@ -175,10 +169,11 @@ function msg.createclient(conf)
 	local data_cb = assert(conf.data, "clientcb data")
 	obj.callback = event_callback(conf.proto, nil, close_cb, data_cb)
 	setmetatable(obj, clientmt)
+	checkconnect(obj)
 	return obj
 end
 
-function msg.createserver(conf)
+function msg.listen(conf)
 	local obj = {
 		fd = false,
 		callback = false,
@@ -190,6 +185,10 @@ function msg.createserver(conf)
 	local data_cb = assert(conf.data, "servercb data")
 	obj.callback = event_callback(conf.proto, accept_cb, close_cb, data_cb)
 	setmetatable(obj, servermt)
+	local fd, errno = core.listen(obj.addr, obj.callback, obj.backlog)
+	if not fd then
+		return nil, errno
+	end
 	return obj
 end
 
