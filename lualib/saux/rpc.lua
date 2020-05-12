@@ -285,7 +285,7 @@ end
 function client.call(self, cmd, body)
 	local ok = checkconnect(self)
 	if not ok then
-		return ok, "closed"
+		return nil, "closed"
 	end
 	local proto = self.__proto
 	local cmd = proto:tag(cmd)
