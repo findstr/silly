@@ -273,12 +273,15 @@ silly_timer_update()
 	if (T->ticktime == time)
 		return;
 	if (unlikely(T->ticktime > time)) {
-		const char *fmt =
-		"[timer] time rewind change from %lld to %lld\n";
-		silly_log(fmt, T->ticktime, time);
+		silly_log("[timer] time rewind change "
+			"from %lld to %lld\n", T->ticktime, time);
 	}
 	delta = time - T->ticktime;
 	assert(delta > 0);
+	if (unlikely(delta > TIMER_DELAY_WARNING)) {
+		silly_log("[timer] update delta is too big, "
+			"from:%lld to %lld\n", T->ticktime, time);
+	}
 	//uint64_t on x86 platform, can't assign as a automatic
 	atomic_lock(&T->ticktime, time);
 	atomic_add(&T->clocktime, delta);

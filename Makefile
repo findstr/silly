@@ -62,6 +62,7 @@ SRC_FILE = \
       silly_env.c \
       silly_malloc.c \
       silly_log.c \
+      silly_monitor.c \
 
 SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))

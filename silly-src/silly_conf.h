@@ -17,7 +17,9 @@
 #define SOCKET_MAX_EXP		(16)
 //timer resolution = (1000 / TIMER_RESOLUTION)
 #define TIMER_RESOLUTION	(10)
-#define TIMER_ACCURACY		(50 * 1000)	//us
+#define TIMER_ACCURACY		(50)	//ms
+#define TIMER_DELAY_WARNING	(10 * TIMER_ACCURACY / TIMER_RESOLUTION)
+#define MONITOR_MSG_SLOW_TIME	(1000)	//ms
 
 #define STR(s) __STR(s)
 #define __STR(s) #s

@@ -10,10 +10,11 @@
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
+#include "silly_monitor.h"
 #include "silly_worker.h"
 
 #define max(a, b)	((a) > (b) ? (a) : (b))
-
+#define WARNING_THRESHOLD (64)
 
 struct silly_worker {
 	lua_State *L;
@@ -33,7 +34,8 @@ silly_worker_push(struct silly_message *msg)
 	sz = silly_queue_push(W->queue, msg);
 	if (unlikely(sz > W->maxmsg)) {
 		W->maxmsg *= 2;
-		silly_log("may overload, now message size is:%zu\n", sz);
+		silly_log("[worker] may overload, "
+			"message queue length:%zu\n", sz);
 	}
 }
 
@@ -50,6 +52,7 @@ silly_worker_dispatch()
 	do {
 		do {
 			assert(W->callback);
+			silly_monitor_trigger(msg->type);
 			W->callback(W->L, msg);
 			tmp = msg;
 			msg = msg->next;
@@ -57,6 +60,8 @@ silly_worker_dispatch()
 		} while (msg);
 		msg = silly_queue_pop(W->queue);
 	} while (msg);
+	silly_monitor_trigger(0);
+	W->maxmsg = WARNING_THRESHOLD;
 	return ;
 }
 
