@@ -123,37 +123,71 @@ lexit(lua_State *L)
 	return 0;
 }
 
+static char *
+inttostr(lua_Integer n, char *begin, char *end)
+{
+	int neg = 0;
+	if (n < 0) {
+		neg = 1;
+		n = -n;
+	}
+	do {
+		int m = n % 10;
+		n /= 10;
+		*(--end) = m + '0';
+	} while (begin < end && n > 0);
+	if (neg && begin < end)
+		*(--end) = '-';
+	return end;
+}
+
 static int
 llog(lua_State *L)
 {
 	int i;
+	size_t sz;
+	const char *str;
 	int paramn = lua_gettop(L);
 	silly_log("");
 	for (i = 1; i <= paramn; i++) {
 		int type = lua_type(L, i);
 		switch (type) {
 		case LUA_TSTRING:
-			silly_log_raw("%s ", lua_tostring(L, i));
+			str = lua_tolstring(L, i, &sz);
+			silly_log_lstr(str, sz);
 			break;
 		case LUA_TNUMBER:
-			silly_log_raw(LUA_INTEGER_FMT" ", lua_tointeger(L, i));
+			if (lua_isinteger(L, i)) {
+				char buf[32];
+				lua_Integer n = lua_tointeger(L, i);
+				char *end = &buf[sizeof(buf)/sizeof(buf[0])];
+				char *start = end - 1;
+				*start = ' ';
+				start = inttostr(n, buf, start);
+				silly_log_lstr(start, end - start);
+			} else {
+				lua_Number n = lua_tonumber(L, i);
+				silly_log_raw(LUA_NUMBER_FMT" ", n);
+			}
 			break;
 		case LUA_TBOOLEAN:
-			silly_log_raw("%s ",
-				lua_toboolean(L, i) ? "true" : "false");
+			if (lua_toboolean(L, i))
+				silly_log_str("true ");
+			else
+				silly_log_str("false ");
 			break;
 		case LUA_TTABLE:
 			silly_log_raw("table: %p ", lua_topointer(L, i));
 			break;
 		case LUA_TNIL:
-			silly_log_raw("#%d.null ", i);
+			silly_log_str("nil ");
 			break;
 		default:
 			return luaL_error(L, "log unspport param#%d type:%s",
 				i, lua_typename(L, type));
 		}
 	}
-	silly_log_raw("\n");
+	silly_log_str("\n");
 	return 0;
 }
 
