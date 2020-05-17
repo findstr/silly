@@ -35,14 +35,13 @@ thread_timer(void *arg)
 {
 	(void)arg;
 	struct timespec req;
-	req.tv_sec = 0;
-	req.tv_nsec = TIMER_ACCURACY * 1000000;
+	req.tv_sec = TIMER_ACCURACY / 1000;
+	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
 	for (;;) {
 		silly_timer_update();
 		if (R.workerstatus == -1)
 			break;
 		nanosleep(&req, NULL);
-		usleep(TIMER_ACCURACY);
 		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);
 	}
@@ -90,11 +89,8 @@ thread_monitor(void *arg)
 {
 	(void)arg;
 	struct timespec req;
-	time_t sec, ms;
-	sec = MONITOR_MSG_SLOW_TIME / 1000;
-	ms = MONITOR_MSG_SLOW_TIME % 1000;
-	req.tv_sec = sec;
-	req.tv_nsec = ms * 1000000;
+	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
+	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
 	for (;;) {
 		if (R.workerstatus == -1)
 			break;

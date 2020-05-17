@@ -278,9 +278,11 @@ silly_timer_update()
 	}
 	delta = time - T->ticktime;
 	assert(delta > 0);
-	if (unlikely(delta > TIMER_DELAY_WARNING)) {
+	if (unlikely(delta > TIMER_DELAY_WARNING/TIMER_RESOLUTION)) {
 		silly_log("[timer] update delta is too big, "
-			"from:%lld to %lld\n", T->ticktime, time);
+			"from:%lld ms to %lld ms\n",
+			T->ticktime * TIMER_RESOLUTION,
+			time * TIMER_RESOLUTION);
 	}
 	//uint64_t on x86 platform, can't assign as a automatic
 	atomic_lock(&T->ticktime, time);
