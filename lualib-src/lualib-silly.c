@@ -155,6 +155,7 @@ llog(lua_State *L)
 		case LUA_TSTRING:
 			str = lua_tolstring(L, i, &sz);
 			silly_log_lstr(str, sz);
+			silly_log_lstr(" ", 1);
 			break;
 		case LUA_TNUMBER:
 			if (lua_isinteger(L, i)) {
