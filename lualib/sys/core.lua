@@ -314,7 +314,7 @@ local messagetype = {
 local MSG = {
 [1] = function(session)					--SILLY_TEXPIRE = 1
 	local co = sleep_session_co[session]
-	assert(sleep_co_session[co] == session)
+	assert(sleep_co_session[co] == session, co)
 	sleep_session_co[session] = nil
 	sleep_co_session[co] = nil
 	wakeup_co_queue[#wakeup_co_queue + 1] = co

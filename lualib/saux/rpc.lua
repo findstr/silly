@@ -26,7 +26,7 @@ end
 local server = {}
 local servermt = {__index = server}
 
-function server_listen(self)
+local function server_listen(self)
 	local EVENT = {}
 	local accept = assert(self.accept, "accept")
 	local close = assert(self.close, "close")
@@ -62,7 +62,7 @@ function server_listen(self)
 			np.drop(buf)
 			local body = proto:decode(cmd, dat, size)
 			if not body then
-				core.log("[rpc.server] decode body fail",
+				core.log("[rpc.server] decode fail",
 					session, cmd)
 				return
 			end
@@ -196,13 +196,16 @@ local function doconnect(self)
 			np.drop(d)
 			local body = proto:decode(cmd, str, sz)
 			if not body then
-				core.log("[rpc.client] parse body fail", session, cmd)
+				core.log("[rpc.client] decode fail",
+					session, cmd)
 				return
 			end
 			--ack
 			local waitpool = self.waitpool
 			local co = waitpool[session]
 			if not co then --timeout
+				core.log("[rpc.client] late session",
+					session, cmd)
 				return
 			end
 			waitpool[session] = nil
@@ -288,7 +291,9 @@ function client.call(self, cmd, body)
 		return nil, "closed"
 	end
 	local proto = self.__proto
-	local cmd = proto:tag(cmd)
+	if type(cmd) == "string" then
+		cmd = proto:tag(cmd)
+	end
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
