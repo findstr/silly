@@ -68,7 +68,10 @@ silly_worker_dispatch()
 uint32_t
 silly_worker_genid()
 {
-	return W->id++;
+	uint32_t id = W->id++;
+	if (unlikely(id == 0))
+		silly_log("[worker] genid wraps around\n");
+	return id;
 }
 
 size_t
@@ -148,7 +151,7 @@ silly_worker_start(const struct silly_config *config)
 	luaL_openlibs(L);
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
-		silly_log("silly worker set lua libpath fail,%s\n",
+		silly_log("[worker] set lua libpath fail,%s\n",
 			lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
@@ -157,7 +160,7 @@ silly_worker_start(const struct silly_config *config)
 	lua_pushcfunction(L, ltraceback);
 	err = luaL_loadfile(L, config->bootstrap);
 	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 1))) {
-		silly_log("silly worker call %s %s\n",
+		silly_log("[worker] call %s %s\n",
 			config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
@@ -171,7 +174,7 @@ silly_worker_init()
 {
 	W = (struct silly_worker *)silly_malloc(sizeof(*W));
 	memset(W, 0, sizeof(*W));
-	W->maxmsg = 128;
+	W->maxmsg = WARNING_THRESHOLD;
 	W->queue = silly_queue_create();
 	return ;
 }
