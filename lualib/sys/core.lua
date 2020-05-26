@@ -1,7 +1,6 @@
 local silly = require "sys.silly"
 
 local core = {}
-local next = next
 local error = error
 local assert = assert
 local xpcall = xpcall
@@ -95,9 +94,8 @@ local weakmt = {__mode="kv"}
 setmetatable(copool, weakmt)
 
 local function cocreate(f)
-	local k, co = next(copool)
+	local co = tremove(copool)
 	if co then
-		copool[k] = nil
 		coresume(co, "STARTUP", f)
 		return co
 	end
