@@ -68,7 +68,7 @@ silly_worker_dispatch()
 uint32_t
 silly_worker_genid()
 {
-	uint32_t id = W->id++;
+	uint32_t id = ++W->id;
 	if (unlikely(id == 0))
 		silly_log("[worker] genid wraps around\n");
 	return id;
