@@ -32,6 +32,9 @@ assert(core.envget("hello") == "world")
 
 _ENV.print = print
 
+local ok, res = pcall(core.wait)
+assert(not ok)
+
 core.start(function()
 	local entry = {}
 	for k, v in pairs(modules) do

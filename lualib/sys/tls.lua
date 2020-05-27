@@ -37,9 +37,8 @@ end
 
 local function suspend(s)
 	assert(not s.co)
-	local co = core.running()
-	s.co = co
-	return core.wait(co)
+	s.co = core.running()
+	return core.wait()
 end
 
 local function handshake(s)

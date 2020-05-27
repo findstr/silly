@@ -201,7 +201,7 @@ local function suspend(session, timeout)
 		wait_coroutine[session] = nil
 		core.wakeup(co, false)
 	end)
-	return core.wait(co)
+	return core.wait()
 end
 
 local function connectserver()

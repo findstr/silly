@@ -12,17 +12,36 @@ local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack
 local traceback = debug.traceback
+local weakmt = {__mode="kv"}
 
---coroutine
-local cocreate_ = coroutine.create
-local corunning = coroutine.running
-local coyield = coroutine.yield
-local coresume = coroutine.resume
 --misc
 local core_log = silly.log
 core.log = core_log
 core.tostring = silly.tostring
 core.genid = silly.genid
+
+--coroutine
+--state migrate(RUN (WAIT->READY)/SLEEP RUN)
+local task_status = setmetatable({}, weakmt)
+local task_running = nil
+local cocreate = coroutine.create
+local corunning = coroutine.running
+local coyield = coroutine.yield
+local coresume = coroutine.resume
+local task_yield = coyield
+local function task_resume(t, ...)
+	task_status[t] = "RUN"
+	task_running = t
+	local ok, err = coresume(t, ...)
+	task_running = nil
+	if not ok then
+		task_status[t] = nil
+		local ret = traceback(t, tostring(err), 1)
+		core_log("[sys.core] resume", ret)
+	else
+		task_status[t] = err
+	end
+end
 --env
 core.envget = silly.getenv
 core.envset = silly.setenv
@@ -78,34 +97,31 @@ end
 
 core.pcall = core_pcall
 function core.running()
-	local co = corunning()
-	return co
+	return task_running
 end
 
 function core.coroutine(resume, yield)
 	coyield = yield
 	coresume = resume
+	task_yield = coyield
 end
 
 --coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
-local weakmt = {__mode="kv"}
 setmetatable(copool, weakmt)
 
-local function cocreate(f)
+local function task_create(f)
 	local co = tremove(copool)
 	if co then
 		coresume(co, "STARTUP", f)
 		return co
 	end
-	co = cocreate_(function(...)
-		local ok, err = core_pcall(f, ...)
-		if not ok then
-			core_log("[sys.core] call", err)
-		end
+	co = cocreate(function(...)
+		f(...)
 		while true do
 			local ret
+			f = nil
 			copool[#copool + 1] = corunning()
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
@@ -113,94 +129,94 @@ local function cocreate(f)
 				core_log(traceback())
 				return
 			end
-			local ok, err = core_pcall(f, coyield("ARGS"))
-			if ok == false then
-				core_log("[sys.core] call", err)
-			end
+			f(coyield())
 		end
 	end)
 	return co
 end
 
-local wakeup_co_queue = {}
-local wakeup_co_param = {}
-local sleep_co_session = {}
-local sleep_session_co = {}
+local wakeup_task_queue = {}
+local wakeup_task_param = {}
+local sleep_task_session = {}
+local sleep_session_task = {}
 
 local dispatch_wakeup
 
 core.exit = function(status)
 	silly.dispatch(function() end)
-	wakeup_co_queue = {}
-	wakeup_co_param = {}
+	wakeup_task_queue = {}
+	wakeup_task_param = {}
 	silly.exit(status)
 	coyield()
 end
 
 function dispatch_wakeup()
 	while true do
-		local co = tremove(wakeup_co_queue, 1)
+		local co = tremove(wakeup_task_queue, 1)
 		if not co then
 			return
 		end
-		local param = wakeup_co_param[co]
-		wakeup_co_param[co] = nil
-		local ok, err = coresume(co, param)
-		if not ok then
-			local ret = traceback(co, "error: " .. tostring(err), 1)
-			core_log("[sys.core] wakeup", ret)
-		end
+		local param = wakeup_task_param[co]
+		wakeup_task_param[co] = nil
+		task_resume(co, param)
 	end
 end
 
 function core.fork(func)
-	local co = cocreate(func)
-	wakeup_co_queue[#wakeup_co_queue + 1] = co
-	return co
+	local t = task_create(func)
+	task_status[t] = "READY"
+	wakeup_task_queue[#wakeup_task_queue + 1] = t
+	return t
 end
 
-function core.wait(co)
-	co = co or corunning()
-	assert(sleep_co_session[co] == nil)
-	return coyield("WAIT")
+function core.wait()
+	local t = task_running
+	local status = task_status[t]
+	assert(status == "RUN", status)
+	return task_yield("WAIT")
 end
 
-function core.wait2(co)
-	local res = core.wait(co)
+function core.wait2()
+	local res = core.wait()
 	if not res then
 		return
 	end
 	return tunpack(res, 1, res.n)
 end
 
-function core.wakeup(co, res)
-	wakeup_co_param[co] = res
-	wakeup_co_queue[#wakeup_co_queue + 1] = co
+function core.wakeup(t, res)
+	local status = task_status[t]
+	assert(status == "WAIT", status)
+	task_status[t] = "READY"
+	wakeup_task_param[t] = res
+	wakeup_task_queue[#wakeup_task_queue + 1] = t
 end
 
-function core.wakeup2(co, ...)
-	core.wakeup(co, tpack(...))
+function core.wakeup2(t, ...)
+	core.wakeup(t, tpack(...))
 end
 
 function core.sleep(ms)
-	local co = corunning()
+	local t = task_running
+	local status = task_status[t]
+	assert(status == "RUN", status)
 	local session = silly_timeout(ms)
-	sleep_session_co[session] = co
-	sleep_co_session[co] = session
-	coyield("SLEEP")
+	sleep_session_task[session] = t
+	sleep_task_session[t] = session
+	task_yield("SLEEP")
 end
 
 function core.timeout(ms, func)
-	local co = cocreate(func)
+	local t = task_create(func)
 	local session = silly_timeout(ms)
-	sleep_session_co[session] = co
-	sleep_co_session[co] = session
+	sleep_session_task[session] = t
+	sleep_task_session[t] = session
 	return session
 end
 
 function core.start(func)
-	local co = cocreate(func)
-	coresume(co)
+	local t = task_create(func)
+	task_resume(t)
 	dispatch_wakeup()
 end
 
@@ -261,9 +277,8 @@ function core.connect(addr, dispatch, bind)
 		return nil
 	end
 	assert(socket_connecting[fd] == nil)
-	local co = corunning()
-	socket_connecting[fd] = co
-	local ok = core.wait(co)
+	socket_connecting[fd] = task_running
+	local ok = core.wait()
 	socket_connecting[fd] = nil
 	if ok ~= true then
 		return nil
@@ -311,11 +326,11 @@ local messagetype = {
 
 local MSG = {
 [1] = function(session)					--SILLY_TEXPIRE = 1
-	local co = sleep_session_co[session]
-	assert(sleep_co_session[co] == session, co)
-	sleep_session_co[session] = nil
-	sleep_co_session[co] = nil
-	wakeup_co_queue[#wakeup_co_queue + 1] = co
+	local t = sleep_session_task[session]
+	assert(sleep_task_session[t] == session, t)
+	sleep_session_task[session] = nil
+	sleep_task_session[t] = nil
+	task_resume(t)
 end,
 [2] = function(fd, _, portid, addr)			--SILLY_SACCEPT = 2
 	assert(socket_dispatch[fd] == nil)
@@ -323,35 +338,35 @@ end,
 	local cb = socket_dispatch[portid]
 	assert(cb, portid)
 	socket_dispatch[fd] = cb
-	local co = cocreate(cb)
-	coresume(co, "accept", fd, _, portid,addr)
+	local t = task_create(cb)
+	task_resume(t, "accept", fd, _, portid,addr)
 end,
 [3] = function(fd, _, errno)				--SILLY_SCLOSE = 3
-	local co = socket_connecting[fd]
-	if co then	--connect fail
-		core.wakeup(co, false)
+	local t = socket_connecting[fd]
+	if t then	--connect fail
+		core.wakeup(t, false)
 		return
 	end
 	local f = socket_dispatch[fd]
 	if f then	--is connected
 		socket_dispatch[fd] = nil
-		local co = cocreate(f)
-		coresume(co, "close", fd, _, errno)
+		local t = task_create(f)
+		task_resume(t, "close", fd, _, errno)
 	end
 end,
 [4] = function(fd)					--SILLY_SCONNECTED = 4
-	local co = socket_connecting[fd]
-	if co == nil then	--have already closed
+	local t = socket_connecting[fd]
+	if t == nil then	--have already closed
 		assert(socket_dispatch[fd] == nil)
 		return
 	end
-	coresume(co, true)
+	task_resume(t, true)
 end,
 [5] = function(fd, msg)					--SILLY_SDATA = 5
 	local f = socket_dispatch[fd]
 	if f then
-		local co = cocreate(f)
-		coresume(co, "data", fd, msg)
+		local t = task_create(f)
+		task_resume(t, "data", fd, msg)
 	else
 		core_log("[sys.core] SILLY_SDATA fd:", fd, "closed")
 	end
@@ -359,8 +374,8 @@ end,
 [6] = function(fd, msg, addr)				--SILLY_UDP = 6
 	local f = socket_dispatch[fd]
 	if f then
-		local co = cocreate(f)
-		coresume(co, "udp", fd, msg, addr)
+		local t = task_create(f)
+		task_resume(t, "udp", fd, msg, addr)
 	else
 		core_log("[sys.core] SILLY_UDP fd:", fd, "closed")
 	end

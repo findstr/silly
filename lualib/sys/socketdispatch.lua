@@ -104,11 +104,10 @@ local function dispatch_response(self)
 					break
 				end
 			else
-				local co = core.running()
-				self.responseco = co
+				self.responseco = core.running()
 				self.waithead = 0
 				self.waittail = 0
-				core.wait(co)
+				core.wait()
 			end
 		end
 		self.dispatchco = false
@@ -129,7 +128,7 @@ local function waitfor_response(self, response)
 		self.responseco = nil
 		core.wakeup(co)
 	end
-	local status = core.wait(co)
+	local status = core.wait()
 	local result_data = self.result_data
 	local data = result_data[co]
 	result_data[co] = nil
@@ -140,7 +139,7 @@ local function waitfor_connect(self)
 	local co = core.running()
 	local connectqueue = self.connectqueue
 	connectqueue[#connectqueue + 1] = co
-	local status = core.wait(co)
+	local status = core.wait()
 	local result_data = self.result_data
 	local data = result_data[co]
 	result_data[co] = nil
