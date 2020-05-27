@@ -1,6 +1,8 @@
 local M = {}
+local helper = require "http.helper"
 local tconcat = table.concat
 local tremove = table.remove
+local type, pairs = type, pairs
 local nexttoken
 local tag = [["'</>=]]
 local T = {
@@ -53,7 +55,7 @@ local function nexttext(str, start)
 	if not start then
 		return nil
 	end
-	local e = str:find("<", start)
+	local e = str:find("%s*<", start)
 	assert(e > start)
 	return str:sub(start, e - 1), e
 end
@@ -128,7 +130,6 @@ local node = {
 				cond.name = k
 			end
 		end
-		local type, pairs = type, pairs
 		local nodes = {self}
 		while true do
 			local n = tremove(nodes, 1)
@@ -164,22 +165,6 @@ local selfclose = {
 	["BR"] = true,
 	["HR"] = true,
 }
-
-local html_unescape = {
-	['quot'] = '"',
-	['amp'] = '&',
-	['lt'] = '<',
-	['gt'] = '>',
-	['nbsp'] = ' ',
-}
-
-function htmlunescape(html)
-	html = string.gsub(html, "&#(%d+);", function(s)
-		return utf8.char(tonumber(s))
-	end)
-	html = string.gsub(html, "&(%a+);", html_unescape)
-	return html
-end
 
 local function parsenode(str, start)
 	--open tag
@@ -243,6 +228,7 @@ local function parsenode(str, start)
 		return obj, e + 1
 	end
 	--child
+	local unescape = helper.htmlunescape
 	while true do
 		local tk
 		back = start
@@ -261,7 +247,7 @@ local function parsenode(str, start)
 			break
 		else
 			tk, start = nexttext(str, back)
-			local raw = htmlunescape(tk)
+			local raw = unescape(tk)
 			child[#child + 1] = raw
 		end
 	end

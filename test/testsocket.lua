@@ -2,7 +2,7 @@ local core = require "sys.core"
 local socket = require "sys.socket"
 local tls = require "sys.tls"
 local testaux = require "testaux"
-
+local IO
 local listen_cb
 local listenfd = socket.listen(":10001", function(fd, addr)
 	if listen_cb then

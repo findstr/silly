@@ -3,6 +3,7 @@ local testaux = require "testaux"
 
 local modules = {
 	"testjson",
+	"testdom",
 	"testtimer",
 	"testsocket",
 	"testdns",

@@ -63,17 +63,6 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 end
 
 ---server
-local function servercb(sc, conf)
-	local accept_cb = assert(conf.accept, "servercb accept")
-	local close_cb = assert(conf.close, "servercb close")
-	local data_cb = assert(conf.data, "servercb data")
-
-	return function (type, fd, message, ...)
-		np.message(queue, message)
-		assert(EVENT[type])(fd, ...)
-	end
-end
-
 local function sendmsg(self, fd, cmd, data)
 	local proto = self.proto
 	if type(cmd) == "string" then
