@@ -7,7 +7,7 @@
 -- protocol detail: https://mariadb.com/kb/en/clientserver-protocol/
 
 local crypto = require "sys.crypto"
-local dispatch = require "sys.socketdispatch"
+local dispatch = require "sys.socketq"
 
 local sub = string.sub
 local strgsub = string.gsub

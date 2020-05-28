@@ -211,7 +211,7 @@ local function tryconnect(self)
 		end
 		return waitfor_connect(self)
 	else
-		core.error("[socketdispatch] incorrect call at status:" .. self.status)
+		core.error("[socketq] incorrect call at status:" .. self.status)
 	end
 end
 
