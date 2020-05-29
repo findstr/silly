@@ -106,7 +106,7 @@ end
 local client = {}
 local clientmt = {__index = client, __gc = gc}
 
-local function clientwakeupall(self)
+local function wakeup_all_timeout(self)
 	local timeout = self.timeout
 	local waitpool = self.waitpool
 	local ackcmd = self.ackcmd
@@ -126,13 +126,8 @@ end
 
 local function clienttimer(self)
 	local wheel
-	if self.hastimer then
-		return
-	end
-	self.hastimer = true
 	wheel = function()
 		if self.closed then
-			self.hastimer = false
 			return
 		end
 		core.timeout(1000, wheel)
@@ -160,7 +155,7 @@ local function clienttimer(self)
 end
 
 
-local function wakeupall(self)
+local function wakeup_all_connect(self)
 	local q = self.connectqueue
 	for k, v in pairs(q) do
 		core.wakeup(v)
@@ -237,12 +232,18 @@ local function checkconnect(self)
 	if not self.fd then	--disconnected
 		self.fd = -1
 		local fd = doconnect(self)
+		if self.closed then
+			if fd then
+				core.close(fd)
+				fd = nil
+			end
+		end
 		if not fd then
 			self.fd = false
 		else
 			self.fd = fd
 		end
-		wakeupall(self)
+		wakeup_all_connect(self)
 		return self.fd
 	else
 		local co = core.running()
@@ -302,17 +303,13 @@ function client.call(self, cmd, body)
 end
 
 function client.close(self)
-	self.closed = true
-	clientwakeupall(self)
+	if self.closed then
+		return
+	end
 	gc(self)
-end
-
-function client.changehost(self, addr)
-	checkconnect(self)
-	self:close()
-	self.closed = false
-	self.__addr = addr
-	clienttimer(self)
+	self.closed = true
+	wakeup_all_connect(self)
+	wakeup_all_timeout(self)
 end
 
 -----rpc
@@ -321,7 +318,6 @@ function rpc.connect(config)
 	local obj = {
 		fd = false,	--false disconnected, -1 conncting, >=0 conncted
 		closed = false,
-		hastimer = false,
 		connectqueue = {},
 		timeout = {},
 		waitpool = {},
