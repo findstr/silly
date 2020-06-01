@@ -28,8 +28,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 	int args = 1;
 	const char *addr;
 	size_t addrlen;
-	lua_pushlightuserdata(L, dispatch);
-	type = lua_gettable(L, LUA_REGISTRYINDEX);
+	type = lua_rawgetp(L, LUA_REGISTRYINDEX, dispatch);
 	if (unlikely(type != LUA_TFUNCTION)) {
 		silly_log("[silly.core] callback need function"
 			"but got:%s\n", lua_typename(L, type));
@@ -81,10 +80,11 @@ dispatch(lua_State *L, struct silly_message *sm)
 		assert(0);
 		break;
 	}
-	err = lua_pcall(L, args, 0, 0);
+	/*the first stack slot of main thread is always trace function */
+	err = lua_pcall(L, args, 0, 1);
 	if (unlikely(err != LUA_OK)) {
-		silly_log("[silly.core] callback call fail:%s\n",
-			lua_tostring(L, -1));
+		silly_log("[silly.core] callback call fail:%d:%s\n",
+			err, lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
 	return ;

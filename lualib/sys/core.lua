@@ -211,6 +211,7 @@ function core.timeout(ms, func)
 	local session = silly_timeout(ms)
 	sleep_session_task[session] = t
 	sleep_task_session[t] = session
+	task_status[t] = "TIMEOUT"
 	return session
 end
 
@@ -315,15 +316,6 @@ function core.close(fd)
 end
 
 --the message handler can't be yield
-local messagetype = {
-	[1] = "expire",		--SILLY_TEXPIRE		= 1
-	[2] = "accept",		--SILLY_SACCEPT		= 2
-	[3] = "close",		--SILLY_SCLOSE		= 3
-	[4] = "connected",	--SILLY_SCONNECTED	= 4
-	[5] = "data",		--SILLY_SDATA		= 5
-	[6] = "udp",		--SILLY_UDP		= 6
-}
-
 local MSG = {
 [1] = function(session)					--SILLY_TEXPIRE = 1
 	local t = sleep_session_task[session]
