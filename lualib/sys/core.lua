@@ -30,10 +30,11 @@ local coyield = coroutine.yield
 local coresume = coroutine.resume
 local task_yield = coyield
 local function task_resume(t, ...)
+	local save = task_running
 	task_status[t] = "RUN"
 	task_running = t
 	local ok, err = coresume(t, ...)
-	task_running = nil
+	task_running = save
 	if not ok then
 		task_status[t] = nil
 		local ret = traceback(t, tostring(err), 1)
@@ -100,12 +101,6 @@ function core.running()
 	return task_running
 end
 
-function core.coroutine(resume, yield)
-	coyield = yield
-	coresume = resume
-	task_yield = coyield
-end
-
 --coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
@@ -134,6 +129,33 @@ local function task_create(f)
 	end)
 	return co
 end
+
+local task_create_origin = task_create
+local task_resume_origin = task_resume
+
+function core.task_hook(create, term)
+	if create then
+		task_create = function(f)
+			local t = task_create_origin(f)
+			create(t)
+			return t
+		end
+	else
+		task_create = task_create_origin
+	end
+	if term then
+		task_resume = function(t, ...)
+			local ok, err = task_resume_origin(t, ...)
+			if err == "EXIT" then
+				term(t)
+			end
+		end
+	else
+		task_resume = task_resume_origin
+	end
+	return task_resume, task_yield
+end
+
 
 local wakeup_task_queue = {}
 local wakeup_task_param = {}
