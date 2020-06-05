@@ -7,7 +7,7 @@ local assert = assert
 local pack = string.pack
 local unpack = string.unpack
 local queue = np.create()
-
+local NIL = {}
 local rpc = {}
 
 local function gc(obj)
@@ -75,6 +75,7 @@ local function server_listen(self)
 				return
 			end
 			--ack
+			res = res or NIL
 			if type(ret) == "string" then
 				ret = proto:tag(ret)
 			end
@@ -295,6 +296,7 @@ function client.call(self, cmd, body)
 	if type(cmd) == "string" then
 		cmd = proto:tag(cmd)
 	end
+	body = body or NIL
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
