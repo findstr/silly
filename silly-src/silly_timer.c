@@ -146,17 +146,19 @@ add_node(struct silly_timer *timer, struct node *n)
 uint32_t
 silly_timer_timeout(uint32_t expire)
 {
+	uint32_t session;
 	struct node *n = newnode();
 	if (unlikely(n == NULL)) {
 		silly_log("silly timer alloc node failed\n");
 		return -1;
 	}
+	session = n->session;
 	lock(T);
 	n->expire = expire / TIMER_RESOLUTION + T->ticktime;
 	assert((int32_t)(n->expire - T->expire) >= 0);
 	add_node(T, n);
 	unlock(T);
-	return n->session;
+	return session;
 }
 
 static void
