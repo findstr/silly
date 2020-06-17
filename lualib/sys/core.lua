@@ -243,6 +243,16 @@ function core.start(func)
 	dispatch_wakeup()
 end
 
+function core.tasks()
+	local tasks = {}
+	for t, status in pairs(task_status) do
+		tasks[t] = {
+			traceback = traceback(t),
+			status = status
+		}
+	end
+	return tasks
+end
 
 --socket
 local socket_dispatch = {}
