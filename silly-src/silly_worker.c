@@ -51,7 +51,6 @@ silly_worker_dispatch()
 	}
 	do {
 		do {
-			assert(W->callback);
 			silly_monitor_trigger(msg->type);
 			W->callback(W->L, msg);
 			tmp = msg;
