@@ -45,7 +45,7 @@ struct netpacket {
 static int
 lcreate(lua_State *L)
 {
-	struct netpacket *r = lua_newuserdata(L, sizeof(struct netpacket));
+	struct netpacket *r = lua_newuserdatauv(L, sizeof(struct netpacket), 0);
 	memset(r, 0, sizeof(*r));
 	r->cap = DEFAULT_QUEUE_SIZE;
 	r->queue = silly_malloc(r->cap * sizeof(r->queue[0]));

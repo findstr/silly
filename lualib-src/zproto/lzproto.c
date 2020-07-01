@@ -312,7 +312,7 @@ funcbuffer(lua_State *L, size_t *sz)
 static __inline void *
 resizebuffer(lua_State *L, size_t sz)
 {
-	void *data = lua_newuserdata(L, sz);
+	void *data = lua_newuserdatauv(L, sz, 0);
 	lua_replace(L, lua_upvalueindex(1));
 	return data;
 }
@@ -606,7 +606,7 @@ setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 {
 	int i = 0;
 	while (tbl[i].name) {
-		lua_newuserdata(L, BUFFSIZE);
+		lua_newuserdatauv(L, BUFFSIZE, 0);
 		lua_pushcclosure(L, tbl[i].func, 1);
 		lua_setfield(L, -2, tbl[i].name);
 		i++;

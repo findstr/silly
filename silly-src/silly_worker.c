@@ -148,6 +148,7 @@ silly_worker_start(const struct silly_config *config)
 	int err;
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
+	lua_gc(L, LUA_GCGEN, 0);
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
 		silly_log("[worker] set lua libpath fail,%s\n",
@@ -155,7 +156,6 @@ silly_worker_start(const struct silly_config *config)
 		lua_close(L);
 		exit(-1);
 	}
-	lua_gc(L, LUA_GCRESTART, 0);
 	lua_pushcfunction(L, ltraceback);
 	err = luaL_loadfile(L, config->bootstrap);
 	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 1))) {

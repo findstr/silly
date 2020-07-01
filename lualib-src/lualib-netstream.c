@@ -59,7 +59,7 @@ new_pool(lua_State *L, int n)
 {
 	int i;
 	struct node *free;
-	free = (struct node *)lua_newuserdata(L, sizeof(struct node) * n);
+	free = (struct node *)lua_newuserdatauv(L, sizeof(struct node) * n, 0);
 	memset(free, 0, sizeof(struct node) * n);
 	for (i = 0; i < n - 1; i++)
 		free[i].next = &free[i + 1];
@@ -160,7 +160,7 @@ static int
 lnew(lua_State *L)
 {
 	struct node_buffer *nb;
-	nb = (struct node_buffer *)lua_newuserdata(L, sizeof(*nb));
+	nb = (struct node_buffer *)lua_newuserdatauv(L, sizeof(*nb), 0);
 	nb->sid = luaL_checkinteger(L, 1);
 	nb->offset = 0;
 	nb->size = 0;

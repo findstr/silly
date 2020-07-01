@@ -54,7 +54,7 @@ static struct ctx *
 new_tls_ctx(lua_State *L, SSL_CTX *ptr, int mode)
 {
 	struct ctx *ctx;
-	ctx = (struct ctx*)lua_newuserdata(L, sizeof(*ctx));
+	ctx = (struct ctx*)lua_newuserdatauv(L, sizeof(*ctx), 0);
 	if (luaL_newmetatable(L, "TLS_CTX")) {
 		lua_pushcfunction(L, lctx_free);
 		lua_setfield(L, -2, "__gc");
@@ -69,7 +69,7 @@ static struct tls *
 new_tls(lua_State *L, int fd)
 {
 	struct tls *tls;
-	tls= (struct tls*)lua_newuserdata(L, sizeof(*tls));
+	tls= (struct tls*)lua_newuserdatauv(L, sizeof(*tls), 0);
 	if (luaL_newmetatable(L, "TLS")) {
 		lua_pushcfunction(L, ltls_free);
 		lua_setfield(L, -2, "__gc");
