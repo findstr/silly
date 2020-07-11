@@ -28,6 +28,7 @@ local cocreate = coroutine.create
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
+local coclose = coroutine.close
 local task_yield = coyield
 local function task_resume(t, ...)
 	local save = task_running
@@ -38,7 +39,11 @@ local function task_resume(t, ...)
 	if not ok then
 		task_status[t] = nil
 		local ret = traceback(t, tostring(err), 1)
-		core_log("[sys.core] resume", ret)
+		core_log("[sys.core] task resume", ret)
+		local ok, err = coclose(t)
+		if not ok then
+			core_log("[sys.core] task close", err)
+		end
 	else
 		task_status[t] = err
 	end
@@ -120,7 +125,7 @@ local function task_create(f)
 			copool[#copool + 1] = corunning()
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
-				core_log("[sys.core] coroutine create", ret)
+				core_log("[sys.core] task create", ret)
 				core_log(traceback())
 				return
 			end
