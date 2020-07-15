@@ -45,10 +45,8 @@ silly_worker_dispatch()
 	struct silly_message *msg;
 	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
-	if (msg == NULL) {
-		lua_gc(W->L, LUA_GCSTEP, 100);
+	if (msg == NULL)
 		return ;
-	}
 	do {
 		do {
 			silly_monitor_trigger(msg->type);
