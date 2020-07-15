@@ -359,7 +359,7 @@ local MSG = {
 	assert(sleep_task_session[t] == session, t)
 	sleep_session_task[session] = nil
 	sleep_task_session[t] = nil
-	task_resume(t)
+	task_resume(t, session)
 end,
 [2] = function(fd, _, portid, addr)			--SILLY_SACCEPT = 2
 	assert(socket_dispatch[fd] == nil)
