@@ -1,5 +1,5 @@
 .PNONY:all
-
+INCLUDE :=
 #---------
 
 TARGET ?= silly
@@ -21,12 +21,12 @@ LUA_STATICLIB=$(LUA_DIR)/liblua.a
 $(LUA_STATICLIB):
 	make -C $(LUA_DIR) $(PLAT) MYCFLAGS=-g
 
-#jemalloc
-
+#malloc lib select
+MALLOC_NAME=jemalloc
+ifeq ($(MALLOC_NAME), jemalloc)
 JEMALLOC_DIR=deps/jemalloc
 JEMALLOC_INC=$(JEMALLOC_DIR)/include
 JEMALLOC_STATICLIB=$(JEMALLOC_DIR)/lib/libjemalloc.a
-
 
 $(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
 	make -C $(JEMALLOC_DIR)
@@ -34,23 +34,22 @@ $(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
 $(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
 	cd $(JEMALLOC_DIR)&&\
 		./autogen.sh --with-jemalloc-prefix=je_
-
 $(JEMALLOC_DIR)/autogen.sh:
 	git submodule update --init
-
 jemalloc:$(JEMALLOC_STATICLIB)
-
-#malloc lib select
-MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
-
+INCLUDE += -I $(JEMALLOC_INC)
+MALLOC_STATICLIB := $(JEMALLOC_STATICLIB)
 all:jemalloc
+else
+CCFLAG += -DDISABLE_JEMALLOC
+MALLOC_STATICLIB :=
+endif
 
 #-----------project
-TEST_PATH = test
 LUACLIB_PATH ?= luaclib
 SRC_PATH = silly-src
 LIB_PATH = lualib-src
-INCLUDE = -I $(LUA_INC) -I $(JEMALLOC_INC) -I $(SRC_PATH)
+INCLUDE += -I $(LUA_INC) -I $(SRC_PATH)
 SRC_FILE = \
       main.c \
       silly_socket.c \
@@ -88,7 +87,7 @@ $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/sys.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED) -DUSE_OPENSSL -lssl -lcrypto
 $(LUACLIB_PATH)/zproto.so: lualib-src/zproto/lzproto.c lualib-src/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)

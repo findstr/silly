@@ -1,7 +1,7 @@
 #ifndef _SILLY_CONF_H
 #define _SILLY_CONF_H
 
-#define USE_JEMALLOC
+//platform related
 
 #ifdef __linux__
 
@@ -12,6 +12,8 @@
 #define USE_CPU_AFFINITY
 
 #endif
+
+
 
 //(1 << 16) = 65536
 #define SOCKET_MAX_EXP		(16)

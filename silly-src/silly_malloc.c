@@ -6,7 +6,7 @@
 #include "silly.h"
 #include "silly_malloc.h"
 
-#if defined(USE_JEMALLOC)
+#ifndef DISABLE_JEMALLOC
 #include <jemalloc/jemalloc.h>
 #elif defined(__linux__)
 #include <malloc.h>
@@ -16,7 +16,7 @@
 
 static size_t allocsize = 0;
 
-#if defined(USE_JEMALLOC)
+#ifndef DISABLE_JEMALLOC
 
 #define MALLOC je_malloc
 #define REALLOC je_realloc
@@ -33,7 +33,7 @@ static size_t allocsize = 0;
 static inline size_t
 xalloc_usable_size(void *ptr)
 {
-#if defined(USE_JEMALLOC)
+#ifndef DISABLE_JEMALLOC
 	return je_malloc_usable_size(ptr);
 #elif defined(__linux__)
 	return malloc_usable_size(ptr);
@@ -78,7 +78,7 @@ silly_free(void *ptr)
 const char *
 silly_allocator()
 {
-#if defined(USE_JEMALLOC)
+#ifndef DISABLE_JEMALLOC
 	return BUILD("jemalloc", JEMALLOC_VERSION_MAJOR, JEMALLOC_VERSION_MINOR);
 #else
 	return "libc";
