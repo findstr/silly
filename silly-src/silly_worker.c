@@ -45,8 +45,12 @@ silly_worker_dispatch()
 	struct silly_message *msg;
 	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
-	if (msg == NULL)
+	if (msg == NULL) {
+#ifdef LUA_GC_STEP
+		lua_gc(W->L, LUA_GCSTEP, LUA_GC_STEP);
+#endif
 		return ;
+	}
 	do {
 		do {
 			silly_monitor_trigger(msg->type);
@@ -146,7 +150,11 @@ silly_worker_start(const struct silly_config *config)
 	int err;
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
-	lua_gc(L, LUA_GCGEN, 0);
+#if LUA_GC_MODE == LUA_GC_INC
+	lua_gc(L, LUA_GCINC);
+#else
+	lua_gc(L, LUA_GCGEN);
+#endif
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
 		silly_log("[worker] set lua libpath fail,%s\n",
