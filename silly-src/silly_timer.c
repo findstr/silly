@@ -286,7 +286,7 @@ silly_timer_update()
 			T->ticktime * TIMER_RESOLUTION,
 			time * TIMER_RESOLUTION);
 	}
-	//uint64_t on x86 platform, can't assign as a automatic
+	//uint64_t on x86 platform, can't assign as a atomic
 	atomic_lock(&T->ticktime, time);
 	atomic_add(&T->clocktime, delta);
 	atomic_add(&T->monotonic, delta);
