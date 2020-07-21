@@ -102,6 +102,11 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 %.o:%.c
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
 
+test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer
+test: LDFLAG += -fsanitize=address -fno-omit-frame-pointer
+test: $(PLATS)
+	./$(TARGET) test/test.conf
+
 clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
