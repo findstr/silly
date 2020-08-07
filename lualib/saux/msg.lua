@@ -71,8 +71,10 @@ local function sendmsg(self, fd, cmd, data)
 	local dat, sz = proto:encode(cmd, data, true)
 	return core.write(fd, np.msgpack(dat, sz, cmd))
 end
-
 msgserver.send = sendmsg
+msgserver.sendbin = function(self, fd, cmd, bin)
+	return core.write(fd, np.msgpack(bin, cmd))
+end
 msgserver.multipack = function(self, cmd, dat, n)
 	local proto = self.proto
 	if type(cmd) == "string" then
