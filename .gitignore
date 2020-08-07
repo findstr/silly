@@ -3,7 +3,6 @@
 *.d
 .depend
 tags
-gate
 server
 client
 /deps/lua/lua

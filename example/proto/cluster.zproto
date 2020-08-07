@@ -1,0 +1,75 @@
+#################common(0x1000)
+error 0x1000 {
+	.cmd:string 1
+	.errno:integer 2
+}
+
+gateinfo_c 0x1001 {
+
+}
+
+gateinfo_a 0x1002 {
+	.listenaddr:string 1
+	.onlinecount:integer 2
+}
+
+gatekick_c 0x1003 {
+	.uid:integer 1
+}
+
+gatekick_a 0x1004 {
+
+}
+
+gatetoken_c 0x1005 {
+	.uid:integer 1
+}
+
+gatetoken_a 0x1006 {
+	.token:string 1
+}
+
+gateonline_c 0x1007 {
+
+}
+
+gateonline_a 0x1008 {
+	.uids:integer[] 1
+}
+
+handle_c 0x1009 {
+	.type:string 1
+	.list:string[] 2
+}
+
+handle_a 0x100a {
+
+}
+
+broadcast_c 0x100b {
+	.cmd:string 1
+	.dat:string 2
+}
+
+broadcast_a 0x100c {
+
+}
+
+online_c 0x1010 {
+	.uid:integer 1
+	.slot:integer 2
+}
+
+online_a 0x1011 {
+
+}
+
+offline_c 0x1012 {
+	.uid:integer 1
+	.slot:integer 2
+}
+
+offline_a 0x1013 {
+
+}
+
