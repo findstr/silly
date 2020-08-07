@@ -4,7 +4,7 @@ local rpc = require "saux.rpc"
 local pairs = pairs
 local assert = assert
 local error = error
-local format = format
+local format = string.format
 local proto, server, master
 local M = {}
 local masterid
@@ -63,7 +63,7 @@ local function transition_until_success(status)
 				core.exit(1)
 			end
 		end
-		core.sleep(1500)
+		core.sleep(500)
 	end
 end
 
