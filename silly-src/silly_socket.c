@@ -557,7 +557,7 @@ read_enable(struct silly_socket *ss, struct cmdreadctrl *cmd)
 	if (s->reading == enable)
 		return ;
 	s->reading = enable;
-	flag = wlist_empty(s) ? 0 : SP_OUT;
+	flag = (!wlist_empty(s) || s->type == STYPE_CONNECTING) ? SP_OUT : 0;
 	if (enable != 0)
 		flag |= SP_IN;
 	sp_ctrl(ss->spfd, s->fd, s, flag);
