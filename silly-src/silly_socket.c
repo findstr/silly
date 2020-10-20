@@ -48,7 +48,7 @@ enum stype {
 	STYPE_LISTEN,		//listen fd
 	STYPE_UDPBIND,		//listen fd(udp)
 	STYPE_SOCKET,		//socket normal status
-	STYPE_HALFCLOSE,	//socket is closed
+	STYPE_SHUTDOWN,		//socket is closed
 	STYPE_CONNECTING,	//socket is connecting, if success it will be STYPE_SOCKET
 	STYPE_CTRL,		//pipe cmd type
 };
@@ -66,7 +66,7 @@ static const char *stype_name[] = {
 	"LISTEN",
 	"UDPBIND",
 	"SOCKET",
-	"HALFCLOSE",
+	"SHUTDOWN",
 	"CONNECTING",
 	"CTRL",
 };
@@ -503,7 +503,7 @@ report_close(struct silly_socket *ss, struct socket *s, int err)
 	(void)ss;
 	int type;
 	struct silly_message_socket *sc;
-	if (s->type == STYPE_HALFCLOSE)//don't notify the active close
+	if (s->type == STYPE_SHUTDOWN)//don't notify the active close
 		return ;
 	type = s->type;
 	assert(type == STYPE_LISTEN ||
@@ -709,7 +709,7 @@ forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 	uint8_t *buf = (uint8_t *)silly_malloc(presize);
 	sz = readn(s->fd, buf, presize);
 	//half close socket need no data
-	if (sz > 0 && s->type != STYPE_HALFCLOSE) {
+	if (sz > 0 && s->type != STYPE_SHUTDOWN) {
 		report_data(ss, s, SILLY_SDATA, buf, sz);
 		//to predict the pakcet size
 		if (sz == presize) {
@@ -824,7 +824,7 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 		if (w == NULL) {//send ok
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (s->type == STYPE_HALFCLOSE)
+			if (s->type == STYPE_SHUTDOWN)
 				freesocket(ss, s);
 		}
 	}
@@ -851,7 +851,7 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 		if (w == NULL) {//send all
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (s->type == STYPE_HALFCLOSE)
+			if (s->type == STYPE_SHUTDOWN)
 				freesocket(ss, s);
 		}
 	}
@@ -1216,7 +1216,8 @@ tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 		freesocket(ss, s);
 		return 0;
 	} else {
-		s->type = STYPE_HALFCLOSE;
+		s->type = STYPE_SHUTDOWN;
+		shutdown(s->fd, SHUT_RD);
 		return -1;
 	}
 }
@@ -1521,7 +1522,7 @@ silly_socket_poll()
 		case STYPE_RESERVE:
 			silly_log("[socket] poll reserve socket\n");
 			continue;
-		case STYPE_HALFCLOSE:
+		case STYPE_SHUTDOWN:
 		case STYPE_SOCKET:
 		case STYPE_UDPBIND:
 			break;
@@ -1636,7 +1637,7 @@ void silly_socket_exit()
 		enum stype type = s->type;
 		if (type == STYPE_SOCKET ||
 			type == STYPE_LISTEN ||
-			type == STYPE_HALFCLOSE) {
+			type == STYPE_SHUTDOWN) {
 			close(s->fd);
 		}
 		++s;
@@ -1671,7 +1672,7 @@ silly_socket_netinfo(struct silly_netinfo *info)
 				++info->udpclient;
 			info->sendsize += silly_socket_sendsize(s->sid);
 			break;
-		case STYPE_HALFCLOSE:
+		case STYPE_SHUTDOWN:
 			++info->tcphalfclose;
 			break;
 		case STYPE_LISTEN:
