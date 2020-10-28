@@ -45,7 +45,11 @@ core.start(function()
 		M = v .. ":"
 		print("=========start=========")
 		testaux.module(v)
-		assert(entry[k])()
+		local ok, err = pcall(entry[k])
+		if not ok then
+			print(err)
+			core.exit(1)
+		end
 		print("======success==========")
 	end
 end)
