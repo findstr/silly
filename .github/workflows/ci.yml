@@ -1,7 +1,6 @@
 name: CI
 
 on: [push, pull_request]
-
 jobs:
   build:
 
@@ -17,25 +16,25 @@ jobs:
         redis version: latest # optional, default is latest
         # Number of Redis databases
         number of databases: 16 # optional, default is 16
-    - name: Setup MySQL
+    - name: Start MySQL
       # You may pin to the exact commit or the version.
-      # uses: mirromutth/mysql-action@de1fba8b3f90ce8db80f663a7043be3cf3231248
-      uses: mirromutth/mysql-action@v1.1
+      # uses: samin/mysql-action@4dd1210f1d6b9c2468adec44066ef4a97b8f07f3
+      uses: samin/mysql-action@v1.3
       with:
         # The port of host
         host port: 3306 # optional, default is 3306
         # The port of container
         container port: 3306 # optional, default is 3306
         # --character-set-server - The character set of MySQL server
-        character set server: utf8mb4# optional, default is utf8mb4
+        character set server: utf8mb4 # optional, default is utf8mb4
         # --collation-server - The character collation of MySQL server
         collation server: utf8mb4_general_ci # optional, default is utf8mb4_general_ci
         # Version of MySQL to use
-        mysql version: latest # optional, default is latest
+        mysql version: 5.7 # optional, default is latest
         # MYSQL_ROOT_PASSWORD - root superuser password
         mysql root password: root # optional, default is
         # MYSQL_DATABASE - name for the default database that is created
-        mysql database: test # optional, default is
+        mysql database: root # optional, default is
         # MYSQL_USER - create the specified user with superuser power for created database
         mysql user: root # optional, default is
         # MYSQL_PASSWORD - specified superuser password which user is power for created database
