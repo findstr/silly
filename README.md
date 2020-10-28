@@ -1,6 +1,7 @@
 # silly
 
 [![license](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat)](https://github.com/findstr/silly/blob/master/LICENSE)
+![CI](https://github.com/findstr/silly/workflows/CI/badge.svg?branch=master)
 
 --------
 
