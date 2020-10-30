@@ -6,6 +6,8 @@
 //sid == socket number, it will be remap in silly_socket, not a real socket fd
 
 #define SOCKET_NAMELEN	(INET6_ADDRSTRLEN + 8 + 1)	//[ipv6]:port
+#define SOCKET_READ_PAUSE	(0)
+#define SOCKET_READ_ENABLE	(1)
 
 typedef void (*silly_finalizer_t)(void *ptr);
 
