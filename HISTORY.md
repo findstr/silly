@@ -1,3 +1,29 @@
+## v0.4.0 (Nov 2, 2020)
+Bug fixes:
+
+- fix timer session race condition
+- fix tls.read, may read broken data
+- fix dns name cache
+- fix sys.socketq(renamed from sys.socketdispatch) auth race condition
+- fix dns session overflow
+- fix netpacket when hash conflict
+- fix core.exit, no code should be run after core.exit()
+- fix saux.rpc when more than one message pops up in a loop
+- fix saux.rpc timer leak
+
+New features:
+
+- dns support ipv6 server address
+- http support dom parser
+- add wakegroup for waiting for a collection of coroutines to finish
+- add fd round back check for sys.socket
+- add monitor thread to monitor slow events(events that take too long to process)
+- abstract `task(special use of coroutine)` for wrapper of event(socket, timer)
+- console add task/net info for debug
+- core.env support number index key
+- add flow control
+- upgrade to lua5.4 and enable generational gc by default
+
 ## v0.3.0 (Oct 1, 2017)
 Bug fixes:
 
