@@ -74,7 +74,7 @@ local function write_frame(w, sock, fin, op, mask, dat)
 		hdr = pack("<I1I1", h, l)
 	end
 	if mask == 1 then
-		masking_key = crypto.randomkey(4)
+		local masking_key = crypto.randomkey(4)
 		dat = crypto.xor(masking_key, dat)
 		return w(sock, hdr .. masking_key .. dat)
 	else

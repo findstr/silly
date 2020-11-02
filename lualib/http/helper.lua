@@ -1,8 +1,9 @@
 local format = string.format
 local gsub = string.gsub
-local char = string.char
 local insert = table.insert
 local concat = table.concat
+local char = utf8.char
+local pairs = pairs
 local tonumber = tonumber
 local type = type
 
@@ -13,6 +14,7 @@ local html_unescape = {
 	['amp'] = '&',
 	['lt'] = '<',
 	['gt'] = '>',
+	['nbsp'] = ' ',
 }
 
 function helper.htmlunescape(html)
@@ -34,13 +36,12 @@ function helper.urlencode(val)
 		local buf = {}
 		for k, v in pairs(val) do
 			v = encode(v)
-			buf[#buf+1] = string.format("%s=%s", k, v)
+			buf[#buf+1] = format("%s=%s", k, v)
 		end
 		return concat(buf, "&")
 	else
 		return encode(val)
 	end
-	return url
 end
 
 function helper.urldecode(url)

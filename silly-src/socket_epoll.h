@@ -2,12 +2,15 @@
 #define _SOCKET_EPOLL_H
 #include <sys/epoll.h>
 
-#define SP_READ(e)   (e->events & EPOLLIN)
-#define SP_WRITE(e)  (e->events & EPOLLOUT)
-#define SP_ERR(e)    (e->events & (EPOLLERR | EPOLLHUP))
-#define SP_UD(e)     (e->data.ptr)
+#define SP_IN		EPOLLIN
+#define SP_OUT		EPOLLOUT
 
-#define SP_INVALID   (-1)
+#define SP_READ(e)	(e->events & EPOLLIN)
+#define SP_WRITE(e)	(e->events & EPOLLOUT)
+#define SP_ERR(e)	(e->events & (EPOLLERR | EPOLLHUP))
+#define SP_UD(e)	(e->data.ptr)
+#define SP_INVALID	(-1)
+
 typedef int sp_t;
 typedef struct epoll_event sp_event_t;
 
@@ -47,7 +50,16 @@ sp_del(sp_t sp, int fd)
 }
 
 static inline int
-sp_write_enable(sp_t sp, int fd, void *ud, int enable)
+sp_ctrl(sp_t sp, int fd, void *ud, int ctrl)
+{
+	struct epoll_event event;
+	event.data.ptr = ud;
+	event.events = ctrl;
+	return epoll_ctl(sp, EPOLL_CTL_MOD, fd, &event);
+}
+
+static inline int
+sp_read_enable(sp_t sp, int fd, void *ud, int enable)
 {
 	struct epoll_event event;
 	event.data.ptr = ud;
@@ -58,6 +70,7 @@ sp_write_enable(sp_t sp, int fd, void *ud, int enable)
 
 	return epoll_ctl(sp, EPOLL_CTL_MOD, fd, &event);
 }
+
 
 #endif
 

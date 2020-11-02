@@ -36,9 +36,8 @@ function channel.pop(self)
 		self.popi = 1
 		self.pushi = 1
 		assert(not self.co)
-		local co = core.running()
-		self.co = co
-		core.wait(co)
+		self.co = core.running()
+		core.wait()
 	end
 	assert(self.popi - self.pushi < 0)
 	local i = self.popi

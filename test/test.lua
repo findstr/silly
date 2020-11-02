@@ -3,21 +3,24 @@ local testaux = require "testaux"
 
 local modules = {
 	"testjson",
+	"testdom",
 	"testtimer",
 	"testsocket",
 	"testdns",
 	"testrpc",
 	"testudp",
 	"testwakeup",
+	"testwaitgroup",
 	"testmulticast",
 	"testnetstream",
 	"testnetpacket",
 	"testchannel",
 	"testcrypto",
 	"testhttp",
+	"testwebsocket",
 	"testredis",
 	"testmysql",
-	"testwebsocket",
+	"testexit",
 }
 
 local M = ""
@@ -30,6 +33,9 @@ assert(core.envget("hello") == "world")
 
 _ENV.print = print
 
+local ok, res = pcall(core.wait)
+assert(not ok)
+
 core.start(function()
 	local entry = {}
 	for k, v in pairs(modules) do
@@ -39,10 +45,13 @@ core.start(function()
 		M = v .. ":"
 		print("=========start=========")
 		testaux.module(v)
-		assert(entry[k])()
+		local ok, err = pcall(entry[k])
+		if not ok then
+			print(err)
+			core.exit(1)
+		end
 		print("======success==========")
 	end
-	core.exit()
 end)
 
 

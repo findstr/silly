@@ -176,7 +176,7 @@ aes_getbuffer(lua_State *L, size_t need)
 	int idx = lua_upvalueindex(1);
 	size_t total = lua_rawlen(L, idx);
 	if (total < need) {
-		data = lua_newuserdata(L, need);
+		data = lua_newuserdatauv(L, need, 0);
 		lua_replace(L, idx);
 	} else {
 		data = lua_touserdata(L, idx);
@@ -363,7 +363,7 @@ lbase64encode(lua_State *L)
 	b = sz % 3;
 	int need = a + (b == 0 ? 0 : 1);
 	need *= 4;
-	ptr = ret = lua_newuserdata(L, need);
+	ptr = ret = lua_newuserdatauv(L, need, 0);
 	while (a--) {
 		numtochar(ptr, buff, 3);
 		buff += 3;
@@ -399,7 +399,7 @@ lbase64decode(lua_State *L)
 		--ptr2;
 		--need;
 	};
-	ptr1 = dst = lua_newuserdata(L, need);
+	ptr1 = dst = lua_newuserdatauv(L, need, 0);
 	ptr2 = dst + need;
 	while (ptr1 < ptr2) {
 		chartonum(ptr1, ptr2 - ptr1, src);
@@ -414,7 +414,7 @@ static inline void
 setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 {
 	while (tbl->name) {
-		lua_newuserdata(L, AESBUFF_LEN);
+		lua_newuserdatauv(L, AESBUFF_LEN, 0);
 		lua_pushcclosure(L, tbl->func, 1);
 		lua_setfield(L, -2, tbl->name);
 		++tbl;

@@ -1,4 +1,4 @@
-local dispatch = require "sys.socketdispatch"
+local dispatch = require "sys.socketq"
 
 local type = type
 local assert = assert

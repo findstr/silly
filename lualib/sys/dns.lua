@@ -20,8 +20,6 @@ local session = 0
 local dns_server
 local connectfd
 
-setmetatable(name_cache, weakmt)
-
 local timenow = core.monotonicsec
 
 --[[
@@ -67,7 +65,7 @@ local function question(name, typ)
 	else
 		typ = A
 	end
-	session = session + 1
+	session = session % 65535 + 1
 	local ID = session
 	--[[ FLAG
 		QR = 0,
@@ -203,7 +201,7 @@ local function suspend(session, timeout)
 		wait_coroutine[session] = nil
 		core.wakeup(co, false)
 	end)
-	return core.wait(co)
+	return core.wait()
 end
 
 local function connectserver()
@@ -212,6 +210,9 @@ local function connectserver()
 		for l in f:lines() do
 			dns_server = l:match("^%s*nameserver%s+([^%s]+)")
 			if dns_server then
+				if dns_server:find(':') then
+					dns_server = '[' .. dns_server .. ']'
+				end
 				dns_server = format("%s:53", dns_server)
 				break
 			end

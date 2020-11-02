@@ -7,6 +7,7 @@
 
 #include "silly.h"
 #include "silly_log.h"
+#include "silly_socket.h"
 #include "silly_malloc.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -29,9 +30,13 @@ struct node_buffer {
 	int sid;
 	int size;
 	int offset;
+	int limit;
+	int pause;
 	struct node *head;
 	struct node **tail;
 };
+
+#define needpause(nb)	((nb->size) >= (nb->limit))
 
 static int
 free_pool(lua_State *L)
@@ -57,7 +62,7 @@ new_pool(lua_State *L, int n)
 {
 	int i;
 	struct node *free;
-	free = (struct node *)lua_newuserdata(L, sizeof(struct node) * n);
+	free = (struct node *)lua_newuserdatauv(L, sizeof(struct node) * n, 0);
 	memset(free, 0, sizeof(struct node) * n);
 	for (i = 0; i < n - 1; i++)
 		free[i].next = &free[i + 1];
@@ -158,11 +163,13 @@ static int
 lnew(lua_State *L)
 {
 	struct node_buffer *nb;
-	nb = (struct node_buffer *)lua_newuserdata(L, sizeof(*nb));
+	nb = (struct node_buffer *)lua_newuserdatauv(L, sizeof(*nb), 0);
 	nb->sid = luaL_checkinteger(L, 1);
 	nb->offset = 0;
 	nb->size = 0;
 	nb->head = NULL;
+	nb->limit = INT_MAX;
+	nb->pause = 0;
 	nb->tail = &nb->head;
 	if (luaL_newmetatable(L, "nodebuffer")) {
 		lua_pushvalue(L, POOL);
@@ -173,6 +180,32 @@ lnew(lua_State *L)
 	return 1;
 }
 
+static inline void
+read_enable(struct node_buffer *nb)
+{
+	if (nb->pause == 0)
+		return ;
+	nb->pause = 0;
+	silly_socket_readctrl(nb->sid, SOCKET_READ_ENABLE);
+}
+
+static inline void
+read_pause(struct node_buffer *nb)
+{
+	if (nb->pause == 1)
+		return ;
+	nb->pause = 1;
+	silly_socket_readctrl(nb->sid, SOCKET_READ_PAUSE);
+}
+
+static inline void
+read_adjust(struct node_buffer *nb)
+{
+	if (needpause(nb))
+		read_pause(nb);
+	else
+		read_enable(nb);
+}
 
 //@input
 //	node, silly_message_socket
@@ -189,6 +222,8 @@ push(lua_State *L, int sid, char *data, int sz)
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
 	assert(nb->sid == sid);
 	append_node(nb, new);
+	if (!nb->pause && needpause(nb))
+		read_pause(nb);
 	return nb->size;
 }
 
@@ -285,20 +320,25 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 static int
 lreadall(lua_State *L)
 {
+	int readsize, sz;
 	struct node_buffer *nb;
 	if (lua_isnil(L, 1)) {
 		lua_pushliteral(L, "");
 		return 1;
 	}
-	nb = (struct node_buffer *)luaL_checkudata(L, 1, "nodebuffer");
-	assert(nb);
-	if (nb->size > 0) {
-		int sz = nb->size;
+	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
+	readsize = luaL_optinteger(L, NB+1, INT_MAX);
+	sz = nb->size;
+	if (sz == 0) {
+		lua_pushliteral(L, "");
+	} else if (readsize >= sz) {
 		nb->size = 0;
 		pushstring(L, nb, sz);
 	} else {
-		lua_pushliteral(L, "");
+		nb->size = sz - readsize;
+		pushstring(L, nb, readsize);
 	}
+	read_adjust(nb);
 	return 1;
 }
 
@@ -322,10 +362,13 @@ lread(lua_State *L)
 		lua_pushliteral(L, "");
 		return 1;
 	} else if (readn > nb->size) {
+		if (nb->pause)
+			read_enable(nb);
 		lua_pushnil(L);
 		return 1;
 	}
 	nb->size -= readn;
+	read_adjust(nb);
 	return pushstring(L, nb, readn);
 }
 
@@ -350,12 +393,54 @@ lreadline(lua_State *L)
 	delim = lua_tolstring(L, NB + 1, &delim_len);
 	readn = checkdelim(nb, delim, delim_len);
 	if (readn == -1 || readn > nb->size) {
+		if (nb->pause)
+			read_enable(nb);
 		lua_pushnil(L);
 		return 1;
 	}
 	nb->size -= readn;
+	read_adjust(nb);
 	return pushstring(L, nb, readn);
 }
+
+//@input
+//	node buffer
+//@return
+//	buff size
+static int
+lsize(lua_State *L)
+{
+	struct node_buffer *nb;
+	if (lua_isnil(L, NB)) {
+		lua_pushinteger(L, 0);
+	} else {
+		nb = luaL_checkudata(L, NB, "nodebuffer");
+		lua_pushinteger(L, nb->size);
+	}
+	return 1;
+}
+
+//@input
+// node buffer
+//@return
+//	previously limit
+static int
+llimit(lua_State *L)
+{
+	int prev, limit;
+	struct node_buffer *nb;
+	if (lua_isnil(L, NB)) {
+		return -1;
+	}
+	nb = luaL_checkudata(L, NB, "nodebuffer");
+	limit = luaL_checkinteger(L, NB+1);
+	prev = nb->limit;
+	nb->limit = limit;
+	read_adjust(nb);
+	lua_pushinteger(L, prev);
+	return 1;
+}
+
 
 static int
 lpush(lua_State *L)
@@ -423,6 +508,8 @@ int luaopen_sys_netstream(lua_State *L)
 		{"free", lfree},
 		{"push", lpush},
 		{"read", lread},
+		{"size", lsize},
+		{"limit", llimit},
 		{"readline", lreadline},
 		{"readall", lreadall},
 		{"todata", ltodata},

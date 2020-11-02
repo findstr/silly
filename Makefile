@@ -1,5 +1,5 @@
 .PNONY:all
-
+INCLUDE :=
 #---------
 
 TARGET ?= silly
@@ -21,12 +21,12 @@ LUA_STATICLIB=$(LUA_DIR)/liblua.a
 $(LUA_STATICLIB):
 	make -C $(LUA_DIR) $(PLAT) MYCFLAGS=-g
 
-#jemalloc
-
+#malloc lib select
+MALLOC_NAME=jemalloc
+ifeq ($(MALLOC_NAME), jemalloc)
 JEMALLOC_DIR=deps/jemalloc
 JEMALLOC_INC=$(JEMALLOC_DIR)/include
 JEMALLOC_STATICLIB=$(JEMALLOC_DIR)/lib/libjemalloc.a
-
 
 $(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
 	make -C $(JEMALLOC_DIR)
@@ -34,23 +34,22 @@ $(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
 $(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
 	cd $(JEMALLOC_DIR)&&\
 		./autogen.sh --with-jemalloc-prefix=je_
-
 $(JEMALLOC_DIR)/autogen.sh:
 	git submodule update --init
-
 jemalloc:$(JEMALLOC_STATICLIB)
-
-#malloc lib select
-MALLOC_STATICLIB=$(JEMALLOC_STATICLIB)
-
+INCLUDE += -I $(JEMALLOC_INC)
+MALLOC_STATICLIB := $(JEMALLOC_STATICLIB)
 all:jemalloc
+else
+CCFLAG += -DDISABLE_JEMALLOC
+MALLOC_STATICLIB :=
+endif
 
 #-----------project
-TEST_PATH = test
 LUACLIB_PATH ?= luaclib
 SRC_PATH = silly-src
 LIB_PATH = lualib-src
-INCLUDE = -I $(LUA_INC) -I $(JEMALLOC_INC) -I $(SRC_PATH)
+INCLUDE += -I $(LUA_INC) -I $(SRC_PATH)
 SRC_FILE = \
       main.c \
       silly_socket.c \
@@ -62,6 +61,7 @@ SRC_FILE = \
       silly_env.c \
       silly_malloc.c \
       silly_log.c \
+      silly_monitor.c \
 
 SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
@@ -101,6 +101,11 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 
 %.o:%.c
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
+
+test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer
+test: LDFLAG += -fsanitize=address -fno-omit-frame-pointer
+test: $(PLATS)
+	./$(TARGET) test/test.conf
 
 clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)

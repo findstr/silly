@@ -2,9 +2,11 @@ local core = require "sys.core"
 local np = require "sys.netpacket"
 local pairs = pairs
 local assert = assert
+local type = type
 local msg = {}
 local msgserver = {}
 local msgclient = {}
+local queue = np.create()
 
 local function gc(obj)
 	if not obj.fd then
@@ -20,14 +22,8 @@ end
 local servermt = {__index = msgserver, __gc = gc}
 local clientmt = {__index = msgclient, __gc = gc}
 
----server
-local function servercb(sc, config)
+local function event_callback(proto, accept_cb, close_cb, data_cb)
 	local EVENT = {}
-	local queue = np.create()
-	local accept_cb = assert(config.accept, "servercb accept")
-	local close_cb = assert(config.close, "servercb close")
-	local data_cb = assert(config.data, "servercb data")
-
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
@@ -35,51 +31,63 @@ local function servercb(sc, config)
 			core.close(fd)
 		end
 	end
-
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close_cb, fd, errno)
 		if not ok then
 			core.log("[msg] EVENT.close", err)
 		end
 	end
-
 	function EVENT.data()
-		local f, d, sz = np.pop(queue)
+		local f, d, sz, cmd = np.msgpop(queue)
 		if not f then
 			return
 		end
 		core.fork(EVENT.data)
 		while true do
-			local ok, err = core.pcall(data_cb, f, d, sz)
+			local obj = proto:decode(cmd, d, sz)
+			np.drop(d);
+			local ok, err = core.pcall(data_cb, f, cmd, obj)
 			if not ok then
 				core.log("[msg] dispatch socket", err)
 			end
-			f, d, sz = np.pop(queue)
+			f, d, sz, cmd = np.msgpop(queue)
 			if not f then
 				return
 			end
 		end
 	end
-
 	return function (type, fd, message, ...)
-		queue = np.message(queue, message)
+		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
 end
 
-local function sendmsg(self, fd, data)
-	return core.write(fd, np.pack(data))
+---server
+local function sendmsg(self, fd, cmd, data)
+	local proto = self.proto
+	if type(cmd) == "string" then
+		cmd = proto:tag(cmd)
+	end
+	local dat, sz = proto:encode(cmd, data, true)
+	return core.write(fd, np.msgpack(dat, sz, cmd))
+end
+msgserver.send = sendmsg
+msgserver.sendbin = function(self, fd, cmd, bin)
+	return core.write(fd, np.msgpack(bin, cmd))
+end
+msgserver.multipack = function(self, cmd, dat, n)
+	local proto = self.proto
+	if type(cmd) == "string" then
+		cmd = proto:tag(cmd)
+	end
+	local dat, sz = proto:encode(cmd, dat, true)
+	local dat, sz = np.msgpack(dat, sz, cmd)
+	dat, sz = core.multipack(dat, sz, n)
+	return dat, sz
 end
 
-msgserver.send = sendmsg
 msgserver.multicast = function(self, fd, data, sz)
 	return core.multicast(fd, data, sz)
-end
-
-function msgserver.listen(self)
-	local fd = core.listen(self.addr, self.callback, self.backlog)
-	self.fd = fd
-	return fd
 end
 
 function msgserver.stop(self)
@@ -91,49 +99,6 @@ function msgserver.close(self, fd)
 end
 
 -----client
-
-local function clientcb(sc, config)
-	local EVENT = {}
-	local queue = np.create()
-	sc.queuedat = {}
-	local close_cb = assert(config.close, "clientcb close")
-	local data_cb = assert(config.data, "clientcb data")
-	function EVENT.accept(fd, portid, addr)
-		assert(not "never come here")
-	end
-
-	function EVENT.close(fd, errno)
-		local ok, err = core.pcall(close_cb, fd, errno)
-		sc.fd = false
-		if not ok then
-			core.log("[msg] EVENT.close", err)
-		end
-	end
-
-	function EVENT.data()
-		local f, d, sz = np.pop(queue)
-		if not f then
-			return
-		end
-		core.fork(EVENT.data)
-		while true do
-			local ok, err = core.pcall(data_cb, f, d, sz)
-			if not ok then
-				core.log("[msg] EVENT.data", err)
-			end
-			f, d, sz = np.pop(queue)
-			if not f then
-				return
-			end
-		end
-	end
-
-	return function (type, fd, message, ...)
-		queue = np.message(queue, message)
-		assert(EVENT[type])(fd, ...)
-	end
-end
-
 local function wakeupall(self)
 	local q = self.connectqueue
 	for k, v in pairs(q) do
@@ -160,7 +125,7 @@ local function checkconnect(self)
 		local co = core.running()
 		local t = self.connectqueue
 		t[#t + 1] = co
-		core.wait(co)
+		core.wait()
 		return self.fd and self.fd > 0
 	end
 end
@@ -169,40 +134,46 @@ function msgclient.close(self)
 	gc(self)
 end
 
-function msgclient.send(self, data)
+function msgclient.send(self, cmd, data)
 	local fd = checkconnect(self)
 	if not fd then
 		return false
 	end
-	return sendmsg(self, fd, data)
+	return sendmsg(self, fd, cmd, data)
 end
 
-function msgclient.connect(self)
-	local fd = checkconnect(self)
-	return fd
-end
-
-
-function msg.createclient(config)
+function msg.connect(conf)
 	local obj = {
 		fd = false,
-		addr = config.addr,
 		callback = false,
+		addr = conf.addr,
+		proto = conf.proto,
 		connectqueue = {},
 	}
-	obj.callback = clientcb(obj, config),
+	local close_cb = assert(conf.close, "clientcb close")
+	local data_cb = assert(conf.data, "clientcb data")
+	obj.callback = event_callback(conf.proto, nil, close_cb, data_cb)
 	setmetatable(obj, clientmt)
+	checkconnect(obj)
 	return obj
 end
 
-function msg.createserver(config)
+function msg.listen(conf)
 	local obj = {
 		fd = false,
-		addr = config.addr,
 		callback = false,
+		addr = conf.addr,
+		proto = conf.proto,
 	}
-	obj.callback = servercb(obj, config)
+	local accept_cb = assert(conf.accept, "servercb accept")
+	local close_cb = assert(conf.close, "servercb close")
+	local data_cb = assert(conf.data, "servercb data")
+	obj.callback = event_callback(conf.proto, accept_cb, close_cb, data_cb)
 	setmetatable(obj, servermt)
+	local fd, errno = core.listen(obj.addr, obj.callback, obj.backlog)
+	if not fd then
+		return nil, errno
+	end
 	return obj
 end
 

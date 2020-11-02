@@ -20,7 +20,7 @@ lmsggc(lua_State *L)
 static struct silly_message *
 newmsg(lua_State *L, size_t sz)
 {
-	struct silly_message *sm = lua_newuserdata(L, sz);
+	struct silly_message *sm = lua_newuserdatauv(L, sz, 0);
 	if (luaL_newmetatable(L, "sillymessage")) {
 		lua_pushcfunction(L, lmsggc);
 		lua_setfield(L, -2, "__gc");

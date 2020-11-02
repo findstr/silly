@@ -1,0 +1,39 @@
+error_n 0xa000 {
+	.cmd:integer 1
+	.errno:integer 2
+}
+
+auth_r 0xa001 {
+	.account:string 1
+	.passwd:string 2
+}
+
+auth_a 0xa002 {
+	.uid:integer 1
+	.gate:string 2
+	.token:string 3
+}
+
+login_r 0xa003 {
+	.account:string 1
+	.uid:integer 2
+	.token:string 3
+}
+
+login_a 0xa004 {
+
+}
+
+foo_r 0xa005 {
+	.txt:string 1
+}
+
+foo_a 0xa006 {
+
+}
+
+bar_n 0xa007 {
+	.uid:integer 1
+	.txt:string 2
+}
+

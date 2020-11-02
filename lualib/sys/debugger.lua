@@ -6,8 +6,7 @@ local getinfo = debug.getinfo
 local getlocal = debug.getlocal
 local getupvalue = debug.getupvalue
 local format = string.format
-local coresume = coroutine.resume
-local coyield = coroutine.yield
+local coresume, coyield
 
 local prompt
 local writedat
@@ -45,26 +44,23 @@ end
 local function sethookall(hook, mask)
 	hookmask = mask
 	hookfunc = hook
-	for co, _ in pairs(livethread) do
-		sethook(co, hook, mask)
+	for t, _ in pairs(livethread) do
+		sethook(t, hook, mask)
 	end
 end
 
-local function hookresume(co, typ, ...)
-	if typ == "STARTUP" then
-		livethread[co] = true
-		sethook(co, hookfunc, hookmask)
+local function hook_create(t)
+	if hookmask and not lockthread then
+		livethread[t] = true
+		sethook(t, hookfunc, hookmask)
 	end
-	return coresume(co, typ, ...)
 end
 
-local function hookyield(typ, ...)
-	if typ == "EXIT" then
-		local co = core.running()
-		livethread[co] = nil
-		sethook(co);
+local function hook_term(t)
+	if livethread[t] then
+		livethread[t] = nil
+		sethook(t)
 	end
-	return coyield(typ, ...)
 end
 
 local function breakpoint(file, line)
@@ -131,6 +127,7 @@ local function checkhit(info, runline)
 end
 
 local function breakin(info, runline)
+	assert(coroutine.running() == core.running())
 	local source = info.source
 	lastfile = source
 	lastline = runline
@@ -224,6 +221,7 @@ function checkcall()
 end
 
 function checkline()
+	prompt = "debugger> "
 	sethookall()	--only only one thread
 	calllevel = 0
 	calltrigger[calllevel] = true
@@ -358,10 +356,11 @@ function CMD.n() --next
 		writedat[2] = prompt
 		return writedat
 	end
+	local t = lockthread
+	lockthread = nil
 	nextlevel = calllevel
 	stepmode = "next"
-	core.wakeup(lockthread)
-	lockthread = nil
+	coresume(t)
 	return "\n"
 end
 
@@ -371,9 +370,10 @@ function CMD.s()	--step
 		writedat[2] = prompt
 		return writedat
 	end
-	stepmode = "step"
-	core.wakeup(lockthread)
+	local t = lockthread
 	lockthread = nil
+	stepmode = "step"
+	coresume(t)
 	return
 end
 
@@ -383,9 +383,10 @@ function CMD.c()	--continue
 		writedat[2] = prompt
 		return writedat
 	end
-	core.wakeup(lockthread)
-	checklinethread(lockthread)
+	local t = lockthread
 	lockthread = nil
+	checklinethread(t)
+	coresume(t)
 	prompt = "debugger> "
 	writedat[1] = prompt
 	return writedat
@@ -462,7 +463,6 @@ local function enter()
 	lockthread = nil
 
 	livethread = {}
-	setmetatable(livethread, {__mode="k"})
 end
 
 local function leave()
@@ -493,8 +493,11 @@ local function leave()
 end
 
 function CMD.q()
+	for t, _ in pairs(livethread) do
+		sethook(t)
+	end
 	if lockthread then
-		core.wakeup(lockthread)
+		coresume(lockthread)
 	end
 	leave()
 end
@@ -546,9 +549,9 @@ start = function(read, write)
 	enter()
 	cread = read
 	cwrite = write
-	core.coroutine(hookresume, hookyield)
+	coresume, coyield = core.task_hook(hook_create, hook_term)
 	local ok, err = core.pcall(cmdline)
-	core.coroutine(coresume, coyield)
+	core.task_hook()
 	CMD.q()
 	if not ok then
 		core.log(err)

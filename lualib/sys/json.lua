@@ -176,7 +176,7 @@ function json.encode(obj)
 	return encodeobj(obj)
 end
 function json.decode(str)
-	local i = skipspace(str, i)
+	local i = skipspace(str)
 	local cb = decode_func[str:byte(i)]
 	if not cb then
 		return nil, " invalid json"

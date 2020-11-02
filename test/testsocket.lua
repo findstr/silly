@@ -1,8 +1,9 @@
 local core = require "sys.core"
 local socket = require "sys.socket"
 local tls = require "sys.tls"
+local crypto = require "sys.crypto"
 local testaux = require "testaux"
-
+local IO
 local listen_cb
 local listenfd = socket.listen(":10001", function(fd, addr)
 	if listen_cb then
@@ -27,6 +28,118 @@ local tlsfd = tls.listen {
 	end
 }
 
+local function test_limit(port)
+	local dat1 = crypto.randomkey(511) .. "\n" .. crypto.randomkey(512)
+	local dat2 = crypto.randomkey(1024)
+	listen_func = function(fd)
+		print("write 1Kbyte data")
+		core.write(fd, dat1)
+		core.sleep(500)
+		print("write 1Kbyte data")
+		core.write(fd, dat2)
+	end
+	print("==test dynamic limit")
+	listen_cb = listen_func
+	local fd = socket.connect("127.0.0.1" .. port)
+	print("limit socket buffer to 1024", fd)
+	socket.limit(fd, 1024)
+	print("wait for recv data")
+	core.sleep(1000)
+	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
+	socket.limit(fd, 2048)
+	core.sleep(1000)
+	testaux.asserteq(socket.recvsize(fd), 2048, "socket flow limit change")
+	socket.close(fd)
+	print("==test read part")
+	listen_cb = listen_func
+	local fd = socket.connect("127.0.0.1" .. port)
+	print("limit socket buffer to 1024", fd)
+	socket.limit(fd, 1024)
+	print("wait for recv data")
+	core.sleep(1000)
+	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
+	local datx = socket.readline(fd)
+	local daty = socket.read(fd, 768)
+	local datz = socket.read(fd, 768)
+	testaux.asserteq(datx..daty..datz, dat1..dat2, "socket flow read 2048")
+	socket.close(fd)
+	print("==test readall")
+	listen_cb = listen_func
+	local fd = socket.connect("127.0.0.1" .. port)
+	print("limit socket buffer to 1024", fd)
+	socket.limit(fd, 1024)
+	print("wait for recv data")
+	core.sleep(1000)
+	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
+	local datx = socket.readall(fd)
+	testaux.asserteq(datx, dat1, "socket flow readall 1024")
+	core.sleep(1000)
+	local daty = socket.readall(fd)
+	testaux.asserteq(daty, dat2, "socket flow readall 1024")
+	socket.close(fd)
+	print("==test write function normal")
+	local recvfd
+	local size = 0
+	local buf1 = {"h"}
+	local dat3 = crypto.randomkey(1024 * 1024)
+	listen_cb = function(fd)
+		recvfd = fd
+		socket.limit(fd, 1)
+		print("write 1Kbyte data")
+		core.write(fd, dat1)
+		core.sleep(500)
+		print("write 1Kbyte data")
+		core.write(fd, dat2)
+	end
+	local fd = socket.connect("127.0.0.1" .. port)
+	socket.limit(fd, 1024)
+	socket.write(fd, buf1[1])
+	core.sleep(1000)
+	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
+	for i = 1, 1024 do
+		size = size + #dat3
+		buf1[#buf1 + 1] = dat3
+		socket.write(fd, dat3)
+		core.sleep(100)
+		if socket.sendsize(fd) > 0 then
+			break
+		end
+	end
+	local datx = socket.read(fd, 1024)
+	local daty = socket.read(fd, 1024)
+	testaux.asserteq(datx .. daty, dat1 .. dat2, "socket flow read 2048")
+	socket.limit(recvfd, 2*size)
+	local datz = socket.read(recvfd, size+1)
+	local datw = table.concat(buf1)
+	testaux.asserteq(datz, datw, "socket flow write check")
+	socket.close(fd)
+	print("==test read large then limit")
+	local recvfd
+	listen_cb = function(fd)
+		recvfd = fd
+		print("write 1Kbyte data")
+		core.write(fd, dat1)
+		core.sleep(500)
+		print("write 1Kbyte data")
+		core.write(fd, dat2)
+	end
+	local fd = socket.connect("127.0.0.1" .. port)
+	socket.limit(fd, 1024)
+	core.sleep(100)
+	local dat = socket.read(fd, 2048)
+	testaux.asserteq(dat, dat1 .. dat2, "socket flow read 2048")
+	print("write 1Kbyte data")
+	core.write(recvfd, dat1)
+	core.sleep(500)
+	print("write 1Kbyte data")
+	core.write(recvfd, dat2)
+	core.sleep(500)
+	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow limit 1024")
+	local dat = socket.read(fd, 2048)
+	testaux.asserteq(dat, dat1 .. dat2, "socket flow read 2048")
+	socket.close(fd)
+end
+
 local function test_read(port)
 	local recv_sum = 0
 	local send_sum = 0
@@ -35,7 +148,7 @@ local function test_read(port)
 
 	local WAIT
 	listen_cb = function(fd)
-		IO.limit(fd, 1024*1024*1024)
+		IO.limit(fd, 8*1024*1024)
 		while true do
 			local n = IO.readline(fd)
 			assert(n,n)
@@ -60,7 +173,7 @@ local function test_read(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	IO.limit(fd, 1024 * 1024 * 1024)
+	IO.limit(fd, 8 * 1024 * 1024)
 	assert(fd >= 0)
 	local start = 8
 	local total = 32 * 1024 * 1024
@@ -283,7 +396,6 @@ local function test_close(port)
 	print("CASE8")
 	listen_cb = function(fd, addr)
 		local ok = IO.write(fd, "po")
-		testaux.asserteq(ok, true, "server write `po`")
 		core.sleep(200)
 		local ok = IO.write(fd, "ng")
 		testaux.asserteq(ok, false, "server write `ng`")
@@ -302,6 +414,8 @@ local function test_close(port)
 end
 
 return function()
+	testaux.module("socet")
+	test_limit(":10001")
 	IO = socket
 	testaux.module("socet")
 	test_read(":10001")

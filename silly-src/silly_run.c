@@ -15,6 +15,7 @@
 #include "silly_timer.h"
 #include "silly_socket.h"
 #include "silly_worker.h"
+#include "silly_monitor.h"
 #include "silly_daemon.h"
 
 #include "silly_run.h"
@@ -33,11 +34,14 @@ static void *
 thread_timer(void *arg)
 {
 	(void)arg;
+	struct timespec req;
+	req.tv_sec = TIMER_ACCURACY / 1000;
+	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
 	for (;;) {
 		silly_timer_update();
 		if (R.workerstatus == -1)
 			break;
-		usleep(TIMER_ACCURACY);
+		nanosleep(&req, NULL);
 		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);
 	}
@@ -71,11 +75,28 @@ thread_worker(void *arg)
 		silly_worker_dispatch();
 		//allow spurious wakeup, it's harmless
 		R.workerstatus = 0;
-		pthread_cond_wait(&R.cond, &R.mutex);
+		if (silly_worker_msgsize() == 0) //double check
+			pthread_cond_wait(&R.cond, &R.mutex);
 		R.workerstatus = 1;
 	}
 	pthread_mutex_unlock(&R.mutex);
 	R.workerstatus = -1;
+	return NULL;
+}
+
+static void *
+thread_monitor(void *arg)
+{
+	(void)arg;
+	struct timespec req;
+	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
+	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
+	for (;;) {
+		if (R.workerstatus == -1)
+			break;
+		nanosleep(&req, NULL);
+		silly_monitor_check();
+	}
 	return NULL;
 }
 
@@ -130,7 +151,7 @@ silly_run(const struct silly_config *config)
 {
 	int i;
 	int err;
-	pthread_t pid[3];
+	pthread_t pid[4];
 	R.running = 1;
 	R.conf = config;
 	R.exitstatus = 0;
@@ -147,14 +168,16 @@ silly_run(const struct silly_config *config)
 		exit(-1);
 	}
 	silly_worker_init();
+	silly_monitor_init();
 	srand(time(NULL));
 	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
 	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
+	thread_create(&pid[3], thread_monitor, NULL, -1);
 	silly_log("%s %s is running ...\n", config->selfname, SILLY_RELEASE);
 	silly_log("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
 		config->timeraffinity, config->socketaffinity, config->workeraffinity);
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 4; i++)
 		pthread_join(pid[i], NULL);
 	silly_daemon_stop(config);
 	pthread_mutex_destroy(&R.mutex);

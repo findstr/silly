@@ -7,7 +7,7 @@
 -- protocol detail: https://mariadb.com/kb/en/clientserver-protocol/
 
 local crypto = require "sys.crypto"
-local dispatch = require "sys.socketdispatch"
+local dispatch = require "sys.socketq"
 
 local sub = string.sub
 local strgsub = string.gsub
@@ -22,6 +22,8 @@ local sha1 = crypto.sha1
 local tpack = table.pack
 local setmetatable = setmetatable
 local error = error
+local type = type
+local pairs = pairs
 local tonumber = tonumber
 local tointeger = math.tointeger
 

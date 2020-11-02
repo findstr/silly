@@ -13,22 +13,6 @@
 
 #define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
 
-static int
-checktype(lua_State *L, const char *key, int skt, int type)
-{
-	int t = lua_type(L, skt);
-	if (t == LUA_TNIL)
-		return -1;
-	if (t != type && t != LUA_TNIL) {
-		const char *expect = lua_typename(L, type);
-		const char *got = lua_typename(L, lua_type(L, skt));
-		const char *fmt = "[checktype] %s expecte %s but got %s\n";
-		silly_log(fmt, key, expect, got);
-		exit(-1);
-	}
-	return 0;
-}
-
 static inline int
 optint(const char *key, int v)
 {
@@ -68,13 +52,20 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 	while (lua_next(L, -2) != 0) {
 		size_t sz;
 		const char *k;
-		checktype(L, "[enveach] key", -2, LUA_TSTRING);
-		k = lua_tolstring(L, -2, &sz);
+		int type = lua_type(L, -2);
+		if (type != LUA_TSTRING && type != LUA_TNUMBER) {
+			silly_log("[checktype] key expecte string/number"
+				" but got %s\n", lua_typename(L, type));
+			exit(-1);
+		}
+		lua_pushvalue(L, -2);
+		k = lua_tolstring(L, -1, &sz);
 		assert(curr <= end);
 		if (sz >= (size_t)(end - curr)) {
 			silly_log("[enveach] buff is too short\n");
 			exit(-1);
 		}
+		lua_pop(L, 1);
 		memcpy(curr, k, sz);
 		if (lua_type(L, -1) == LUA_TTABLE) {
 			curr[sz] = '.';
