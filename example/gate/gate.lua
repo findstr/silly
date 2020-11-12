@@ -1,7 +1,7 @@
 local core = require "sys.core"
 local json = require "sys.json"
 local crypto = require "sys.crypto"
-local msgserver = require "saux.msg"
+local msgserver = require "cluster.msg"
 local role = require "agent.role"
 local zproto = require "zproto"
 local proto = zproto:parse(require "proto.client")

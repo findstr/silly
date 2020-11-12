@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local master = require "saux.cluster.master"
+local master = require "cluster.master"
 
 core.start(function()
 	local addr = assert(core.envget("master"), "master")

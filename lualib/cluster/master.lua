@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local zproto = require "zproto"
-local rpc = require "saux.rpc"
+local rpc = require "cluster.rpc"
 local waitgroup = require "sys.waitgroup"
 local type = type
 local pairs = pairs
@@ -436,7 +436,7 @@ capacity = {
 
 function M.start(conf)
 	local errno
-	local str = require "saux.cluster.proto"
+	local str = require "cluster.proto"
 	proto = zproto:parse(str)
 	server, errno = rpc.listen {
 		addr = conf.listen,

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local testaux = require "testaux"
-local msg = require "saux.msg"
+local msg = require "cluster.msg"
 local np = require "sys.netpacket"
 local zproto = require "zproto"
 local logic = zproto:parse [[

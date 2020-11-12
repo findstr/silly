@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local zproto = require "zproto"
-local rpc = require "saux.rpc"
+local rpc = require "cluster.rpc"
 local pairs = pairs
 local assert = assert
 local error = error
@@ -188,7 +188,7 @@ end
 
 function M.up(conf)
 	local errno
-	local str = require "saux.cluster.proto"
+	local str = require "cluster.proto"
 	proto = assert(zproto:parse(str .. conf.proto))
 	for k, v in pairs(handler) do
 		local cmd = assert(proto:tag(k), k)

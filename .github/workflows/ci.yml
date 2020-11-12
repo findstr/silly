@@ -46,7 +46,4 @@ jobs:
         sudo apt-get install libssl-dev
         patch -p1 < ssl.patch
     - name: make
-      run: make
-    - name: run test
-      run: |
-        ./silly test/test.conf
+      run: make test

@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local worker = require "saux.cluster.worker"
+local worker = require "cluster.worker"
 local proto = require "proto.cluster"
 local gate = require "agent.gate"
 local E = {}

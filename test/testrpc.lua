@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local waitgroup = require "sys.waitgroup"
-local rpc = require "saux.rpc"
+local rpc = require "cluster.rpc"
 local crypto = require "sys.crypto"
 local testaux = require "testaux"
 local zproto = require "zproto"

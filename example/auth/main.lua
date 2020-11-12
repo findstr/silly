@@ -1,8 +1,8 @@
 local core = require "sys.core"
 local zproto = require "zproto"
 local gate = require "agent.gate"
-local msgserver = require "saux.msg"
-local worker = require "saux.cluster.worker"
+local msgserver = require "cluster.msg"
+local worker = require "cluster.worker"
 local gate_info = {}
 local auth_server
 local uid_start = 0x123456
