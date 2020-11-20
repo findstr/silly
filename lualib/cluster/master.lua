@@ -9,9 +9,9 @@ local assert = assert
 local tonumber = tonumber
 local format = string.format
 local M = {}
-local idx = 0
+local epoch = 0
 local proto, server
-local master_id = nil
+local master_epoch = nil
 local modify_id = 0
 local consistent_id = 0
 local worker_total = 0
@@ -25,11 +25,11 @@ local router = {}
 
 --[[
 worker {
-	id:integer,
+	epoch:integer,
 	type:string,
 	status:string,	`up,run,down`
 	listen:string,
-	slotid:integer,
+	slot:integer,
 	fd:integer,
 	heartbeat:long
 }
@@ -41,6 +41,14 @@ local function clone(a, b)
 		b[k] = v
 	end
 	return b
+end
+
+local function formatworker(w)
+	return format(
+[[{type="%s",epoch=%s,status="%s",listen="%s",slot=%s,fd=%s,heartbeat=%s}]],
+		w.type, w.epoch, w.status, w.listen,
+		w.slot, w.fd, w.heartbeat
+	)
 end
 
 local function create_rpc_for_worker(w)
@@ -83,18 +91,18 @@ local function join_start(msg, fd)
 	if w and req.type ~= w.type then
 		return false, format("listen exist type:%s", w.type)
 	end
-	if req.slotid then -- transition or restore
-		if j and req.id < j.id then
-			return false, format("join newer:%s", j.id)
+	if req.slot then -- transition or restore
+		if j and req.epoch < j.epoch then
+			return false, format("join newer:%s", j.epoch)
 		end
-		if w and req.id < w.id then
-			return false, format("join newer:%s", j.id)
+		if w and req.epoch < w.epoch then
+			return false, format("join newer:%s", j.epoch)
 		end
-		local w = type_to_workers[req.type][req.slotid]
-		if w and req.id < w.id then
-			return false, format("join newer:%s", w.id)
+		local w = type_to_workers[req.type][req.slot]
+		if w and req.epoch < w.epoch then
+			return false, format("join newer:%s", w.epoch)
 		end
-		if not master_id then --restore
+		if not master_epoch then --restore
 			assert(msg.workers, listen)
 			restoreing[#restoreing + 1] = msg.workers
 		end
@@ -112,15 +120,13 @@ local fd_waiting = {}
 
 local function join_accept(w)
 	fd_waiting[w.fd] = "success"
-	core.log("[master] join accept", w.type,
-		w.listen, w.status, w.slotid, w.id)
+	core.log("[master] join accept", formatworker(w))
 	return join_remove(w.fd)
 end
 
 local function join_fail(w, err)
 	fd_waiting[w.fd] = err
-	core.log("[master] join fail", w.type, w.listen,
-		w.status, w.slotid, w.id, err)
+	core.log("[master] join fail", formatworker(w), "err:", err)
 	return join_remove(w.fd)
 end
 
@@ -129,8 +135,9 @@ function router.join_r(msg, cmd, fd)
 	if not waiting then
 		local j = msg.self
 		local ok, err = join_start(msg, fd)
-		core.log("[master] join_r start", fd, j.type,
-			j.listen, j.status, j.slotid, j.id, ok, err)
+		core.log("[master] join_r start fd:", fd,
+			"joiner:", formatworker(j),
+			"res:", ok, "err:", err)
 		if ok then
 			modify_id = modify_id + 1
 			fd_waiting[fd] = true
@@ -151,6 +158,8 @@ function router.join_r(msg, cmd, fd)
 		fd_waiting[fd] = nil
 		local req = msg.self
 		if waiting ~= "success" then
+			core.log("[master] join_r fail:",
+				waiting,  formatworker(w))
 			return "join_a", {result = -1, status = waiting}
 		end
 		local listen, typ = req.listen, req.type
@@ -158,9 +167,8 @@ function router.join_r(msg, cmd, fd)
 		assert(w, listen)
 		clone(w, req)
 		req.capacity = assert(type_to_workers[typ].count, typ)
-		req.masterid = master_id
-		core.log("[master] join_r success", w.type,
-			w.listen, w.status, w.slotid, w.id)
+		req.mepoch = master_epoch
+		core.log("[master] join_r success", formatworker(w))
 		return "join_a", req
 	end
 end
@@ -172,7 +180,7 @@ local function worker_join(w)
 	assert(not fd_to_worker[fd], fd)
 	local workers = type_to_workers[w.type]
 	w.heartbeat = core.monotonicsec()
-	workers[w.slotid] = w
+	workers[w.slot] = w
 	listen_to_worker[listen] = w
 	fd_to_worker[fd] = w
 	join_accept(w)
@@ -188,7 +196,7 @@ local function worker_clear(w)
 		fd_to_worker[fd] = nil
 	end
 	w.status = "down"
-	type_to_workers[w.type][w.slotid] = nil
+	type_to_workers[w.type][w.slot] = nil
 	listen_to_worker[w.listen] = nil
 end
 
@@ -197,8 +205,9 @@ local function worker_down(w)
 	w.fd = nil
 	w.status = "down"
 	fd_to_worker[fd] = nil
-	core.log("[master] worker down", w.type,
-		w.status, w.listen, w.slotid, w.id, fd)
+	fd_waiting[fd] = nil
+	join_remove(fd)
+	core.log("[master] worker down fd:", fd, "worker:", formatworker(w))
 end
 
 local function worker_close(fd, errno)
@@ -219,7 +228,7 @@ function router.heartbeat_r(msg, cmd, fd)
 		return "heartbeat_a", {}
 	end
 	w.heartbeat = core.monotonicsec()
-	return "heartbeat_a", {masterid = master_id}
+	return "heartbeat_a", {mepoch = master_epoch}
 end
 
 local function restore_cluster()
@@ -228,20 +237,20 @@ local function restore_cluster()
 		for _, w in ipairs(workers) do
 			local t = w.type
 			local workers = assert(type_to_workers[t], t)
-			local ww = workers[w.slotid]
-			local id = ww and ww.id or 0
-			local wid = w.id
-			if wid > id then
+			local ww = workers[w.slot]
+			local epoch = ww and ww.epoch or 0
+			local wid = w.epoch
+			if wid > epoch then
 				w.status = "down"
 				w.heartbeat = now - 100
-				workers[w.slotid] = w
+				workers[w.slot] = w
 				listen_to_worker[w.listen] = w
 				--restore assume all node is down,
 				--so worker has no fd,
 				--of course, don't need mark fd_to_worker
 			end
-			if wid > idx then
-				idx = wid
+			if wid > epoch then
+				epoch = wid
 			end
 		end
 		restoreing[k] = nil
@@ -260,7 +269,7 @@ end
 local function count_joining()
 	local rn, jn = 0, 0
 	for _, req in pairs(listen_to_join) do
-		if req.slotid then
+		if req.slot then
 			rn = rn + 1
 		else
 			jn = jn + 1
@@ -290,20 +299,20 @@ local function count_by_type(list)
 
 end
 
-local function try_join(j) --process slotid and not nil
+local function try_join(j) --process slot and not nil
 	local workers = type_to_workers[j.type]
 	if not workers then
 		join_fail(j, "unkonw "..j.type)
 		return
 	end
-	local slotid = j.slotid
-	if slotid then --status transition
-		local w = workers[slotid]
-		assert(j.id >= w.id)
+	local slot = j.slot
+	if slot then --status transition
+		local w = workers[slot]
+		assert(j.epoch >= w.epoch)
 		local type = j.type
 		assert(type == w.type)
 		assert(listen_to_worker[w.listen])
-		assert(workers[w.slotid])
+		assert(workers[w.slot])
 		worker_clear(w)
 		w = clone(j, w)
 		worker_join(w)
@@ -315,9 +324,9 @@ local function try_join(j) --process slotid and not nil
 		if not w or w.status == "down" then
 			worker_clear(w)
 			w = clone(j, w)
-			idx = idx + 1
-			w.id = idx
-			w.slotid = i
+			epoch = epoch + 1
+			w.epoch = epoch
+			w.slot = i
 			worker_join(w)
 			return
 		end
@@ -331,7 +340,7 @@ local function cluster_workers()
 		return
 	end
 	--restore cluster info
-	if not master_id then
+	if not master_epoch then
 		local rn, jn = count_joining()
 		core.log("[master] start restore count:", rn,
 			"joining count:", jn, "worker_total:", worker_total)
@@ -343,9 +352,9 @@ local function cluster_workers()
 		elseif jn < worker_total then
 			return
 		end
-		idx = (idx // 1000 + 1) * 1000 + 1
-		master_id = idx
-		core.log("[master] start success masterid", master_id,
+		epoch = (epoch // 1000 + 1) * 1000 + 1
+		master_epoch = epoch
+		core.log("[master] start success mepoch", master_epoch,
 			"modify", modify_id, "consistent", consistent_id)
 	end
 	check_down()
@@ -383,8 +392,7 @@ local function cluster_workers()
 	core.log("[master] cluster_r begin")
 	local cluster_r = { workers = l }
 	for _, w in pairs(listen_to_worker) do
-		core.log("[master] cluster_r worker", w.type,
-			w.status, w.listen, w.slotid, w.id)
+		core.log("[master] cluster_r worker", formatworker(w))
 		l[#l + 1] = w
 	end
 	local count = 0
@@ -394,7 +402,7 @@ local function cluster_workers()
 			create_rpc_for_worker(w)
 			local ack, cmd = w.rpc:call("cluster_r", cluster_r)
 			if not ack then
-				core.log("[master] cluster_r",
+				core.log("[master] cluster_r ",
 					w.listen, "err:", cmd)
 			else
 				count = count + 1

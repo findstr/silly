@@ -7,7 +7,7 @@ local error = error
 local format = string.format
 local proto, server, master
 local M = {}
-local masterid
+local mepoch
 local router = {}
 local handler = {}
 local type_to_workers = {}
@@ -23,6 +23,14 @@ local function clone(src, dst)
 	end
 end
 
+local function formatworker(w)
+	return format(
+[[{type="%s",epoch=%s,status="%s",listen="%s",slot=%s,fd=%s}]],
+		w.type, w.epoch, w.status, w.listen,
+		w.slot, w.fd, w.heartbeat
+	)
+end
+
 local function transition_until_success(status)
 	local x = {}
 	local req = {
@@ -32,34 +40,35 @@ local function transition_until_success(status)
 	clone(join_r.self, x)
 	x.status = status
 	while true do
-		core.log("[worker]", x.type, "join try", status, x.listen)
+		core.log("[worker] join try type:", x.type,
+			"listen:", x.listen, "status:",  status)
 		local ack, err = master:call("join_r", req)
 		if ack and not ack.result then
-			assert(ack.id)
-			assert(ack.slotid)
-			assert(ack.status == status)
+			assert(ack.epoch)
+			assert(ack.slot)
+			assert(ack.status == status, ack.status)
 			local self = join_r.self
-			self.id = ack.id
-			self.slotid = ack.slotid
+			self.epoch = ack.epoch
+			self.slot = ack.slot
 			self.status = status
-			core.log("[worker]", self.type,
-				"join successfully", status,
-				self.listen, self.slotid,
-				self.id, ack.masterid)
-			return ack.masterid, ack.capacity
+			core.log("[worker] join successfully type:", x.type,
+				"listen:", x.listen,
+				"mepoch:", ack.mepoch,
+				"self:", formatworker(self))
+			return ack.mepoch, ack.capacity
 		end
 		if not ack then
-			core.log("[worker]", x.type, "join ret",
-				x.listen, "timeout")
+			core.log("[worker] join timeout type:",
+				x.type, "listen:", x.listen)
 		else
 			local res = ack.result
 			if res == 1 then
-				core.log("[worker]", x.type,
-					"join ret retry", x.listen)
+				core.log("[worker] join retry type:",
+					x.type, "listen:", x.listen)
 			else
-				core.log("[worker]", x.type,
-					"join ret error",
-					x.listen, ack.status)
+				core.log("[worker] join error type:", x.type,
+					"listen:", x.listen,
+					"status:", ack.status)
 				core.exit(1)
 			end
 		end
@@ -93,39 +102,37 @@ local function worker_join(w, conns_of_type)
 		conns = {}
 		conns_of_type[typ] = conns
 	end
-	local slotid = w.slotid
-	local ww = workers[slotid]
+	local slot = w.slot
+	local ww = workers[slot]
 	if not ww then
-		workers[slotid] = w
+		workers[slot] = w
 		if w.status == "run" then
-			conns[w.slotid] = w
+			conns[w.slot] = w
 		end
-		core.log("[worker] worker_join add", w.type,
-			w.listen, w.status, w.slotid, w.id)
+		core.log("[worker] worker_join add", formatworker(w))
 		return
 	end
-	assert(w.id >= ww.id)
-	if w.id > ww.id then
+	assert(w.epoch >= ww.epoch)
+	if w.epoch > ww.epoch then
 		if ww.rpc then
 			ww.rpc:close()
 		end
 		clone(w, ww)
 		if ww.status == "run" then
-			conns[ww.slotid] = ww
+			conns[ww.slot] = ww
 		end
 	elseif w.status ~= ww.status then
 		assert(w.status == "run")
 		assert(ww.status == "up")
-		assert(ww.id == w.id)
-		assert(ww.slotid == w.slotid)
+		assert(ww.epoch == w.epoch)
+		assert(ww.slot == w.slot)
 		assert(ww.listen == w.listen)
 		ww.status = w.status
-		conns[ww.slotid] = ww
+		conns[ww.slot] = ww
 	else
 		return
 	end
-	core.log("[worker] worker_join update", w.type,
-		w.listen, w.status, w.slotid, w.id)
+	core.log("[worker] worker_join update", formatworker(w))
 end
 
 function handler.cluster_r(msg, cmd, fd)
@@ -153,11 +160,11 @@ local function heartbeat()
 		core.log("[worker] master heartbeat timeout")
 		return
 	end
-	if not ack.masterid or masterid and masterid ~= ack.masterid then
+	if not ack.mepoch or mepoch and mepoch ~= ack.mepoch then
 		local status = join_r.self.status
 		assert(status == "up" or status == "run")
 		core.log("[worker] master down report to new master")
-		masterid = transition_until_success("run")
+		mepoch = transition_until_success("run")
 	end
 end
 
@@ -183,7 +190,7 @@ end
 
 function M.run(funcs, __index)
 	M.more(funcs, __index)
-	masterid = transition_until_success("run")
+	mepoch = transition_until_success("run")
 end
 
 function M.up(conf)
@@ -222,8 +229,8 @@ function M.up(conf)
 		end
 	}
 	join_r.self = {
-		id = nil,
-		slotid = nil,
+		epoch = nil,
+		slot = nil,
 		type = conf.type,
 		status = "start",
 		listen = conf.listen,
@@ -235,7 +242,7 @@ function M.up(conf)
 	end
 	local _, capacity = transition_until_success("up")
 	timer()
-	return join_r.self.slotid, capacity
+	return join_r.self.slot, capacity
 end
 
 return M
