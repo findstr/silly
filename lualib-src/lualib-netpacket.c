@@ -368,7 +368,8 @@ lrpcpack(lua_State *L)
 	const char *str;
 	size_t size, body;
 	struct rpc_cookie *rpc;
-	int session, stk = 1;
+	int stk = 1;
+	session_t session;
 	str = getbuffer(L, &stk, &size);
 	if (size > (USHRT_MAX - sizeof(struct rpc_cookie))) {
 		luaL_error(L, "netpacket.pack data large then:%d\n",
