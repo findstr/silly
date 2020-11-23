@@ -29,7 +29,7 @@ local function print(...)
 	gprint(M, ...)
 end
 
-assert(core.envget("hello") == "world")
+assert(core.envget("hello.1.1") == "world")
 
 _ENV.print = print
 

@@ -79,9 +79,6 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 			}
 			const char *value = lua_tostring(L, -1);
 			curr[sz] = '\0';
-			char *eval = getenv(first);
-			if (eval)
-				value = eval;
 			silly_env_set(first, value);
 		}
 		lua_pop(L, 1);
@@ -145,7 +142,7 @@ initenv(const char *self, const char *file)
 }
 
 static void
-parseconfig(struct silly_config *config)
+applyconfig(struct silly_config *config)
 {
 	int slash;
 	char *p;
@@ -218,16 +215,34 @@ selfname(const char *path)
 
 int main(int argc, char *argv[])
 {
-	int status;
+	int i, status;
 	struct silly_config config;
-	if (argc != 2) {
-		printf("USAGE:%s <config file>\n", argv[0]);
+	if (argc < 2) {
+		printf("USAGE:%s <config file> --parameters\n", argv[0]);
 		return -1;
 	}
 	silly_env_init();
 	config.selfname = selfname(argv[0]);
-	initenv(config.selfname, argv[1]);
-	parseconfig(&config);
+	i = 1;
+	//first argument is t he config file name?
+	if (argv[i][0] != '-' || argv[i][1] != '-')
+		initenv(config.selfname, argv[i++]);
+	while (i < argc) {
+		if (argv[i][0] != '-' || argv[i][1] != '-') {
+			silly_log("[config] skip argument '%s'\n", argv[i]);
+		} else {
+			const char *k, *v;
+			char *str = argv[i];
+			k = strtok(&str[2], "=");
+			v = strtok(NULL, "=");
+			if (k == NULL || v == NULL)
+				silly_log("[config] skip argument '%s'\n", str);
+			else
+				silly_env_set(k, v);
+		}
+		++i;
+	}
+	applyconfig(&config);
 	status = silly_run(&config);
 	silly_env_exit();
 	silly_log("%s exit, leak memory size:%zu\n",
