@@ -6,7 +6,7 @@ do
 	}
 	local buf = {}
 	local open = io.open
-	local prefix= "example/proto/"
+	local prefix= "examples/cluster/proto/"
 	for _, name in ipairs(l) do
 		local p = prefix .. name
 		local f = io.open(p, "r")

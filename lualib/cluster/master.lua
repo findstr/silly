@@ -467,7 +467,8 @@ local function collect_status(typ, w, i)
 			s[k] = v
 		end
 		local day<const> = 24*3600
-		s.memory_fragmentation_ratio = s.memory_used / s.memory_rss
+		s.memory_fragmentation_ratio =
+			format("%.02f", s.memory_rss / s.memory_used)
 		s.memory_rss = format("%.02fKiB", s.memory_rss / 1024)
 		s.memory_used = format("%.02fKiB", s.memory_used/ 1024)
 		s.uptime_in_days = format("%.02f", s.uptime_in_seconds / day)

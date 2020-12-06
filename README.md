@@ -31,6 +31,10 @@
 - All test code are in `test` folder
 - Run `./silly test/test.conf` to test all module
 
+## Examples
+
+- `examples/start.sh cluster/timer/socket/rpc/http/websocket` can run one example of cluster
+
 ## Wiki
 https://github.com/findstr/silly/wiki
 

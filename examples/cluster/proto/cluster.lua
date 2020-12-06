@@ -17,7 +17,7 @@ do
 		end
 	end
 	str = table.concat(buf, "\n")
-	local prefix= "example/proto/"
+	local prefix= "examples/cluster/proto/"
 	local f = io.open(prefix.."cluster.zproto")
 	str = str .. f:read("a")
 	f:close()
