@@ -29,5 +29,20 @@ return [[
 	cluster_a 0x0006 {
 
 	}
+	status_r 0x0007 {
+	}
+	status_a 0x0008 {
+		.pid:integer 1
+		.cpu_sys:string 2
+		.cpu_user:string 3
+		.memory_used:long 4
+		.memory_rss:long 5
+		.memory_allocator:string 6
+		.version:string 7
+		.multiplexing_api:string 8
+		.uptime_in_seconds:integer 9
+		.message_pending:integer 10
+		.timer_resolution:integer 11
+	}
 ]]
 

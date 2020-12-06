@@ -25,10 +25,8 @@ end
 
 local function formatworker(w)
 	return format(
-[[{type="%s",epoch=%s,status="%s",listen="%s",slot=%s,fd=%s}]],
-		w.type, w.epoch, w.status, w.listen,
-		w.slot, w.fd, w.heartbeat
-	)
+[[{type="%s",epoch=%s,status="%s",listen="%s",slot=%s}]],
+	w.type, w.epoch, w.status, w.listen,w.slot)
 end
 
 local function transition_until_success(status)
@@ -152,6 +150,27 @@ function handler.cluster_r(msg, cmd, fd)
 		workers.agent.join(conns, #workers, typ)
 	end
 	return "cluster_a", {}
+end
+
+function handler.status_r(msg, cmd, fd)
+	local sys, usr = core.cpuinfo()
+	local mused = core.memused()
+	local mrss = core.memrss()
+	local status = {
+		pid = core.getpid(),
+		cpu_sys = format("%.2fs", sys),
+		cpu_user = format("%.2fs", usr),
+		memory_used = mused,
+		memory_rss = mrss,
+		memory_fragmentation_ratio = mrss / mused,
+		memory_allocator = core.allocator,
+		version = core.version,
+		multiplexing_api = core.pollapi,
+		uptime_in_seconds = core.monotonicsec(),
+		message_pending = core.msgsize(),
+		timer_resolution = core.timerrs,
+	}
+	return "status_a", status
 end
 
 local function heartbeat()

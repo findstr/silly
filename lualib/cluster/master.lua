@@ -1,6 +1,9 @@
 local core = require "sys.core"
+local json = require "sys.json"
 local zproto = require "zproto"
 local rpc = require "cluster.rpc"
+local httpd = require "http.server"
+local monitor_html = require "cluster.monitor"
 local waitgroup = require "sys.waitgroup"
 local type = type
 local pairs = pairs
@@ -432,15 +435,69 @@ local function timer()
 	core.timeout(1000, timer)
 end
 
+
 --[[
 listen = "127.0.0.1:8000",
 monitor = "127.0.0.1:8080",
-console = "127.0.0.1:8081",
 capacity = {
 	type_x = count_x,
 	type_y = count_y,
 },
 ]]
+
+local function collect_status(typ, w, i)
+	if not w then
+		return {
+			name = format("%s[%s]", typ, i),
+			status = "absent"
+		}
+	end
+	local s = {
+		name = format("%s[%s]", typ, i),
+		epoch = w.epoch,
+		status = w.status,
+		listen = w.listen,
+	}
+	if not w.rpc then
+		return s
+	end
+	local si = w.rpc:call("status_r")
+	if si then
+		for k, v in pairs(si) do
+			s[k] = v
+		end
+		local day<const> = 24*3600
+		s.memory_fragmentation_ratio = s.memory_used / s.memory_rss
+		s.memory_rss = format("%.02fKiB", s.memory_rss / 1024)
+		s.memory_used = format("%.02fKiB", s.memory_used/ 1024)
+		s.uptime_in_days = format("%.02f", s.uptime_in_seconds / day)
+	end
+	return s
+end
+
+local function http_monitor(req)
+	if req.uri == "/" then
+		httpd.write(req.sock, 200,
+		{"Content-Type: text/html"},
+		monitor_html)
+	elseif req.uri == "/status" then
+		local status = {}
+		for typ, workers in pairs(type_to_workers) do
+			local count = workers.count
+			for i = 1, count do
+				local w = workers[i]
+				status[#status + 1] = collect_status(typ, w, i)
+			end
+		end
+		httpd.write(req.sock, 200,
+		{"Content-Type: application/json"},
+		json.encode(status))
+	else
+		httpd.write(req.sock, 404,
+		{"Content-Type: text/plain"},
+		"404 Page Not Found")
+	end
+end
 
 function M.start(conf)
 	local errno
@@ -471,6 +528,12 @@ function M.start(conf)
 	end
 	router = r
 	timer()
+	if conf.monitor then
+		httpd.listen {
+			port = conf.monitor,
+			handler = http_monitor,
+		}
+	end
 end
 
 return M

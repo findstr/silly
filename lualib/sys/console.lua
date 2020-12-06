@@ -171,7 +171,7 @@ end
 function console.info()
 	local tbl = {}
 	local uptime = core.monotonicsec()
-	insert(tbl, "#Build")
+	insert(tbl, "#Server")
 	insert(tbl, format("version:%s", core.version))
 	insert(tbl, format("process_id:%s", core.getpid()))
 	insert(tbl, format("multiplexing_api:%s", core.pollapi))

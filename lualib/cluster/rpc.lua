@@ -240,6 +240,7 @@ local function checkconnect(self)
 			end
 		end
 		if not fd then
+			core.log("[rpc.client] connect", self.__addr, "fail")
 			self.fd = false
 		else
 			self.fd = fd
