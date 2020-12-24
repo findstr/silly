@@ -151,9 +151,9 @@ silly_worker_start(const struct silly_config *config)
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
 #if LUA_GC_MODE == LUA_GC_INC
-	lua_gc(L, LUA_GCINC);
+	lua_gc(L, LUA_GCINC, 0, 0, 0);
 #else
-	lua_gc(L, LUA_GCGEN);
+	lua_gc(L, LUA_GCGEN, 0, 0);
 #endif
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
