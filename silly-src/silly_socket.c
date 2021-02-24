@@ -1532,12 +1532,6 @@ silly_socket_poll()
 			silly_log("[socket] poll: unkonw socket type:%d\n", s->type);
 			continue;
 		}
-
-		if (SP_ERR(e)) {
-			report_close(ss, s, 0);
-			freesocket(ss, s);
-			continue;
-		}
 		if (SP_READ(e)) {
 			switch (s->protocol) {
 			case PROTOCOL_TCP:
@@ -1562,6 +1556,11 @@ silly_socket_poll()
 			else
 				send_msg_udp(ss, s);
 		}
+		if (SP_ERR(e)) {
+			report_close(ss, s, 0);
+			freesocket(ss, s);
+		}
+
 	}
 	return 0;
 }
