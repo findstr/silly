@@ -411,6 +411,19 @@ local function test_close(port)
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , false, "client close dummy")
 	core.sleep(200)
+	--CASE9:cilent connect, server write then close immediately,
+	--client should read all data
+	print("CASE9")
+	local dat = crypto.randomkey(64*1024*1024)
+	listen_cb = function(fd, addr)
+		local ok = IO.write(fd, dat)
+		testaux.asserteq(ok, true, "server write `64MByte`")
+		IO.close(fd)
+	end
+	local fd = IO.connect("127.0.0.1" .. port)
+	testaux.assertneq(fd, nil, "client connect")
+	local dat1 = IO.read(fd, 64*1024*1024)
+	testaux.asserteq(dat, dat1, "client read connect")
 end
 
 return function()
