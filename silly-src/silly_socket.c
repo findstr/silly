@@ -1217,7 +1217,6 @@ tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 		return 0;
 	} else {
 		s->type = STYPE_SHUTDOWN;
-		shutdown(s->fd, SHUT_RD);
 		return -1;
 	}
 }
