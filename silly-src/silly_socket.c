@@ -797,7 +797,7 @@ silly_socket_sendsize(int sid)
 	return size;
 }
 
-static void
+static int
 send_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
 	struct wlist *w;
@@ -810,11 +810,11 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 		if (unlikely(sz < 0)) {
 			report_close(ss, s, errno);
 			freesocket(ss, s);
-			return ;
+			return -1;
 		}
 		s->wloffset += sz;
 		if (s->wloffset < w->size) //send some
-			return ;
+			break;
 		assert((size_t)s->wloffset == w->size);
 		s->wloffset = 0;
 		s->wlhead = w->next;
@@ -824,14 +824,16 @@ send_msg_tcp(struct silly_socket *ss, struct socket *s)
 		if (w == NULL) {//send ok
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (s->type == STYPE_SHUTDOWN)
+			if (s->type == STYPE_SHUTDOWN) {
 				freesocket(ss, s);
+				return -1;
+			}
 		}
 	}
-	return ;
+	return 0;
 }
 
-static void
+static int
 send_msg_udp(struct silly_socket *ss, struct socket *s)
 {
 	struct wlist *w;
@@ -851,11 +853,13 @@ send_msg_udp(struct silly_socket *ss, struct socket *s)
 		if (w == NULL) {//send all
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (s->type == STYPE_SHUTDOWN)
+			if (s->type == STYPE_SHUTDOWN) {
 				freesocket(ss, s);
+				return -1;
+			}
 		}
 	}
-	return ;
+	return 0;
 }
 
 struct addrinfo *
@@ -1545,15 +1549,20 @@ silly_socket_poll()
 					s->protocol);
 				continue;
 			}
-			//this socket have already occurs error, so ignore the write event
+			//this socket have already occurs error,
+			//so ignore the write event
 			if (err < 0)
 				continue;
 		}
 		if (SP_WRITE(e)) {
 			if (s->protocol == PROTOCOL_TCP)
-				send_msg_tcp(ss, s);
+				err = send_msg_tcp(ss, s);
 			else
-				send_msg_udp(ss, s);
+				err = send_msg_udp(ss, s);
+			//this socket have already occurs error,
+			//so ignore the error event
+			if (err < 0)
+				continue;
 		}
 		if (SP_ERR(e)) {
 			report_close(ss, s, 0);
