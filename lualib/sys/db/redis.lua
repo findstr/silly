@@ -1,5 +1,5 @@
+local core = require "sys.core"
 local dispatch = require "sys.socketq"
-
 local type = type
 local assert = assert
 local tostring = tostring
@@ -179,6 +179,9 @@ function redis:pipeline(req, ret)
 			local ok, res
 			for i = 1, cmd_len do
 				ok, res = read_response(sock)
+				if not ok then
+					core.log('[redis] pipeline error', res)
+				end
 			end
 			return ok, res
 		end)
