@@ -1,6 +1,8 @@
 local core = require "sys.core"
+local json = require "sys.json"
 local c = require "test.aux.c"
 local type = type
+local pairs = pairs
 local tostring = tostring
 local format = string.format
 local testaux = {}
@@ -30,6 +32,15 @@ local function escape(a)
 				return "\\n"
 			end
 		end)
+	elseif type(a) == "table" then
+		local l = {}
+		for k, v in pairs(a) do
+			l[#l + 1] = {k, v}
+		end
+		table.sort(l, function(a, b)
+			return a[1] < b[1]
+		end)
+		return json.encode(l)
 	else
 		return a
 	end

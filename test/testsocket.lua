@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local json = require "sys.json"
 local socket = require "sys.socket"
 local tls = require "sys.tls"
 local crypto = require "sys.crypto"
@@ -427,16 +428,29 @@ local function test_close(port)
 end
 
 return function()
+	local info1 = core.netinfo()
+	print(json.encode(info1))
 	testaux.module("socet")
 	test_limit(":10001")
+	core.sleep(100)
+	local info2 = core.netinfo()
+	print(json.encode(info2))
+	testaux.asserteq(info1, info2, "check limit clear")
 	IO = socket
 	testaux.module("socet")
 	test_read(":10001")
 	test_close(":10001")
+	core.sleep(100)
+	local info3 = core.netinfo()
+	testaux.asserteq(info1, info3, "check socket clear")
+
 	IO = tls
 	testaux.module("tls")
 	IO.limit = function() end
 	test_read(":10002")
 	test_close(":10002")
+	core.sleep(100)
+	local info4 = core.netinfo()
+	testaux.asserteq(info1, info4, "check tls clear")
 end
 
