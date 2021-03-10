@@ -1,6 +1,7 @@
 local silly = require "sys.silly"
 
 local core = {}
+local type = type
 local error = error
 local assert = assert
 local xpcall = xpcall
@@ -164,7 +165,6 @@ end
 
 local wakeup_task_queue = {}
 local wakeup_task_param = {}
-local sleep_task_session = {}
 local sleep_session_task = {}
 
 local dispatch_wakeup
@@ -229,16 +229,12 @@ function core.sleep(ms)
 	assert(status == "RUN", status)
 	local session = silly_timeout(ms)
 	sleep_session_task[session] = t
-	sleep_task_session[t] = session
 	task_yield("SLEEP")
 end
 
 function core.timeout(ms, func)
-	local t = task_create(func)
 	local session = silly_timeout(ms)
-	sleep_session_task[session] = t
-	sleep_task_session[t] = session
-	task_status[t] = "TIMEOUT"
+	sleep_session_task[session] = func
 	return session
 end
 
@@ -356,9 +352,10 @@ end
 local MSG = {
 [1] = function(session)					--SILLY_TEXPIRE = 1
 	local t = sleep_session_task[session]
-	assert(sleep_task_session[t] == session, t)
 	sleep_session_task[session] = nil
-	sleep_task_session[t] = nil
+	if type(t) == "function" then
+		t = task_create(t)
+	end
 	task_resume(t, session)
 end,
 [2] = function(fd, _, portid, addr)			--SILLY_SACCEPT = 2
