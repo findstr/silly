@@ -35,10 +35,13 @@ local function escape(a)
 	elseif type(a) == "table" then
 		local l = {}
 		for k, v in pairs(a) do
+			if type(v) == "function" then
+				v = tostring(v)
+			end
 			l[#l + 1] = {k, v}
 		end
 		table.sort(l, function(a, b)
-			return a[1] < b[1]
+			return tostring(a[1]) < tostring(b[1])
 		end)
 		return json.encode(l)
 	else
