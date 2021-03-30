@@ -161,18 +161,17 @@ static void linkgclist_ (GCObject *o, GCObject **pnext, GCObject **list) {
 
 
 /*
-** Clear keys for empty entries in tables. If entry is empty
-** and its key is not marked, mark its entry as dead. This allows the
-** collection of the key, but keeps its entry in the table (its removal
-** could break a chain). The main feature of a dead key is that it must
-** be different from any other value, to do not disturb searches.
-** Other places never manipulate dead keys, because its associated empty
-** value is enough to signal that the entry is logically empty.
+** Clear keys for empty entries in tables. If entry is empty, mark its
+** entry as dead. This allows the collection of the key, but keeps its
+** entry in the table: its removal could break a chain and could break
+** a table traversal.  Other places never manipulate dead keys, because
+** its associated empty value is enough to signal that the entry is
+** logically empty.
 */
 static void clearkey (Node *n) {
   lua_assert(isempty(gval(n)));
-  if (keyiswhite(n))
-    setdeadkey(n);  /* unused and unmarked key; remove it */
+  if (keyiscollectable(n))
+    setdeadkey(n);  /* unused key; remove it */
 }
 
 
@@ -301,7 +300,7 @@ static void reallymarkobject (global_State *g, GCObject *o) {
       if (upisopen(uv))
         set2gray(uv);  /* open upvalues are kept gray */
       else
-        set2black(o);  /* closed upvalues are visited here */
+        set2black(uv);  /* closed upvalues are visited here */
       markvalue(g, uv->v);  /* mark its content */
       break;
     }
@@ -309,7 +308,7 @@ static void reallymarkobject (global_State *g, GCObject *o) {
       Udata *u = gco2u(o);
       if (u->nuvalue == 0) {  /* no user values? */
         markobjectN(g, u->metatable);  /* mark its metatable */
-        set2black(o);  /* nothing else to mark */
+        set2black(u);  /* nothing else to mark */
         break;
       }
       /* else... */
@@ -633,9 +632,8 @@ static int traversethread (global_State *g, lua_State *th) {
   for (uv = th->openupval; uv != NULL; uv = uv->u.open.next)
     markobject(g, uv);  /* open upvalues cannot be collected */
   if (g->gcstate == GCSatomic) {  /* final traversal? */
-    StkId lim = th->stack + th->stacksize;  /* real end of stack */
-    for (; o < lim; o++)  /* clear not-marked stack slice */
-      setnilvalue(s2v(o));
+    for (; o < th->stack_last + EXTRA_STACK; o++)
+      setnilvalue(s2v(o));  /* clear dead stack slice */
     /* 'remarkupvals' may have removed thread from 'twups' list */
     if (!isintwups(th) && th->openupval != NULL) {
       th->twups = g->twups;  /* link it back to the list */
@@ -644,7 +642,7 @@ static int traversethread (global_State *g, lua_State *th) {
   }
   else if (!g->gcemergency)
     luaD_shrinkstack(th); /* do not change stack in emergency cycle */
-  return 1 + th->stacksize;
+  return 1 + stacksize(th);
 }
 
 
@@ -771,12 +769,16 @@ static void freeobj (lua_State *L, GCObject *o) {
     case LUA_VUPVAL:
       freeupval(L, gco2upv(o));
       break;
-    case LUA_VLCL:
-      luaM_freemem(L, o, sizeLclosure(gco2lcl(o)->nupvalues));
+    case LUA_VLCL: {
+      LClosure *cl = gco2lcl(o);
+      luaM_freemem(L, cl, sizeLclosure(cl->nupvalues));
       break;
-    case LUA_VCCL:
-      luaM_freemem(L, o, sizeCclosure(gco2ccl(o)->nupvalues));
+    }
+    case LUA_VCCL: {
+      CClosure *cl = gco2ccl(o);
+      luaM_freemem(L, cl, sizeCclosure(cl->nupvalues));
       break;
+    }
     case LUA_VTABLE:
       luaH_free(L, gco2t(o));
       break;
@@ -788,13 +790,17 @@ static void freeobj (lua_State *L, GCObject *o) {
       luaM_freemem(L, o, sizeudata(u->nuvalue, u->len));
       break;
     }
-    case LUA_VSHRSTR:
-      luaS_remove(L, gco2ts(o));  /* remove it from hash table */
-      luaM_freemem(L, o, sizelstring(gco2ts(o)->shrlen));
+    case LUA_VSHRSTR: {
+      TString *ts = gco2ts(o);
+      luaS_remove(L, ts);  /* remove it from hash table */
+      luaM_freemem(L, ts, sizelstring(ts->shrlen));
       break;
-    case LUA_VLNGSTR:
-      luaM_freemem(L, o, sizelstring(gco2ts(o)->u.lnglen));
+    }
+    case LUA_VLNGSTR: {
+      TString *ts = gco2ts(o);
+      luaM_freemem(L, ts, sizelstring(ts->u.lnglen));
       break;
+    }
     default: lua_assert(0);
   }
 }
@@ -910,7 +916,7 @@ static void GCTM (lua_State *L) {
     L->ci->callstatus &= ~CIST_FIN;  /* not running a finalizer anymore */
     L->allowhook = oldah;  /* restore hooks */
     g->gcrunning = running;  /* restore state */
-    if (unlikely(status != LUA_OK)) {  /* error while running __gc? */
+    if (l_unlikely(status != LUA_OK)) {  /* error while running __gc? */
       luaE_warnerror(L, "__gc metamethod");
       L->top--;  /* pops error object */
     }
@@ -1569,52 +1575,64 @@ static int sweepstep (lua_State *L, global_State *g,
 
 static lu_mem singlestep (lua_State *L) {
   global_State *g = G(L);
+  lu_mem work;
+  lua_assert(!g->gcstopem);  /* collector is not reentrant */
+  g->gcstopem = 1;  /* no emergency collections while collecting */
   switch (g->gcstate) {
     case GCSpause: {
       restartcollection(g);
       g->gcstate = GCSpropagate;
-      return 1;
+      work = 1;
+      break;
     }
     case GCSpropagate: {
       if (g->gray == NULL) {  /* no more gray objects? */
         g->gcstate = GCSenteratomic;  /* finish propagate phase */
-        return 0;
+        work = 0;
       }
       else
-        return propagatemark(g);  /* traverse one gray object */
+        work = propagatemark(g);  /* traverse one gray object */
+      break;
     }
     case GCSenteratomic: {
-      lu_mem work = atomic(L);  /* work is what was traversed by 'atomic' */
+      work = atomic(L);  /* work is what was traversed by 'atomic' */
       entersweep(L);
       g->GCestimate = gettotalbytes(g);  /* first estimate */;
-      return work;
+      break;
     }
     case GCSswpallgc: {  /* sweep "regular" objects */
-      return sweepstep(L, g, GCSswpfinobj, &g->finobj);
+      work = sweepstep(L, g, GCSswpfinobj, &g->finobj);
+      break;
     }
     case GCSswpfinobj: {  /* sweep objects with finalizers */
-      return sweepstep(L, g, GCSswptobefnz, &g->tobefnz);
+      work = sweepstep(L, g, GCSswptobefnz, &g->tobefnz);
+      break;
     }
     case GCSswptobefnz: {  /* sweep objects to be finalized */
-      return sweepstep(L, g, GCSswpend, NULL);
+      work = sweepstep(L, g, GCSswpend, NULL);
+      break;
     }
     case GCSswpend: {  /* finish sweeps */
       checkSizes(L, g);
       g->gcstate = GCScallfin;
-      return 0;
+      work = 0;
+      break;
     }
     case GCScallfin: {  /* call remaining finalizers */
       if (g->tobefnz && !g->gcemergency) {
-        int n = runafewfinalizers(L, GCFINMAX);
-        return n * GCFINALIZECOST;
+        g->gcstopem = 0;  /* ok collections during finalizers */
+        work = runafewfinalizers(L, GCFINMAX) * GCFINALIZECOST;
       }
       else {  /* emergency mode or no more finalizers */
         g->gcstate = GCSpause;  /* finish collection */
-        return 0;
+        work = 0;
       }
+      break;
     }
     default: lua_assert(0); return 0;
   }
+  g->gcstopem = 0;
+  return work;
 }
 
 
