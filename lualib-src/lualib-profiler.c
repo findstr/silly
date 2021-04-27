@@ -21,10 +21,10 @@
 #define	UV_COSTAMP 6
 #define	UV_COTIME 7
 
-static uint32_t
+static uint64_t
 timestamp()
 {
-	uint32_t ms;
+	uint64_t ms;
 #ifdef __macosx__
 	struct task_thread_times_info info;
 	mach_msg_type_number_t count = TASK_THREAD_TIMES_INFO_COUNT;
@@ -32,15 +32,15 @@ timestamp()
 			(task_info_t)&info, &count);
 	if (kr != KERN_SUCCESS)
 		return 0;
-	ms = info.user_time.seconds * 1000;
-	ms += info.user_time.microseconds / 1000;
-	ms += info.system_time.seconds * 1000;
-	ms += info.system_time.microseconds / 1000;
+	ms = info.user_time.seconds * 1000 * 1000;
+	ms += info.user_time.microseconds;
+	ms += info.system_time.seconds * 1000 * 1000;
+	ms += info.system_time.microseconds;
 #else
 	struct timespec tp;
 	clock_gettime(CLOCK_MONOTONIC, &tp);
-	ms = tp.tv_sec * 1000;
-	ms += tp.tv_nsec / 1000000;
+	ms = tp.tv_sec * 1000 * 1000;
+	ms += tp.tv_nsec / 1000;
 #endif
 	return ms;
 }
