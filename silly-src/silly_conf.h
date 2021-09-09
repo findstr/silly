@@ -21,6 +21,8 @@
 #define LUA_GC_STEP	(100) //KiB
 #endif
 
+
+
 //(1 << 16) = 65536
 #define SOCKET_MAX_EXP		(16)
 #define TIMER_RESOLUTION	(10)			//ms

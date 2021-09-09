@@ -2,11 +2,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include "md5.h"
-#include "sha256.h"
 #include "aes.h"
+#include "sha256.h"
 #include "lsha1.h"
 
 char num_to_char[] = "0123456789abcdef";
@@ -52,6 +53,20 @@ lxor(lua_State *L)
 		luaL_addchar(&b, c);
 	}
 	luaL_pushresult(&b);
+	return 1;
+}
+
+static int
+lsha256(lua_State *L)
+{
+	size_t sz;
+	sha256_context ctx;
+	uint8_t keybuf[256/8];
+	const char *str = luaL_checklstring(L, 1, &sz);
+	sha256_starts(&ctx);
+	sha256_update(&ctx, (const uint8_t *)str, sz);
+	sha256_finish(&ctx, keybuf);
+	lua_pushlstring(L, (char *)keybuf, sizeof(keybuf));
 	return 1;
 }
 
@@ -271,21 +286,13 @@ laesdecode(lua_State *L)
 	return aes_do(L, aes_decode);
 }
 
-static inline char
-dict(int n)
-{
-	static const char *dict =
-		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	return dict[n];
-}
-
-static unsigned int
+static inline unsigned int
 undict(int ch)
 {
 	int v;
-	if (ch == '+')
+	if (ch == '+' || ch == '-')
 		v = 62;
-	else if (ch == '/')
+	else if (ch == '/' || ch == '_')
 		v = 63;
 	else if (ch >= 'A' && ch <= 'Z')
 		v = ch - 'A';
@@ -298,117 +305,222 @@ undict(int ch)
 	return v;
 }
 
-static void
-numtochar(char *dst, const char *src, int sz)
-{
-	unsigned int n = 0;
-	switch (sz) {
-	default:
-		/* fall through */
-	case 3:
-		n |= (uint8_t)src[2];
-		/* fall through */
-	case 2:
-		n |= (uint8_t)src[1] << 8;
-		/* fall through */
-	case 1:
-		n |= (uint8_t)src[0] << 16;
-		break;
-	case 0:
-		assert(0);
-		break;
-	}
-	dst[3] = dict(n & 0x3f);
-	dst[2] = dict((n >> 6) & 0x3f);
-	dst[1] = dict((n >> 12) & 0x3f);
-	dst[0] = dict((n >> 18) & 0x3f);
-}
-
-static void
-chartonum(char *dst, size_t sz, const char *src)
-{
-	unsigned int n = 0;
-	n |= undict(src[3]);
-	n |= undict(src[2]) << 6;
-	n |= undict(src[1]) << 12;
-	n |= undict(src[0]) << 18;
-	switch (sz) {
-	default:
-		/* fall through */
-	case 3:
-		dst[2] = n & 0xff;
-		/* fall through */
-	case 2:
-		dst[1] = (n >> 8) & 0xff;
-		/* fall through */
-	case 1:
-		dst[0] = (n >> 16) & 0xff;
-		break;
-	case 0:
-		assert(0);
-		break;
-	}
-	return ;
-
-}
-int
+static int
 lbase64encode(lua_State *L)
 {
-	const char *buff;
 	size_t sz;
-	int a, b;
-	char *ret, *ptr;
-	buff = luaL_checklstring(L, 1, &sz);
-	a = sz / 3;
-	b = sz % 3;
-	int need = a + (b == 0 ? 0 : 1);
-	need *= 4;
-	ptr = ret = lua_newuserdatauv(L, need, 0);
-	while (a--) {
-		numtochar(ptr, buff, 3);
-		buff += 3;
-		ptr += 4;
+	int i, j;
+	unsigned int n;
+	int need, urlsafe;
+	char *ptr;
+	const char *dict;
+	const uint8_t *dat;
+	luaL_Buffer lbuf;
+	dat = (const uint8_t *)luaL_checklstring(L, 1, &sz);
+	dict = lua_tostring(L, 2);
+	if (dict && strcasecmp(dict, "url") == 0) {
+		urlsafe = 1;
+		dict = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+	} else {
+		urlsafe = 0;
+		dict = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	}
-	if (b) { // if b == 0perfect, just direct return
-		numtochar(ptr, buff, b);
-		ptr += 1 + b;
-		while (ptr < (ret + need))
-			*ptr++ = '=';
+	need = (sz + 2) / 3 * 4;
+	ptr = luaL_buffinitsize(L, &lbuf, need);
+	for (i = 0, j = 0; i < (int)sz - 2; i += 3, j += 4) {
+		n = (dat[i+0] << 16) | (dat[i+1] << 8) | dat[i+2];
+		ptr[j+0] = dict[(n >> 18) & 0x3f];
+		ptr[j+1] = dict[(n >> 12) & 0x3f];
+		ptr[j+2] = dict[(n >> 6) & 0x3f];
+		ptr[j+3] = dict[n & 0x3f];
 	}
-	lua_pushlstring(L, ret, need);
+	switch (sz - i) {
+	case 1:
+		n = dat[i] << 16;
+		ptr[j++] = dict[n >> 18];
+		ptr[j++] = dict[(n >> 12) & 0x3f];
+		if (urlsafe == 0) {
+			ptr[j++] = '=';
+			ptr[j++] = '=';
+		}
+		break;
+	case 2:
+		n = dat[i] << 16 | dat[i+1] << 8;
+		ptr[j++] = dict[n >> 18];
+		ptr[j++] = dict[(n >> 12) & 0x3f];
+		ptr[j++] = dict[(n >> 6) & 0x3f];
+		if (urlsafe == 0)
+			ptr[j++] = '=';
+		break;
+	}
+	luaL_pushresultsize(&lbuf, j);
 	return 1;
 }
 
-int
+static int
 lbase64decode(lua_State *L)
 {
-	int need;
-	char *dst, *ptr1;
-	const char *src, *ptr2;
 	size_t sz;
-	src = luaL_checklstring(L, 1, &sz);
-	if (sz % 4 != 0)
-		return luaL_error(L, "base64decode invalid param");
+	char *dst;
+	const char *dat;
+	int i = 0, j = 0;
+	luaL_Buffer lbuf;
+	dat = luaL_checklstring(L, 1, &sz);
 	if (sz == 0) {
 		lua_pushliteral(L, "");
 		return 1;
 	}
-	need = sz / 4 * 3;
-	ptr2 = src + sz;
-	while ((*(ptr2- 1) == '=') && (ptr2 > src)) {
-		--ptr2;
-		--need;
-	};
-	ptr1 = dst = lua_newuserdatauv(L, need, 0);
-	ptr2 = dst + need;
-	while (ptr1 < ptr2) {
-		chartonum(ptr1, ptr2 - ptr1, src);
-		ptr1 += 3;
-		src += 4;
+	dst = luaL_buffinitsize(L, &lbuf, (sz + 3) / 4 * 3);
+	while (i < (int)sz) {
+		int k;
+		unsigned int n;
+		k = ((i + 4) > (int)sz ? (int)sz : (i + 4)) - 1;
+		while (k >= i && dat[k] == '=')
+			--k;
+		switch (k - i + 1) {
+		case 4:
+			n =	undict(dat[i+3])	|
+				undict(dat[i+2]) << 6	|
+				undict(dat[i+1]) << 12	|
+				undict(dat[i+0]) << 18;
+			dst[j++] = (n >> 16) & 0xff;
+			dst[j++] = (n >> 8) & 0xff;
+			dst[j++] = n & 0xff;
+			break;
+		case 3:
+			n =	undict(dat[i+2]) << 6	|
+				undict(dat[i+1]) << 12	|
+				undict(dat[i+0]) << 18;
+			dst[j++] = (n >> 16) & 0xff;
+			dst[j++] = (n >> 8) & 0xff;
+			break;
+		case 2:
+			n = undict(dat[i+1]) << 12 | undict(dat[i+0]) << 18;
+			dst[j++] = (n >> 16) & 0xff;
+			break;
+
+		case 1:
+			n = undict(dat[i+0]) << 18;
+			dst[j++] = (n >> 16) & 0xff;
+			break;
+		}
+		i += 4;
 	}
-	lua_pushlstring(L, dst, need);
+	luaL_pushresultsize(&lbuf, j);
 	return 1;
 }
+
+#ifdef USE_OPENSSL
+#include <openssl/sha.h>
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/obj_mac.h>
+
+#define HASH(M, ctx, dat, dsz, digest, digsz) \
+	rc = M##_Init(&ctx);\
+	if (rc != 1) \
+		break;\
+	rc = M##_Update(&ctx, dat, dsz); \
+	if (rc != 1) \
+		break; \
+	rc = M##_Final(digest, &ctx); \
+	if (rc != 1) \
+		break; \
+	sz = sizeof(digest);
+
+static inline int
+hashmode(lua_State *L, int stk)
+{
+	static const int modes[] = {NID_sha1, NID_sha256};
+	static const char *const modenames[] = {"sha1", "sha256"};
+	return modes[luaL_checkoption(L, stk, NULL, modenames)];
+}
+
+static int
+lrsasign(lua_State *L)
+{
+	luaL_Buffer b;
+	BIO *bio = NULL;
+	RSA *rsa = NULL;
+	uint8_t *sig;
+	unsigned int siglen = 0;
+	size_t ksz, dsz;
+	const char *key = luaL_checklstring(L, 1, &ksz);
+	const char *dat = luaL_checklstring(L, 2, &dsz);
+	int hash = hashmode(L, 3);
+	int rc = 1, sz = 0;
+	bio = BIO_new_mem_buf(key, ksz);
+	rsa = PEM_read_bio_RSAPrivateKey(bio, NULL, NULL, NULL);
+	luaL_argcheck(L, rsa != NULL, 1, "invalid private key in PEM format");
+	sig = (uint8_t *)luaL_buffinitsize(L, &b, RSA_size(rsa));
+	switch (hash) {
+	case NID_sha1: {
+		SHA_CTX ctx;
+		uint8_t digest[SHA_DIGEST_LENGTH];
+		HASH(SHA1, ctx, dat, dsz, digest, sz);
+		rc = RSA_sign(NID_sha1, digest, sz, sig, &siglen, rsa);
+		break;}
+	case NID_sha256: {
+		SHA256_CTX ctx;
+		uint8_t digest[SHA256_DIGEST_LENGTH];
+		HASH(SHA256, ctx, dat, dsz, digest, sz);
+		rc = RSA_sign(NID_sha256, digest, sz, sig, &siglen, rsa);
+		break;}
+	}
+	if (rsa != NULL)
+		RSA_free(rsa);
+	if (bio != NULL)
+		BIO_free(bio);
+	if (rc != 1) {
+		return luaL_error(L, "sign error:%s\n",
+			ERR_error_string(ERR_get_error(), NULL));
+	}
+	luaL_pushresultsize(&b, siglen);
+	return 1;
+}
+
+static int
+lrsaverify(lua_State *L)
+{
+	BIO *bio = NULL;
+	RSA *rsa = NULL;
+	size_t ksz, dsz, siglen;
+	const char *key = luaL_checklstring(L, 1, &ksz);
+	const char *dat = luaL_checklstring(L, 2, &dsz);
+	const uint8_t *sig = (const uint8_t *)luaL_checklstring(L, 3, &siglen);
+	int hash = hashmode(L, 4);
+	int rc = 1, sz = 0, ok = 0;
+	bio = BIO_new_mem_buf(key, ksz);
+	rsa = PEM_read_bio_RSA_PUBKEY(bio, NULL, NULL, NULL);
+	luaL_argcheck(L, rsa != NULL, 1, "invalid public key in PEM format");
+	switch (hash) {
+	case NID_sha1: {
+		SHA_CTX ctx;
+		uint8_t digest[SHA_DIGEST_LENGTH];
+		HASH(SHA1, ctx, dat, dsz, digest, sz);
+		ok = RSA_verify(NID_sha1, digest, sz, sig, siglen, rsa);
+		break;}
+	case NID_sha256: {
+		SHA256_CTX ctx;
+		uint8_t digest[SHA256_DIGEST_LENGTH];
+		HASH(SHA256, ctx, dat, dsz, digest, sz);
+		ok = RSA_verify(NID_sha256, digest, sz, sig, siglen, rsa);
+		break;}
+	}
+	if (rsa != NULL)
+		RSA_free(rsa);
+	if (bio != NULL)
+		BIO_free(bio);
+	if (rc != 1) {
+		return luaL_error(L, "sign error:%s\n",
+			ERR_error_string(ERR_get_error(), NULL));
+	}
+	lua_pushboolean(L, ok);
+	return 1;
+}
+
+#endif
 
 static inline void
 setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
@@ -426,15 +538,20 @@ int
 luaopen_sys_crypto(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"md5", lmd5},
 		{"xor", lxor},
+		{"md5", lmd5},
 		{"sha1", lsha1},
+		{"sha256", lsha256},
 		{"hmac", lhmac_sha1},
 		{"randomkey", lrandomkey},
 		{"aesencode", laesencode},
 		{"aesdecode", laesdecode},
 		{"base64encode", lbase64encode},
 		{"base64decode", lbase64decode},
+#ifdef USE_OPENSSL
+		{"rsasign", lrsasign},
+		{"rsaverify", lrsaverify},
+#endif
 		{NULL, NULL},
 	};
 	luaL_Reg tbl_b[] = {

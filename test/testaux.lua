@@ -72,6 +72,14 @@ local function tostringx(a, len)
 	return a
 end
 
+function testaux.hextostr(arr)
+	local buf = {}
+	for i = 1, #arr do
+		buf[i] = format("%02x", arr:byte(i))
+	end
+	return table.concat(buf, "")
+end
+
 function testaux.asserteq(a, b, str)
 	local aa = escape(a)
 	local bb = escape(b)
