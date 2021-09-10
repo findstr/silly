@@ -169,7 +169,7 @@ function M.connect(scheme, host, port)
 	local ip = dns.resolve(host, "A")
 	assert(ip, host)
 	ip = format("%s:%s", ip, port)
-	local fd = scheme_connect[scheme](ip)
+	local fd = scheme_connect[scheme](ip, nil, host)
 	if not fd then
 		return nil
 	end

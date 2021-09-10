@@ -153,8 +153,10 @@ ltls_open(lua_State *L)
 	int fd;
 	struct ctx *ctx;
 	struct tls *tls;
+	const char *hostname;
 	ctx = luaL_checkudata(L, 1, "TLS_CTX");
 	fd = luaL_checkinteger(L, 2);
+	hostname = lua_tostring(L, 3);
 	tls = new_tls(L, fd);
 	tls->ssl = SSL_new(ctx->ptr);
 	if (tls->ssl == NULL)
@@ -169,10 +171,13 @@ ltls_open(lua_State *L)
 	BIO_set_mem_eof_return(tls->in_bio, -1);
 	BIO_set_mem_eof_return(tls->out_bio, -1);
 	SSL_set_bio(tls->ssl, tls->in_bio, tls->out_bio);
-	if (ctx->mode == 'C')
+	if (ctx->mode == 'C') {
+		if (hostname != NULL)
+			SSL_set_tlsext_host_name(tls->ssl, hostname);
 		SSL_set_connect_state(tls->ssl);
-	else
+	} else {
 		SSL_set_accept_state(tls->ssl);
+	}
 	return 1;
 }
 
