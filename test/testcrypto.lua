@@ -44,8 +44,8 @@ return function()
 	local x = crypto.sha256("aGVsbG8sIG15IGZyaWVuZCwgeW91IGtvbncgaSBkb24ndCBnb29kIGF0IGNy")
 	x = testaux.hextostr(x)
 	testaux.asserteq(x, "a3f0f2484b434eb7e3b7dbf89a3b2192c5577a3d51bb65d766a1abedb57aea8c","sha256 hash")
-	if crypto.rsasign then
-		local pub =
+	if crypto.digestsign then
+		local rsa_pub =
 '-----BEGIN PUBLIC KEY-----\n\z
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2LewXe+8fkojFjTQ+pRq\n\z
 e29jKHJXcoqEc4D2GDNNdq32GjloPFidVvnlDhOForS5fH5jlqzvcG0mvzAGkmU3\n\z
@@ -55,7 +55,7 @@ KBeLP8QuuBd68nRMLZMseMyUz+foVv22FvZ/SdqIeG8IZOSzoN2WJOPy+kYRxdS7\n\z
 h/2sfHCcNJhxDw4G8tB1oiX+uZclwBMSuOJiu6dD1/IBt4FwzvLZghhgHW7ziJoA\n\z
 dQIDAQAB\n\z
 -----END PUBLIC KEY-----'
-		local pri =
+		local rsa_pri =
 '-----BEGIN RSA PRIVATE KEY-----\n\z
 MIIEpQIBAAKCAQEA2LewXe+8fkojFjTQ+pRqe29jKHJXcoqEc4D2GDNNdq32Gjlo\n\z
 PFidVvnlDhOForS5fH5jlqzvcG0mvzAGkmU3Zz5fkrRkiKa+/EyHkiHk+h/VZgCP\n\z
@@ -83,9 +83,20 @@ p6sn54cCgYEAi0g89uogqIYsBnTHi9jWDaordsSJdcZyRzq7wlb8sTeBpJEHOdzo\n\z
 whjjqZDjAW0a+58OPaKcDbTriqug9XvsIs25+7htJysO/yzTOIzTGb1pqJ1ZkeNs\n\z
 w0W5t0qWE/d60ztwcVCUSINIb680yZexrobYH+tlpsVIdXxjcHPU2o4=\n\z
 -----END RSA PRIVATE KEY-----'
+		local ec_secp256k1_pri =
+'-----BEGIN EC PRIVATE KEY-----\n\z
+MHQCAQEEIHmXrEOL6We4OA9zJ8FOCe/Ed2efH+bi6bfn/0OYGzSqoAcGBSuBBAAK\n\z
+oUQDQgAESYuWA8FXcHPPPuLj2uAuZRWQwRKEcayXWwXR47rGwMaQzNIhIHxkwbdZ\n\z
+bd9rXq9Xrhow8xvLeInIGibcx27f1w==\n\z
+-----END EC PRIVATE KEY-----'
+		local ec_secp256k1_pub =
+'-----BEGIN PUBLIC KEY-----\n\z
+MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAESYuWA8FXcHPPPuLj2uAuZRWQwRKEcayX\n\z
+WwXR47rGwMaQzNIhIHxkwbdZbd9rXq9Xrhow8xvLeInIGibcx27f1w==\n\z
+-----END PUBLIC KEY-----'
 
-		local sig = crypto.rsasign(pri, "hello", "sha256")
-		local ver = crypto.rsaverify(pub, "hello", sig, "sha256")
+		local sig = crypto.digestsign(rsa_pri, "hello", "SHA256")
+		local ver = crypto.digestverify(rsa_pub, "hello", sig, "SHA256")
 		testaux.asserteq(testaux.hextostr(sig),
 		'7169cb0696fc074feb26296b9801833277cd7fce836\z
 		6ccdb01f228fd0ee058e063374856d3316df9628774d\z
@@ -99,10 +110,15 @@ w0W5t0qWE/d60ztwcVCUSINIb680yZexrobYH+tlpsVIdXxjcHPU2o4=\n\z
 		bc838a4141149e731a78a96e0b82f413fdb5f41bf45d\z
 		dcb157e254a6e959275fce64e7e7de25aa5017590e49\z
 		e06588b8ca903bea4fa4862df0846', "SHA256withRSA sign success")
-		local ok = crypto.rsaverify(pub, "hello", sig, "sha256")
+		local ok = crypto.digestverify(rsa_pub, "hello", sig, "sha256")
 		testaux.asserteq(ok, true, "SHA256withRSA verify success")
-		local ok = crypto.rsaverify(pub, "hellox", sig, "sha256")
+		local ok = crypto.digestverify(rsa_pub, "hellox", sig, "sha256")
 		testaux.asserteq(ok, false, "SHA256withRSA verify invalid")
+		local sig = crypto.digestsign(ec_secp256k1_pri, "hello", "sha256")
+		local ok = crypto.digestverify(ec_secp256k1_pub, "hello", sig, "sha256")
+		testaux.asserteq(ok, true, "SHA256withECDSA verify success")
+		local ok = crypto.digestverify(ec_secp256k1_pub, "hellox", sig, "sha256")
+		testaux.asserteq(ok, false, "SHA256withECDSA verify invalid")
 	end
 
 end

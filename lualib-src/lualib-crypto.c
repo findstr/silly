@@ -411,112 +411,108 @@ lbase64decode(lua_State *L)
 }
 
 #ifdef USE_OPENSSL
-#include <openssl/sha.h>
-#include <openssl/rsa.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
-#include <openssl/obj_mac.h>
+#include <openssl/evp.h>
 
-#define HASH(M, ctx, dat, dsz, digest, digsz) \
-	rc = M##_Init(&ctx);\
-	if (rc != 1) \
-		break;\
-	rc = M##_Update(&ctx, dat, dsz); \
-	if (rc != 1) \
-		break; \
-	rc = M##_Final(digest, &ctx); \
-	if (rc != 1) \
-		break; \
-	sz = sizeof(digest);
-
-static inline int
-hashmode(lua_State *L, int stk)
-{
-	static const int modes[] = {NID_sha1, NID_sha256};
-	static const char *const modenames[] = {"sha1", "sha256"};
-	return modes[luaL_checkoption(L, stk, NULL, modenames)];
-}
 
 static int
-lrsasign(lua_State *L)
+ldigestsign(lua_State *L)
 {
+	int ok = 0;
+	const EVP_MD *md;
+	EVP_MD_CTX mdctx;
+	BIO *bio;
+	EVP_PKEY *pk;
 	luaL_Buffer b;
-	BIO *bio = NULL;
-	RSA *rsa = NULL;
-	uint8_t *sig;
-	unsigned int siglen = 0;
-	size_t ksz, dsz;
+	size_t ksz, dsz, siglen;
 	const char *key = luaL_checklstring(L, 1, &ksz);
 	const char *dat = luaL_checklstring(L, 2, &dsz);
-	int hash = hashmode(L, 3);
-	int rc = 1, sz = 0;
+	const char *hname = luaL_checkstring(L, 3);
+	md = EVP_get_digestbyname(hname);
+	if (md == NULL)
+		return luaL_error(L, "unkonw hash method '%s'", hname);
 	bio = BIO_new_mem_buf(key, ksz);
-	rsa = PEM_read_bio_RSAPrivateKey(bio, NULL, NULL, NULL);
-	luaL_argcheck(L, rsa != NULL, 1, "invalid private key in PEM format");
-	sig = (uint8_t *)luaL_buffinitsize(L, &b, RSA_size(rsa));
-	switch (hash) {
-	case NID_sha1: {
-		SHA_CTX ctx;
-		uint8_t digest[SHA_DIGEST_LENGTH];
-		HASH(SHA1, ctx, dat, dsz, digest, sz);
-		rc = RSA_sign(NID_sha1, digest, sz, sig, &siglen, rsa);
-		break;}
-	case NID_sha256: {
-		SHA256_CTX ctx;
-		uint8_t digest[SHA256_DIGEST_LENGTH];
-		HASH(SHA256, ctx, dat, dsz, digest, sz);
-		rc = RSA_sign(NID_sha256, digest, sz, sig, &siglen, rsa);
-		break;}
-	}
-	if (rsa != NULL)
-		RSA_free(rsa);
+	pk = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
 	if (bio != NULL)
 		BIO_free(bio);
-	if (rc != 1) {
-		return luaL_error(L, "sign error:%s\n",
+	luaL_argcheck(L, pk != NULL, 1, "invalid private key in PEM format");
+	EVP_MD_CTX_init(&mdctx);
+	do {
+		unsigned char *sig;
+		if (EVP_DigestSignInit(&mdctx, NULL, md, NULL, pk) != 1)
+			break;
+		if (EVP_DigestSignUpdate(&mdctx, dat, dsz) != 1)
+			break;
+		if (EVP_DigestSignFinal(&mdctx, NULL, &siglen) != 1)
+			break;
+		sig = (unsigned char *)luaL_buffinitsize(L, &b, siglen);
+		if (EVP_DigestSignFinal(&mdctx, sig, &siglen) != 1)
+			break;
+		ok = 1;
+		luaL_pushresultsize(&b, siglen);
+	} while (0);
+	EVP_MD_CTX_cleanup(&mdctx);
+	if (pk != NULL)
+		EVP_PKEY_free(pk);
+	if (ok != 1) {
+		return luaL_error(L, "digest sign error:%s",
 			ERR_error_string(ERR_get_error(), NULL));
 	}
-	luaL_pushresultsize(&b, siglen);
 	return 1;
 }
 
 static int
-lrsaverify(lua_State *L)
+ldigestverify(lua_State *L)
 {
-	BIO *bio = NULL;
-	RSA *rsa = NULL;
+	int ok = 0;
+	int verifyok = 0;
+	BIO *bio;
+	EVP_PKEY *pk;
+	const EVP_MD *md;
+	EVP_MD_CTX mdctx;
 	size_t ksz, dsz, siglen;
 	const char *key = luaL_checklstring(L, 1, &ksz);
 	const char *dat = luaL_checklstring(L, 2, &dsz);
 	const uint8_t *sig = (const uint8_t *)luaL_checklstring(L, 3, &siglen);
-	int hash = hashmode(L, 4);
-	int rc = 1, sz = 0, ok = 0;
+	const char *hname = luaL_checkstring(L, 4);
+	md = EVP_get_digestbyname(hname);
+	if (md == NULL)
+		return luaL_error(L, "unkonw hash method '%s'", hname);
 	bio = BIO_new_mem_buf(key, ksz);
-	rsa = PEM_read_bio_RSA_PUBKEY(bio, NULL, NULL, NULL);
-	luaL_argcheck(L, rsa != NULL, 1, "invalid public key in PEM format");
-	switch (hash) {
-	case NID_sha1: {
-		SHA_CTX ctx;
-		uint8_t digest[SHA_DIGEST_LENGTH];
-		HASH(SHA1, ctx, dat, dsz, digest, sz);
-		ok = RSA_verify(NID_sha1, digest, sz, sig, siglen, rsa);
-		break;}
-	case NID_sha256: {
-		SHA256_CTX ctx;
-		uint8_t digest[SHA256_DIGEST_LENGTH];
-		HASH(SHA256, ctx, dat, dsz, digest, sz);
-		ok = RSA_verify(NID_sha256, digest, sz, sig, siglen, rsa);
-		break;}
-	}
-	if (rsa != NULL)
-		RSA_free(rsa);
+	pk = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
 	if (bio != NULL)
 		BIO_free(bio);
-	if (rc != 1) {
-		return luaL_error(L, "sign error:%s\n",
+	luaL_argcheck(L, pk != NULL, 1, "invalid public key in PEM format");
+	EVP_MD_CTX_init(&mdctx);
+	do {
+		if (EVP_DigestVerifyInit(&mdctx, NULL, md, NULL, pk) != 1)
+			break;
+		if (EVP_DigestVerifyUpdate(&mdctx, dat, dsz) != 1)
+			break;
+		switch (EVP_DigestVerifyFinal(&mdctx, sig, siglen)) {
+		case 1:
+			ok = 1;
+			verifyok = 1;
+			break;
+		case 0:
+			ok = 1;
+			verifyok = 0;
+			break;
+		default:
+			ok = 0;
+			verifyok = 0;
+			break;
+		}
+	} while (0);
+	EVP_MD_CTX_cleanup(&mdctx);
+	if (pk != NULL)
+		EVP_PKEY_free(pk);
+	if (ok != 1) {
+		return luaL_error(L, "digest verify error:%s",
 			ERR_error_string(ERR_get_error(), NULL));
 	}
-	lua_pushboolean(L, ok);
+	lua_pushboolean(L, verifyok);
 	return 1;
 }
 
@@ -549,8 +545,8 @@ luaopen_sys_crypto(lua_State *L)
 		{"base64encode", lbase64encode},
 		{"base64decode", lbase64decode},
 #ifdef USE_OPENSSL
-		{"rsasign", lrsasign},
-		{"rsaverify", lrsaverify},
+		{"digestsign", ldigestsign},
+		{"digestverify", ldigestverify},
 #endif
 		{NULL, NULL},
 	};
@@ -562,5 +558,11 @@ luaopen_sys_crypto(lua_State *L)
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
 	setfuncs_withbuffer(L, tbl_b);
+
+#ifdef USE_OPENSSL
+#if  OPENSSL_VERSION_NUMBER < 0x10100000L
+	OpenSSL_add_all_digests();
+#endif
+#endif
 	return 1;
 }
