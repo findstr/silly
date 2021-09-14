@@ -18,7 +18,7 @@ dispatch["/"] = function(req)
 		</html>
 	]]
 	local head = {
-		"Content-Type: text/html",
+		["Content-Type"] = "text/html",
 	}
 	write(req.sock, 200, head, body)
 end
@@ -26,7 +26,7 @@ end
 local content = ""
 
 dispatch["/download"] = function(req)
-	write(req.sock, 200, {"Content-Type: text/plain"}, content)
+	write(req.sock, 200, {["Content-Type"] = "text/plain"}, content)
 end
 
 dispatch["/upload"] = function(req)
@@ -34,9 +34,7 @@ dispatch["/upload"] = function(req)
 		content = req.form.Hello
 	end
 	local body = "Upload"
-	local head = {
-		"Content-Type: text/plain",
-		}
+	local head = {["Content-Type"] = "text/plain"}
 	write(req.sock, 200, head, body)
 end
 
@@ -50,13 +48,13 @@ return function()
 			else
 				print("Unsupport uri", req.uri)
 				write(req.sock, 404,
-					{"Content-Type: text/plain"},
+					{["Content-Type"] = "text/plain"},
 					"404 Page Not Found")
 			end
 		end
 	}
 	local res = client.POST("http://127.0.0.1:8080/upload",
-			{"Content-Type: application/x-www-form-urlencoded"},
+			{["Content-Type"] = "application/x-www-form-urlencoded"},
 			"Hello=findstr&")
 	local res = client.GET("http://127.0.0.1:8080/download")
 	print(json.encode(res))

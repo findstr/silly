@@ -93,15 +93,22 @@ local function parseuri(str)
 end
 
 local function httpwrite(sock, status, header, body)
-	if not header then
-		header = {}
+	local buf = {
+		format("HTTP/1.1 %d %s", status, http_err_msg[status])
+	}
+	if header then
+		for k, v in pairs(header) do
+			buf[#buf + 1] = format("%s: %s", k, v)
+		end
 	end
-	body = body or ""
-	local msg = http_err_msg[status]
-	insert(header, 1, format("HTTP/1.1 %d %s", status, msg))
-	insert(header, format("Content-Length: %d", #body))
-	local tmp = concat(header, "\r\n")
-	tmp = tmp .. "\r\n\r\n" .. body
+	if body then
+		buf[#buf + 1] = format("Content-Length: %d", #body)
+		buf[#buf + 1] = ""
+		buf[#buf + 1] = body
+	else
+		buf[#buf + 1] = "\r\n"
+	end
+	local tmp = concat(buf, "\r\n")
 	return sock:write(tmp)
 end
 

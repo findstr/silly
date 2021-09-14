@@ -178,9 +178,9 @@ local function handshake(req)
 	end
 	key = crypto.base64encode(crypto.sha1(key .. guid))
 	local ack = {
-		"connection: Upgrade",
-		"upgrade: websocket",
-		"sec-websocket-accept: " .. key,
+		["connection"] = "Upgrade",
+		["upgrade"] = "websocket",
+		["sec-websocket-accept"] = key,
 	}
 	return write(sock, 101, ack)
 end
@@ -208,10 +208,10 @@ end
 function M.connect(uri, param)
 	local key = crypto.base64encode(crypto.randomkey(16))
 	local req = client.request("GET", uri, {
-		"connection: Upgrade",
-		"upgrade: websocket",
-		"sec-websocket-version: 13",
-		"sec-websocket-key: " .. key,
+		["connection"] = "Upgrade",
+		["upgrade"] = "websocket",
+		["sec-websocket-version"] = 13,
+		["sec-websocket-key"] = key,
 	}, param)
 	if not req or req.status ~= 101 then
 		return nil, "websocket.connect fail"

@@ -1,6 +1,7 @@
 local core = require "sys.core"
 local stream = require "http.stream"
 local helper = require "http.helper"
+local pairs = pairs
 local assert = assert
 local tonumber = tonumber
 local format = string.format
@@ -35,13 +36,32 @@ end
 
 local function send_request(sock, method, host, abs, header, body)
 	local tmp
-	insert(header, 1, format("%s %s HTTP/1.1", method, abs))
-	insert(header, format("Host: %s", host))
-	insert(header, format("Content-Length: %d", #body))
-	insert(header, http_agent)
-	insert(header, "")
-	insert(header, body)
-	tmp = concat(header, "\r\n")
+	local buf = {
+		format("%s %s HTTP/1.1", method, abs),
+		nil,nil,nil,nil,nil,
+	}
+	if header then
+		if not header.host then
+			buf[#buf + 1] = format("host: %s", host)
+		end
+		if not header['User-Agent'] then
+			buf[#buf + 1] = http_agent
+		end
+		for k, v in pairs(header) do
+			buf[#buf + 1] = format("%s: %s", k, v)
+	end
+	else
+		buf[#buf + 1] = format("host: %s", host)
+		buf[#buf + 1] = http_agent
+	end
+	if body then
+		buf[#buf + 1] = format("Content-Length: %d", #body)
+		buf[#buf + 1] = ""
+		buf[#buf + 1] = body
+	else
+		buf[#buf + 1] = "\r\n"
+	end
+	tmp = concat(buf, "\r\n")
 	sock:write(tmp)
 end
 
@@ -51,10 +71,6 @@ local function process(method, uri, header, body)
 	if not sock then
 		return nil
 	end
-	if not header then
-		header = {}
-	end
-	body = body or ""
 	if not default then
 		host = format("%s:%s", host, port)
 	end
