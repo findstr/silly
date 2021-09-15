@@ -415,13 +415,12 @@ lbase64decode(lua_State *L)
 #include <openssl/err.h>
 #include <openssl/evp.h>
 
-
 static int
 ldigestsign(lua_State *L)
 {
 	int ok = 0;
 	const EVP_MD *md;
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx;
 	BIO *bio;
 	EVP_PKEY *pk;
 	luaL_Buffer b;
@@ -437,22 +436,22 @@ ldigestsign(lua_State *L)
 	if (bio != NULL)
 		BIO_free(bio);
 	luaL_argcheck(L, pk != NULL, 1, "invalid private key in PEM format");
-	EVP_MD_CTX_init(&mdctx);
+	mdctx = EVP_MD_CTX_create();
 	do {
 		unsigned char *sig;
-		if (EVP_DigestSignInit(&mdctx, NULL, md, NULL, pk) != 1)
+		if (EVP_DigestSignInit(mdctx, NULL, md, NULL, pk) != 1)
 			break;
-		if (EVP_DigestSignUpdate(&mdctx, dat, dsz) != 1)
+		if (EVP_DigestSignUpdate(mdctx, dat, dsz) != 1)
 			break;
-		if (EVP_DigestSignFinal(&mdctx, NULL, &siglen) != 1)
+		if (EVP_DigestSignFinal(mdctx, NULL, &siglen) != 1)
 			break;
 		sig = (unsigned char *)luaL_buffinitsize(L, &b, siglen);
-		if (EVP_DigestSignFinal(&mdctx, sig, &siglen) != 1)
+		if (EVP_DigestSignFinal(mdctx, sig, &siglen) != 1)
 			break;
 		ok = 1;
 		luaL_pushresultsize(&b, siglen);
 	} while (0);
-	EVP_MD_CTX_cleanup(&mdctx);
+	EVP_MD_CTX_destroy(mdctx);
 	if (pk != NULL)
 		EVP_PKEY_free(pk);
 	if (ok != 1) {
@@ -470,7 +469,7 @@ ldigestverify(lua_State *L)
 	BIO *bio;
 	EVP_PKEY *pk;
 	const EVP_MD *md;
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx;
 	size_t ksz, dsz, siglen;
 	const char *key = luaL_checklstring(L, 1, &ksz);
 	const char *dat = luaL_checklstring(L, 2, &dsz);
@@ -484,13 +483,13 @@ ldigestverify(lua_State *L)
 	if (bio != NULL)
 		BIO_free(bio);
 	luaL_argcheck(L, pk != NULL, 1, "invalid public key in PEM format");
-	EVP_MD_CTX_init(&mdctx);
+	mdctx = EVP_MD_CTX_create();
 	do {
-		if (EVP_DigestVerifyInit(&mdctx, NULL, md, NULL, pk) != 1)
+		if (EVP_DigestVerifyInit(mdctx, NULL, md, NULL, pk) != 1)
 			break;
-		if (EVP_DigestVerifyUpdate(&mdctx, dat, dsz) != 1)
+		if (EVP_DigestVerifyUpdate(mdctx, dat, dsz) != 1)
 			break;
-		switch (EVP_DigestVerifyFinal(&mdctx, sig, siglen)) {
+		switch (EVP_DigestVerifyFinal(mdctx, sig, siglen)) {
 		case 1:
 			ok = 1;
 			verifyok = 1;
@@ -505,7 +504,7 @@ ldigestverify(lua_State *L)
 			break;
 		}
 	} while (0);
-	EVP_MD_CTX_cleanup(&mdctx);
+	EVP_MD_CTX_destroy(mdctx);
 	if (pk != NULL)
 		EVP_PKEY_free(pk);
 	if (ok != 1) {
@@ -560,7 +559,7 @@ luaopen_sys_crypto(lua_State *L)
 	setfuncs_withbuffer(L, tbl_b);
 
 #ifdef USE_OPENSSL
-#if  OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	OpenSSL_add_all_digests();
 #endif
 #endif

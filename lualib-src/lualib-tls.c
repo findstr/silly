@@ -80,11 +80,15 @@ new_tls(lua_State *L, int fd)
 	return tls;
 }
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_method TLSv1_2_method
+#endif
+
 static int
 lctx_client(lua_State *L)
 {
 	SSL_CTX *ptr;
-	ptr = SSL_CTX_new(TLSv1_2_method());
+	ptr = SSL_CTX_new(TLS_method());
 	if (ptr == NULL) {
 		lua_pushnil(L);
 		lua_pushstring(L, "SSL_CTX_new fail");
@@ -100,7 +104,7 @@ lctx_server(lua_State *L)
 	int r;
 	SSL_CTX *ptr;
 	const char *certpath, *keypath;
-	ptr = SSL_CTX_new(TLSv1_2_method());
+	ptr = SSL_CTX_new(TLS_method());
 	if (ptr == NULL) {
 		lua_pushnil(L);
 		lua_pushstring(L, "SSL_CTX_new fail");
@@ -325,7 +329,9 @@ luaopen_sys_tls_ctx(lua_State *L)
 	SSL_library_init();
 	SSL_load_error_strings();
 	ERR_load_BIO_strings();
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	OpenSSL_add_all_algorithms();
+#endif
 #endif
 	return 1;
 }
