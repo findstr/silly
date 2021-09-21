@@ -17,6 +17,7 @@ local modules = {
 	"testchannel",
 	"testcrypto",
 	"testhttp",
+	"testhttp2",
 	"testwebsocket",
 	"testredis",
 	"testmysql",
