@@ -17,6 +17,7 @@
 
 struct ctx {
 	int mode;
+	int alpn;
 	SSL_CTX *ptr;
 };
 
@@ -61,6 +62,7 @@ new_tls_ctx(lua_State *L, SSL_CTX *ptr, int mode)
 	}
 	ctx->ptr = ptr;
 	ctx->mode = mode;
+	ctx->alpn = 0;
 	lua_setmetatable(L, -2);
 	return ctx;
 }
@@ -98,16 +100,55 @@ lctx_client(lua_State *L)
 	return 1;
 }
 
+static unsigned char alpn_h2[] = {
+	2, 'h', '2',
+};
+static unsigned char alpn_h1[] = {
+	8, 'h', 't', 't', 'p', '/', '1', '.', '1'
+};
+
+
+#define ALPN_NONE	(0)
+#define ALPN_H2		(1)
+
+int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+	const unsigned char *in, unsigned int inlen, void *arg)
+{
+	int ret;
+	unsigned int size;
+	unsigned char *alpn;
+	unsigned char *outx;
+	(void)ssl;
+	struct ctx *ctx = (struct ctx *)arg;
+	if (ctx->ptr == NULL)
+		return SSL_TLSEXT_ERR_NOACK;
+	if (ctx->alpn == 1) {
+		alpn = alpn_h2;
+		size = sizeof(alpn_h2);
+	} else {
+		alpn = alpn_h1;
+		size = sizeof(alpn_h1);
+	}
+	ret = SSL_select_next_proto(&outx, outlen, alpn, size, in, inlen);
+	if (ret == OPENSSL_NPN_NEGOTIATED) {
+		*out = outx;
+		return SSL_TLSEXT_ERR_OK;
+	} else {
+		return SSL_TLSEXT_ERR_NOACK;
+	}
+}
+
 static int
 lctx_server(lua_State *L)
 {
-	int r;
+	int r, alpn;
 	SSL_CTX *ptr;
+	struct ctx *ctx;
 	const char *certpath, *keypath;
 	ptr = SSL_CTX_new(TLS_method());
 	if (ptr == NULL) {
 		lua_pushnil(L);
-		lua_pushstring(L, "SSL_CTX_new fail");
+		lua_pushstring(L, "SSL_CTX_new");
 		return 2;
 	}
 	certpath = luaL_checkstring(L, 1);
@@ -115,26 +156,26 @@ lctx_server(lua_State *L)
 	//create tls_ctx first so that
 	//even lctx_server fail
 	//gc also will free the ptr
-	new_tls_ctx(L, ptr, 'S');
+	ctx = new_tls_ctx(L, ptr, 'S');
 	r = SSL_CTX_use_certificate_file(ptr, certpath, SSL_FILETYPE_PEM);
 	if (r != 1) {
 		lua_pop(L, 1);
 		lua_pushnil(L);
-		lua_pushstring(L, "SSL_CTX_use_certificate_file fail");
+		lua_pushstring(L, "SSL_CTX_use_certificate_file");
 		return 2;
 	}
 	r = SSL_CTX_use_PrivateKey_file(ptr, keypath, SSL_FILETYPE_PEM);
 	if (r != 1) {
 		lua_pop(L, 1);
 		lua_pushnil(L);
-		lua_pushstring(L, "SSL_CTX_use_PrivateKey_file fail");
+		lua_pushstring(L, "SSL_CTX_use_PrivateKey_file");
 		return 2;
 	}
 	r = SSL_CTX_check_private_key(ptr);
 	if (r != 1) {
 		lua_pop(L, 1);
 		lua_pushnil(L);
-		lua_pushstring(L, "SSL_CTX_check_private_key fail");
+		lua_pushstring(L, "SSL_CTX_check_private_key");
 		return 2;
 	}
 	if (lua_type(L, 3) != LUA_TNIL) {
@@ -148,23 +189,33 @@ lctx_server(lua_State *L)
 			return 2;
 		}
 	}
+	alpn = luaL_optinteger(L, 4, 0);
+	if (alpn == 1) {
+		ctx->alpn = alpn;
+		SSL_CTX_set_alpn_select_cb(ptr, alpn_cb, ctx);
+	}
 	return 1;
 }
 
 static int
 ltls_open(lua_State *L)
 {
-	int fd;
+	int fd, alpn;
 	struct ctx *ctx;
 	struct tls *tls;
 	const char *hostname;
 	ctx = luaL_checkudata(L, 1, "TLS_CTX");
 	fd = luaL_checkinteger(L, 2);
 	hostname = lua_tostring(L, 3);
+	alpn = luaL_optinteger(L, 4, 0);
 	tls = new_tls(L, fd);
 	tls->ssl = SSL_new(ctx->ptr);
 	if (tls->ssl == NULL)
 		luaL_error(L, "SSL_new fail");
+	if (alpn == 1)
+		SSL_set_alpn_protos(tls->ssl, alpn_h2, sizeof(alpn_h2));
+	else
+		SSL_set_alpn_protos(tls->ssl, alpn_h1, sizeof(alpn_h1));
 	tls->in_bio = BIO_new(BIO_s_mem());
 	if (tls->in_bio == NULL)
 		luaL_error(L, "BIO_new fail");

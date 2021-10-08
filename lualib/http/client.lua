@@ -9,30 +9,8 @@ local match = string.match
 local insert = table.insert
 local concat = table.concat
 local client = {}
-local http_agent = format("User-Agent: Silly/%s", core.version)
-
-local default_port = {
-	["https"] = "443",
-	["wss"] = "443",
-	["http"] = "80",
-	["ws"] = "80",
-}
-
-local function parseurl(url)
-	local default = false
-	local scheme, host, port, path= match(url, "^([^:]+)://([^:/]+):?(%d*)(.*)")
-	if path == "" then
-		path = "/"
-	end
-	if port == "" then
-		port = default_port[scheme]
-		if not port then
-			assert(false, "unsupport parse url scheme:" .. scheme)
-		end
-		default = true
-	end
-	return scheme, host, port, path, default
-end
+local http_agent = format("user-agent: Silly/%s", core.version)
+local parseurl = helper.parseurl
 
 local function send_request(sock, method, host, abs, header, body)
 	local tmp
@@ -44,7 +22,7 @@ local function send_request(sock, method, host, abs, header, body)
 		if not header.host then
 			buf[#buf + 1] = format("host: %s", host)
 		end
-		if not header['User-Agent'] then
+		if not header['user-agent'] then
 			buf[#buf + 1] = http_agent
 		end
 		for k, v in pairs(header) do
@@ -55,7 +33,7 @@ local function send_request(sock, method, host, abs, header, body)
 		buf[#buf + 1] = http_agent
 	end
 	if body then
-		buf[#buf + 1] = format("Content-Length: %d", #body)
+		buf[#buf + 1] = format("content-length: %d", #body)
 		buf[#buf + 1] = ""
 		buf[#buf + 1] = body
 	else

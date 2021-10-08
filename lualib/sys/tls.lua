@@ -11,13 +11,18 @@ local ctx
 local tls
 local client_ctx
 
-local function new_socket(fd, ctx, hostname)
+local alpn_mode = {
+	["h2"] = 1
+}
+
+local function new_socket(fd, ctx, hostname, alpn)
+	local mode = alpn_mode[alpn]
 	local s = {
 		nil,
 		fd = fd,
 		delim = false,
 		co = false,
-		ssl = tls.open(ctx, fd, hostname),
+		ssl = tls.open(ctx, fd, hostname, mode),
 		closing = false,
 	}
 	socket_pool[fd] = s
@@ -52,7 +57,7 @@ end
 
 function EVENT.accept(fd, _, portid, addr)
 	local lc = socket_pool[portid];
-	local s = new_socket(fd, lc.ctx)
+	local s = new_socket(fd, lc.ctx, nil, nil)
 	local ok = handshake(s)
 	if not ok then
 		return
@@ -119,12 +124,12 @@ local function socket_dispatch(type, fd, message, ...)
 end
 
 
-local function connect_normal(ip, bind, hostname)
+local function connect_normal(ip, bind, hostname, alpn)
 	local fd = core.connect(ip, socket_dispatch, bind)
 	if not fd then
 		return nil
 	end
-	local s = new_socket(fd, client_ctx, hostname)
+	local s = new_socket(fd, client_ctx, hostname, alpn)
 	local ok = handshake(s)
 	if ok then
 		return fd
@@ -133,12 +138,12 @@ local function connect_normal(ip, bind, hostname)
 	return nil
 end
 
-function M.connect(ip, bind, hostname)
+function M.connect(ip, bind, hostname, alpn)
 	tls = require "sys.tls.tls"
 	ctx = require "sys.tls.ctx"
 	client_ctx = ctx.client()
 	M.connect = connect_normal
-	return connect_normal(ip, bind, hostname)
+	return connect_normal(ip, bind, hostname, alpn)
 end
 
 function M.listen(conf)
@@ -150,8 +155,9 @@ function M.listen(conf)
 	end
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
-	local c = ctx.server(conf.cert, conf.key, conf.ciphers)
-	local s = new_socket(portid, c, nil)
+	local mode = alpn_mode[conf.alpn]
+	local c = ctx.server(conf.cert, conf.key, conf.ciphers, mode)
+	local s = new_socket(portid, c, nil, nil)
 	s.ctx = c
 	s.disp = conf.disp
 	return portid

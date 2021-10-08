@@ -1,5 +1,6 @@
 local format = string.format
 local gsub = string.gsub
+local match = string.match
 local insert = table.insert
 local concat = table.concat
 local char = utf8.char
@@ -60,6 +61,30 @@ end
 
 function helper.getcookie(cookie)
 	return "Cookie:" .. concat(cookie, ";")
+end
+
+local default_port = {
+	["https"] = "443",
+	["wss"] = "443",
+	["http"] = "80",
+	["ws"] = "80",
+}
+
+
+function helper.parseurl(url)
+	local default = false
+	local scheme, host, port, path= match(url, "^([^:]+)://([^:/]+):?(%d*)(.*)")
+	if path == "" then
+		path = "/"
+	end
+	if port == "" then
+		port = default_port[scheme]
+		if not port then
+			assert(false, "unsupport parse url scheme:" .. scheme)
+		end
+		default = true
+	end
+	return scheme, host, port, path, default
 end
 
 return helper
