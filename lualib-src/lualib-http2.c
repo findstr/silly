@@ -5,6 +5,7 @@
 #include <lauxlib.h>
 
 #include "http2_table.h"
+#include "silly_malloc.h"
 
 #define STATIC_TBL_SIZE	(61)
 #ifndef HTTP2_HEADER_SIZE
@@ -25,6 +26,7 @@ struct hpack {
 };
 
 struct unpack_ctx {
+	struct root *huffman;
 	int stat;
 	int dyna;
 	unsigned int flag;
@@ -52,45 +54,48 @@ struct root {
 	int free;
 	struct node node;
 	struct node *pool;
-} ROOT;
+};
 
 static struct node *
-alloc()
+alloc(struct root *huffman)
 {
 	struct node *n;
-	if (ROOT.free >= ROOT.size) {
-		int newsize = (ROOT.size + 64);
-		ROOT.size = newsize;
-		ROOT.pool = realloc(ROOT.pool, newsize * sizeof(ROOT.pool[0]));
+	if (huffman->free >= huffman->size) {
+		int newsz = (huffman->size + 64);
+		huffman->size = newsz;
+		huffman->pool = silly_realloc(huffman->pool,
+			newsz * sizeof(huffman->pool[0]));
 	}
-	n = &ROOT.pool[ROOT.free++];
+	n = &huffman->pool[huffman->free++];
 	n->codelen = -1;
 	memset(n->children, -1, sizeof(n->children));
 	return n;
 }
 
 static void
-add_node(uint8_t sym, uint32_t code, int codelen)
+add_node(struct root *huffman, uint8_t sym, uint32_t code, int codelen)
 {
 	int i, shift, start, end, id;
-	struct node *curr = &ROOT.node, *n;
-	n = alloc();
+	struct node *n;
+	struct node *curr = &huffman->node;
+	struct node *pool = huffman->pool;
+	n = alloc(huffman);
 	n->sym = sym;
 	n->codelen = codelen;
-	id = n - ROOT.pool;
+	id = n - pool;
 	while (codelen > 8) {
 		codelen -= 8;
 		int i = (code >> codelen) & 0xff;
 		int nid = curr->children[i];
 		if (nid < 0) {
-			struct node *n = alloc();
-			curr->children[i] = n - ROOT.pool;
+			struct node *n = alloc(huffman);
+			curr->children[i] = n - pool;
 			curr = n;
 		} else {
-			curr = &ROOT.pool[nid];
+			curr = &pool[nid];
 		}
 	}
-	ROOT.pool[id].codelen = codelen;
+	pool[id].codelen = codelen;
 	shift = 8 - codelen;
 	start = (code << shift) & 0xff;
 	end = (1 << shift);
@@ -153,7 +158,9 @@ huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 	uint32_t mask;
 	const uint8_t *dat, *end;
 	uint32_t cur = 0, cbits = 0, sbits = 0;
-	struct node *n = &ROOT.node;
+	struct root *huffman = uctx->huffman;
+	struct node *n = &huffman->node;
+	struct node *pool = huffman->pool;
 	end = uctx->p + size;
 	for (dat = uctx->p; dat < end; dat = ++uctx->p) {
 		uint32_t b = *dat;
@@ -165,11 +172,11 @@ huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 			int nid = n->children[idx];
 			if (nid < 0)
 				return -1;
-			n = &ROOT.pool[nid];
+			n = &pool[nid];
 			if (n->codelen >= 0) {
 				luaL_addchar(buf, n->sym);
 				cbits -= n->codelen;
-				n = &ROOT.node;
+				n = &huffman->node;
 				sbits = cbits;
 			} else {
 				cbits -= 8;
@@ -180,12 +187,12 @@ huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 		int nid = n->children[(cur << (8 - cbits)) & 0xff];
 		if (nid < 0)
 			return -1;
-		n = &ROOT.pool[nid];
+		n = &pool[nid];
 		if (n->codelen < 0 || n->codelen > (int)cbits)
 			break;
 		luaL_addchar(buf, n->sym);
 		cbits -= n->codelen;
-		n = &ROOT.node;
+		n = &huffman->node;
 		sbits = cbits;
 	}
 	if (sbits > 7)
@@ -195,17 +202,35 @@ huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 	return 0;
 }
 
+static int
+huffman_gc(lua_State *L)
+{
+	struct root *huffman = luaL_checkudata(L, 1, "http2.huffman");
+	if (huffman->pool != NULL) {
+		silly_free(huffman->pool);
+		huffman->pool = NULL;
+		huffman->size = 0;
+		huffman->free = 0;
+	}
+	return 0;
+}
+
 static void
-init_huffman()
+create_huffman_tree(lua_State *L)
 {
 	size_t i;
-	ROOT.size = 256;
-	ROOT.free = 0;
-	ROOT.pool = malloc(sizeof(struct node) * ROOT.size);
-	memset(ROOT.node.children, -1, sizeof(ROOT.node.children));
-	for (i = 0; i < sizeof(huffman_codes) / sizeof(huffman_codes[0]); i++) {
-		add_node(i, huffman_codes[i], huffman_codelen[i]);
+	struct root *huffman = lua_newuserdatauv(L, sizeof(*huffman), 0);
+	if (luaL_newmetatable(L, "http2.huffman")) {
+		lua_pushcfunction(L, huffman_gc);
+		lua_setfield(L, -2, "__gc");
 	}
+	lua_setmetatable(L, -2);
+	huffman->size = 270;
+	huffman->free = 0;
+	huffman->pool = silly_malloc(sizeof(struct node) * huffman->size);
+	memset(huffman->node.children, -1, sizeof(huffman->node.children));
+	for (i = 0; i < sizeof(huffman_codes) / sizeof(huffman_codes[0]); i++)
+		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
 static inline size_t
@@ -502,7 +527,7 @@ concat_table(lua_State *L, struct unpack_ctx *ctx, int t)
 		lua_tolstring(L, -1, &n);
 		sz += n;
 	}
-	p = ctx->buf = malloc(sz);
+	p = ctx->buf = silly_malloc(sz);
 	ctx->p = ctx->buf;
 	ctx->e = p + sz;
 	for (;;) {
@@ -632,6 +657,7 @@ lhpack_unpack(lua_State *L)
 	struct unpack_ctx uctx;
 	uctx.hpack = luaL_checkudata(L, 1, "HPACK");
 	uctx.hpack->queue_used_min = uctx.hpack->queue_head;
+	uctx.huffman = lua_touserdata(L, lua_upvalueindex(2));
 	if (lua_type(L, 2) != LUA_TTABLE) {
 		size_t sz;
 		uctx.buf = NULL;
@@ -754,9 +780,8 @@ luaopen_http2_hpack(lua_State *L)
 	};
 	luaL_newlibtable(L,tbl);
 	create_static_table(L);
-	luaL_setfuncs(L,tbl,1);
-	init_huffman();
-
+	create_huffman_tree(L);
+	luaL_setfuncs(L,tbl,2);
 	return 1;
 }
 
