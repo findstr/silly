@@ -1,110 +1,137 @@
 local type = type
 local pairs = pairs
 local assert = assert
-local dgetinfo = debug.getinfo
-local dgetupval = debug.getupvalue
-local dupvaljoin = debug.upvaluejoin
+local concat = table.concat
+local setmetatable = setmetatable
+local getinfo = debug.getinfo
+local getupval = debug.getupvalue
+local setupvalue = debug.setupvalue
+local upvalid = debug.upvalueid
+local upvaljoin = debug.upvaluejoin
 
-local function collectup(func,  tbl, unique)
-	local info = dgetinfo(func, "u")
+local M = {}
+local mt = {__index = M}
+
+local function collectfn(fn, upvals, unique)
+	local info = getinfo(fn, "u")
 	for i = 1, info.nups do
 		local up
-		local name, val = dgetupval(func, i)
+		local name, val = getupval(fn, i)
 		local utype = type(val)
 		if utype == "function" then
 			local upval = unique[val]
 			if not upval then
 				upval = {}
 				unique[val] = upval
-				collectup(val, upval, unique)
+				collectfn(val, upval, unique)
 			end
 			up = {
 				idx = i,
 				utype = utype,
 				val = val,
-				up = upval
+				upid = upvalid(fn, i),
+				upvals = upval
 			}
 		else
 			up = {
 				idx = i,
 				utype = utype,
 				val = val,
+				upid = upvalid(fn, i),
 			}
 		end
-		tbl[name] = up
+		upvals[name] = up
 	end
 end
 
+function M.create()
+	return setmetatable({
+		collected = {},
+		valjoined = {},
+		fnjoined = {},
+	}, mt)
+end
 
-local function join_val(joined, nfv, nup, rfv, rup)
-	assert(type(nfv) == "function")
-	assert(type(rfv) == "function")
-	for name, nu in pairs(nup) do
-		local ru = rup[name]
-		if ru then
-			local nidx = nu.idx
-			local ridx = ru.idx
-			assert(ru.utype == nu.utype or not nu.val or not ru.val)
-			if nu.utype == "function" then
-				local v = nu.val
+function M:collectupval(f_or_t)
+	local upvals = {}
+	local t = type(f_or_t)
+	local unique = self.collected
+	if t == "table" then
+		for name, fn in pairs(f_or_t) do
+			local x = {}
+			collectfn(fn, x, unique)
+			upvals[name] = {
+				val = fn,
+				upvals = x
+			}
+		end
+	else
+		collectfn(f_or_t, upvals, unique)
+	end
+	return upvals
+end
+
+local function joinval(f1, up1, f2, up2, joined, path, absent)
+	local n = 0
+	local depth = #path + 1
+	for name, uv1 in pairs(up1) do
+		path[depth] = name
+		local uv2 = up2[name]
+		if uv2 then
+			local idx1 = uv1.idx
+			local idx2 = uv2.idx
+			assert(uv1.utype == uv2.utype or not uv1.val or not uv2.val)
+			if uv1.utype == "function" then
+				assert(uv2.utype == "function")
+				local v = uv1.val
 				if not joined[v] then
 					joined[v] = true
-					join_val(joined, v, nu.up, ru.val, ru.up)
+					n = n + joinval(v, uv1.upvals,
+						uv2.val, uv2.upvals,
+						joined, path, absent)
 				end
 			else
-				dupvaljoin(nfv, nidx, rfv, ridx)
+				upvaljoin(f1, idx1, f2, idx2)
 			end
+		elseif name == "_ENV" then
+			setupvalue(f1, uv1.idx, _ENV)
+			absent[#absent + 1] = concat(path, ".")
+		else
+			absent[#absent + 1] = concat(path, ".")
 		end
+		path[depth] = nil
 	end
+	return n
 end
 
-local function join_fn(joined, rfv, rup, nfv, nup)
-	assert(type(nfv) == "function")
-	assert(type(rfv) == "function")
-	for name, ru in pairs(rup) do
-		local nu = nup[name]
-		if nu then
-			local nidx = nu.idx
-			local ridx = ru.idx
-			if nu.utype == "function" then
-				assert(ru.utype == nu.utype)
-				local v = nu.val
-				if not joined[v] then
-					joined[v] = true
-					join_fn(joined, ru.val, ru.up, nu.val, nu.up)
-				end
-				dupvaljoin(rfv, ridx, nfv, nidx)
+function M:join(f1, up1, f2, up2)
+	local n
+	local path = {"$"}
+	local absent = {}
+	local joined = self.valjoined
+	if type(f1) == "table" then
+		local up1, up2 = f1, up1
+		n = 0
+		for name, uv1 in pairs(up1) do
+			local uv2 = up2[name]
+			if uv2 then
+				path[2] = name
+				n = n + joinval(uv1.val, uv1.upvals,
+					uv2.val, uv2.upvals,
+					joined, path, absent)
+				path[2] = nil
 			end
 		end
+	else
+		assert(type(f1) == "function")
+		assert(type(f2) == "function")
+		path[2] = "#"
+		n = joinval(f1, up1, f2, up2, joined, path, absent)
+		path[2] = nil
 	end
+	return absent
 end
 
-return function(newenv, runm, newm)
-	local unique = {}
-	local val_joined = {}
-	local fn_joined = {}
-	--join the runm to newm
-	for fn, nfv in pairs(newm) do
-		local rfv = runm[fn]
-		if rfv then
-			local ru = {}
-			local nu = {}
-			collectup(rfv, ru, unique)
-			collectup(nfv, nu, unique)
-			join_val(val_joined, nfv, nu, rfv, ru)
-			join_fn(fn_joined, rfv, ru, nfv, nu)
-		end
-	end
-	--replace runm to newm
-	for fn, nfv in pairs(newm) do
-		runm[fn] = nfv
-	end
-	--fix _ENV
-	for k, v in pairs(newenv) do
-		if not _ENV[k] then
-			_ENV[k] = v
-		end
-	end
-	return
-end
+
+return M
 

@@ -28,7 +28,7 @@ local desc = {
 "CPUINFO: Show system time and user time statistics. [CPUINFO]",
 "SOCKET: Show socket detail information. [SOCKET]",
 "TASK: Show all task status and traceback. [TASK]",
-"PATCH: Hot patch the code. [PATCH <modulename> <filename>]",
+"INJECT: INJECT code. [INJECT <path>]",
 "DEBUG: Enter Debug mode. [DEBUG]",
 }
 
@@ -36,17 +36,6 @@ local desc = {
 local console = {}
 
 local envmt = {__index = _ENV}
-
-local function _patch(module, filename)
-	local ENV = {}
-	setmetatable(ENV, envmt)
-	local runm = require(module)
-	local newm = assert(loadfile(fixfile, "bt", ENV))()
-	assert(runm and type(runm) == "table")
-	assert(newm and type(newm) == "table")
-	patch(ENV, runm, newm)
-end
-
 
 function console.help()
 	return desc
@@ -172,18 +161,20 @@ function console.info()
 	return concat(tbl, "\r\n")
 end
 
-function console.patch(_, module, filename)
-	if not module then
-		return "ERR lost the module file name"
-	elseif not filename == 0 then
-		return "ERR lost the filename"
+function console.inject(_, filepath)
+	if not filepath == 0 then
+		return "ERR lost the filepath"
 	end
-	local ok, err = pcall(_patch, module, filename)
-	local fmt = "Patch module:%s function:%s by:%s %s"
+	local ENV = setmetatable({}, envmt)
+	local ok, err = pcall(loadfile, filepath, bt, ENV)
 	if ok then
-		return format(fmt, module, fix, "Success")
+		ok, err = pcall(err)
+	end
+	local fmt = "Inject file:%s %s"
+	if ok then
+		return format(fmt, filepath, "Success")
 	else
-		return format(fmt, module, fix, err)
+		return format(fmt, filepath, err)
 	end
 end
 
@@ -228,6 +219,7 @@ return function (config)
 		core.log("console come in:", addr)
 		local param = {}
 		local dat = {}
+		socket.write(fd, "Hello\n")
 		socket.write(fd, prompt)
 		while true do
 			local l = socket.readline(fd)
