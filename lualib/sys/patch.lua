@@ -48,7 +48,6 @@ function M.create()
 	return setmetatable({
 		collected = {},
 		valjoined = {},
-		fnjoined = {},
 	}, mt)
 end
 
