@@ -162,11 +162,11 @@ function console.info()
 end
 
 function console.inject(_, filepath)
-	if not filepath == 0 then
+	if not filepath then
 		return "ERR lost the filepath"
 	end
 	local ENV = setmetatable({}, envmt)
-	local ok, err = pcall(loadfile, filepath, bt, ENV)
+	local ok, err = pcall(loadfile, filepath, "bt", ENV)
 	if ok then
 		ok, err = pcall(err)
 	end
