@@ -71,7 +71,6 @@ function M:collectupval(f_or_t)
 end
 
 local function joinval(f1, up1, f2, up2, joined, path, absent)
-	local n = 0
 	local depth = #path + 1
 	for name, uv1 in pairs(up1) do
 		path[depth] = name
@@ -85,7 +84,7 @@ local function joinval(f1, up1, f2, up2, joined, path, absent)
 				local v = uv1.val
 				if not joined[v] then
 					joined[v] = true
-					n = n + joinval(v, uv1.upvals,
+					joinval(v, uv1.upvals,
 						uv2.val, uv2.upvals,
 						joined, path, absent)
 				end
@@ -100,7 +99,6 @@ local function joinval(f1, up1, f2, up2, joined, path, absent)
 		end
 		path[depth] = nil
 	end
-	return n
 end
 
 function M:join(f1, up1, f2, up2)
@@ -110,12 +108,11 @@ function M:join(f1, up1, f2, up2)
 	local joined = self.valjoined
 	if type(f1) == "table" then
 		local up1, up2 = f1, up1
-		n = 0
 		for name, uv1 in pairs(up1) do
 			local uv2 = up2[name]
 			if uv2 then
 				path[2] = name
-				n = n + joinval(uv1.val, uv1.upvals,
+				joinval(uv1.val, uv1.upvals,
 					uv2.val, uv2.upvals,
 					joined, path, absent)
 				path[2] = nil
@@ -125,7 +122,7 @@ function M:join(f1, up1, f2, up2)
 		assert(type(f1) == "function")
 		assert(type(f2) == "function")
 		path[2] = "#"
-		n = joinval(f1, up1, f2, up2, joined, path, absent)
+		joinval(f1, up1, f2, up2, joined, path, absent)
 		path[2] = nil
 	end
 	return absent
