@@ -28,43 +28,15 @@ local desc = {
 "CPUINFO: Show system time and user time statistics. [CPUINFO]",
 "SOCKET: Show socket detail information. [SOCKET]",
 "TASK: Show all task status and traceback. [TASK]",
-"PATCH: Hot patch the code. [PATCH <fixfile> <modulename> <funcname> ...]",
+"INJECT: INJECT code. [INJECT <path>]",
 "DEBUG: Enter Debug mode. [DEBUG]",
+"QUIT: Quit the console. [QUIT]",
 }
 
 
 local console = {}
 
 local envmt = {__index = _ENV}
-
-local function _patch(fixfile, module, ...)
-	local ENV = {}
-	local funcs = {}
-	local funcname = {...}
-	assert(#funcname > 0, "function list is empty")
-	setmetatable(ENV, envmt)
-	local runm = require(module)
-	local fixm = assert(loadfile(fixfile, "bt", ENV))()
-	assert(runm and type(runm) == "table")
-	assert(fixm and type(fixm) == "table")
-	for k, v in pairs(funcname) do
-		local funcid = tonumber(v)
-		if funcid then
-			funcname[k] = funcid
-			v = funcid
-		end
-		local runf = assert(runm[v], "run code has no function")
-		local fixf = assert(fixm[v], "fix code has no function")
-		funcs[#funcs + 1] = fixf
-		funcs[#funcs + 1] = runf
-	end
-	patch(ENV, unpack(funcs))
-	for k, v in pairs(funcname) do
-		runm[v] = assert(fixm[v])
-	end
-	return
-end
-
 
 function console.help()
 	return desc
@@ -190,20 +162,20 @@ function console.info()
 	return concat(tbl, "\r\n")
 end
 
-function console.patch(_, fix, module, ...)
-	if not fix then
-		return "ERR lost the fix file name"
-	elseif not module then
-		return "ERR lost the module file name"
-	elseif select("#", ...) == 0 then
-		return "ERR lost the function name"
+function console.inject(_, filepath)
+	if not filepath then
+		return "ERR lost the filepath"
 	end
-	local ok, err = pcall(_patch, fix, module, ...)
-	local fmt = "Patch module:%s function:%s by:%s %s"
+	local ENV = setmetatable({}, envmt)
+	local ok, err = pcall(loadfile, filepath, "bt", ENV)
 	if ok then
-		return format(fmt, module, fix, "Success")
+		ok, err = pcall(err)
+	end
+	local fmt = "Inject file:%s %s"
+	if ok then
+		return format(fmt, filepath, "Success")
 	else
-		return format(fmt, module, fix, err)
+		return format(fmt, filepath, err)
 	end
 end
 
@@ -248,6 +220,8 @@ return function (config)
 		core.log("console come in:", addr)
 		local param = {}
 		local dat = {}
+		socket.write(fd, "\nWelcome to console.\n\n")
+		socket.write(fd, "Type 'help' for help.\n\n")
 		socket.write(fd, prompt)
 		while true do
 			local l = socket.readline(fd)

@@ -14,7 +14,7 @@ cluster() {
 }
 
 module() {
-	./silly --lualib_path="lualib/?.lua" --lualib_cpath="luaclib/?.so" --bootstrap="examples/$1.lua"
+	./silly --lualib_path="lualib/?.lua;examples/?.lua" --lualib_cpath="luaclib/?.so" --bootstrap="examples/$1.lua"
 }
 
 all() {

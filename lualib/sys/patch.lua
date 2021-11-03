@@ -1,80 +1,133 @@
 local type = type
 local pairs = pairs
 local assert = assert
-local dgetinfo = debug.getinfo
-local dgetupval = debug.getupvalue
-local dupvaljoin = debug.upvaluejoin
+local concat = table.concat
+local setmetatable = setmetatable
+local getinfo = debug.getinfo
+local getupval = debug.getupvalue
+local setupvalue = debug.setupvalue
+local upvalid = debug.upvalueid
+local upvaljoin = debug.upvaluejoin
 
-local function collectup(func,  tbl)
-	local info = dgetinfo(func, "u")
+local M = {}
+local mt = {__index = M}
+
+local function collectfn(fn, upvals, unique)
+	local info = getinfo(fn, "u")
 	for i = 1, info.nups do
-		local name, val = dgetupval(func, i)
 		local up
-		if type(val) == "function" then
+		local name, val = getupval(fn, i)
+		local utype = type(val)
+		if utype == "function" then
+			local upval = unique[val]
+			if not upval then
+				upval = {}
+				unique[val] = upval
+				collectfn(val, upval, unique)
+			end
 			up = {
 				idx = i,
-				uname = name,
-				utype = type(val),
+				utype = utype,
 				val = val,
-				up = {}
+				upid = upvalid(fn, i),
+				upvals = upval
 			}
-			collectup(val, up.up)
 		else
 			up = {
 				idx = i,
-				uname = name,
-				uptype = type(val),
+				utype = utype,
 				val = val,
-				up = val,
+				upid = upvalid(fn, i),
 			}
 		end
-		tbl[name] = up
+		upvals[name] = up
 	end
 end
 
+function M.create()
+	return setmetatable({
+		collected = {},
+		valjoined = {},
+	}, mt)
+end
 
-local function patchup(cache, fix, fixup, run, runup)
-	assert(type(run) == "function")
-	assert(type(fix) == "function")
-	local info = dgetinfo(run, "u")
-	for i = 1, info.nups do
-		local name, val = dgetupval(run, i)
-		if fixup[name] then
-			local rup = runup[name]
-			local fup = fixup[name]
-			assert(rup.idx == i)
-			if (type(val) == "function") and (not cache[val]) then
-				assert(rup.val == val)
-				patchup(cache, fup.val, fup.up, rup.val, rup.up)
+function M:collectupval(f_or_t)
+	local upvals = {}
+	local t = type(f_or_t)
+	local unique = self.collected
+	if t == "table" then
+		for name, fn in pairs(f_or_t) do
+			local x = {}
+			collectfn(fn, x, unique)
+			upvals[name] = {
+				val = fn,
+				upvals = x
+			}
+		end
+	else
+		collectfn(f_or_t, upvals, unique)
+	end
+	return upvals
+end
+
+local function joinval(f1, up1, f2, up2, joined, path, absent)
+	local depth = #path + 1
+	for name, uv1 in pairs(up1) do
+		path[depth] = name
+		local uv2 = up2[name]
+		if uv2 then
+			local idx1 = uv1.idx
+			local idx2 = uv2.idx
+			assert(uv1.utype == uv2.utype or not uv1.val or not uv2.val)
+			if uv1.utype == "function" then
+				assert(uv2.utype == "function")
+				local v = uv1.val
+				if not joined[v] then
+					joined[v] = true
+					joinval(v, uv1.upvals,
+						uv2.val, uv2.upvals,
+						joined, path, absent)
+				end
 			else
-				dupvaljoin(fix, fup.idx, run, rup.idx)
+				upvaljoin(f1, idx1, f2, idx2)
+			end
+		elseif name == "_ENV" then
+			setupvalue(f1, uv1.idx, _ENV)
+			absent[#absent + 1] = concat(path, ".")
+		else
+			absent[#absent + 1] = concat(path, ".")
+		end
+		path[depth] = nil
+	end
+end
+
+function M:join(f1, up1, f2, up2)
+	local n
+	local path = {"$"}
+	local absent = {}
+	local joined = self.valjoined
+	if type(f1) == "table" then
+		local up1, up2 = f1, up1
+		for name, uv1 in pairs(up1) do
+			local uv2 = up2[name]
+			if uv2 then
+				path[2] = name
+				joinval(uv1.val, uv1.upvals,
+					uv2.val, uv2.upvals,
+					joined, path, absent)
+				path[2] = nil
 			end
 		end
+	else
+		assert(type(f1) == "function")
+		assert(type(f2) == "function")
+		path[2] = "#"
+		joinval(f1, up1, f2, up2, joined, path, absent)
+		path[2] = nil
 	end
-	cache[fix] = true
+	return absent
 end
 
-local function patch(cache, fixfunc, runfunc, ...)
-	if not fixfunc then
-		assert(not runfunc)
-		return
-	end
-	local runup = {}
-	local fixup = {}
-	collectup(runfunc, runup)
-	collectup(fixfunc, fixup)
-	patchup(cache, fixfunc, fixup, runfunc, runup)
-	return patch(cache, ...)
-end
 
-return function(fixenv, ...)
-	local cache = {}
-	patch(cache, ...)
-	for k, v in pairs(fixenv) do
-		if not _ENV[k] then
-			_ENV[k] = v
-		end
-	end
-	return
-end
+return M
 
