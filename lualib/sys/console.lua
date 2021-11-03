@@ -21,10 +21,11 @@ local desc = {
 "HELP: List command description. [HELP]",
 "PING: Test connection alive. [PING <text>]",
 "GC: Performs a full garbage-collection cycle. [GC]",
-"INFO: Show all information of server, include CPUINFO,MINFO,QINFO,NETINFO,TASK. [INFO]",
+"INFO: Show all information of server, include CPUINFO,MINFO,QINFO. [INFO]",
 "MINFO: Show memory infomation. [MINFO <kb|mb>]",
 "QINFO: Show framework message queue size. [QINFO]",
 "NETINFO: Show network info. [NETINFO]",
+"TIMERINFO: Show timer pending/process event count. [TIMERINFO]",
 "CPUINFO: Show system time and user time statistics. [CPUINFO]",
 "SOCKET: Show socket detail information. [SOCKET]",
 "TASK: Show all task status and traceback. [TASK]",
@@ -59,39 +60,55 @@ function console.gc()
 	return format("Lua Mem Used:%.2f KiB", collectgarbage("count"))
 end
 
+function console.timerinfo()
+	return format("#Timer\r\n\z
+		resolution:%s\r\n\z
+		active:%s\r\n\z
+		expired:%s\r\n",
+		core.timerrs, core.timerinfo())
+end
+
 function console.cpuinfo()
 	local sys, usr = core.cpuinfo()
 	return format("#CPU\r\ncpu_sys:%.2fs\r\ncpu_user:%.2fs", sys, usr)
 end
 
+local function format_size(fmt, size)
+	if fmt == "kb" then
+		return format("%.2f KiB", size / 1024)
+	elseif fmt == "mb" then
+		return format("%.2f MB", size / (1024 * 1024))
+	else
+		return format("%d B", size)
+	end
+end
+
 function console.minfo(_, fmt)
-	local tbl = {}
-	local sz = core.memused()
 	if fmt then
 		fmt = lower(fmt)
 	else
 		fmt = NULL
 	end
-	tbl[1] = "#Memory\r\n"
-	tbl[2] = "memory_used:"
-	if fmt == "kb" then
-		tbl[3] = format("%.2f", sz / 1024)
-		tbl[4] = " KiB\r\n"
-	elseif fmt == "mb" then
-		tbl[3] = format("%.2f", sz / (1024 * 1024))
-		tbl[4] = " MB\r\n"
-	else
-		tbl[3] = sz
-		tbl[4] = " B\r\n"
-	end
+	local sz = core.memused()
 	local rss = core.memrss()
-	tbl[5] = "memory_rss:"
-	tbl[6] = rss
-	tbl[7] = " B\r\n"
-	tbl[8] = "memory_fragmentation_ratio:"
-	tbl[9] = format("%.2f\r\n", rss / sz)
-	tbl[10] = "memory_allocator:"
-	tbl[11] = core.allocator
+	local allocated, active, resident = core.allocatorinfo()
+	local tbl = {
+		"#Memory",
+		"\r\nused_memory:",
+		format_size(fmt, sz),
+		"\r\nused_memory_rss:",
+		format_size(fmt, rss),
+		"\r\nallocator_allocated:",
+		format_size(fmt, allocated),
+		"\r\nallocator_active:",
+		format_size(fmt, active),
+		"\r\nallocator_resident:",
+		format_size(fmt, resident),
+		"\r\nmemory_fragmentation_ratio:",
+		format("%.2f", rss / sz),
+		"\r\nmemory_allocator:",
+		core.allocator,
+	}
 	return concat(tbl)
 end
 
@@ -147,18 +164,15 @@ function console.info()
 	insert(tbl, format("version:%s", core.version))
 	insert(tbl, format("process_id:%s", core.getpid()))
 	insert(tbl, format("multiplexing_api:%s", core.pollapi))
-	insert(tbl, format("timer_resolution:%s", core.timerrs))
 	insert(tbl, format("uptime_in_seconds:%s", uptime))
 	insert(tbl, format("uptime_in_days:%.2f\r\n", uptime / (24 * 3600)))
 	insert(tbl, console.cpuinfo())
 	insert(tbl, NULL)
 	insert(tbl, console.qinfo())
 	insert(tbl, NULL)
-	insert(tbl, console.minfo("MB"))
+	insert(tbl, console.minfo(nil, "MB"))
 	insert(tbl, NULL)
-	insert(tbl, console.netinfo())
-	insert(tbl, NULL)
-	insert(tbl, console.task())
+	insert(tbl, console.timerinfo())
 	return concat(tbl, "\r\n")
 end
 

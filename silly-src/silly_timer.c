@@ -49,6 +49,8 @@ struct silly_timer {
 	uint64_t monotonic;
 	struct slot_root root;
 	struct slot_level level[4];
+	uint32_t expired_count;
+	uint32_t active_count;
 };
 
 static struct silly_timer *T;
@@ -56,6 +58,8 @@ static struct silly_timer *T;
 static inline struct node *
 newnode()
 {
+	atomic_add(&T->active_count, 1);
+	atomic_add(&T->expired_count, 1);
 	struct node *n = silly_malloc(sizeof(*n));
 	uint32_t session = silly_worker_genid();
 	n->session = session;
@@ -65,6 +69,7 @@ newnode()
 static inline void
 freenode(struct node *n)
 {
+	atomic_sub(&T->active_count, 1);
 	silly_free(n);
 	return ;
 }
@@ -105,6 +110,14 @@ silly_timer_monotonicsec()
 {
 	int scale = 1000 / TIMER_RESOLUTION;
 	return T->monotonic / scale;
+}
+
+uint32_t
+silly_timer_info(uint32_t *expired)
+{
+	if (expired!= NULL)
+		*expired = T->expired_count;
+	return T->active_count;
 }
 
 static inline void
