@@ -30,6 +30,7 @@ local desc = {
 "TASK: Show all task status and traceback. [TASK]",
 "INJECT: INJECT code. [INJECT <path>]",
 "DEBUG: Enter Debug mode. [DEBUG]",
+"QUIT: Quit the console. [QUIT]",
 }
 
 
@@ -219,7 +220,8 @@ return function (config)
 		core.log("console come in:", addr)
 		local param = {}
 		local dat = {}
-		socket.write(fd, "Hello\n")
+		socket.write(fd, "\nWelcome to console.\n\n")
+		socket.write(fd, "Type 'help' for help.\n\n")
 		socket.write(fd, prompt)
 		while true do
 			local l = socket.readline(fd)
