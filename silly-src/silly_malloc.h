@@ -10,6 +10,7 @@ void silly_free(void *ptr);
 const char *silly_allocator();
 size_t silly_memused();
 size_t silly_memrss();
+void silly_allocator_info(size_t *allocated, size_t *active, size_t *resident);
 
 #endif
 

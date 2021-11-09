@@ -131,6 +131,22 @@ silly_memrss()
 #else
 	return allocsize;
 #endif
+}
 
+void
+silly_allocator_info(size_t *allocated, size_t *active, size_t *resident)
+{
+	size_t sz;
+	uint64_t epoch = 1;
+	*allocated = *resident = *active = 0;
+#ifndef DISABLE_JEMALLOC
+	sz = sizeof(epoch);
+	je_mallctl("epoch", &epoch, &sz, &epoch, sz);
+	sz = sizeof(size_t);
+	je_mallctl("stats.resident", resident, &sz, NULL, 0);
+	je_mallctl("stats.active", active, &sz, NULL, 0);
+	je_mallctl("stats.allocated", allocated, &sz, NULL, 0);
+#endif
+	return ;
 }
 

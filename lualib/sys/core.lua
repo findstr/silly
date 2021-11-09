@@ -83,6 +83,8 @@ core.cpuinfo = silly.cpuinfo
 core.getpid = silly.getpid
 core.netinfo = silly.netinfo
 core.socketinfo = silly.socketinfo
+core.timerinfo = silly.timerinfo
+core.allocatorinfo = silly.memallocatorinfo
 --const
 core.allocator = silly.memallocator()
 core.version = silly.version()

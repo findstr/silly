@@ -567,6 +567,16 @@ lmemallocator(lua_State *L)
 }
 
 static int
+lmemallocatorinfo(lua_State *L)
+{
+	size_t allocated, active, resident;
+	silly_allocator_info(&allocated, &active, &resident);
+	lua_pushinteger(L, allocated);
+	lua_pushinteger(L, active);
+	lua_pushinteger(L, resident);
+	return 3;
+}
+static int
 lmemused(lua_State *L)
 {
 	size_t sz;
@@ -647,6 +657,16 @@ lnetinfo(lua_State *L)
 }
 
 static int
+ltimerinfo(lua_State *L)
+{
+	uint32_t active, expired;
+	active = silly_timer_info(&expired);
+	lua_pushinteger(L, active);
+	lua_pushinteger(L, expired);
+	return 2;
+}
+
+static int
 lsocketinfo(lua_State *L)
 {
 	int sid;
@@ -709,10 +729,12 @@ luaopen_sys_silly(lua_State *L)
 		{"memused", lmemused},
 		{"memrss", lmemrss},
 		{"memallocator", lmemallocator},
+		{"memallocatorinfo", lmemallocatorinfo},
 		{"msgsize", lmsgsize},
 		{"cpuinfo", lcpuinfo},
 		{"pollapi", lpollapi},
 		{"netinfo", lnetinfo},
+		{"timerinfo", ltimerinfo},
 		{"socketinfo", lsocketinfo},
 		{"timerresolution", ltimerresolution},
 		//end
