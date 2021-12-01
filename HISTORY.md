@@ -1,3 +1,22 @@
+## v0.5.0 (Dec 1, 2021)
+Bug fixes:
+
+- fix incorrect session type in netpacket.rpcpack
+- fix incorrect call of lua_gc
+- handle socket close event in send_msg_tcp/send_msg_udp 
+
+New features:
+
+- add cluster module to provide some help for cluster networking
+- use parameters instead of environment variables to override startup variables ([#984308b](https://github.com/findstr/silly/tree/984308b82012e733bcf8c8481875a6a6f888a2ff))
+- add examples for timer,socket,rpc,http,websocket
+- refine core.timeout for large number of timer events(delay create task for timer event can reduce the memory usage to 30% of the original)
+- crypto.base64encode support url safe code and add crypto.sha256, crypto.digestsign, crypto.digestverify
+- TLS support SNI,ALPN
+- support http2
+- refine patch(more flexible, more powerful)
+- more monitor data(timer event info, more memory info)
+
 ## v0.4.0 (Nov 2, 2020)
 Bug fixes:
 
