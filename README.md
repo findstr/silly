@@ -13,6 +13,7 @@
 ## Build
 
 - make
+- make TLS=off (disable TLS function)
 
 ## Run
     ./silly <config>

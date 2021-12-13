@@ -44,6 +44,5 @@ jobs:
       run: |
         sudo apt-get install openssl
         sudo apt-get install libssl-dev
-        patch -p1 < ssl.patch
     - name: make
       run: make test

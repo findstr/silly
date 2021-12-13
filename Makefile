@@ -3,6 +3,7 @@ INCLUDE :=
 #---------
 
 TARGET ?= silly
+TLS ?= ON
 
 #-----------platform
 
@@ -44,6 +45,12 @@ else
 CCFLAG += -DDISABLE_JEMALLOC
 MALLOC_STATICLIB :=
 endif
+
+#tls disable
+ifeq ($(TLS), ON)
+TLSFLAG := -DUSE_OPENSSL -lssl -lcrypto
+endif
+
 
 #-----------project
 LUACLIB_PATH ?= luaclib
@@ -88,7 +95,7 @@ $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/sys.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED) $(TLSFLAG)
 $(LUACLIB_PATH)/zproto.so: $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/http2.so: $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
