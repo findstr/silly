@@ -9,7 +9,10 @@ local M = {}
 local function wrap_request(method)
 	return function(url, header, body)
 		local _, host, port, path = parseurl(url)
-		local stream = stream.connect(host, port)
+		local stream, err = stream.connect(host, port)
+		if not stream then
+			return nil, err
+		end
 		header = header or {}
 		header['host'] = host
 		if body then

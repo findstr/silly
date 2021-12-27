@@ -489,6 +489,7 @@ function M.connect(host, port)
 			for i = 1, #wait do
 				wakeup(wait[i], false, reason)
 			end
+			return ok, reason
 		end
 	elseif not ch.fd or ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
