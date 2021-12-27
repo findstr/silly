@@ -44,8 +44,10 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 		end
 		core.fork(EVENT.data)
 		while true do
-			local obj = proto:decode(cmd, d, sz)
-			np.drop(d);
+			--parse
+			local dat, size = proto:unpack(d, sz, true)
+			np.drop(d)
+			local obj = proto:decode(cmd, dat, size)
 			local ok, err = core.pcall(data_cb, f, cmd, obj)
 			if not ok then
 				core.log("[msg] dispatch socket", err)
@@ -69,6 +71,7 @@ local function sendmsg(self, fd, cmd, data)
 		cmd = proto:tag(cmd)
 	end
 	local dat, sz = proto:encode(cmd, data, true)
+	dat, sz= proto:pack(dat, sz, true)
 	return core.write(fd, np.msgpack(dat, sz, cmd))
 end
 msgserver.send = sendmsg
@@ -81,7 +84,8 @@ msgserver.multipack = function(self, cmd, dat, n)
 		cmd = proto:tag(cmd)
 	end
 	local dat, sz = proto:encode(cmd, dat, true)
-	local dat, sz = np.msgpack(dat, sz, cmd)
+	dat, sz = proto:pack(dat, sz, true)
+	dat, sz = np.msgpack(dat, sz, cmd)
 	dat, sz = core.multipack(dat, sz, n)
 	return dat, sz
 end
