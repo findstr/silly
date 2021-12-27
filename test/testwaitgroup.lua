@@ -9,8 +9,7 @@ return function()
 		wg:fork(function()
 			core.sleep(500)
 			count = count + 1
-			assert(count ~= 5)
-			print("finish", count)
+			assert(count ~= 5, "crash the last coroutine")
 		end)
 	end
 	wg:wait()
