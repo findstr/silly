@@ -59,14 +59,25 @@ lxor(lua_State *L)
 static int
 lsha256(lua_State *L)
 {
-	size_t sz;
+	size_t i, j, sz;
 	sha256_context ctx;
 	uint8_t keybuf[256/8];
+	char strbuf[256/8 * 2];
 	const char *str = luaL_checklstring(L, 1, &sz);
+	int binary = luaL_optinteger(L, 2, 0);
 	sha256_starts(&ctx);
 	sha256_update(&ctx, (const uint8_t *)str, sz);
 	sha256_finish(&ctx, keybuf);
-	lua_pushlstring(L, (char *)keybuf, sizeof(keybuf));
+	if (binary == 0) {
+		for (i = 0, j = 0; i < sizeof(keybuf) / sizeof(keybuf[0]); i++) {
+			uint8_t n = keybuf[i];
+			strbuf[j++] = num_to_char[n >> 4];
+			strbuf[j++] = num_to_char[n & 0xf];
+		}
+		lua_pushlstring(L, strbuf, j);
+	} else {
+		lua_pushlstring(L, (char *)keybuf, sizeof(keybuf));
+	}
 	return 1;
 }
 

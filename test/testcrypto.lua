@@ -42,7 +42,6 @@ return function()
 	testaux.asserteq(d3, "", "base64 decode empty success")
 	---------------------test sha256
 	local x = crypto.sha256("aGVsbG8sIG15IGZyaWVuZCwgeW91IGtvbncgaSBkb24ndCBnb29kIGF0IGNy")
-	x = testaux.hextostr(x)
 	testaux.asserteq(x, "a3f0f2484b434eb7e3b7dbf89a3b2192c5577a3d51bb65d766a1abedb57aea8c","sha256 hash")
 	if crypto.digestsign then
 		local rsa_pub =
