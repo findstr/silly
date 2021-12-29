@@ -31,6 +31,7 @@ return function()
 	}
 	local n = 0
 	print("test http2 client")
+	--[[ disable test http2 client for temporary
 	local wg = waitgroup:create()
 	for i = 1, 2000 do
 		wg:fork(function()
@@ -47,6 +48,7 @@ return function()
 		end)
 	end
 	wg:wait()
+	]]
 	print("test http2 server")
 	local wg = waitgroup:create()
 	for i = 1, 2000 do
