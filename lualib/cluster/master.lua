@@ -162,7 +162,7 @@ function router.join_r(msg, cmd, fd)
 		local req = msg.self
 		if waiting ~= "success" then
 			core.log("[master] join_r fail:",
-				waiting,  formatworker(w))
+				waiting,  formatworker(req))
 			return "join_a", {result = -1, status = waiting}
 		end
 		local listen, typ = req.listen, req.type
