@@ -14,7 +14,7 @@ core.start(function()
 		master = master,
 		proto = proto,
 		agents = {
-			["role"] = role,
+			["role"] = role.join,
 		},
 	}
 	worker.run(router, function(tbl, k)

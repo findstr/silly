@@ -91,7 +91,7 @@ core.start(function()
 		master = master,
 		proto = require "proto.cluster",
 		agents = {
-			["gate"] = gate,
+			["gate"] = gate.join,
 		}
 	}
 	while not gate.isready() do
@@ -103,5 +103,4 @@ core.start(function()
 	auth_start()
 end)
 
-return start
 
