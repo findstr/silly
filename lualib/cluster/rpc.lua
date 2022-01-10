@@ -281,7 +281,9 @@ function client.send(self, cmd, body)
 		return ok, "closed"
 	end
 	local proto = self.__proto
-	local cmd = proto:tag(cmd)
+	if type(cmd) == "string" then
+		cmd = proto:tag(cmd)
+	end
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
