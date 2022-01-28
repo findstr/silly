@@ -89,23 +89,23 @@ local function create_rpc_for_worker(w)
 	}
 end
 
-local function worker_join(w, conns_of_type)
+local function worker_join(w, run_workers)
 	local typ = w.type
 	local workers = type_to_workers[typ]
 	if not workers then
 		return
 	end
-	local conns = conns_of_type[typ]
-	if not conns then
-		conns = {}
-		conns_of_type[typ] = conns
+	local rw = run_workers[typ]
+	if not rw then
+		rw = {}
+		run_workers[typ] = rw
 	end
 	local slot = w.slot
 	local ww = workers[slot]
 	if not ww then
 		workers[slot] = w
 		if w.status == "run" then
-			conns[w.slot] = w
+			rw[w.slot] = w
 		end
 		core.log("[worker] worker_join add", formatworker(w))
 		return
@@ -117,7 +117,7 @@ local function worker_join(w, conns_of_type)
 		end
 		clone(w, ww)
 		if ww.status == "run" then
-			conns[ww.slot] = ww
+			rw[ww.slot] = ww
 		end
 	elseif w.status ~= ww.status then
 		assert(w.status == "run")
@@ -126,7 +126,7 @@ local function worker_join(w, conns_of_type)
 		assert(ww.slot == w.slot)
 		assert(ww.listen == w.listen)
 		ww.status = w.status
-		conns[ww.slot] = ww
+		rw[ww.slot] = ww
 	else
 		return
 	end
@@ -134,20 +134,23 @@ local function worker_join(w, conns_of_type)
 end
 
 function handler.cluster_r(msg, cmd, fd)
-	local conns_of_type = {}
+	local run_workers_by_type= {}
 	local workers = msg.workers
 	join_r.workers = workers
 	core.log("[worker] cluster_r join_r.workers", #workers)
 	for _, w in pairs(workers) do
-		worker_join(w, conns_of_type)
+		worker_join(w, run_workers_by_type)
 	end
-	for typ, conns in pairs(conns_of_type) do
-		for k, v in pairs(conns) do
-			create_rpc_for_worker(v)
-			conns[k] = v.rpc
+	for typ, workers in pairs(run_workers_by_type) do
+		for k, w in pairs(workers) do
+			create_rpc_for_worker(w)
+			workers[k] = {
+				rpc = w.rpc,
+				epoch = w.epoch
+			}
 		end
-		local workers = type_to_workers[typ]
-		workers.agent.join(conns, #workers, typ)
+		local tw = type_to_workers[typ]
+		tw.join(workers, #tw, typ)
 	end
 	return "cluster_a", {}
 end
@@ -232,7 +235,7 @@ function M.up(conf)
 			if cb then
 				return cb(msg, cmd, fd)
 			end
-			error(format("[worker] call %s %s none", fd, cmd))
+			core.log(format("[worker] call %s %s none", fd, cmd))
 		end,
 		close = function(fd, errno)
 			core.log("[worker] close", fd, errno)
@@ -254,9 +257,9 @@ function M.up(conf)
 		status = "start",
 		listen = conf.listen,
 	}
-	for typ, agent in pairs(conf.agents) do
+	for typ, join in pairs(conf.agents) do
 		type_to_workers[typ] = {
-			agent = agent
+			join = join,
 		}
 	end
 	local _, capacity = transition_until_success("up")

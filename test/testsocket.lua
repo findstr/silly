@@ -32,7 +32,7 @@ local tlsfd = tls.listen {
 local function test_limit(port)
 	local dat1 = crypto.randomkey(511) .. "\n" .. crypto.randomkey(512)
 	local dat2 = crypto.randomkey(1024)
-	listen_func = function(fd)
+	local listen_func = function(fd)
 		print("write 1Kbyte data")
 		core.write(fd, dat1)
 		core.sleep(500)

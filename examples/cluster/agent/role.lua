@@ -11,16 +11,16 @@ local M = {}
 local role_count
 local role_rpc = {}
 
-function M.join(conns, count)
+function M.join(workers, count)
 	if not role_count then
 		role_count = count
 	else
 		assert(role_count == count)
 	end
 	for i = 1, count do
-		local rpc = conns[i]
-		if rpc then
-			role_rpc[i] = rpc
+		local w = workers[i]
+		if w then
+			role_rpc[i] = w.rpc
 		end
 	end
 end

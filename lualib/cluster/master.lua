@@ -12,7 +12,7 @@ local assert = assert
 local tonumber = tonumber
 local format = string.format
 local M = {}
-local epoch = 0
+local wepoch = 0
 local proto, server
 local master_epoch = nil
 local modify_id = 0
@@ -252,12 +252,13 @@ local function restore_cluster()
 				--so worker has no fd,
 				--of course, don't need mark fd_to_worker
 			end
-			if wid > epoch then
-				epoch = wid
+			if wid > wepoch then
+				wepoch = wid
 			end
 		end
 		restoreing[k] = nil
 	end
+	core.log("[master] restore cluster epoch:", wepoch)
 end
 
 local function check_down()
@@ -327,8 +328,8 @@ local function try_join(j) --process slot and not nil
 		if not w or w.status == "down" then
 			worker_clear(w)
 			w = clone(j, w)
-			epoch = epoch + 1
-			w.epoch = epoch
+			wepoch = wepoch + 1
+			w.epoch = wepoch
 			w.slot = i
 			worker_join(w)
 			return
@@ -355,8 +356,8 @@ local function cluster_workers()
 		elseif jn < worker_total then
 			return
 		end
-		epoch = (epoch // 1000 + 1) * 1000 + 1
-		master_epoch = epoch
+		wepoch = (wepoch // 1000 + 1) * 1000 + 1
+		master_epoch = wepoch
 		core.log("[master] start success mepoch", master_epoch,
 			"modify", modify_id, "consistent", consistent_id)
 	end

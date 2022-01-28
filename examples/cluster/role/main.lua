@@ -35,7 +35,7 @@ core.start(function()
 		master = master,
 		proto = proto,
 		agents = {
-			gate = gate,
+			gate = gate.join,
 		}
 	}
 	gate.handle("role", E)

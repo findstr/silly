@@ -30,15 +30,16 @@ local function gate_join(slotid, rpc)
 	end
 end
 
-function M.join(conns, count)
+function M.join(workers, count)
 	if not gate_count then
 		gate_count = count
 	else
 		assert(gate_count == count)
 	end
 	for i = 1, count do
-		local rpc = conns[i]
-		if rpc then
+		local w = workers[i]
+		if w then
+			local rpc = w.rpc
 			gate_rpc[i] = rpc
 			gate_join(i, rpc)
 		end
