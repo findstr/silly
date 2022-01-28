@@ -742,25 +742,23 @@ zproto_load(struct zproto_parser *p, const char *path)
 {
 	int err;
 	char *buff;
-	struct stat st;
-	err = stat(path, &st);
-	if (err == -1) {
-		perror("zproto_load:");
-		return -1;
-	}
+	int file_size;
 	FILE *fp = fopen(path, "rb");
 	if (fp == NULL) {
 		perror("zproto_load:");
 		return -1;
 	}
-	buff = (char *)malloc(st.st_size + 1);
-	err = fread(buff, 1, st.st_size, fp);
-	if (err != st.st_size) {
+	fseek(fp, 0, SEEK_END);
+	file_size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	buff = (char *)malloc(file_size + 1);
+	err = fread(buff, 1, file_size, fp);
+	if (err != file_size) {
 		perror("zproto_load:");
 		err = -1;
 		goto end;
 	}
-	buff[st.st_size] = '\0';
+	buff[file_size] = '\0';
 	err = zproto_parse(p, buff);
 end:
 	if (fp)

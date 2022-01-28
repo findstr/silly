@@ -537,6 +537,98 @@ ldecode(lua_State *L)
 	return 2;
 }
 
+static int default_table(struct zproto_args *args);
+
+static int
+default_field(struct zproto_args *args)
+{
+	struct lencode_ud *eud = args->ud;
+	lua_State *L = eud->L;
+	switch(args->type) {
+	case ZPROTO_BOOLEAN: {
+		lua_pushboolean(L, 0);
+		break;
+	}
+	case ZPROTO_BYTE:
+	case ZPROTO_SHORT:
+	case ZPROTO_INTEGER:
+	case ZPROTO_LONG:
+	case ZPROTO_UBYTE:
+	case ZPROTO_USHORT:
+	case ZPROTO_UINTEGER:
+	case ZPROTO_ULONG:
+		lua_pushinteger(L, 0);
+		break;
+	case ZPROTO_FLOAT:
+		lua_pushnumber(L, 0.0f);
+		break;
+	case ZPROTO_BLOB:
+	case ZPROTO_STRING: {
+		lua_pushliteral(L, "");
+		break;
+	}
+	case ZPROTO_STRUCT: {
+		int sz;
+		//size, tagcount, arrlen, type size, tag space
+		uint8_t buf[4+2+4+8+64*2];
+		struct lencode_ud ud;
+		lua_newtable(L);
+		ud.level = eud->level + 1;
+		ud.L = eud->L;
+		sz = zproto_encode(args->sttype, buf,
+			sizeof(buf), default_table, &ud);
+		if (sz < 0)
+			return sz;
+		break;
+	}}
+	return 0;
+}
+
+static int
+default_table(struct zproto_args *args)
+{
+	int err;
+	struct lencode_ud *eud = args->ud;
+	lua_State *L = eud->L;
+	if (eud->level >= MAX_RECURSIVE) {
+		const char *fmt = "default_table too deep:%d stkidx:%d \n";
+		return luaL_error(L, fmt, eud->level, lua_gettop(L));
+	}
+	if (args->idx >= 0)
+		lua_newtable(L);
+	else if ((err = default_field(args)) < 0)
+		return err;
+	lua_setfield(L, -2, args->name);
+	args->len = -1;
+	return ZPROTO_NOFIELD;
+}
+
+static int
+ldefault(lua_State *L)
+{
+	int top, sz;
+	//assume max field count less then 64
+	uint8_t buf[4+2+4+8+64*2];//size, tagcount, arrlen, type size, tag space
+	struct lencode_ud ud;
+	struct zproto_struct *st;
+	st = (struct zproto_struct *)lua_touserdata(L, 1);
+	if (st == NULL)
+		return luaL_error(L, "encode: 'struct' is null");
+	top = lua_gettop(L);
+	ud.level = 0;
+	ud.L = L;
+	lua_newtable(L);
+	sz = zproto_encode(st, buf, sizeof(buf), default_table, &ud);
+	if (sz < 0) {
+		lua_settop(L, top);
+		return 0;
+	}
+	assert(lua_gettop(L) == (top + 1));
+	return 1;
+}
+
+
+
 static int
 lpack(lua_State *L)
 {
@@ -613,7 +705,7 @@ setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 	}
 }
 
-int
+LUALIB_API int
 luaopen_zproto_c(lua_State *L)
 {
 	luaL_Reg tbl1[] = {
@@ -622,6 +714,7 @@ luaopen_zproto_c(lua_State *L)
 		{"free", lfree},
 		{"query", lquery},
 		{"decode", ldecode},
+		{"default", ldefault},
 		{NULL, NULL},
 	};
 
