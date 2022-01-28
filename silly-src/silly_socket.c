@@ -941,7 +941,7 @@ silly_socket_listen(const char *ip, const char *port, int backlog)
 		return -errno;
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
-		silly_log("[socket] listen %s:%d:%d allocsocket fail\n",
+		silly_log("[socket] listen %s:%s:%d allocsocket fail\n",
 			ip, port, backlog);
 		close(fd);
 		return -1;
@@ -972,7 +972,7 @@ silly_socket_udpbind(const char *ip, const char *port)
 	nonblock(fd);
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (unlikely(s == NULL)) {
-		silly_log("[socket] udpbind %s:%d allocsocket fail\n",
+		silly_log("[socket] udpbind %s:%s allocsocket fail\n",
 			ip, port);
 		goto end;
 	}
@@ -1234,7 +1234,7 @@ silly_socket_send(int sid, uint8_t *buf, size_t sz, silly_finalizer_t finalizer)
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(buf);
-		silly_log("[socket] silly_socket_send invalid sid:%d\n");
+		silly_log("[socket] silly_socket_send invalid sid:%d\n", sid);
 		return -1;
 	}
 	type = s->type;
@@ -1270,7 +1270,7 @@ silly_socket_udpsend(int sid, uint8_t *buf, size_t sz,
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(buf);
-		silly_log("[socket] silly_socket_send invalid sid:%d\n");
+		silly_log("[socket] silly_socket_send invalid sid:%d\n", sid);
 		return -1;
 	}
 	type = s->type;
