@@ -8,7 +8,9 @@
 #include "silly_malloc.h"
 
 #define STATIC_TBL_SIZE	(61)
-#ifndef HTTP2_HEADER_SIZE
+#ifdef SILLY_TEST
+#define HTTP2_HEADER_SIZE	(4096)
+#else
 #define HTTP2_HEADER_SIZE	(250)
 #endif
 #define FIELD_BUFSZ	(HTTP2_HEADER_SIZE + 6)
@@ -351,7 +353,7 @@ prune(lua_State *L, struct hpack *ctx, int dyna)
 			const char *ks, *vs;
 			lua_geti(L, -1, 1);
 			ks = lua_tolstring(L, -1, &ksz);
-			lua_geti(L, -2, 1);
+			lua_geti(L, -2, 2);
 			vs = lua_tolstring(L, -1, &vsz);
 			len = format_field(buf, ks, vs);
 			lua_pushlstring(L, buf, len);
@@ -369,22 +371,22 @@ prune(lua_State *L, struct hpack *ctx, int dyna)
 	}
 	ctx->queue_used_min -= (ctx->queue_tail - 1);
 	ctx->queue_tail = 1;
-	ctx->queue_head = idx;
+	ctx->queue_head = idx+1;
 	ctx->evict_count = 0;
 }
 
 static inline int
 try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 {
-	unsigned int i;
 	if ((ctx->soft_limit - ctx->table_size) >= left)
 		return 1;
-	unsigned int min_idx = ctx->queue_used_min;
-	while ((i = ctx->queue_tail++) < min_idx) {
+	int min_idx = ctx->queue_used_min;
+	while (ctx->queue_tail < min_idx) {
 		int len;
 		size_t ksz, vsz;
 		const char *ks, *vs;
 		char buf[FIELD_BUFSZ];
+		int i = ctx->queue_tail++;
 		int type = lua_geti(L, dyna, i);
 		assert(type == LUA_TTABLE);
 		lua_geti(L, -1, 1);
@@ -768,6 +770,37 @@ create_static_table(lua_State *L)
 	}
 }
 
+#ifdef SILLY_TEST
+static int
+dbg_evictcount(lua_State *L)
+{
+	struct hpack *hpack = luaL_checkudata(L, 1, "HPACK");
+	lua_pushinteger(L, hpack->evict_count);
+	return 1;
+}
+
+static int
+dbg_stringid(lua_State *L)
+{
+	int len, type;
+	char buf[FIELD_BUFSZ];
+	lua_getiuservalue(L, 1, 1);		//dynamic_table
+	int dyna = lua_gettop(L);
+	size_t ksz, vsz;
+	const char *ks = luaL_tolstring(L, 2, &ksz);
+	const char *vs = luaL_tolstring(L, 3, &vsz);
+	len = format_field(buf, ks, vs);
+	lua_pushlstring(L, buf, len);
+
+	lua_pushvalue(L, -1);
+	type = lua_gettable(L, dyna);
+	if (type != LUA_TNUMBER)
+		lua_pushnil(L);
+	return 1;
+}
+
+#endif
+
 int
 luaopen_http2_hpack(lua_State *L)
 {
@@ -776,6 +809,10 @@ luaopen_http2_hpack(lua_State *L)
 		{"pack", lhpack_pack},
 		{"unpack", lhpack_unpack},
 		{"hardlimit", lhpack_hardlimit},
+#ifdef SILLY_TEST
+		{"dbg_evictcount", dbg_evictcount},
+		{"dbg_stringid", dbg_stringid},
+#endif
 		{NULL, NULL},
 	};
 	luaL_newlibtable(L,tbl);

@@ -112,7 +112,7 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 %.o:%.c
 	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
 
-test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer -DHTTP2_HEADER_SIZE=4096
+test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer -DSILLY_TEST
 test: LDFLAG += -fsanitize=address -fno-omit-frame-pointer
 test: $(PLATS)
 	./$(TARGET) test/test.conf

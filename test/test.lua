@@ -18,6 +18,7 @@ local modules = {
 	"testcrypto",
 	"testhttp",
 	"testhttp2",
+	"testhpack",
 	"testwebsocket",
 	"testpatch",
 	"testredis",
