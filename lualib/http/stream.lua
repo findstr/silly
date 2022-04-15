@@ -13,7 +13,7 @@ local function readheader(sock)
 		return nil
 	end
 	while tmp ~= "\r\n" do
-		local k, v = tmp:match("(.+):%s*(.+)\r\n")
+		local k, v = tmp:match("([^:]+):%s*(.+)\r\n")
 		k = k:lower(k)
 		if header[k] then
 			header[k] = header[k] .. ";" .. v
