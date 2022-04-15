@@ -142,7 +142,7 @@ local function httpd(scheme, handler)
 			local header = res.header
 			if header["content-type"] == fmt_urlencoded then
 				local form = res.form
-				for k, v in gmatch(res.body, "(%w+)=(%w+)") do
+				for k, v in gmatch(res.body, "(%w+)=([^%s&]+)") do
 					form[k] = v
 				end
 			end
