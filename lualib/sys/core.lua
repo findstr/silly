@@ -240,6 +240,14 @@ function core.timeout(ms, func)
 	return session
 end
 
+function core.timercancel(session)
+	f = sleep_session_task[session]
+	if f then
+		assert(type(f) == "function")
+		sleep_session_task[session] = nil
+	end
+end
+
 function core.start(func)
 	local t = task_create(func)
 	task_resume(t)
@@ -354,11 +362,13 @@ end
 local MSG = {
 [1] = function(session)					--SILLY_TEXPIRE = 1
 	local t = sleep_session_task[session]
-	sleep_session_task[session] = nil
-	if type(t) == "function" then
-		t = task_create(t)
+	if t then
+		sleep_session_task[session] = nil
+		if type(t) == "function" then
+			t = task_create(t)
+		end
+		task_resume(t, session)
 	end
-	task_resume(t, session)
 end,
 [2] = function(fd, _, portid, addr)			--SILLY_SACCEPT = 2
 	assert(socket_dispatch[fd] == nil)
