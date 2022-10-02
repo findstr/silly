@@ -20,7 +20,7 @@ local function gen_closure(n)
 	end
 end
 
-return function()
+local function test_timer()
 	for i = 1, total do
 		local n = i * 50
 		local f = gen_closure(n)
@@ -29,5 +29,20 @@ return function()
 	end
 	WAIT = core.running()
 	core.wait(WAIT)
+end
+
+local function test_cancel()
+	local key = "foo"
+	local session = core.timeout(1, function()
+		key = "bar"
+	end)
+	core.timercancel(session)
+	core.sleep(1000)
+	testaux.assertneq(key, "bar", "test timer cancel")
+end
+
+return function()
+	test_timer()
+	test_cancel()
 end
 
