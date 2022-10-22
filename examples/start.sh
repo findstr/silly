@@ -21,7 +21,7 @@ all() {
 	array=($(ls examples/*.lua))
 	for i in "${array[@]}"; do
 		echo "---------------$i-------------------"
-		timeout 5 ./silly --lualib_path="lualib/?.lua" --lualib_cpath="luaclib/?.so" --bootstrap="$i"
+		timeout 5 ./silly --lualib_path="lualib/?.lua;examples/?.lua" --lualib_cpath="luaclib/?.so" --bootstrap="$i"
 	done
 	cluster
 	sleep 30
