@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local channel = require "sys.channel"
+local channel = require "sys.sync.channel"
 local testaux = require "testaux"
 local c1 = channel.channel()
 

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local testaux = require "testaux"
-local waitgroup = require "sys.waitgroup"
+local waitgroup = require "sys.sync.waitgroup"
 
 return function()
 	local wg = waitgroup:create()
