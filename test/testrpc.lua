@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local waitgroup = require "sys.waitgroup"
+local waitgroup = require "sys.sync.waitgroup"
 local rpc = require "cluster.rpc"
 local crypto = require "sys.crypto"
 local testaux = require "testaux"
