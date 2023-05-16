@@ -3,14 +3,16 @@ local testaux = require "testaux"
 local waitgroup = require "sys.sync.waitgroup"
 local mutex = require "sys.sync.mutex"
 
+local mutex = mutex.new()
+
 local function testcase1()
+	print("===:case1")
 	local wg = waitgroup:create()
-	local count = 0
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
 		wg:fork(function()
-			local lock<close> = mutex.lock(key)
+			local lock<close> = mutex:lock(key)
 			local n = x
 			core.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
@@ -18,7 +20,7 @@ local function testcase1()
 		end)
 	end
 	wg:fork(function()
-		local lock<close> = mutex.lock(key)
+		local lock<close> = mutex:lock(key)
 		local n = x
 		core.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
@@ -29,13 +31,13 @@ local function testcase1()
 end
 
 local function testcase2()
+	print("===:case2")
 	local wg = waitgroup:create()
-	local count = 0
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
 		wg:fork(function()
-			local lock<close> = mutex.lock(key)
+			local lock<close> = mutex:lock(key)
 			local n = x
 			core.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
@@ -44,7 +46,7 @@ local function testcase2()
 		end)
 	end
 	wg:fork(function()
-		local lock<close> = mutex.lock(key)
+		local lock<close> = mutex:lock(key)
 		local n = x
 		core.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
@@ -55,13 +57,13 @@ local function testcase2()
 end
 
 local function testcase3()
+	print("===:case3")
 	local wg = waitgroup:create()
-	local count = 0
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
 		wg:fork(function()
-			local lock<close> = mutex.lock(key)
+			local lock<close> = mutex:lock(key)
 			local n = x
 			core.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
@@ -71,7 +73,7 @@ local function testcase3()
 		end)
 	end
 	wg:fork(function()
-		local lock<close> = mutex.lock(key)
+		local lock<close> = mutex:lock(key)
 		local n = x
 		core.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
@@ -82,12 +84,12 @@ local function testcase3()
 end
 
 local function testcase4()
+	print("===:case4")
 	local wg = waitgroup:create()
-	local count = 0
 	local key = {}
 	local x = 0
 	wg:fork(function()
-		local lock<close> = mutex.lock(key)
+		local lock<close> = mutex:lock(key)
 		local n = x
 		core.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
@@ -96,7 +98,7 @@ local function testcase4()
 	end)
 	wg:wait()
 	wg:fork(function()
-		local lock<close> = mutex.lock(key)
+		local lock<close> = mutex:lock(key)
 		local n = x
 		core.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
@@ -107,11 +109,61 @@ local function testcase4()
 	testaux.asserteq(x, 2, "all mutex can be released")
 end
 
+local function testcase5()
+	print("===:case5")
+	local wg = waitgroup:create()
+	local key = {}
+	wg:fork(function()
+		local lock1 = mutex:lock(key)
+		local lock = mutex:lock(key)
+		local n = x
+		local flag = false
+		lock:unlock()
+		local parent = core.running()
+		core.fork(function()
+			core.wakeup(parent)
+			local key = mutex:lock(key)
+			flag = true
+		end)
+		core.wait()
+		testaux.asserteq(flag, false, "test lock reentrant")
+	end)
+	wg:wait()
+	testaux.success("reentrant mutex is ok")
+end
+
+local function testcase6()
+	print("===:case6")
+	local wg = waitgroup:create()
+	local key = {}
+	wg:fork(function()
+		local lock1 = mutex:lock(key)
+		local lock = mutex:lock(key)
+		local n = x
+		local flag = false
+		lock:unlock()
+		lock1:unlock()
+		local parent = core.running()
+		core.fork(function()
+			core.wakeup(parent)
+			local key = mutex:lock(key)
+			flag = true
+		end)
+		core.wait()
+		testaux.asserteq(flag, true, "test lock reentrant")
+	end)
+	wg:wait()
+	testaux.success("reentrant mutex is ok")
+end
+
+
 
 return function()
 	testcase1()
 	testcase2()
 	testcase3()
 	testcase4()
+	testcase5()
+	testcase6()
 end
 

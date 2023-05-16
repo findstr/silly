@@ -80,6 +80,15 @@ function testaux.hextostr(arr)
 	return table.concat(buf, "")
 end
 
+function testaux.error(str)
+	print(format('%s\tFAIL\t"%s"', m, str))
+	print(debug.traceback(1))
+	core.exit(1)
+end
+function testaux.success(str)
+	print(format('%s\tSUCCESS\t"%s"', m, str))
+end
+
 function testaux.asserteq(a, b, str)
 	local aa = escape(a)
 	local bb = escape(b)
