@@ -1,6 +1,7 @@
 local core = require "sys.core"
 local socket = require "sys.socket"
 local assert = assert
+local pairs = pairs
 local sub = string.sub
 local concat = table.concat
 local pack = string.pack
@@ -8,19 +9,36 @@ local unpack = string.unpack
 local format = string.format
 local match = string.match
 local gmatch = string.gmatch
+local setmetatable = setmetatable
+local timenow = core.monotonicsec
+local maxinteger = math.maxinteger
 
-local dns = {}
-local A = 1
-local CNAME = 5
-local AAAA = 28
-local name_cache = {}
-local wait_coroutine = {}
-local weakmt = {__mode = "kv"}
 local session = 0
 local dns_server
 local connectfd
 
-local timenow = core.monotonicsec
+local resolv_conf = core.envget("sys.dns.resolv_conf") or "/etc/resolv.conf"
+local hosts = core.envget("sys.dns.hosts") or "/etc/hosts"
+
+local name_cache = {}
+local wait_coroutine = {}
+
+local RR_A = 1
+local RR_CNAME = 5
+local RR_AAAA = 28
+local RR_SRV = 33
+
+local function guesstype(str)
+	if str:match("^[%d%.]+$") then
+		return "A"
+	end
+
+	if str:find(":") then
+		return "AAAA"
+	end
+
+	return "NAME"
+end
 
 --[[
 	ID:16
@@ -60,11 +78,6 @@ local function QNAME(name, n)
 end
 
 local function question(name, typ)
-	if typ == "AAAA" then
-		typ = AAAA
-	else
-		typ = A
-	end
 	session = session % 65535 + 1
 	local ID = session
 	--[[ FLAG
@@ -132,37 +145,104 @@ local function readname(dat, i)
 	return concat(tbl), i
 end
 
-local function answer(dat, pos, n)
-	for i = 1, n do
-		local src, pos = readname(dat, pos)
-		local qtype, qclass, ttl, rdlen, pos
-			= unpack(">I2I2I4I2", dat, pos)
-		if qtype == A then
-			local d1, d2, d3, d4 =
-				unpack(">I1I1I1I1", dat, pos)
-			name_cache[src] = {
-				TTL = timenow() + ttl,
-				TYPE = "A",
-				A = format("%d.%d.%d.%d", d1, d2, d3, d4),
-			}
-		elseif qtype == CNAME then
-			local cname = readname(dat, pos)
-			name_cache[src] = {
-				TTL = timenow() + ttl,
-				TYPE = "CNAME",
-				CNAME = cname,
-			}
-		elseif qtype == AAAA then
-			local x1, x2, x3, x4, x5, x6, x7, x8 =
-				unpack(">I2I2I2I2I2I2I2I2", dat, pos)
-			name_cache[src] = {
-				TTL = timenow() + ttl,
-				TYPE = "AAAA",
-				AAAA = format("%x:%x:%x:%x:%x%x:%x:%x",
-					x1, x2, x3, x4, x5, x6, x7, x8),
-			}
+local parser = {
+	[RR_A] = function(dat, pos)
+		local d1, d2, d3, d4 = unpack(">I1I1I1I1", dat, pos)
+		return format("%d.%d.%d.%d", d1, d2, d3, d4)
+	end,
+	[RR_AAAA] = function(dat, pos)
+		local x1, x2, x3, x4, x5, x6, x7, x8 =
+			unpack(">I2I2I2I2I2I2I2I2", dat, pos)
+		return format(
+			"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
+			x1, x2, x3, x4, x5, x6, x7, x8
+		)
+	end,
+	[RR_CNAME] = function(dat, pos)
+		return readname(dat, pos)
+	end,
+	[RR_SRV] = function(dat, pos)
+		local priority, weight, port = unpack(">I2I2I2", dat, pos)
+		local target = readname(dat, pos + 6)
+		return {
+			priority = priority,
+			weight = weight,
+			port = port,
+			target = target,
+		}
+	end
+}
+
+local newrrmt = {__index = function(t, k)
+	local v = {
+		TTL = maxinteger
+	}
+	t[k] = v
+	return v
+end}
+
+local answers = setmetatable({}, {__index = function(t, k)
+	local v = setmetatable({}, newrrmt)
+	t[k] = v
+	return v
+end})
+
+local function merge_answers()
+	for name, rrs in pairs(answers) do
+		answers[name] = nil
+		local dst = name_cache[name]
+		if not dst then
+			setmetatable(rrs, nil)
+			name_cache[name] = rrs
+		else
+			for k, v in pairs(rrs) do
+				dst[k] = v
+			end
 		end
 	end
+end
+
+local function answer(dat, start, n)
+	local now = timenow()
+	for i = 1, n do
+		local name, pos = readname(dat, start)
+		local qtype, qclass, ttl, rdlen, pos = unpack(">I2I2I4I2", dat, pos)
+		local parse = parser[qtype]
+		if parse then
+			local rr = answers[name][qtype]
+			rr[#rr + 1] = parse(dat, pos)
+			ttl = now + ttl
+			if rr.TTL > ttl then
+				rr.TTL = ttl
+			end
+		end
+		start = pos + rdlen
+	end
+	merge_answers()
+end
+
+
+do --parse hosts
+	local f<close> = io.open(hosts)
+	for line in f:lines() do
+		local ip, names = line:match("^%s*([%[%]%x%.%:]+)%s+([^#;]+)")
+		if not ip or not names then
+			goto continue
+		end
+
+		local typename = guesstype(ip)
+		if typename == "NAME" then
+			goto continue
+		end
+
+		for name in names:gmatch("%S+") do
+			name = name:lower()
+			local rr = answers[name][typename]
+			rr[#rr + 1] = ip
+		end
+		::continue::
+	end
+	merge_answers()
 end
 
 local function callback(msg, _)
@@ -206,7 +286,7 @@ end
 
 local function connectserver()
 	if not dns_server then
-		local f = io.open("/etc/resolv.conf", "r")
+		local f<close> = io.open(resolv_conf, "r")
 		for l in f:lines() do
 			dns_server = l:match("^%s*nameserver%s+([^%s]+)")
 			if dns_server then
@@ -249,66 +329,77 @@ local function query(name, typ, timeout)
 	end
 end
 
-local function lookup(name)
-	local d
+local function findcache(name, qtype, deep)
 	local now = timenow()
 	for i = 1, 100 do
-		d = name_cache[name]
-		if not d then
-			return nil, name
+		local rrs = name_cache[name]
+		if not rrs then
+			return nil, nil
 		end
-		if d.TTL < now then
-			name_cache[name] = nil
-			return nil, name
+		local rr = rrs[qtype]
+		if rr and rr.TTL >= now then
+			return rr, nil
 		end
-		if d.TYPE == "CNAME" then
-			name = d.CNAME
+		local cname = rrs[RR_CNAME]
+		if cname and cname.TTL >= now then
+			name = cname[1]
 		else
-			return d
+			return nil, nil
 		end
 	end
-	return nil, name
+	return nil, nil
 end
 
-local function isname(name)
-	local right = name:match("([%x])", #name)
-	if right then
-		return false
+
+local function resolve(name, qtype, timeout, deep)
+	if deep > 100 then
+		return nil
 	end
-	return true
+	local rr, cname = findcache(name, qtype)
+	if not rr and not cname then
+		local res = query(name, qtype, timeout)
+		if not res then
+			return nil
+		end
+		rr, cname = findcache(name, qtype)
+	end
+	if cname then
+		return resolve(cname, qtype, timeout, deep + 1)
+	end
+	return rr
 end
 
-function dns.resolve(name, typ, timeout)
-	if not isname(name) then
+local dns = {
+	A = RR_A,
+	AAAA = RR_AAAA,
+	SRV = RR_SRV,
+}
+
+function dns.lookup(name, qtype, timeout)
+	if guesstype(name) ~= "NAME" then
 		return name
 	end
-	local d , cname = lookup(name)
-	if not d then
-		for i = 1, 100 do
-			local res = query(cname, typ, timeout)
-			if not res then
-				return
-			end
-			d, cname = lookup(cname)
-			if not cname then
-				goto FIND
-			end
-		end
-		return
+	local rr = resolve(name, qtype, timeout, 1)
+	if not rr then
+		return nil
 	end
-	::FIND::
-	if typ then
-		return d[typ], typ
-	else
-		return d.A or d.AAAA, d.TYPE
+	return rr[1]
+end
+
+function dns.resolve(name, qtype, timeout)
+	if guesstype(name) ~= "NAME" then
+		return {name}
 	end
+	return resolve(name, qtype, timeout, 1)
 end
 
 function dns.server(ip)
 	dns_server = ip
 end
 
-dns.isname = isname
+function dns.isname(name)
+	return guesstype(name) == "NAME"
+end
 
 return dns
 

@@ -49,12 +49,16 @@ return function()
 	end
 	wg:wait()
 	]]
+	local status, header, body = http2.GET("https://http2cdn.cdnsun.com/")
+	testaux.asserteq(status, 200, "http2.client status")
+	testaux.asserteq(body, "Hello\n", "http2.body")
+
 	print("test http2 server")
 	local wg = waitgroup:create()
 	for i = 1, 2000 do
 		wg:fork(function()
 			local key = crypto.randomkey(1028)
-			local status, header, body = http2.POST("https://127.0.0.1:8081/test", {
+			local status, header, body = http2.POST("https://localhost:8081/test", {
 				['hello'] = 'world',
 				['foo'] = key,
 			}, "http2")
