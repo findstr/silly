@@ -166,9 +166,9 @@ function M.accept(scheme, fd)
 end
 
 function M.connect(scheme, host, port)
-	local ip = dns.resolve(host, "A")
+	local ip = dns.lookup(host, dns.A)
 	assert(ip, host)
-	ip = format("%s:%s", ip, port)
+	local ip = format("%s:%s", ip, port)
 	local fd = scheme_connect[scheme](ip, nil, host)
 	if not fd then
 		return nil

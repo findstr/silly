@@ -362,7 +362,7 @@ local function client_dispatch(ch)
 end
 
 local function handshake_as_client(ch, host, port)
-	local ip = dns.resolve(host, "A")
+	local ip = dns.lookup(host, dns.A)
 	assert(ip, host)
 	local addr = format("%s:%s", ip, port)
 	local fd = tls_connect(addr, nil, host, "h2")

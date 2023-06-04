@@ -53,12 +53,14 @@ return function()
 			end
 		end
 	}
-	local res = client.POST("http://127.0.0.1:8080/upload",
+	local res = client.POST("http://localhost:8080/upload",
 			{["Content-Type"] = "application/x-www-form-urlencoded"},
 			"Hello=findstr&")
-	local res = client.GET("http://127.0.0.1:8080/download")
+	local res = client.GET("http://localhost:8080/download")
 	print(json.encode(res))
 	testaux.asserteq(res.body, "findstr", "http GET data validate")
+	testaux.asserteq(res.status, 200, "http GET status validate")
+	local res = client.GET("http://www.baidu.com")
 	testaux.asserteq(res.status, 200, "http GET status validate")
 end
 
