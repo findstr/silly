@@ -11,7 +11,10 @@ local obj = {
 		a = "hello",
 		b = "-5",
 		c = "3.5"
-	}
+	},
+	[3] = {
+		c = {-5}
+	},
 }
 
 return function()

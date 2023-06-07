@@ -99,7 +99,7 @@ local function decodenull(str, i)
 	end
 end
 local function decodenumber(str, i)
-	local n = find(str, "[%s,}]", i)
+	local n = find(str, "[^%x%.-+]", i)
 	local k = sub(str, i, n - 1)
 	return tonumber(k), n
 end
