@@ -34,7 +34,8 @@
 
 ## Examples
 
-- `examples/start.sh cluster/timer/socket/rpc/http/websocket` can run one example of cluster
+- `examples/start.sh timer/socket/rpc/http/websocket` can run one example
+- `examples/start.sh` can run all examples
 
 ## Wiki
 https://github.com/findstr/silly/wiki
