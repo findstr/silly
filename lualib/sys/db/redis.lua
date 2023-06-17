@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local dispatch = require "sys.socketq"
 local type = type
 local assert = assert
@@ -180,25 +181,26 @@ function redis:pipeline(req, ret)
 			for i = 1, cmd_len do
 				ok, res = read_response(sock)
 				if not ok then
-					core.log('[redis] pipeline error', res)
+					logger.error('[redis] pipeline error',
+						res
+					)
 				end
 			end
 			return ok, res
 		end)
-	else
-		return self.sock:request(out, function(sock)
-			local ok, res
-			local j = 0
-			for i = 1, cmd_len do
-				ok, res = read_response(sock)
-				j = j + 1
-				ret[j] = ok
-				j = j + 1
-				ret[j] = res
-			end
-			return true, j
-		end)
 	end
+	return self.sock:request(out, function(sock)
+		local ok, res
+		local j = 0
+		for i = 1, cmd_len do
+			ok, res = read_response(sock)
+			j = j + 1
+			ret[j] = ok
+			j = j + 1
+			ret[j] = res
+		end
+		return true, j
+	end)
 end
 
 return redis

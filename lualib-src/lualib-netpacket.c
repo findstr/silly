@@ -130,7 +130,7 @@ push_complete(lua_State *L, struct netpacket *p, struct incomplete *ic)
 	assert(p->head < p->cap);
 	assert(p->tail < p->cap);
 	if (p->head == p->tail) {
-		silly_log("packet queue full\n");
+		silly_log_warn("packet queue full\n");
 		expand_queue(L, p);
 	}
 	return ;
@@ -444,7 +444,7 @@ lmessage(lua_State *L)
 	case SILLY_SCONNECTED:
 		return 0;
 	default:
-		silly_log("lmessage unspport:%d\n", sm->type);
+		silly_log_error("lmessage unspport:%d\n", sm->type);
 		assert(!"never come here");
 		return 0;
 	}

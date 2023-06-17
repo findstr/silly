@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local socket = require "sys.socket"
 local tls = require "sys.tls"
 local stream = require "http.stream"
@@ -148,7 +149,7 @@ local function httpd(scheme, handler)
 			end
 			local ok, err = pcall(handler, res)
 			if not ok then
-				core.log(err)
+				logger.error(err)
 				break
 			end
 			if header["connection"] == "close" then

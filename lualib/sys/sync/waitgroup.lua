@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local M = {}
 local mt = {__index = M}
 
@@ -11,7 +12,7 @@ function M:fork(func)
 	core.fork(function()
 		local ok, err = core.pcall(func)
 		if not ok then
-			core.log("[waitgroup] fork err:", err)
+			logger.error("[waitgroup] fork err:", err)
 		end
 		local n = self.count - 1
 		self.count = n

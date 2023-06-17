@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local np = require "sys.netpacket"
 local pairs = pairs
 local assert = assert
@@ -27,14 +28,14 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
-			core.log("[msg] EVENT.accept", err)
+			logger.error("[msg] EVENT.accept", err)
 			core.close(fd)
 		end
 	end
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close_cb, fd, errno)
 		if not ok then
-			core.log("[msg] EVENT.close", err)
+			logger.error("[msg] EVENT.close", err)
 		end
 	end
 	function EVENT.data()
@@ -50,7 +51,7 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 			local obj = proto:decode(cmd, dat, size)
 			local ok, err = core.pcall(data_cb, f, cmd, obj)
 			if not ok then
-				core.log("[msg] dispatch socket", err)
+				logger.error("[msg] dispatch socket", err)
 			end
 			f, d, sz, cmd = np.msgpop(queue)
 			if not f then

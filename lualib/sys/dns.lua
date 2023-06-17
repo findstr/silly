@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local socket = require "sys.socket"
 local assert = assert
 local pairs = pairs
@@ -299,6 +300,7 @@ local function connectserver()
 		end
 	end
 	assert(dns_server)
+	logger.info("[dns] server ip:", dns_server)
 	return socket.udp(dns_server, callback)
 end
 

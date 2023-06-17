@@ -7,30 +7,31 @@
 
 ## Depend
 
-- sudo apt-get install libreadline-dev(Debian)
-- yum install readline-devel(Centos)
+- Debian: `apt-get install libreadline-dev`
+- CentOS: `yum install readline-devel`
 
 ## Build
 
-- make
-- make TLS=off (disable TLS function)
+- `make`
+- `make TLS=off` (disable TLS function)
 
-## Run
-    ./silly <config>
-
-## Config
+## Configuration
 
 - `daemon`, 1 --> run as daemon, 0 --> normal
 - `bootstrap`, lua entry file
 - `lualib_path`, will append the package.path (in luaVM)
 - `lualib_cpath`, will append the package.cpath (int luaVM)
-- `logpath`, when running in daemon mode, all print message will write to `[logpath]/silly-[pid].log` file
-- `pidfile`, when running in daemon mode, `pidfile` will used by run only once on a system
+- `logpath`, if running in daemon mode, all print messages will be written to the  `[logpath]/silly-[pid].log` file
+- `loglevel`, is used to control the log level limits, it can be set to `debug`, `info`, `warn`, or `error`, default is `info`
+- `pidfile`,  if running in daemon mode, `pidfile` will used by run only once in a system
+
+## Running
+    ./silly <config>
 
 ## Test
 
-- All test code are in `test` folder
-- Run `./silly test/test.conf` to test all module
+- Tests are in the test folder
+- Run `./silly test/test.conf` to test all modules
 
 ## Examples
 
@@ -42,3 +43,4 @@ https://github.com/findstr/silly/wiki
 
 ## Benchmark
 https://github.com/findstr/silly/wiki/Benchmark
+
