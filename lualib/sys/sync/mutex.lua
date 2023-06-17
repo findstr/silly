@@ -22,7 +22,7 @@ local function unlock(proxy)
 		local lockobj = proxy.lockobj
 		local waitq = l.waitq
 		if waitq and #waitq > 0 then
-			co = remove(waitq, 1)
+			local co = remove(waitq, 1)
 			wakeup(co)
 		end
 		lockobj[l.key] = nil
@@ -46,8 +46,8 @@ function M.new()
 	}, mt)
 end
 
-function lockkey(lockobj, key, co)
-	l = remove(lockcache)
+local function lockkey(lockobj, key, co)
+	local l = remove(lockcache)
 	if l then
 		l.key = key
 		l.owner = co
@@ -83,7 +83,7 @@ function M:lock(key)
 	else
 		l = lockkey(lockobj, key, co)
 	end
-	proxy = remove(proxycache)
+	local proxy = remove(proxycache)
 	if not proxy then
 		proxy = setmetatable({
 			lock = l,
