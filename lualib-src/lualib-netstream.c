@@ -461,7 +461,7 @@ lpush(lua_State *L)
 	case SILLY_SCONNECTED:
 	default:
 		size = 0;
-		silly_log("lmessage unspport:%d\n", msg->type);
+		silly_log_error("lmessage unspport:%d\n", msg->type);
 		assert(!"never come here");
 		break;
 	}

@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local type = type
 local concat = table.concat
 local assert = assert
@@ -64,7 +65,7 @@ function EVENT.accept(fd, _, portid, addr)
 	end
 	local ok, err = core.pcall(lc.disp, fd, addr)
 	if not ok then
-		core.log(err)
+		logger.error(err)
 		M.close(fd)
 	end
 end

@@ -162,7 +162,7 @@ silly_timer_timeout(uint32_t expire)
 	uint32_t session;
 	struct node *n = newnode();
 	if (unlikely(n == NULL)) {
-		silly_log("silly timer alloc node failed\n");
+		silly_log_error("silly timer alloc node failed\n");
 		return -1;
 	}
 	session = n->session;
@@ -288,13 +288,13 @@ silly_timer_update()
 	if (T->ticktime == time)
 		return;
 	if (unlikely(T->ticktime > time)) {
-		silly_log("[timer] time rewind change "
+		silly_log_error("[timer] time rewind change "
 			"from %lld to %lld\n", T->ticktime, time);
 	}
 	delta = time - T->ticktime;
 	assert(delta > 0);
 	if (unlikely(delta > TIMER_DELAY_WARNING/TIMER_RESOLUTION)) {
-		silly_log("[timer] update delta is too big, "
+		silly_log_warn("[timer] update delta is too big, "
 			"from:%lld ms to %lld ms\n",
 			T->ticktime * TIMER_RESOLUTION,
 			time * TIMER_RESOLUTION);

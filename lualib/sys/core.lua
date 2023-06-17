@@ -1,4 +1,5 @@
 local silly = require "sys.silly"
+local logger = require "sys.logger"
 
 local core = {}
 local type = type
@@ -16,8 +17,8 @@ local traceback = debug.traceback
 local weakmt = {__mode="kv"}
 
 --misc
-local core_log = silly.log
-core.log = core_log
+local log_info = logger.info
+local log_error = logger.error
 core.tostring = silly.tostring
 core.genid = silly.genid
 
@@ -40,10 +41,10 @@ local function task_resume(t, ...)
 	if not ok then
 		task_status[t] = nil
 		local ret = traceback(t, tostring(err), 1)
-		core_log("[sys.core] task resume", ret)
+		log_error("[sys.core] task resume", ret)
 		local ok, err = coclose(t)
 		if not ok then
-			core_log("[sys.core] task close", err)
+			log_error("[sys.core] task close", err)
 		end
 	else
 		task_status[t] = err
@@ -100,8 +101,8 @@ local function core_pcall(f, ...)
 end
 
 function core.error(errmsg)
-	core_log(errmsg)
-	core_log(traceback())
+	log_error(errmsg)
+	log_error(traceback())
 end
 
 core.pcall = core_pcall
@@ -128,8 +129,8 @@ local function task_create(f)
 			copool[#copool + 1] = corunning()
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
-				core_log("[sys.core] task create", ret)
-				core_log(traceback())
+				log_error("[sys.core] task create", ret)
+				log_error(traceback())
 				return
 			end
 			f(coyield())
@@ -284,7 +285,7 @@ function core.listen(addr, dispatch, backlog)
 	local id = socket_listen(ip, port, backlog);
 	if id < 0 then
 		local errno = -id
-		core_log("[sys.core] listen", port, "error", errno)
+		log_error("[sys.core] listen", port, "error", errno)
 		return nil, errno
 	end
 	socket_dispatch[id] = dispatch
@@ -300,7 +301,7 @@ function core.bind(addr, dispatch)
 	end
 	local id = socket_bind(ip, port);
 	if id < 0 then
-		core_log("[sys.core] udpbind", port, "error",  id)
+		log_error("[sys.core] udpbind", port, "error",  id)
 		return nil
 	end
 	socket_dispatch[id] = dispatch
@@ -406,7 +407,7 @@ end,
 		local t = task_create(f)
 		task_resume(t, "data", fd, msg)
 	else
-		core_log("[sys.core] SILLY_SDATA fd:", fd, "closed")
+		log_info("[sys.core] SILLY_SDATA fd:", fd, "closed")
 	end
 end,
 [6] = function(fd, msg, addr)				--SILLY_UDP = 6
@@ -415,7 +416,7 @@ end,
 		local t = task_create(f)
 		task_resume(t, "udp", fd, msg, addr)
 	else
-		core_log("[sys.core] SILLY_UDP fd:", fd, "closed")
+		log_info("[sys.core] SILLY_UDP fd:", fd, "closed")
 	end
 end
 }

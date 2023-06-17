@@ -9,6 +9,7 @@
 #include "silly.h"
 #include "silly_log.h"
 #include "silly_env.h"
+#include "silly_timer.h"
 #include "silly_run.h"
 
 #define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
@@ -28,7 +29,7 @@ optint(const char *key, int v)
 	n = strtol(val, &end, 0);
 	if (errno != 0 || end != (val + len)) {
 		const char *fmt = "[config] incorrect value of '%s' %s\n";
-		silly_log(fmt, key);
+		silly_log_error(fmt, key);
 		exit(-1);
 	}
 	return n;
@@ -54,7 +55,7 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 		const char *k;
 		int type = lua_type(L, -2);
 		if (type != LUA_TSTRING && type != LUA_TNUMBER) {
-			silly_log("[checktype] key expecte string/number"
+			silly_log_error("[checktype] key expecte string/number"
 				" but got %s\n", lua_typename(L, type));
 			exit(-1);
 		}
@@ -62,7 +63,7 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 		k = lua_tolstring(L, -1, &sz);
 		assert(curr <= end);
 		if (sz >= (size_t)(end - curr)) {
-			silly_log("[enveach] buff is too short\n");
+			silly_log_error("[enveach] buff is too short\n");
 			exit(-1);
 		}
 		lua_pop(L, 1);
@@ -75,7 +76,7 @@ enveach(lua_State *L, char *first, char *curr, char *end)
 			if (type != LUA_TSTRING && type != LUA_TNUMBER) {
 				const char *fmt = "[enveach]"
 					"%s expect string/number bug got:%s\n";
-				silly_log(fmt, lua_typename(L, type));
+				silly_log_error(fmt, lua_typename(L, type));
 			}
 			const char *value = lua_tostring(L, -1);
 			curr[sz] = '\0';
@@ -131,7 +132,7 @@ initenv(const char *self, const char *file)
 	if (err != LUA_OK) {
 		const char *err = lua_tostring(L, -1);
 		err = skipcode(err);
-		silly_log("%s parse config file:%s fail,%s\n",
+		silly_log_error("%s parse config file:%s fail,%s\n",
 			self, file, err);
 		lua_close(L);
 		exit(-1);
@@ -146,31 +147,31 @@ applyconfig(struct silly_config *config)
 {
 	int slash;
 	char *p;
-	size_t sz, n;
+	size_t i, sz, n;
 	const char *str;
 	config->daemon = optint("daemon", 0);
 	//bootstrap
 	str = optstr("bootstrap", &sz, "");
 	if (sz >= ARRAY_SIZE(config->bootstrap)) {
-		silly_log("[config] bootstrap is too long\n");
+		silly_log_error("[config] bootstrap is too long\n");
 		exit(-1);
 	}
 	if (sz == 0) {
-		silly_log("[config] bootstrap can't be empty\n");
+		silly_log_error("[config] bootstrap can't be empty\n");
 		exit(-1);
 	}
 	memcpy(config->bootstrap, str, sz + 1);
 	//lualib_path
 	str = optstr("lualib_path", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_path)) {
-		silly_log("[config] lualib_path is too long\n");
+		silly_log_error("[config] lualib_path is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_path, str, sz + 1);
 	//lualib_cpath
 	str = optstr("lualib_cpath", &sz, "");
 	if (sz >= ARRAY_SIZE(config->lualib_cpath)) {
-		silly_log("[config] lualib_cpath is too long\n");
+		silly_log_error("[config] lualib_cpath is too long\n");
 		exit(-1);
 	}
 	memcpy(config->lualib_cpath, str, sz + 1);
@@ -184,13 +185,30 @@ applyconfig(struct silly_config *config)
 	else
 		sz = snprintf(p, n, "%s", str);
 	if (sz >= n) {
-		silly_log("[config] logpath is too long\n");
+		silly_log_error("[config] logpath is too long\n");
 		exit(-1);
+	}
+	//log level
+	struct {
+		const char *name;
+		enum silly_log_level level;
+	} loglevels[] = {
+		{"debug",	SILLY_LOG_DEBUG},
+		{"info",	SILLY_LOG_INFO},
+		{"warn",	SILLY_LOG_WARN},
+		{"error",	SILLY_LOG_ERROR},
+	};
+	str = optstr("loglevel", &sz, "");
+	for (i = 0; i < ARRAY_SIZE(loglevels); i++) {
+		if (strcmp(loglevels[i].name, str) == 0) {
+			silly_log_setlevel(loglevels[i].level);
+			break;
+		}
 	}
 	//pidfile
 	str = optstr("pidfile", &sz, "");
 	if ((sz + 1) >= ARRAY_SIZE(config->pidfile)) {
-		silly_log("[config] pidfile is too long\n");
+		silly_log_error("[config] pidfile is too long\n");
 		exit(-1);
 	}
 	memcpy(config->pidfile, str, sz + 1);
@@ -222,6 +240,8 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 	silly_env_init();
+	silly_log_init();
+	silly_timer_init();
 	config.selfname = selfname(argv[0]);
 	i = 1;
 	//first argument is t he config file name?
@@ -229,14 +249,14 @@ int main(int argc, char *argv[])
 		initenv(config.selfname, argv[i++]);
 	while (i < argc) {
 		if (argv[i][0] != '-' || argv[i][1] != '-') {
-			silly_log("[config] skip argument '%s'\n", argv[i]);
+			silly_log_error("[config] skip argument '%s'\n", argv[i]);
 		} else {
 			const char *k, *v;
 			char *str = argv[i];
 			k = strtok(&str[2], "=");
 			v = strtok(NULL, "=");
 			if (k == NULL || v == NULL)
-				silly_log("[config] skip argument '%s'\n", str);
+				silly_log_error("[config] skip argument '%s'\n", str);
 			else
 				silly_env_set(k, v);
 		}
@@ -245,8 +265,9 @@ int main(int argc, char *argv[])
 	applyconfig(&config);
 	status = silly_run(&config);
 	silly_env_exit();
-	silly_log("%s exit, leak memory size:%zu\n",
+	silly_log_info("%s exit, leak memory size:%zu\n",
 		argv[0], silly_memused());
+	silly_log_flush();
 	return status;
 }
 

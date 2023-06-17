@@ -74,6 +74,7 @@ SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 LIB_SRC = lualib-silly.c \
+	  lualib-logger.c \
 	  lualib-profiler.c \
 	  lualib-netstream.c \
 	  lualib-netpacket.c \

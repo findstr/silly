@@ -19,10 +19,6 @@
 #define tosocket(msg)   ((struct silly_message_socket *)(msg))
 #define COMMONFIELD struct silly_message *next; enum silly_message_type type;
 
-struct silly_listen {
-	char name[64];
-	char addr[64];
-};
 
 struct silly_config {
 	int daemon;
@@ -30,7 +26,6 @@ struct silly_config {
 	int workeraffinity;
 	int timeraffinity;
 	const char *selfname;
-	//please forgive my shortsighted, i think listen max to 16 ports is very many
 	char bootstrap[128];
 	char lualib_path[256];
 	char lualib_cpath[256];

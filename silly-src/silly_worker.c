@@ -34,7 +34,7 @@ silly_worker_push(struct silly_message *msg)
 	sz = silly_queue_push(W->queue, msg);
 	if (unlikely(sz > W->maxmsg)) {
 		W->maxmsg *= 2;
-		silly_log("[worker] may overload, "
+		silly_log_warn("[worker] may overload, "
 			"message queue length:%zu\n", sz);
 	}
 }
@@ -71,7 +71,7 @@ silly_worker_genid()
 {
 	uint32_t id = ++W->id;
 	if (unlikely(id == 0))
-		silly_log("[worker] genid wraps around\n");
+		silly_log_warn("[worker] genid wraps around\n");
 	return id;
 }
 
@@ -157,7 +157,7 @@ silly_worker_start(const struct silly_config *config)
 #endif
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
-		silly_log("[worker] set lua libpath fail,%s\n",
+		silly_log_error("[worker] set lua libpath fail,%s\n",
 			lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
@@ -165,7 +165,7 @@ silly_worker_start(const struct silly_config *config)
 	lua_pushcfunction(L, ltraceback);
 	err = luaL_loadfile(L, config->bootstrap);
 	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 1))) {
-		silly_log("[worker] call %s %s\n",
+		silly_log_error("[worker] call %s %s\n",
 			config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);

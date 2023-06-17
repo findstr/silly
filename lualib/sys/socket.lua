@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local ns = require "sys.netstream"
 local assert = assert
 --when luaVM destroyed, all process will be exit
@@ -46,7 +47,7 @@ function EVENT.accept(fd, _, portid, addr)
 	new_socket(fd)
 	local ok, err = core.pcall(lc.disp, fd, addr)
 	if not ok then
-		core.log(err)
+		logger.error(err)
 		socket.close(fd)
 	end
 end

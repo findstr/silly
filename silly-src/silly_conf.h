@@ -33,4 +33,7 @@
 #define STR(s) __STR(s)
 #define __STR(s) #s
 
+
+#define LOG_BUF_SIZE		(4*1024)
+
 #endif

@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local patch = require "sys.patch"
 local socket = require "sys.socket"
 local debugger = require "sys.debugger"
@@ -231,7 +232,7 @@ end
 
 return function (config)
 	socket.listen(config.addr, function(fd, addr)
-		core.log("console come in:", addr)
+		logger.info("console come in:", addr)
 		local param = {}
 		local dat = {}
 		socket.write(fd, "\nWelcome to console.\n\n")
@@ -266,7 +267,7 @@ return function (config)
 				param[i] = nil
 			end
 		end
-		core.log(addr, "leave")
+		logger.info(addr, "leave")
 end)
 
 end
