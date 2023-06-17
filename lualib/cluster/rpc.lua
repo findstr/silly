@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local np = require "sys.netpacket"
 local zproto = require "zproto"
 local type = type
@@ -35,7 +36,7 @@ local function server_listen(self)
 	function EVENT.accept(fd, portid, addr)
 		local ok, err = core.pcall(accept, fd, addr)
 		if not ok then
-			core.log("[rpc.server] EVENT.accept", err)
+			logger.error("[rpc.server] EVENT.accept", err)
 			np.clear(queue, fd)
 			core.close(fd)
 		end
@@ -44,7 +45,7 @@ local function server_listen(self)
 	function EVENT.close(fd, errno)
 		local ok, err = core.pcall(close, fd, errno)
 		if not ok then
-			core.log("[rpc.server] EVENT.close", err)
+			logger.error("[rpc.server] EVENT.close", err)
 		end
 		np.clear(queue, fd)
 	end
@@ -62,13 +63,13 @@ local function server_listen(self)
 			np.drop(buf)
 			local body = proto:decode(cmd, dat, size)
 			if not body then
-				core.log("[rpc.server] decode fail",
+				logger.error("[rpc.server] decode fail",
 					session, cmd)
 				return
 			end
 			local ok, ret, res = core.pcall(call, body, cmd, fd)
 			if not ok then
-				core.log("[rpc.server] call error", ret)
+				logger.error("[rpc.server] call error", ret)
 				return
 			end
 			if not ret then
@@ -115,7 +116,7 @@ local function wakeup_all_timeout(self)
 		for k, v in pairs(wk) do
 			local co = waitpool[v]
 			if co then
-				core.log("[rpc.client] wakeupall session", v)
+				logger.info("[rpc.client] wakeupall session", v)
 				ackcmd[v] = "closed"
 				core.wakeup(co)
 				waitpool[v] = nil
@@ -144,7 +145,7 @@ local function clienttimer(self)
 		for k, v in pairs(wk) do
 			local co = waitpool[v]
 			if co then
-				core.log("[rpc.client] timeout session", v)
+				logger.warn("[rpc.client] timeout session", v)
 				ackcmd[v] = "timeout"
 				core.wakeup(co)
 				waitpool[v] = nil
@@ -173,7 +174,7 @@ local function doconnect(self)
 		if close then
 			local ok, err = core.pcall(close, fd, errno)
 			if not ok then
-				core.log("[rpc.client] EVENT.close", err)
+				logger.info("[rpc.client] EVENT.close", err)
 			end
 		end
 		self.fd = nil
@@ -192,7 +193,7 @@ local function doconnect(self)
 			np.drop(d)
 			local body = proto:decode(cmd, str, sz)
 			if not body then
-				core.log("[rpc.client] decode fail",
+				logger.error("[rpc.client] decode fail",
 					session, cmd)
 				return
 			end
@@ -200,7 +201,7 @@ local function doconnect(self)
 			local waitpool = self.waitpool
 			local co = waitpool[session]
 			if not co then --timeout
-				core.log("[rpc.client] late session",
+				logger.warn("[rpc.client] late session",
 					session, cmd)
 				return
 			end
@@ -240,7 +241,7 @@ local function checkconnect(self)
 			end
 		end
 		if not fd then
-			core.log("[rpc.client] connect", self.__addr, "fail")
+			logger.error("[rpc.client] connect", self.__addr, "fail")
 			self.fd = false
 		else
 			self.fd = fd

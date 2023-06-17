@@ -32,7 +32,7 @@ void
 silly_monitor_check()
 {
 	if (M.msgtype != 0 && unlikely(M.check_id == M.process_id)) {
-		silly_log("[monitor] message of %s processed slowly\n",
+		silly_log_warn("[monitor] message of %s processed slowly\n",
 			msgname[M.msgtype]);
 	}
 	M.check_id = M.process_id;

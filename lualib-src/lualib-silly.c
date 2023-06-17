@@ -30,7 +30,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 	size_t addrlen;
 	type = lua_rawgetp(L, LUA_REGISTRYINDEX, dispatch);
 	if (unlikely(type != LUA_TFUNCTION)) {
-		silly_log("[silly.core] callback need function"
+		silly_log_error("[silly.core] callback need function"
 			"but got:%s\n", lua_typename(L, type));
 		return ;
 	}
@@ -75,7 +75,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 		args += 3;
 		break;
 	default:
-		silly_log("[silly.core] callback unknow message type:%d\n",
+		silly_log_error("[silly.core] callback unknow message type:%d\n",
 			sm->type);
 		assert(0);
 		break;
@@ -83,7 +83,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 	/*the first stack slot of main thread is always trace function */
 	err = lua_pcall(L, args, 0, 1);
 	if (unlikely(err != LUA_OK)) {
-		silly_log("[silly.core] callback call fail:%d:%s\n",
+		silly_log_error("[silly.core] callback call fail:%d:%s\n",
 			err, lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
@@ -120,75 +120,6 @@ lexit(lua_State *L)
 	int status;
 	status = luaL_optinteger(L, 1, 0);
 	silly_exit(status);
-	return 0;
-}
-
-static char *
-inttostr(lua_Integer n, char *begin, char *end)
-{
-	int neg = 0;
-	if (n < 0) {
-		neg = 1;
-		n = -n;
-	}
-	do {
-		int m = n % 10;
-		n /= 10;
-		*(--end) = m + '0';
-	} while (begin < end && n > 0);
-	if (neg && begin < end)
-		*(--end) = '-';
-	return end;
-}
-
-static int
-llog(lua_State *L)
-{
-	int i;
-	size_t sz;
-	const char *str;
-	int paramn = lua_gettop(L);
-	silly_log("");
-	for (i = 1; i <= paramn; i++) {
-		int type = lua_type(L, i);
-		switch (type) {
-		case LUA_TSTRING:
-			str = lua_tolstring(L, i, &sz);
-			silly_log_lstr(str, sz);
-			silly_log_lstr(" ", 1);
-			break;
-		case LUA_TNUMBER:
-			if (lua_isinteger(L, i)) {
-				char buf[32];
-				lua_Integer n = lua_tointeger(L, i);
-				char *end = &buf[sizeof(buf)/sizeof(buf[0])];
-				char *start = end - 1;
-				*start = ' ';
-				start = inttostr(n, buf, start);
-				silly_log_lstr(start, end - start);
-			} else {
-				lua_Number n = lua_tonumber(L, i);
-				silly_log_raw(LUA_NUMBER_FMT" ", n);
-			}
-			break;
-		case LUA_TBOOLEAN:
-			if (lua_toboolean(L, i))
-				silly_log_str("true ");
-			else
-				silly_log_str("false ");
-			break;
-		case LUA_TTABLE:
-			silly_log_raw("table: %p ", lua_topointer(L, i));
-			break;
-		case LUA_TNIL:
-			silly_log_str("nil ");
-			break;
-		default:
-			return luaL_error(L, "log unspport param#%d type:%s",
-				i, lua_typename(L, type));
-		}
-	}
-	silly_log_str("\n");
 	return 0;
 }
 
@@ -700,7 +631,6 @@ luaopen_sys_silly(lua_State *L)
 		{"getenv", lgetenv},
 		{"setenv", lsetenv},
 		{"exit", lexit},
-		{"log", llog},
 		{"genid", lgenid},
 		{"tostring", ltostring},
 		{"getpid", lgetpid},

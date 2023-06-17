@@ -23,7 +23,7 @@ pidfile_create(const struct silly_config *conf)
 		return ;
 	pidfile = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 	if (pidfile == -1) {
-		silly_log("[pidfile] create '%s' fail:%s\n", path,
+		silly_log_error("[pidfile] create '%s' fail:%s\n", path,
 				strerror(errno));
 		exit(-1);
 	}
@@ -32,7 +32,7 @@ pidfile_create(const struct silly_config *conf)
 		char pid[128];
 		FILE *fp = fdopen(pidfile, "r+");
 		fscanf(fp , "%s\n", pid);
-		silly_log("[pidfile] lock '%s' fail,"
+		silly_log_error("[pidfile] lock '%s' fail,"
 			"another instace of '%s' alread run\n",
 			path, pid);
 		fclose(fp);
@@ -73,8 +73,9 @@ logfileopen(const struct silly_config *conf)
 		dup2(fd, 1);
 		dup2(fd, 2);
 		close(fd);
-		setvbuf(stdout, NULL, _IOLBF, 0);
-		setvbuf(stderr, NULL, _IOLBF, 0);
+		setvbuf(stdout, NULL, _IOFBF, LOG_BUF_SIZE);
+		setvbuf(stderr, NULL, _IOLBF, LOG_BUF_SIZE);
+
 	}
 }
 
@@ -88,7 +89,7 @@ silly_daemon_start(const struct silly_config *conf)
 	err = daemon(1, 0);
 	if (err < 0) {
 		pidfile_delete(conf);
-		silly_log("[daemon] %s\n", strerror(errno));
+		silly_log_error("[daemon] %s\n", strerror(errno));
 		exit(0);
 	}
 	pidfile_write();

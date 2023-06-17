@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local logger = require "sys.logger"
 local socket = require "sys.socket"
 local helper = require "sys.debugger.helper"
 local sethook = helper.hook
@@ -554,7 +555,7 @@ start = function(read, write)
 	core.task_hook()
 	CMD.q()
 	if not ok then
-		core.log(err)
+		logger.error(err)
 		return
 	end
 	return err
