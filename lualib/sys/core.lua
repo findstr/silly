@@ -241,7 +241,7 @@ function core.timeout(ms, func)
 end
 
 function core.timercancel(session)
-	f = sleep_session_task[session]
+	local f = sleep_session_task[session]
 	if f then
 		assert(type(f) == "function")
 		sleep_session_task[session] = nil
