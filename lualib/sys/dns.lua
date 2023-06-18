@@ -1,6 +1,8 @@
 local core = require "sys.core"
+local time = require "sys.time"
+local env = require "sys.env"
 local logger = require "sys.logger"
-local socket = require "sys.socket"
+local udp = require "sys.net.udp"
 local assert = assert
 local pairs = pairs
 local sub = string.sub
@@ -11,15 +13,15 @@ local format = string.format
 local match = string.match
 local gmatch = string.gmatch
 local setmetatable = setmetatable
-local timenow = core.monotonicsec
+local timenow = time.monotonicsec
 local maxinteger = math.maxinteger
 
 local session = 0
 local dns_server
 local connectfd
 
-local resolv_conf = core.envget("sys.dns.resolv_conf") or "/etc/resolv.conf"
-local hosts = core.envget("sys.dns.hosts") or "/etc/hosts"
+local resolv_conf = env.get("sys.dns.resolv_conf") or "/etc/resolv.conf"
+local hosts = env.get("sys.dns.hosts") or "/etc/hosts"
 
 local name_cache = {}
 local wait_coroutine = {}
@@ -301,7 +303,7 @@ local function connectserver()
 	end
 	assert(dns_server)
 	logger.info("[dns] server ip:", dns_server)
-	return socket.udp(dns_server, callback)
+	return udp.connect(dns_server, callback)
 end
 
 local function query(name, typ, timeout)
@@ -315,7 +317,7 @@ local function query(name, typ, timeout)
 	--should be less than 5 seconds
 	timeout = timeout or 5000
 	while true do
-		local ok = socket.udpwrite(connectfd, r)
+		local ok = udp.send(connectfd, r)
 		if not ok then
 			return false
 		end

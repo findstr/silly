@@ -1,4 +1,4 @@
-local socket = require "sys.socket"
+local tcp = require "sys.net.tcp"
 local core = require "sys.core"
 
 local pairs = pairs
@@ -15,7 +15,7 @@ local mt = {
 	__index = dispatch,
 	__gc = function(tbl)
 		if tbl.sock then
-			socket.close(tbl.sock)
+			tcp.close(tbl.sock)
 		end
 	end
 }
@@ -67,7 +67,7 @@ local function doclose(self)
 		return
 	end
 	assert(self.sock)
-	socket.close(self.sock)
+	tcp.close(self.sock)
 	self.sock = nil
 	self.status = CLOSE;
 	local co = self.responseco
@@ -167,7 +167,7 @@ local function tryconnect(self)
 	if status == CLOSE then
 		local err, sock, res
 		self.status = CONNECTING;
-		sock = socket.connect(self.addr)
+		sock = tcp.connect(self.addr)
 		if sock then
 			self.sock = sock
 			--wait for responseco exit
@@ -234,7 +234,7 @@ function dispatch:request(cmd, response)
 	if not ok then
 		return ok, err
 	end
-	local ok = socket.write(self.sock, cmd)
+	local ok = tcp.write(self.sock, cmd)
 	if not ok then
 		doclose(self)
 		return false, "closed"
@@ -251,9 +251,9 @@ local function read_write_wrapper(func)
 	end
 end
 
-dispatch.read = read_write_wrapper(socket.read)
-dispatch.write = read_write_wrapper(socket.write)
-dispatch.readline = read_write_wrapper(socket.readline)
+dispatch.read = read_write_wrapper(tcp.read)
+dispatch.write = read_write_wrapper(tcp.write)
+dispatch.readline = read_write_wrapper(tcp.readline)
 
 return dispatch
 

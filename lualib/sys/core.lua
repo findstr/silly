@@ -1,9 +1,10 @@
-local silly = require "sys.silly"
+local c = require "sys.core.c"
 local logger = require "sys.logger"
 
 local core = {}
 local type = type
 local error = error
+local pairs = pairs
 local assert = assert
 local xpcall = xpcall
 local tostring = tostring
@@ -19,8 +20,16 @@ local weakmt = {__mode="kv"}
 --misc
 local log_info = logger.info
 local log_error = logger.error
-core.tostring = silly.tostring
-core.genid = silly.genid
+local readctrl = assert(c.readctrl)
+core.genid = c.genid
+core.getpid = c.getpid
+core.version = c.version()
+core.tostring = c.tostring
+core.multipack = assert(c.multipack)
+core.sendsize = assert(c.sendsize)
+core.socket_read_ctrl = function (sid, ctrl)
+	return readctrl(sid, ctrl == "enable")
+end
 
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
@@ -50,47 +59,6 @@ local function task_resume(t, ...)
 		task_status[t] = err
 	end
 end
---env
-core.envget = silly.getenv
-core.envset = silly.setenv
---socket
-local socket_listen = silly.listen
-local socket_bind = silly.bind
-local socket_connect = silly.connect
-local socket_udp = silly.udp
-local socket_close = silly.close
-local socket_readctrl = silly.readctrl
-core.multipack = silly.multipack
-core.multifree = silly.multifree
-core.multicast = silly.multicast
-core.write = silly.send
-core.udpwrite = silly.udpsend
-core.ntop = silly.ntop
-core.sendsize = silly.sendsize
-core.readctrl = function (sid, ctrl)
-	return socket_readctrl(sid, ctrl == "enable")
-end
---timer
-local silly_timeout = silly.timeout
-core.now = silly.timenow
-core.nowsec = silly.timenowsec
-core.monotonic = silly.timemonotonic
-core.monotonicsec = silly.timemonotonicsec
---debug interface
-core.memused = silly.memused
-core.memrss = silly.memrss
-core.msgsize = silly.msgsize
-core.cpuinfo = silly.cpuinfo
-core.getpid = silly.getpid
-core.netinfo = silly.netinfo
-core.socketinfo = silly.socketinfo
-core.timerinfo = silly.timerinfo
-core.allocatorinfo = silly.memallocatorinfo
---const
-core.allocator = silly.memallocator()
-core.version = silly.version()
-core.pollapi = silly.pollapi()
-core.timerrs = silly.timerresolution()
 
 local function errmsg(msg)
 	return traceback("error: " .. tostring(msg), 2)
@@ -173,10 +141,10 @@ local sleep_session_task = {}
 local dispatch_wakeup
 
 core.exit = function(status)
-	silly.dispatch(function() end)
+	c.dispatch(function() end)
 	wakeup_task_queue = {}
 	wakeup_task_param = {}
-	silly.exit(status)
+	c.exit(status)
 	coyield()
 end
 
@@ -226,17 +194,18 @@ function core.wakeup2(t, ...)
 	core.wakeup(t, tpack(...))
 end
 
+local timeout = c.timeout
 function core.sleep(ms)
 	local t = task_running
 	local status = task_status[t]
 	assert(status == "RUN", status)
-	local session = silly_timeout(ms)
+	local session = timeout(ms)
 	sleep_session_task[session] = t
 	task_yield("SLEEP")
 end
 
 function core.timeout(ms, func)
-	local session = silly_timeout(ms)
+	local session = timeout(ms)
 	sleep_session_task[session] = func
 	return session
 end
@@ -272,7 +241,15 @@ local socket_connecting = {}
 
 local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)$"
 
-function core.listen(addr, dispatch, backlog)
+local tcp_listen = assert(c.tcp_listen)
+local tcp_connect = assert(c.tcp_connect)
+local udp_bind = assert(c.udp_bind)
+local udp_connect = assert(c.udp_connect)
+local socket_close = assert(c.close)
+core.tcp_send = assert(c.tcp_send)
+core.udp_send = assert(c.udp_send)
+core.tcp_multicast = assert(c.tcp_multicast)
+function core.tcp_listen(addr, dispatch, backlog)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -282,7 +259,7 @@ function core.listen(addr, dispatch, backlog)
 	if not backlog then
 		backlog = 256 --this constant come from linux kernel comment
 	end
-	local id = socket_listen(ip, port, backlog);
+	local id = tcp_listen(ip, port, backlog);
 	if id < 0 then
 		local errno = -id
 		log_error("[sys.core] listen", port, "error", errno)
@@ -292,14 +269,14 @@ function core.listen(addr, dispatch, backlog)
 	return id
 end
 
-function core.bind(addr, dispatch)
+function core.udp_bind(addr, dispatch)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
 	if ip == "" then
 		ip = "0::0"
 	end
-	local id = socket_bind(ip, port);
+	local id = udp_bind(ip, port);
 	if id < 0 then
 		log_error("[sys.core] udpbind", port, "error",  id)
 		return nil
@@ -309,7 +286,7 @@ function core.bind(addr, dispatch)
 
 end
 
-function core.connect(addr, dispatch, bind)
+function core.tcp_connect(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -317,7 +294,7 @@ function core.connect(addr, dispatch, bind)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = socket_connect(ip, port, bip, bport)
+	local fd = tcp_connect(ip, port, bip, bport)
 	if fd < 0 then
 		return nil
 	end
@@ -332,7 +309,7 @@ function core.connect(addr, dispatch, bind)
 	return fd
 end
 
-function core.udp(addr, dispatch, bind)
+function core.udp_connect(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
 	local ip, port = smatch(addr, ip_pattern)
@@ -340,7 +317,7 @@ function core.udp(addr, dispatch, bind)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = socket_udp(ip, port, bip, bport)
+	local fd = udp_connect(ip, port, bip, bport)
 	if fd >= 0 then
 		socket_dispatch[fd] = dispatch
 		return fd
@@ -349,7 +326,7 @@ function core.udp(addr, dispatch, bind)
 	end
 end
 
-function core.close(fd)
+function core.socket_close(fd)
 	local sc = socket_dispatch[fd]
 	if sc == nil then
 		return false
@@ -428,7 +405,7 @@ local function dispatch(typ, fd, message, ...)
 	dispatch_wakeup()
 end
 
-silly.dispatch(dispatch)
+c.dispatch(dispatch)
 
 return core
 

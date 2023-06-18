@@ -1,7 +1,9 @@
 local core = require "sys.core"
+local time = require "sys.time"
+local metrics = require "sys.metrics"
 local logger = require "sys.logger"
 local patch = require "sys.patch"
-local socket = require "sys.socket"
+local tcp = require "sys.net.tcp"
 local debugger = require "sys.debugger"
 local type = type
 local pairs = pairs
@@ -63,15 +65,16 @@ end
 
 function console.timerinfo()
 	return format("#Timer\r\n\z
-		resolution:%s\r\n\z
-		active:%s\r\n\z
-		expired:%s\r\n",
-		core.timerrs, core.timerinfo())
+		resolution: %s\r\n\z
+		active: %s\r\n\z
+		expired: %s\r\n",
+		metrics.timerresolution(),
+		metrics.timerinfo())
 end
 
 function console.cpuinfo()
-	local sys, usr = core.cpuinfo()
-	return format("#CPU\r\ncpu_sys:%.2fs\r\ncpu_user:%.2fs", sys, usr)
+	local sys, usr = metrics.cpuinfo()
+	return format("#CPU\r\ncpu_sys: %.2fs\r\ncpu_user: %.2fs", sys, usr)
 end
 
 local function format_size(fmt, size)
@@ -90,42 +93,42 @@ function console.minfo(_, fmt)
 	else
 		fmt = NULL
 	end
-	local sz = core.memused()
-	local rss = core.memrss()
-	local allocated, active, resident = core.allocatorinfo()
+	local sz = metrics.memused()
+	local rss = metrics.memrss()
+	local allocated, active, resident = metrics.memallocatorinfo()
 	local tbl = {
 		"#Memory",
-		"\r\nused_memory:",
+		"\r\nused_memory: ",
 		format_size(fmt, sz),
-		"\r\nused_memory_rss:",
+		"\r\nused_memory_rss: ",
 		format_size(fmt, rss),
-		"\r\nallocator_allocated:",
+		"\r\nallocator_allocated: ",
 		format_size(fmt, allocated),
-		"\r\nallocator_active:",
+		"\r\nallocator_active: ",
 		format_size(fmt, active),
-		"\r\nallocator_resident:",
+		"\r\nallocator_resident: ",
 		format_size(fmt, resident),
-		"\r\nmemory_fragmentation_ratio:",
+		"\r\nmemory_fragmentation_ratio: ",
 		format("%.2f", rss / sz),
-		"\r\nmemory_allocator:",
-		core.allocator,
+		"\r\nmemory_allocator: ",
+		metrics.memallocator(),
 	}
 	return concat(tbl)
 end
 
 function console.qinfo()
-	local sz = core.msgsize();
-	return format("#Message\r\nmessage pending:%d", sz)
+	local sz = metrics.msgsize();
+	return format("#Message\r\nmessage pending: %d", sz)
 end
 
 function console.netinfo()
-	local info = core.netinfo()
-	local a = format("#NET\r\ntcp_listen:%s\r\ntcp_client:%s\r\n\z
-		tcp_connecting:%s\r\ntcp_halfclose:%s\r\n", info.tcplisten,
+	local info = metrics.netinfo()
+	local a = format("#NET\r\ntcp_listen: %s\r\ntcp_client: %s\r\n\z
+		tcp_connecting: %s\r\ntcp_halfclose: %s\r\n", info.tcplisten,
 		info.tcpclient, info.connecting, info.tcphalfclose)
-	local b = format("udp_bind:%s\r\nudp_client:%s\r\n",
+	local b = format("udp_bind: %s\r\nudp_client: %s\r\n",
 		info.udpbind, info.udpclient)
-	local c = format("send_buffer_size:%s\r\n", info.sendsize)
+	local c = format("send_buffer_size: %s\r\n", info.sendsize)
 	return a .. b .. c
 end
 
@@ -148,9 +151,9 @@ function console.socket(_, fd)
 	if not fd then
 		return "lost fd argument"
 	end
-	local info = core.socketinfo(fd)
-	local a, b = format("#Socket\r\nfd:%s\r\nos_fd:%s\r\ntype:%s\r\n\z
-		protocol:%s\r\nsendsize:%s\r\n", info.fd, info.os_fd,
+	local info = metrics.socketinfo(fd)
+	local a, b = format("#Socket\r\nfd: %s\r\nos_fd: %s\r\ntype: %s\r\n\z
+		protocol: %s\r\nsendsize: %s\r\n", info.fd, info.os_fd,
 		info.type, info.protocol, info.sendsize), ""
 	if info.localaddr ~= "" then
 		b = info.localaddr .. "<->" .. info.remoteaddr
@@ -160,13 +163,13 @@ end
 
 function console.info()
 	local tbl = {}
-	local uptime = core.monotonicsec()
+	local uptime = time.monotonicsec()
 	insert(tbl, "#Server")
-	insert(tbl, format("version:%s", core.version))
-	insert(tbl, format("process_id:%s", core.getpid()))
-	insert(tbl, format("multiplexing_api:%s", core.pollapi))
-	insert(tbl, format("uptime_in_seconds:%s", uptime))
-	insert(tbl, format("uptime_in_days:%.2f\r\n", uptime / (24 * 3600)))
+	insert(tbl, format("version: %s", core.version))
+	insert(tbl, format("process_id: %s", core.getpid()))
+	insert(tbl, format("multiplexing_api: %s", metrics.pollapi()))
+	insert(tbl, format("uptime_in_seconds: %s", uptime))
+	insert(tbl, format("uptime_in_days: %.2f\r\n", uptime / (24 * 3600)))
 	insert(tbl, console.cpuinfo())
 	insert(tbl, NULL)
 	insert(tbl, console.qinfo())
@@ -196,10 +199,10 @@ end
 
 function console.debug(fd)
 	local read = function ()
-		return socket.readline(fd)
+		return tcp.readline(fd)
 	end
 	local write = function(dat)
-		return socket.write(fd, dat)
+		return tcp.write(fd, dat)
 	end
 	return debugger.start(read, write)
 end
@@ -231,15 +234,15 @@ local function clear(tbl)
 end
 
 return function (config)
-	socket.listen(config.addr, function(fd, addr)
+	tcp.listen(config.addr, function(fd, addr)
 		logger.info("console come in:", addr)
 		local param = {}
 		local dat = {}
-		socket.write(fd, "\nWelcome to console.\n\n")
-		socket.write(fd, "Type 'help' for help.\n\n")
-		socket.write(fd, prompt)
+		tcp.write(fd, "\nWelcome to console.\n\n")
+		tcp.write(fd, "Type 'help' for help.\n\n")
+		tcp.write(fd, prompt)
 		while true do
-			local l = socket.readline(fd)
+			local l = tcp.readline(fd)
 			if not l then
 				break
 			end
@@ -249,9 +252,9 @@ return function (config)
 			local res = process(fd, config, param, l)
 			if not res then
 				dat[1] = "Bye, Bye\n"
-				socket.write(fd, dat)
+				tcp.write(fd, dat)
 				clear(dat)
-				socket.close(fd)
+				tcp.close(fd)
 				break
 			end
 			if type(res) == "table" then
@@ -261,7 +264,7 @@ return function (config)
 			end
 			dat[2] = "\n"
 			dat[3] = prompt
-			socket.write(fd, dat)
+			tcp.write(fd, dat)
 			clear(dat)
 			for i = 1, #param do
 				param[i] = nil

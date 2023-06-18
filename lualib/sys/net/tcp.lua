@@ -2,6 +2,7 @@ local core = require "sys.core"
 local logger = require "sys.logger"
 local ns = require "sys.netstream"
 local assert = assert
+
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
 local socket_pool = {}
@@ -98,7 +99,7 @@ end
 function socket.listen(port, disp, backlog)
 	assert(port)
 	assert(disp)
-	local portid = core.listen(port, socket_dispatch, backlog)
+	local portid = core.tcp_listen(port, socket_dispatch, backlog)
 	if portid then
 		socket_pool[portid] = {
 			fd = portid,
@@ -110,7 +111,7 @@ function socket.listen(port, disp, backlog)
 end
 
 function socket.connect(ip, bind)
-	local fd = core.connect(ip, socket_dispatch, bind)
+	local fd = core.tcp_connect(ip, socket_dispatch, bind)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -135,7 +136,7 @@ function socket.close(fd)
 		wakeup(s, false)
 	end
 	del_socket(s)
-	core.close(fd)
+	core.socket_close(fd)
 	return true
 end
 
@@ -195,50 +196,8 @@ function socket.recvsize(fd)
 	return ns.size(s.sbuffer)
 end
 
-socket.write = core.write
+socket.write = core.tcp_send
 socket.sendsize = core.sendsize
-
----------udp
-local function new_udp(fd, callback)
-	local s = {
-		fd = fd,
-		callback = callback,
-	}
-	socket_pool[fd] = s
-end
-
---udp client can be closed(because it use connect)
-local function udp_dispatch(typ, fd, message, addr)
-	local data
-	local cb = socket_pool[fd].callback
-	if typ == "udp" then
-		data = ns.todata(message)
-		cb(data, addr)
-	elseif typ == "close" then
-		cb()
-		socket_pool[fd] = nil
-	else
-		assert(false, "type must be 'udp' or 'close'")
-	end
-end
-
-function socket.bind(addr, callback)
-	local fd = core.bind(addr, udp_dispatch)
-	if fd  then
-		new_udp(fd, callback)
-	end
-	return fd
-end
-
-function socket.udp(addr, callback, bindip)
-	local fd = core.udp(addr, udp_dispatch, bindip)
-	if fd  then
-		new_udp(fd, callback)
-	end
-	return fd
-end
-
-socket.udpwrite = core.udpwrite
 
 return socket
 

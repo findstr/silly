@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local socket = require "sys.socket"
+local udp = require "sys.net.udp"
 local crypto = require "sys.crypto"
 local testaux = require "testaux"
 
@@ -10,7 +10,7 @@ local queue = {}
 
 local function udp_server(data, addr)
 	core.sleep(100)
-	socket.udpwrite(server_fd, data, addr)
+	udp.send(server_fd, data, addr)
 end
 
 local function udp_client(data, addr)
@@ -19,14 +19,14 @@ local function udp_client(data, addr)
 end
 
 return function()
-	server_fd = socket.bind(":8989", udp_server)
+	server_fd = udp.bind(":8989", udp_server)
 	testaux.asserteq(not server_fd, false, "upd bind")
-	client_fd = socket.udp("127.0.0.1:8989", udp_client)
+	client_fd = udp.connect("127.0.0.1:8989", udp_client)
 	testaux.asserteq(not client_fd, false, "udp bridge")
 	for i = 1, 20 do
 		local d = crypto.randomkey(8)
 		queue[i] = d
-		socket.udpwrite(client_fd, d)
+		udp.send(client_fd, d)
 		core.sleep(150)
 	end
 end

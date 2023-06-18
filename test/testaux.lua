@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local time = require "sys.time"
 local json = require "sys.json"
 local c = require "test.aux.c"
 local type = type
@@ -15,7 +16,7 @@ for i = 1, #meta_str do
 	meta[#meta + 1] = meta_str:sub(i, i)
 end
 
-math.randomseed(core.now())
+math.randomseed(time.now())
 
 --inhierit testaux.c function
 for k, v in pairs(c) do

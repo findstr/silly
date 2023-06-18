@@ -7,6 +7,7 @@ local pairs = pairs
 local assert = assert
 local pack = string.pack
 local unpack = string.unpack
+local tcp_send = core.tcp_send
 local queue = np.create()
 local NIL = {}
 local rpc = {}
@@ -20,7 +21,7 @@ local function gc(obj)
 	if fd < 0 then
 		return
 	end
-	core.close(fd)
+	core.socket_close(fd)
 end
 
 -----------server
@@ -38,7 +39,7 @@ local function server_listen(self)
 		if not ok then
 			logger.error("[rpc.server] EVENT.accept", err)
 			np.clear(queue, fd)
-			core.close(fd)
+			core.socket_close(fd)
 		end
 	end
 
@@ -82,7 +83,7 @@ local function server_listen(self)
 			end
 			local bodydat, sz = proto:encode(ret, res, true)
 			bodydat, sz = proto:pack(bodydat, sz, true)
-			core.write(fd, np.rpcpack(bodydat, sz, ret, session))
+			tcp_send(fd, np.rpcpack(bodydat, sz, ret, session))
 			--next
 			fd, buf, size, cmd, session = np.rpcpop(queue)
 			if not fd then
@@ -95,7 +96,7 @@ local function server_listen(self)
 		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	local fd, errno = core.listen(self.addr, callback, self.backlog)
+	local fd, errno = core.tcp_listen(self.addr, callback, self.backlog)
 	self.fd = fd
 	return fd, errno
 end
@@ -220,7 +221,7 @@ local function doconnect(self)
 		np.message(queue, message)
 		assert(EVENT[type])(fd, ...)
 	end
-	return core.connect(addr, callback)
+	return core.tcp_connect(addr, callback)
 end
 
 --return true/false
@@ -236,7 +237,7 @@ local function checkconnect(self)
 		local fd = doconnect(self)
 		if self.closed then
 			if fd then
-				core.close(fd)
+				core.socket_close(fd)
 				fd = nil
 			end
 		end
@@ -288,7 +289,7 @@ function client.send(self, cmd, body)
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
-	return core.write(self.fd, np.rpcpack(body, sz, cmd, session))
+	return tcp_send(self.fd, np.rpcpack(body, sz, cmd, session))
 end
 
 function client.call(self, cmd, body)
@@ -304,7 +305,7 @@ function client.call(self, cmd, body)
 	local session = core.genid()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
-	core.write(self.fd, np.rpcpack(body, sz, cmd, session))
+	tcp_send(self.fd, np.rpcpack(body, sz, cmd, session))
 	return waitfor(self, session)
 end
 

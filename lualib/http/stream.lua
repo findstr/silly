@@ -1,4 +1,4 @@
-local socket = require "sys.socket"
+local tcp = require "sys.net.tcp"
 local dns = require "sys.dns"
 local tls = require "sys.tls"
 local tonumber = tonumber
@@ -132,31 +132,31 @@ local tls_mt = {
 	__index = nil,
 }
 
-local socket_mt = {
-	close = wrap_close(socket.close),
-	read = wrap_one(socket.read),
-	write = wrap_one(socket.write),
-	readline = wrap_one(socket.readline),
+local tcp_mt = {
+	close = wrap_close(tcp.close),
+	read = wrap_one(tcp.read),
+	write = wrap_one(tcp.write),
+	readline = wrap_one(tcp.readline),
 	recvrequest = recv_request,
 	__gc = gc,
 	__index = nil,
 }
 
 tls_mt.__index = tls_mt
-socket_mt.__index = socket_mt
+tcp_mt.__index = tcp_mt
 
 local scheme_io = {
 	["https"] = tls_mt,
 	["wss"] = tls_mt,
-	["http"] = socket_mt,
-	["ws"] = socket_mt,
+	["http"] = tcp_mt,
+	["ws"] = tcp_mt,
 }
 
 local scheme_connect = {
 	["https"] = tls.connect,
 	["wss"] = tls.connect,
-	["http"] = socket.connect,
-	["ws"] = socket.connect,
+	["http"] = tcp.connect,
+	["ws"] = tcp.connect,
 }
 
 function M.accept(scheme, fd)

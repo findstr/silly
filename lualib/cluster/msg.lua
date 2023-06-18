@@ -16,7 +16,7 @@ local function gc(obj)
 	if obj.fd < 0 then
 		return
 	end
-	core.close(obj.fd)
+	core.socket_close(obj.fd)
 	obj.fd = false
 end
 
@@ -29,7 +29,7 @@ local function event_callback(proto, accept_cb, close_cb, data_cb)
 		local ok, err = core.pcall(accept_cb, fd, addr)
 		if not ok then
 			logger.error("[msg] EVENT.accept", err)
-			core.close(fd)
+			core.socket_close(fd)
 		end
 	end
 	function EVENT.close(fd, errno)
@@ -73,11 +73,11 @@ local function sendmsg(self, fd, cmd, data)
 	end
 	local dat, sz = proto:encode(cmd, data, true)
 	dat, sz= proto:pack(dat, sz, true)
-	return core.write(fd, np.msgpack(dat, sz, cmd))
+	return core.tcp_send(fd, np.msgpack(dat, sz, cmd))
 end
 msgserver.send = sendmsg
 msgserver.sendbin = function(self, fd, cmd, bin)
-	return core.write(fd, np.msgpack(bin, cmd))
+	return core.tcp_send(fd, np.msgpack(bin, cmd))
 end
 msgserver.multipack = function(self, cmd, dat, n)
 	local proto = self.proto
@@ -92,7 +92,7 @@ msgserver.multipack = function(self, cmd, dat, n)
 end
 
 msgserver.multicast = function(self, fd, data, sz)
-	return core.multicast(fd, data, sz)
+	return core.tcp_multicast(fd, data, sz)
 end
 
 function msgserver.stop(self)
@@ -100,7 +100,7 @@ function msgserver.stop(self)
 end
 
 function msgserver.close(self, fd)
-	core.close(fd)
+	core.socket_close(fd)
 end
 
 -----client
@@ -118,7 +118,7 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local fd = core.connect(self.addr, self.callback)
+		local fd = core.tcp_connect(self.addr, self.callback)
 		if not fd then
 			self.fd = false
 		else
@@ -175,7 +175,7 @@ function msg.listen(conf)
 	local data_cb = assert(conf.data, "servercb data")
 	obj.callback = event_callback(conf.proto, accept_cb, close_cb, data_cb)
 	setmetatable(obj, servermt)
-	local fd, errno = core.listen(obj.addr, obj.callback, obj.backlog)
+	local fd, errno = core.tcp_listen(obj.addr, obj.callback, obj.backlog)
 	if not fd then
 		return nil, errno
 	end

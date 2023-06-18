@@ -1,17 +1,18 @@
 local core = require "sys.core"
+local metrics = require "sys.metrics"
 local json = require "sys.json"
-local socket = require "sys.socket"
+local tcp = require "sys.net.tcp"
 local tls = require "sys.tls"
 local crypto = require "sys.crypto"
 local testaux = require "testaux"
 local IO
 local listen_cb
-local listenfd = socket.listen(":10001", function(fd, addr)
+local listenfd = tcp.listen(":10001", function(fd, addr)
 	if listen_cb then
 		listen_cb(fd)
 		listen_cb = nil
 	else
-		socket.close(fd)
+		tcp.close(fd)
 	end
 end)
 
@@ -34,50 +35,50 @@ local function test_limit(port)
 	local dat2 = crypto.randomkey(1024)
 	local listen_func = function(fd)
 		print("write 1Kbyte data")
-		core.write(fd, dat1)
+		tcp.write(fd, dat1)
 		core.sleep(500)
 		print("write 1Kbyte data")
-		core.write(fd, dat2)
+		tcp.write(fd, dat2)
 	end
 	print("==test dynamic limit")
 	listen_cb = listen_func
-	local fd = socket.connect("127.0.0.1" .. port)
-	print("limit socket buffer to 1024", fd)
-	socket.limit(fd, 1024)
+	local fd = tcp.connect("127.0.0.1" .. port)
+	print("limit tcp buffer to 1024", fd)
+	tcp.limit(fd, 1024)
 	print("wait for recv data")
 	core.sleep(1000)
-	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
-	socket.limit(fd, 2048)
+	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow pause")
+	tcp.limit(fd, 2048)
 	core.sleep(1000)
-	testaux.asserteq(socket.recvsize(fd), 2048, "socket flow limit change")
-	socket.close(fd)
+	testaux.asserteq(tcp.recvsize(fd), 2048, "tcp flow limit change")
+	tcp.close(fd)
 	print("==test read part")
 	listen_cb = listen_func
-	local fd = socket.connect("127.0.0.1" .. port)
-	print("limit socket buffer to 1024", fd)
-	socket.limit(fd, 1024)
+	local fd = tcp.connect("127.0.0.1" .. port)
+	print("limit tcp buffer to 1024", fd)
+	tcp.limit(fd, 1024)
 	print("wait for recv data")
 	core.sleep(1000)
-	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
-	local datx = socket.readline(fd)
-	local daty = socket.read(fd, 768)
-	local datz = socket.read(fd, 768)
-	testaux.asserteq(datx..daty..datz, dat1..dat2, "socket flow read 2048")
-	socket.close(fd)
+	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow pause")
+	local datx = tcp.readline(fd)
+	local daty = tcp.read(fd, 768)
+	local datz = tcp.read(fd, 768)
+	testaux.asserteq(datx..daty..datz, dat1..dat2, "tcp flow read 2048")
+	tcp.close(fd)
 	print("==test readall")
 	listen_cb = listen_func
-	local fd = socket.connect("127.0.0.1" .. port)
-	print("limit socket buffer to 1024", fd)
-	socket.limit(fd, 1024)
+	local fd = tcp.connect("127.0.0.1" .. port)
+	print("limit tcp buffer to 1024", fd)
+	tcp.limit(fd, 1024)
 	print("wait for recv data")
 	core.sleep(1000)
-	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
-	local datx = socket.readall(fd)
-	testaux.asserteq(datx, dat1, "socket flow readall 1024")
+	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow pause")
+	local datx = tcp.readall(fd)
+	testaux.asserteq(datx, dat1, "tcp flow readall 1024")
 	core.sleep(1000)
-	local daty = socket.readall(fd)
-	testaux.asserteq(daty, dat2, "socket flow readall 1024")
-	socket.close(fd)
+	local daty = tcp.readall(fd)
+	testaux.asserteq(daty, dat2, "tcp flow readall 1024")
+	tcp.close(fd)
 	print("==test write function normal")
 	local recvfd
 	local size = 0
@@ -85,60 +86,60 @@ local function test_limit(port)
 	local dat3 = crypto.randomkey(1024 * 1024)
 	listen_cb = function(fd)
 		recvfd = fd
-		socket.limit(fd, 1)
+		tcp.limit(fd, 1)
 		print("write 1Kbyte data")
-		core.write(fd, dat1)
+		tcp.write(fd, dat1)
 		core.sleep(500)
 		print("write 1Kbyte data")
-		core.write(fd, dat2)
+		tcp.write(fd, dat2)
 	end
-	local fd = socket.connect("127.0.0.1" .. port)
-	socket.limit(fd, 1024)
-	socket.write(fd, buf1[1])
+	local fd = tcp.connect("127.0.0.1" .. port)
+	tcp.limit(fd, 1024)
+	tcp.write(fd, buf1[1])
 	core.sleep(1000)
-	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow pause")
+	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow pause")
 	for i = 1, 1024 do
 		size = size + #dat3
 		buf1[#buf1 + 1] = dat3
-		socket.write(fd, dat3)
+		tcp.write(fd, dat3)
 		core.sleep(100)
-		if socket.sendsize(fd) > 0 then
+		if tcp.sendsize(fd) > 0 then
 			break
 		end
 	end
-	local datx = socket.read(fd, 1024)
-	local daty = socket.read(fd, 1024)
-	testaux.asserteq(datx .. daty, dat1 .. dat2, "socket flow read 2048")
-	socket.limit(recvfd, 2*size)
-	local datz = socket.read(recvfd, size+1)
+	local datx = tcp.read(fd, 1024)
+	local daty = tcp.read(fd, 1024)
+	testaux.asserteq(datx .. daty, dat1 .. dat2, "tcp flow read 2048")
+	tcp.limit(recvfd, 2*size)
+	local datz = tcp.read(recvfd, size+1)
 	local datw = table.concat(buf1)
-	testaux.asserteq(datz, datw, "socket flow write check")
-	socket.close(fd)
+	testaux.asserteq(datz, datw, "tcp flow write check")
+	tcp.close(fd)
 	print("==test read large then limit")
 	local recvfd
 	listen_cb = function(fd)
 		recvfd = fd
 		print("write 1Kbyte data")
-		core.write(fd, dat1)
+		tcp.write(fd, dat1)
 		core.sleep(500)
 		print("write 1Kbyte data")
-		core.write(fd, dat2)
+		tcp.write(fd, dat2)
 	end
-	local fd = socket.connect("127.0.0.1" .. port)
-	socket.limit(fd, 1024)
+	local fd = tcp.connect("127.0.0.1" .. port)
+	tcp.limit(fd, 1024)
 	core.sleep(100)
-	local dat = socket.read(fd, 2048)
-	testaux.asserteq(dat, dat1 .. dat2, "socket flow read 2048")
+	local dat = tcp.read(fd, 2048)
+	testaux.asserteq(dat, dat1 .. dat2, "tcp flow read 2048")
 	print("write 1Kbyte data")
-	core.write(recvfd, dat1)
+	tcp.write(recvfd, dat1)
 	core.sleep(500)
 	print("write 1Kbyte data")
-	core.write(recvfd, dat2)
+	tcp.write(recvfd, dat2)
 	core.sleep(500)
-	testaux.asserteq(socket.recvsize(fd), 1024, "socket flow limit 1024")
-	local dat = socket.read(fd, 2048)
-	testaux.asserteq(dat, dat1 .. dat2, "socket flow read 2048")
-	socket.close(fd)
+	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow limit 1024")
+	local dat = tcp.read(fd, 2048)
+	testaux.asserteq(dat, dat1 .. dat2, "tcp flow read 2048")
+	tcp.close(fd)
 end
 
 local function test_read(port)
@@ -191,8 +192,8 @@ local function test_read(port)
 	end
 	WAIT = core.running()
 	core.wait(WAIT)
-	testaux.asserteq(recv_nr, send_nr, "socket send type count")
-	testaux.asserteq(recv_sum, send_sum, "socket send checksum")
+	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
+	testaux.asserteq(recv_sum, send_sum, "tcp send checksum")
 	IO.close(fd)
 end
 
@@ -393,7 +394,7 @@ local function test_close(port)
 	testaux.asserteq(dat, false, "client recv `false` ")
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , false, "client close dummy")
-	--CASE8:cilent read, server write to an closed socket
+	--CASE8:cilent read, server write to an closed tcp
 	print("CASE8")
 	listen_cb = function(fd, addr)
 		local ok = IO.write(fd, "po")
@@ -428,21 +429,21 @@ local function test_close(port)
 end
 
 return function()
-	local info1 = core.netinfo()
+	local info1 = metrics.netinfo()
 	print(json.encode(info1))
 	testaux.module("socet")
 	test_limit(":10001")
 	core.sleep(100)
-	local info2 = core.netinfo()
+	local info2 = metrics.netinfo()
 	print(json.encode(info2))
 	testaux.asserteq(info1, info2, "check limit clear")
-	IO = socket
+	IO = tcp
 	testaux.module("socet")
 	test_read(":10001")
 	test_close(":10001")
 	core.sleep(100)
-	local info3 = core.netinfo()
-	testaux.asserteq(info1, info3, "check socket clear")
+	local info3 = metrics.netinfo()
+	testaux.asserteq(info1, info3, "check tcp clear")
 
 	IO = tls
 	testaux.module("tls")
@@ -450,7 +451,7 @@ return function()
 	test_read(":10002")
 	test_close(":10002")
 	core.sleep(100)
-	local info4 = core.netinfo()
+	local info4 = metrics.netinfo()
 	testaux.asserteq(info1, info4, "check tls clear")
 end
 
