@@ -126,7 +126,7 @@ end
 
 
 local function connect_normal(ip, bind, hostname, alpn)
-	local fd = core.connect(ip, socket_dispatch, bind)
+	local fd = core.tcp_connect(ip, socket_dispatch, bind)
 	if not fd then
 		return nil
 	end
@@ -150,7 +150,7 @@ end
 function M.listen(conf)
 	assert(conf.port)
 	assert(conf.disp)
-	local portid = core.listen(conf.port, socket_dispatch, conf.backlog)
+	local portid = core.tcp_listen(conf.port, socket_dispatch, conf.backlog)
 	if not portid then
 		return nil
 	end
@@ -173,7 +173,7 @@ function M.close(fd)
 		wakeup(s, false)
 	end
 	del_socket(s)
-	core.close(fd)
+	core.socket_close(fd)
 	return true
 end
 
