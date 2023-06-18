@@ -13,7 +13,6 @@
 #include "silly.h"
 #include "compiler.h"
 #include "silly_log.h"
-#include "silly_env.h"
 #include "silly_run.h"
 #include "silly_worker.h"
 #include "silly_socket.h"
@@ -90,30 +89,6 @@ dispatch(lua_State *L, struct silly_message *sm)
 	return ;
 }
 
-
-
-static int
-lgetenv(lua_State *L)
-{
-	const char *key = luaL_checkstring(L, 1);
-	const char *value = silly_env_get(key);
-	if (value)
-		lua_pushstring(L, value);
-	else
-		lua_pushnil(L);
-
-	return 1;
-}
-
-static int
-lsetenv(lua_State *L)
-{
-	const char *key = luaL_checkstring(L, 1);
-	const char *value = luaL_checkstring(L, 2);
-	silly_env_set(key, value);
-	return 0;
-}
-
 static int
 lexit(lua_State *L)
 {
@@ -151,45 +126,10 @@ lgetpid(lua_State *L)
 }
 
 static int
-ltimeout(lua_State *L)
+lversion(lua_State *L)
 {
-	uint32_t expire;
-	uint32_t session;
-	expire = luaL_checkinteger(L, 1);
-	session = silly_timer_timeout(expire);
-	lua_pushinteger(L, session);
-	return 1;
-}
-
-static int
-ltimenow(lua_State *L)
-{
-	uint64_t now = silly_timer_now();
-	lua_pushinteger(L, now);
-	return 1;
-}
-
-static int
-ltimenowsec(lua_State *L)
-{
-	uint64_t now = silly_timer_nowsec();
-	lua_pushinteger(L, now);
-	return 1;
-}
-
-static int
-ltimemonotonic(lua_State *L)
-{
-	uint64_t monotonic = silly_timer_monotonic();
-	lua_pushinteger(L, monotonic);
-	return 1;
-}
-
-static int
-ltimemonotonicsec(lua_State *L)
-{
-	uint64_t monotonic = silly_timer_monotonicsec();
-	lua_pushinteger(L, monotonic);
+	const char *ver = SILLY_VERSION;
+	lua_pushstring(L, ver);
 	return 1;
 }
 
@@ -202,45 +142,18 @@ ldispatch(lua_State *L)
 	return 0;
 }
 
-typedef int (connect_t)(const char *ip, const char *port,
-		const char *bip, const char *bport);
-
 static int
-socketconnect(lua_State *L, connect_t *connect)
+ltimeout(lua_State *L)
 {
-	int err;
-	const char *ip;
-	const char *port;
-	const char *bip;
-	const char *bport;
-	ip = luaL_checkstring(L, 1);
-	port = luaL_checkstring(L, 2);
-	bip = luaL_checkstring(L, 3);
-	bport = luaL_checkstring(L, 4);
-	err = connect(ip, port, bip, bport);
-	lua_pushinteger(L, err);
+	uint32_t expire;
+	uint32_t session;
+	expire = luaL_checkinteger(L, 1);
+	session = silly_timer_timeout(expire);
+	lua_pushinteger(L, session);
 	return 1;
 }
 
-static int
-ltcpconnect(lua_State *L)
-{
-	return socketconnect(L, silly_socket_connect);
-}
-
-static int
-ltcplisten(lua_State *L)
-{
-	const char *ip = luaL_checkstring(L, 1);
-	const char *port = luaL_checkstring(L, 2);
-	int backlog = luaL_checkinteger(L, 3);
-	int err = silly_socket_listen(ip, port, backlog);
-	lua_pushinteger(L, err);
-	return 1;
-}
-
-//NOTE:this function may cocurrent
-
+//socket
 struct multicasthdr {
 	uint32_t ref;
 	char mask;
@@ -249,6 +162,7 @@ struct multicasthdr {
 
 #define	MULTICAST_SIZE offsetof(struct multicasthdr, data)
 
+//NOTE:this function may cocurrent
 static void
 multifinalizer(void *buff)
 {
@@ -343,6 +257,44 @@ tablebuffer(lua_State *L, int idx, size_t *size)
 	*size = total;
 	return p;
 }
+
+typedef int (connect_t)(const char *ip, const char *port,
+		const char *bip, const char *bport);
+
+static int
+socketconnect(lua_State *L, connect_t *connect)
+{
+	int err;
+	const char *ip;
+	const char *port;
+	const char *bip;
+	const char *bport;
+	ip = luaL_checkstring(L, 1);
+	port = luaL_checkstring(L, 2);
+	bip = luaL_checkstring(L, 3);
+	bport = luaL_checkstring(L, 4);
+	err = connect(ip, port, bip, bport);
+	lua_pushinteger(L, err);
+	return 1;
+}
+
+static int
+ltcpconnect(lua_State *L)
+{
+	return socketconnect(L, silly_socket_connect);
+}
+
+static int
+ltcplisten(lua_State *L)
+{
+	const char *ip = luaL_checkstring(L, 1);
+	const char *port = luaL_checkstring(L, 2);
+	int backlog = luaL_checkinteger(L, 3);
+	int err = silly_socket_listen(ip, port, backlog);
+	lua_pushinteger(L, err);
+	return 1;
+}
+
 
 static int
 ltcpsend(lua_State *L)
@@ -480,193 +432,34 @@ lsendsize(lua_State *L)
 	return 1;
 }
 
-static int
-lversion(lua_State *L)
-{
-	const char *ver = SILLY_VERSION;
-	lua_pushstring(L, ver);
-	return 1;
-}
 
-static int
-lmemallocator(lua_State *L)
-{
-	const char *ver;
-	ver = silly_allocator();
-	lua_pushstring(L, ver);
-	return 1;
-}
-
-static int
-lmemallocatorinfo(lua_State *L)
-{
-	size_t allocated, active, resident;
-	silly_allocator_info(&allocated, &active, &resident);
-	lua_pushinteger(L, allocated);
-	lua_pushinteger(L, active);
-	lua_pushinteger(L, resident);
-	return 3;
-}
-static int
-lmemused(lua_State *L)
-{
-	size_t sz;
-	sz = silly_memused();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lmemrss(lua_State *L)
-{
-	size_t sz;
-	sz = silly_memrss();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lmsgsize(lua_State *L)
-{
-	size_t sz;
-	sz = silly_worker_msgsize();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lcpuinfo(lua_State *L)
-{
-	struct rusage ru;
-	float stime,utime;
-	getrusage(RUSAGE_SELF, &ru);
-	stime = (float)ru.ru_stime.tv_sec;
-	stime += (float)ru.ru_stime.tv_usec / 1000000;
-	utime = (float)ru.ru_utime.tv_sec;
-	utime += (float)ru.ru_utime.tv_usec / 1000000;
-	lua_pushnumber(L, stime);
-	lua_pushnumber(L, utime);
-	return 2;
-}
-
-static int
-lpollapi(lua_State *L)
-{
-	const char *api = silly_socket_pollapi();
-	lua_pushstring(L, api);
-	return 1;
-}
-
-static inline void
-table_set_int(lua_State *L, int table, const char *k, int v)
-{
-	lua_pushinteger(L, v);
-	lua_setfield(L, table-1, k);
-}
-
-static inline void
-table_set_str(lua_State *L, int table, const char *k, const char *v)
-{
-	lua_pushstring(L, v);
-	lua_setfield(L, table-1, k);
-}
-
-static int
-lnetinfo(lua_State *L)
-{
-	struct silly_netinfo info;
-	silly_socket_netinfo(&info);
-	lua_newtable(L);
-	table_set_int(L, -1, "tcplisten", info.tcplisten);
-	table_set_int(L, -1, "udpbind", info.udpbind);
-	table_set_int(L, -1, "connecting", info.connecting);
-	table_set_int(L, -1, "udpclient", info.udpclient);
-	table_set_int(L, -1, "tcpclient", info.tcpclient);
-	table_set_int(L, -1, "tcphalfclose", info.tcphalfclose);
-	table_set_int(L, -1, "sendsize", info.sendsize);
-	return 1;
-}
-
-static int
-ltimerinfo(lua_State *L)
-{
-	uint32_t active, expired;
-	active = silly_timer_info(&expired);
-	lua_pushinteger(L, active);
-	lua_pushinteger(L, expired);
-	return 2;
-}
-
-static int
-lsocketinfo(lua_State *L)
-{
-	int sid;
-	struct silly_socketinfo info;
-	sid = luaL_checkinteger(L, 1);
-	silly_socket_socketinfo(sid, &info);
-	lua_newtable(L);
-	table_set_int(L, -1, "fd", info.sid);
-	table_set_int(L, -1, "os_fd", info.fd);
-	table_set_int(L, -1, "sendsize", info.sendsize);
-	table_set_str(L, -1, "type", info.type);
-	table_set_str(L, -1, "protocol", info.protocol);
-	table_set_str(L, -1, "localaddr", info.localaddr);
-	table_set_str(L, -1, "remoteaddr", info.remoteaddr);
-	return 1;
-}
-
-static int
-ltimerresolution(lua_State *L)
-{
-	lua_pushinteger(L, TIMER_RESOLUTION);
-	return 1;
-}
 
 int
-luaopen_sys_silly(lua_State *L)
+luaopen_sys_core_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core
+		{"version", lversion},
 		{"dispatch", ldispatch},
-		{"getenv", lgetenv},
-		{"setenv", lsetenv},
-		{"exit", lexit},
+		{"timeout", ltimeout},
 		{"genid", lgenid},
 		{"tostring", ltostring},
 		{"getpid", lgetpid},
-		//timer
-		{"timeout", ltimeout},
-		{"timenow", ltimenow},
-		{"timenowsec", ltimenowsec},
-		{"timemonotonic", ltimemonotonic},
-		{"timemonotonicsec", ltimemonotonicsec},
+		{"exit", lexit},
 		//socket
-		{"connect", ltcpconnect},
-		{"listen", ltcplisten},
+		{"tcp_connect", ltcpconnect},
+		{"tcp_listen", ltcplisten},
+		{"tcp_send", ltcpsend},
+		{"tcp_multicast", ltcpmulticast},
+		{"udp_bind", ludpbind},
+		{"udp_connect", ludpconnect},
+		{"udp_send", ludpsend},
+		{"sendsize", lsendsize},
 		{"multipack", lmultipack},
 		{"multifree", lmultifree},
-		{"send", ltcpsend},
-		{"multicast", ltcpmulticast},
-		{"bind", ludpbind},
-		{"udp", ludpconnect},
-		{"udpsend", ludpsend},
+		{"readctrl", lreadctrl},
 		{"ntop", lntop},
 		{"close", lclose},
-		{"readctrl", lreadctrl},
-		{"sendsize", lsendsize},
-		//probe
-		{"version", lversion},
-		{"memused", lmemused},
-		{"memrss", lmemrss},
-		{"memallocator", lmemallocator},
-		{"memallocatorinfo", lmemallocatorinfo},
-		{"msgsize", lmsgsize},
-		{"cpuinfo", lcpuinfo},
-		{"pollapi", lpollapi},
-		{"netinfo", lnetinfo},
-		{"timerinfo", ltimerinfo},
-		{"socketinfo", lsocketinfo},
-		{"timerresolution", ltimerresolution},
 		//end
 		{NULL, NULL},
 	};

@@ -1,14 +1,15 @@
 local core = require "sys.core"
+local env = require "sys.env"
 local testaux = require "testaux"
 
 local modules = {
 	"testjson",
 	"testdom",
 	"testtimer",
-	"testsocket",
+	"testtcp",
+	"testudp",
 	"testdns",
 	"testrpc",
-	"testudp",
 	"testwakeup",
 	"testwaitgroup",
 	"testmutex",
@@ -33,7 +34,9 @@ local function print(...)
 	gprint(M, ...)
 end
 
-assert(core.envget("hello.1.1") == "world")
+assert(env.get("hello.1.1") == "world")
+env.set("hello.1.1", "hello")
+assert(env.get("hello.1.1") == "hello")
 
 _ENV.print = print
 

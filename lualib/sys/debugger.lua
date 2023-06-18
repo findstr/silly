@@ -1,6 +1,5 @@
 local core = require "sys.core"
 local logger = require "sys.logger"
-local socket = require "sys.socket"
 local helper = require "sys.debugger.helper"
 local sethook = helper.hook
 local getinfo = debug.getinfo

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local logger = require "sys.logger"
-local socket = require "sys.socket"
+local tcp = require "sys.net.tcp"
 local tls = require "sys.tls"
 local stream = require "http.stream"
 
@@ -167,7 +167,7 @@ local server = {
 		local handler = conf.handler
 		local port = conf.port
 		if port then
-			fd1 = socket.listen(port, httpd("http", handler))
+			fd1 = tcp.listen(port, httpd("http", handler))
 		end
 		if conf.tls_port then
 			fd2 = tls.listen {

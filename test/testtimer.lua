@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local time = require "sys.time"
 local testaux = require "testaux"
 
 local context = {}
@@ -6,10 +7,10 @@ local total = 30
 local WAIT
 
 local function gen_closure(n)
-	local now = core.now()
+	local now = time.now()
 	return function (s)
 		assert(context[s] == n)
-		local delta = core.now() - now
+		local delta = time.now() - now
 		delta = math.abs(delta - 100 - n)
 		--precise is 50ms
 		testaux.assertle(delta, 100, "timer check delta")

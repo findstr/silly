@@ -1,5 +1,4 @@
 local core = require "sys.core"
-local socket = require "sys.socket"
 local dns = require "sys.dns"
 local testaux = require "testaux"
 
