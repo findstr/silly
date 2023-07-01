@@ -7,6 +7,7 @@
 #include "silly.h"
 #include "compiler.h"
 #include "silly_timer.h"
+#include "silly_trace.h"
 #include "silly_log.h"
 
 static char pid[16];
@@ -16,14 +17,18 @@ static __thread struct {
 	char buf[64];
 	char *sstr;
 	char *mstr;
+	char *tstr;
 	char *term;
 	time_t sec;
 	time_t msec;
+	silly_trace_id_t traceid;
 } head_cache = {
 	"",
 	NULL,
 	NULL,
 	NULL,
+	NULL,
+	0,
 	0,
 	0,
 };
@@ -33,6 +38,13 @@ static char level_names[] = {
 	'I',
 	'W',
 	'E',
+};
+
+static char hex[] = {
+	'0', '1', '2', '3',
+	'4', '5', '6', '7',
+	'8', '9', 'a', 'b',
+	'c', 'd', 'e', 'f',
 };
 
 void
@@ -59,42 +71,72 @@ silly_log_getlevel()
 	return log_level;
 }
 
+#define BUILD_PID   (0)
+#define BUILD_SEC   (1)
+#define BUILD_MSEC  (2)
+#define BUILD_TRACE (3)
+#define BUILD_NONE  (4)
+
 static inline void
 fmttime()
 {
+	int n;
+	char *end;
+	struct tm tm;
 	uint64_t now = silly_timer_now();
 	time_t sec = now / 1000;
 	int ms = now % 1000;
+	silly_trace_id_t traceid = silly_trace_get();
+	int build_step;
 	if (head_cache.sstr == NULL) {
+		build_step = BUILD_PID;
+	} else if (sec != head_cache.sec) {
+		build_step = BUILD_SEC;
+		head_cache.sec= sec;
+	} else if (ms != head_cache.msec) {
+		build_step = BUILD_MSEC;
+		head_cache.msec = ms;
+	} else if (traceid != head_cache.traceid) {
+		build_step = BUILD_TRACE;
+		head_cache.traceid = traceid;
+	} else {
+		build_step = BUILD_NONE;
+	}
+	switch (build_step) {
+	case BUILD_PID:
 		memcpy(head_cache.buf, pid, pidlen);
 		head_cache.sstr = head_cache.buf + pidlen;
-	}
-	if (sec != head_cache.sec) {
-		int len;
-		struct tm tm;
-		char *end = &head_cache.buf[sizeof(head_cache.buf)];
-		head_cache.sec= sec;
+		//fallthrough
+	case BUILD_SEC:
+		end = &head_cache.buf[sizeof(head_cache.buf)];
 		localtime_r(&sec, &tm);
-		len = strftime(
+		n = strftime(
 			head_cache.sstr,
 			end - head_cache.sstr,
 			"%Y-%m-%d %H:%M:%S", &tm
 		);
-		head_cache.mstr = head_cache.sstr + len;
-	}
-	if (ms != head_cache.msec) {
-		int len;
-		char *end = &head_cache.buf[sizeof(head_cache.buf)];
-		head_cache.msec = ms;
+		head_cache.mstr = head_cache.sstr + n;
+		//fallthrough
+	case BUILD_MSEC:
+		end = &head_cache.buf[sizeof(head_cache.buf)];
 		//NOTE: the ms is less than 100,
 		//and the head_cache.str is ensure enough
 		//so use sprintf instead of snprintf
-		len = snprintf(
+		n = snprintf(
 			head_cache.mstr,
 			end - head_cache.mstr,
 			".%03d ", ms
 		);
-		head_cache.term = head_cache.mstr + len;
+		head_cache.tstr = head_cache.mstr + n;
+		//fallthrough
+	case BUILD_TRACE:
+		for (n = 15; n >= 0; n--) {
+			head_cache.tstr[n] = hex[traceid & 0xf];
+			traceid >>= 4;
+		}
+		head_cache.tstr[16] = ' ';
+		head_cache.term = head_cache.tstr + 17;
+		break;
 	}
 	return;
 }
