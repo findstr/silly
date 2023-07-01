@@ -52,10 +52,11 @@ local function server_listen(self)
 	end
 
 	function EVENT.data()
-		local fd, buf, size, cmd, session = np.rpcpop(queue)
+		local fd, buf, size, cmd, session, traceid = np.rpcpop(queue)
 		if not fd then
 			return
 		end
+		local otrace = core.trace(traceid)
 		core.fork(EVENT.data)
 		while true do
 			local dat
@@ -83,14 +84,15 @@ local function server_listen(self)
 			end
 			local bodydat, sz = proto:encode(ret, res, true)
 			bodydat, sz = proto:pack(bodydat, sz, true)
-			tcp_send(fd, np.rpcpack(bodydat, sz, ret, session))
+			tcp_send(fd, np.rpcpack(bodydat, sz, ret, session, traceid))
 			--next
-			fd, buf, size, cmd, session = np.rpcpop(queue)
+			fd, buf, size, cmd, session, traceid = np.rpcpop(queue)
 			if not fd then
 				return
 			end
+			core.trace(traceid)
 		end
-
+		core.trace(otrace)
 	end
 	local callback = function(type, fd, message, ...)
 		np.message(queue, message)
@@ -183,7 +185,7 @@ local function doconnect(self)
 	end
 
 	function EVENT.data()
-		local fd, d, sz, cmd, session = np.rpcpop(queue)
+		local fd, d, sz, cmd, session, _ = np.rpcpop(queue)
 		if not fd then
 			return
 		end
@@ -210,7 +212,7 @@ local function doconnect(self)
 			self.ackcmd[session] = cmd
 			core.wakeup(co, body)
 			--next
-			fd, d, sz, cmd, session = np.rpcpop(queue)
+			fd, d, sz, cmd, session, _ = np.rpcpop(queue)
 			if not fd then
 				break
 			end
@@ -277,35 +279,33 @@ local function waitfor(self, session)
 	return body, cmd
 end
 
-function client.send(self, cmd, body)
+local function send_request(self, cmd, body) 
 	local ok = checkconnect(self)
 	if not ok then
-		return ok, "closed"
+		return false, "closed"
 	end
 	local proto = self.__proto
 	if type(cmd) == "string" then
 		cmd = proto:tag(cmd)
 	end
 	local session = core.genid()
+	local traceid = core.tracepropagate()
 	local body, sz = proto:encode(cmd, body, true)
 	body, sz = proto:pack(body, sz, true)
-	return tcp_send(self.fd, np.rpcpack(body, sz, cmd, session))
+	local ok = tcp_send(self.fd, np.rpcpack(body, sz, cmd, session, traceid))
+	if not ok then
+		return false, "send fail"
+	end
+	return true, session
 end
 
+client.send = send_request
+
 function client.call(self, cmd, body)
-	local ok = checkconnect(self)
+	local ok, session = send_request(self, cmd, body)
 	if not ok then
-		return nil, "closed"
+		return false, session
 	end
-	local proto = self.__proto
-	if type(cmd) == "string" then
-		cmd = proto:tag(cmd)
-	end
-	body = body or NIL
-	local session = core.genid()
-	local body, sz = proto:encode(cmd, body, true)
-	body, sz = proto:pack(body, sz, true)
-	tcp_send(self.fd, np.rpcpack(body, sz, cmd, session))
 	return waitfor(self, session)
 end
 

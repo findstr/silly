@@ -12,6 +12,7 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "silly_trace.h"
 #include "silly_log.h"
 #include "silly_run.h"
 #include "silly_worker.h"
@@ -432,7 +433,46 @@ lsendsize(lua_State *L)
 	return 1;
 }
 
+static int
+ltracespan(lua_State *L)
+{
+	silly_trace_span_t span;
+	span = (silly_trace_span_t)luaL_checkinteger(L, 1);
+	silly_trace_span(span);
+	return 0;
+}
 
+static int
+ltracenew(lua_State *L)
+{
+	silly_trace_id_t traceid;
+	traceid = silly_trace_new();
+	lua_pushinteger(L, (lua_Integer)traceid);
+	return 1;
+}
+
+static int
+ltraceset(lua_State *L)
+{
+	silly_trace_id_t traceid;
+	if lua_isnoneornil(L, 1) {
+		traceid = TRACE_WORKER_ID;
+	} else {
+		traceid = (silly_trace_id_t)luaL_checkinteger(L, 1);
+	}
+	traceid = silly_trace_set(traceid);
+	lua_pushinteger(L, (lua_Integer)traceid);
+	return 1;
+}
+
+static int
+ltraceget(lua_State *L)
+{
+	silly_trace_id_t traceid;
+	traceid = silly_trace_get();
+	lua_pushinteger(L, (lua_Integer)traceid);
+	return 1;
+}
 
 int
 luaopen_sys_core_c(lua_State *L)
@@ -446,6 +486,11 @@ luaopen_sys_core_c(lua_State *L)
 		{"tostring", ltostring},
 		{"getpid", lgetpid},
 		{"exit", lexit},
+		//trace
+		{"trace_span", ltracespan},
+		{"trace_new", ltracenew},
+		{"trace_set", ltraceset},
+		{"trace_get", ltraceget},
 		//socket
 		{"tcp_connect", ltcpconnect},
 		{"tcp_listen", ltcplisten},

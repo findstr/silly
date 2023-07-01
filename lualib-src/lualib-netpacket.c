@@ -8,6 +8,7 @@
 
 #include "silly.h"
 #include "silly_log.h"
+#include "silly_trace.h"
 #include "silly_malloc.h"
 
 #define DEFAULT_QUEUE_SIZE 2048
@@ -335,6 +336,7 @@ lmsgpack(lua_State *L)
 struct rpc_cookie {
 	cmd_t cmd;
 	session_t session;
+	silly_trace_id_t traceid;
 };
 
 static int
@@ -357,7 +359,8 @@ lrpcpop(lua_State *L)
 	lua_pushinteger(L, size);
 	lua_pushinteger(L, rpc->cmd);
 	lua_pushinteger(L, rpc->session);
-	return 5;
+	lua_pushinteger(L, (lua_Integer)rpc->traceid);
+	return 6;
 }
 
 static int
@@ -370,6 +373,7 @@ lrpcpack(lua_State *L)
 	struct rpc_cookie *rpc;
 	int stk = 1;
 	session_t session;
+	silly_trace_id_t traceid;
 	str = getbuffer(L, &stk, &size);
 	if (size > (USHRT_MAX - sizeof(struct rpc_cookie))) {
 		luaL_error(L, "netpacket.pack data large then:%d\n",
@@ -377,6 +381,7 @@ lrpcpack(lua_State *L)
 	}
 	cmd = luaL_checkinteger(L, stk);
 	session = luaL_checkinteger(L, stk+1);
+	traceid = luaL_checkinteger(L, stk+2);
 	body = size + sizeof(struct rpc_cookie);
 	p = silly_malloc(2 + body);
 	p[0] = (body >> 8) & 0xff;
@@ -386,6 +391,7 @@ lrpcpack(lua_State *L)
 	rpc = (struct rpc_cookie *)&p[2 + size];
 	rpc->cmd = cmd;
 	rpc->session = session;
+	rpc->traceid = traceid;
 	lua_pushlightuserdata(L, p);
 	lua_pushinteger(L, 2 + body);
 	return 2;

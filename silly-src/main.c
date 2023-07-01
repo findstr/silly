@@ -7,6 +7,7 @@
 #include <lauxlib.h>
 #include <string.h>
 #include "silly.h"
+#include "silly_trace.h"
 #include "silly_log.h"
 #include "silly_env.h"
 #include "silly_timer.h"
@@ -239,6 +240,7 @@ int main(int argc, char *argv[])
 		printf("USAGE:%s <config file> --parameters\n", argv[0]);
 		return -1;
 	}
+	silly_trace_init();
 	silly_env_init();
 	silly_log_init();
 	silly_timer_init();
