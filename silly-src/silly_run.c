@@ -9,6 +9,7 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "silly_trace.h"
 #include "silly_log.h"
 #include "silly_env.h"
 #include "silly_malloc.h"
@@ -37,6 +38,8 @@ thread_timer(void *arg)
 	struct timespec req;
 	req.tv_sec = TIMER_ACCURACY / 1000;
 	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
+	silly_trace_set(TRACE_TIMER_ID);
+	silly_log_info("[timer] start\n");
 	for (;;) {
 		silly_timer_update();
 		if (R.workerstatus == -1)
@@ -45,6 +48,7 @@ thread_timer(void *arg)
 		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);
 	}
+	silly_log_info("[timer] stop\n");
 	silly_socket_terminate();
 	return NULL;
 }
@@ -54,6 +58,8 @@ static void *
 thread_socket(void *arg)
 {
 	(void)arg;
+	silly_trace_set(TRACE_SOCKET_ID);
+	silly_log_info("[socket] start\n");
 	for (;;) {
 		int err = silly_socket_poll();
 		if (err < 0)
@@ -61,6 +67,7 @@ thread_socket(void *arg)
 		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);
 	}
+	silly_log_info("[socket] stop\n");
 	return NULL;
 }
 
@@ -71,6 +78,8 @@ thread_worker(void *arg)
 	c = (struct silly_config *)arg;
 	silly_worker_start(c);
 	pthread_mutex_lock(&R.mutex);
+	silly_trace_set(TRACE_WORKER_ID);
+	silly_log_info("[worker] start\n");
 	while (R.running) {
 		silly_worker_dispatch();
 		//allow spurious wakeup, it's harmless
@@ -80,6 +89,7 @@ thread_worker(void *arg)
 		R.workerstatus = 1;
 		silly_log_flush();
 	}
+	silly_log_info("[worker] stop\n");
 	pthread_mutex_unlock(&R.mutex);
 	R.workerstatus = -1;
 	return NULL;
@@ -91,12 +101,15 @@ monitor_check()
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
 	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
+	silly_trace_set(TRACE_MONITOR_ID);
+	silly_log_info("[monitor] start\n");
 	for (;;) {
 		if (R.workerstatus == -1)
 			break;
 		nanosleep(&req, NULL);
 		silly_monitor_check();
 	}
+	silly_log_info("[monitor] stop\n");
 	return ;
 }
 
@@ -177,6 +190,7 @@ silly_run(const struct silly_config *config)
 	monitor_check();
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
+	silly_log_flush();
 	silly_daemon_stop(config);
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);

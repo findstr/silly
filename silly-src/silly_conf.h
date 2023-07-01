@@ -36,4 +36,9 @@
 
 #define LOG_BUF_SIZE		(4*1024)
 
+#define TRACE_WORKER_ID     (0)
+#define TRACE_TIMER_ID      (1)
+#define TRACE_SOCKET_ID     (2)
+#define TRACE_MONITOR_ID    (3)
+
 #endif

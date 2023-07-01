@@ -21,6 +21,11 @@ local weakmt = {__mode="kv"}
 local log_info = logger.info
 local log_error = logger.error
 local readctrl = assert(c.readctrl)
+local trace_new = assert(c.trace_new)
+local trace_set = assert(c.trace_set)
+local trace_get = assert(c.trace_get)
+local trace_span = assert(c.trace_span)
+
 core.genid = c.genid
 core.getpid = c.getpid
 core.version = c.version()
@@ -34,6 +39,7 @@ end
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
 local task_status = setmetatable({}, weakmt)
+local task_traceid = setmetatable({}, weakmt)
 local task_running = nil
 local cocreate = coroutine.create
 local corunning = coroutine.running
@@ -45,7 +51,9 @@ local function task_resume(t, ...)
 	local save = task_running
 	task_status[t] = "RUN"
 	task_running = t
+	local traceid = trace_set(task_traceid[t])
 	local ok, err = coresume(t, ...)
+	trace_set(traceid)
 	task_running = save
 	if not ok then
 		task_status[t] = nil
@@ -66,6 +74,21 @@ end
 
 local function core_pcall(f, ...)
 	return xpcall(f, errmsg, ...)
+end
+
+core.tracespan = trace_span
+core.tracepropagate = trace_new
+function core.tracenew()
+	local traceid = task_traceid[task_running]
+	if traceid then
+		return traceid
+	end
+	return trace_new()
+end
+
+function core.trace(id)
+	task_traceid[task_running] = id
+	return (trace_set(id))
 end
 
 function core.error(errmsg)
@@ -94,7 +117,9 @@ local function task_create(f)
 		while true do
 			local ret
 			f = nil
-			copool[#copool + 1] = corunning()
+			local co = corunning()
+			task_traceid[co] = nil
+			copool[#copool + 1] = co
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
 				log_error("[sys.core] task create", ret)
