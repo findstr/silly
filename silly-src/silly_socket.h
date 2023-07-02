@@ -11,17 +11,14 @@
 
 typedef void (*silly_finalizer_t)(void *ptr);
 
-struct silly_netinfo {
-	int tcplisten;
-	int udpbind;
+struct silly_netstat {
 	int connecting;
-	int udpclient;
 	int tcpclient;
-	int tcphalfclose;
+	size_t recvsize;
 	size_t sendsize;
 };
 
-struct silly_socketinfo {
+struct silly_socketstat {
 	int sid;
 	int fd;
 	const char *type;
@@ -58,8 +55,9 @@ int silly_socket_poll();
 
 const char *silly_socket_pollapi();
 
-void silly_socket_netinfo(struct silly_netinfo *net);
-void silly_socket_socketinfo(int sid, struct silly_socketinfo*info);
+int silly_socket_ctrlcount();
+struct silly_netstat *silly_socket_netstat();
+void silly_socket_socketstat(int sid, struct silly_socketstat *info);
 
 #endif
 

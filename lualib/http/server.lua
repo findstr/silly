@@ -165,7 +165,7 @@ local server = {
 	listen = function (conf)
 		local fd1, fd2
 		local handler = conf.handler
-		local port = conf.port
+		local port = conf.port or conf.addr
 		if port then
 			fd1 = tcp.listen(port, httpd("http", handler))
 		end

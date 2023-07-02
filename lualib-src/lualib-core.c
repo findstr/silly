@@ -127,6 +127,13 @@ lgetpid(lua_State *L)
 }
 
 static int
+lgitsha1(lua_State *L)
+{
+	lua_pushstring(L, STR(SILLY_GIT_SHA1));
+	return 1;
+}
+
+static int
 lversion(lua_State *L)
 {
 	const char *ver = SILLY_VERSION;
@@ -479,6 +486,7 @@ luaopen_sys_core_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core
+		{"gitsha1", lgitsha1},
 		{"version", lversion},
 		{"dispatch", ldispatch},
 		{"timeout", ltimeout},

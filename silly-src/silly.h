@@ -6,6 +6,10 @@
 #include "silly_malloc.h"
 #include "silly_socket.h"
 
+#ifndef SILLY_GIT_SHA1
+#define SILLY_GIT_SHA1 0
+#endif
+
 #define SILLY_VERSION_MAJOR 0
 #define SILLY_VERSION_MINOR 5
 #define SILLY_VERSION_RELEASE 0

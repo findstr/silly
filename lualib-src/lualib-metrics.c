@@ -1,8 +1,11 @@
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <dirent.h>
 #include <string.h>
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -19,6 +22,10 @@
 #include "silly_malloc.h"
 #include "silly_timer.h"
 
+#ifndef DISABLE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#endif
+
 static int
 lmemallocator(lua_State *L)
 {
@@ -29,44 +36,7 @@ lmemallocator(lua_State *L)
 }
 
 static int
-lmemallocatorinfo(lua_State *L)
-{
-	size_t allocated, active, resident;
-	silly_allocator_info(&allocated, &active, &resident);
-	lua_pushinteger(L, allocated);
-	lua_pushinteger(L, active);
-	lua_pushinteger(L, resident);
-	return 3;
-}
-static int
-lmemused(lua_State *L)
-{
-	size_t sz;
-	sz = silly_memused();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lmemrss(lua_State *L)
-{
-	size_t sz;
-	sz = silly_memrss();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lmsgsize(lua_State *L)
-{
-	size_t sz;
-	sz = silly_worker_msgsize();
-	lua_pushinteger(L, sz);
-	return 1;
-}
-
-static int
-lcpuinfo(lua_State *L)
+lcpustat(lua_State *L)
 {
 	struct rusage ru;
 	float stime,utime;
@@ -78,6 +48,83 @@ lcpuinfo(lua_State *L)
 	lua_pushnumber(L, stime);
 	lua_pushnumber(L, utime);
 	return 2;
+}
+
+static int
+lmaxfds(lua_State *L)
+{
+	struct rlimit rlim;
+	int ret = getrlimit(RLIMIT_NOFILE, &rlim);
+	if (ret != 0) {
+		silly_log_error("[metrics] getrlimit errno:%d", errno);
+		rlim.rlim_cur = 0;
+		rlim.rlim_max = 0;
+	}
+	lua_pushinteger(L, rlim.rlim_cur);	//soft
+	lua_pushinteger(L, rlim.rlim_max);	//hard
+	return 2;
+}
+
+static int
+lopenfds(lua_State *L)
+{
+	int fd_count = 0;
+	struct dirent *entry;
+	DIR *fd_dir = opendir("/proc/self/fd");
+	if (fd_dir == NULL) {
+		silly_log_error("[metrics] failed to open /proc/self/fd");
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+	while ((entry = readdir(fd_dir)) != NULL) {
+		if (entry->d_name[0] != '.') {
+			fd_count++;
+		}
+	}
+	closedir(fd_dir);
+	lua_pushinteger(L, fd_count);
+	return 1;
+}
+
+
+static int
+lmemstat(lua_State *L)
+{
+	lua_pushinteger(L, silly_memrss());
+	lua_pushinteger(L, silly_memused());
+	return 2;
+}
+
+static int
+ljestat(lua_State *L)
+{
+	uint64_t epoch = 1;
+	size_t allocated, active, resident, retained;
+#ifndef DISABLE_JEMALLOC
+	size_t sz = sizeof(epoch);
+	je_mallctl("epoch", &epoch, &sz, &epoch, sz);
+	sz = sizeof(size_t);
+	je_mallctl("stats.resident", &resident, &sz, NULL, 0);
+	je_mallctl("stats.active", &active, &sz, NULL, 0);
+	je_mallctl("stats.allocated", &allocated, &sz, NULL, 0);
+	je_mallctl("stats.retained", &retained, &sz, NULL, 0);
+#else
+	allocated = resident = active = retained = 0;
+#endif
+	lua_pushinteger(L, allocated);
+	lua_pushinteger(L, active);
+	lua_pushinteger(L, resident);
+	lua_pushinteger(L, retained);
+	return 4;
+}
+
+static int
+lworkerstat(lua_State *L)
+{
+	size_t sz;
+	sz = silly_worker_msgsize();
+	lua_pushinteger(L, sz);
+	return 1;
 }
 
 static int
@@ -103,23 +150,20 @@ table_set_str(lua_State *L, int table, const char *k, const char *v)
 }
 
 static int
-lnetinfo(lua_State *L)
+lnetstat(lua_State *L)
 {
-	struct silly_netinfo info;
-	silly_socket_netinfo(&info);
-	lua_newtable(L);
-	table_set_int(L, -1, "tcplisten", info.tcplisten);
-	table_set_int(L, -1, "udpbind", info.udpbind);
-	table_set_int(L, -1, "connecting", info.connecting);
-	table_set_int(L, -1, "udpclient", info.udpclient);
-	table_set_int(L, -1, "tcpclient", info.tcpclient);
-	table_set_int(L, -1, "tcphalfclose", info.tcphalfclose);
-	table_set_int(L, -1, "sendsize", info.sendsize);
-	return 1;
+	struct silly_netstat *stat;
+	stat = silly_socket_netstat();
+	lua_pushinteger(L, stat->connecting);
+	lua_pushinteger(L, stat->tcpclient);
+	lua_pushinteger(L, silly_socket_ctrlcount());
+	lua_pushinteger(L, stat->sendsize);
+	lua_pushinteger(L, stat->recvsize);
+	return 5;
 }
 
 static int
-ltimerinfo(lua_State *L)
+ltimerstat(lua_State *L)
 {
 	uint32_t active, expired;
 	active = silly_timer_info(&expired);
@@ -129,12 +173,12 @@ ltimerinfo(lua_State *L)
 }
 
 static int
-lsocketinfo(lua_State *L)
+lsocketstat (lua_State *L)
 {
 	int sid;
-	struct silly_socketinfo info;
+	struct silly_socketstat info;
 	sid = luaL_checkinteger(L, 1);
-	silly_socket_socketinfo(sid, &info);
+	silly_socket_socketstat(sid, &info);
 	lua_newtable(L);
 	table_set_int(L, -1, "fd", info.sid);
 	table_set_int(L, -1, "os_fd", info.fd);
@@ -154,20 +198,27 @@ ltimerresolution(lua_State *L)
 }
 
 int
-luaopen_sys_metrics(lua_State *L)
+luaopen_sys_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"memused", lmemused},
-		{"memrss", lmemrss},
-		{"memallocator", lmemallocator},
-		{"memallocatorinfo", lmemallocatorinfo},
-		{"msgsize", lmsgsize},
-		{"cpuinfo", lcpuinfo},
+		//build
 		{"pollapi", lpollapi},
-		{"netinfo", lnetinfo},
-		{"timerinfo", ltimerinfo},
-		{"socketinfo", lsocketinfo},
+		{"memallocator", lmemallocator},
 		{"timerresolution", ltimerresolution},
+		//process
+		{"cpustat", lcpustat},
+		{"maxfds", lmaxfds},
+		{"openfds", lopenfds},
+		//memory
+		{"memstat", lmemstat},
+#ifndef DISABLE_JEMALLOC
+		{"jestat", ljestat},
+#endif
+		//core
+		{"workerstat", lworkerstat},
+		{"timerstat", ltimerstat},
+		{"netstat", lnetstat},
+		{"socketstat", lsocketstat},
 		//end
 		{NULL, NULL},
 	};
