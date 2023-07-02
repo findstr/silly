@@ -26,8 +26,10 @@ local trace_set = assert(c.trace_set)
 local trace_get = assert(c.trace_get)
 local trace_span = assert(c.trace_span)
 
+core.pid = c.getpid()
 core.genid = c.genid
 core.getpid = c.getpid
+core.gitsha1 = c.gitsha1()
 core.version = c.version()
 core.tostring = c.tostring
 core.multipack = assert(c.multipack)
@@ -247,6 +249,10 @@ function core.start(func)
 	local t = task_create(func)
 	task_resume(t)
 	dispatch_wakeup()
+end
+
+function core.taskstat()
+	return #copool, #wakeup_task_queue
 end
 
 function core.tasks()

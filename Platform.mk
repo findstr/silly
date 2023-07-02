@@ -18,7 +18,10 @@ PLATS=linux macosx
 platform:
 	@echo "'make PLATFORM' where PLATFORM is one of these:"
 	@echo "$(PLATS)"
-CCFLAG = -g3 -O2 -Wall -Wextra
+
+target:GITSHA1=$(shell git log -1 --pretty=format:"%h")
+
+CCFLAG = -g3 -O2 -Wall -Wextra -DSILLY_GIT_SHA1=$(GITSHA1)
 LDFLAG := -lm -ldl
 
 linux:CCFLAG += -D__linux__
