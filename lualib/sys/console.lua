@@ -1,6 +1,7 @@
 local core = require "sys.core"
 local time = require "sys.time"
-local metrics = require "sys.metrics"
+local metrics = require "sys.metrics.c"
+local prometheus = require "sys.metrics.prometheus"
 local logger = require "sys.logger"
 local patch = require "sys.patch"
 local tcp = require "sys.net.tcp"
@@ -24,12 +25,7 @@ local desc = {
 "HELP: List command description. [HELP]",
 "PING: Test connection alive. [PING <text>]",
 "GC: Performs a full garbage-collection cycle. [GC]",
-"INFO: Show all information of server, include CPUINFO,MINFO,QINFO. [INFO]",
-"MINFO: Show memory infomation. [MINFO <kb|mb>]",
-"QINFO: Show framework message queue size. [QINFO]",
-"NETINFO: Show network info. [NETINFO]",
-"TIMERINFO: Show timer pending/process event count. [TIMERINFO]",
-"CPUINFO: Show system time and user time statistics. [CPUINFO]",
+"INFO: Show all information of server. [INFO]",
 "SOCKET: Show socket detail information. [SOCKET]",
 "TASK: Show all task status and traceback. [TASK]",
 "INJECT: INJECT code. [INJECT <path>]",
@@ -63,75 +59,6 @@ function console.gc()
 	return format("Lua Mem Used:%.2f KiB", collectgarbage("count"))
 end
 
-function console.timerinfo()
-	return format("#Timer\r\n\z
-		resolution: %s\r\n\z
-		active: %s\r\n\z
-		expired: %s\r\n",
-		metrics.timerresolution(),
-		metrics.timerinfo())
-end
-
-function console.cpuinfo()
-	local sys, usr = metrics.cpuinfo()
-	return format("#CPU\r\ncpu_sys: %.2fs\r\ncpu_user: %.2fs", sys, usr)
-end
-
-local function format_size(fmt, size)
-	if fmt == "kb" then
-		return format("%.2f KiB", size / 1024)
-	elseif fmt == "mb" then
-		return format("%.2f MB", size / (1024 * 1024))
-	else
-		return format("%d B", size)
-	end
-end
-
-function console.minfo(_, fmt)
-	if fmt then
-		fmt = lower(fmt)
-	else
-		fmt = NULL
-	end
-	local sz = metrics.memused()
-	local rss = metrics.memrss()
-	local allocated, active, resident = metrics.memallocatorinfo()
-	local tbl = {
-		"#Memory",
-		"\r\nused_memory: ",
-		format_size(fmt, sz),
-		"\r\nused_memory_rss: ",
-		format_size(fmt, rss),
-		"\r\nallocator_allocated: ",
-		format_size(fmt, allocated),
-		"\r\nallocator_active: ",
-		format_size(fmt, active),
-		"\r\nallocator_resident: ",
-		format_size(fmt, resident),
-		"\r\nmemory_fragmentation_ratio: ",
-		format("%.2f", rss / sz),
-		"\r\nmemory_allocator: ",
-		metrics.memallocator(),
-	}
-	return concat(tbl)
-end
-
-function console.qinfo()
-	local sz = metrics.msgsize();
-	return format("#Message\r\nmessage pending: %d", sz)
-end
-
-function console.netinfo()
-	local info = metrics.netinfo()
-	local a = format("#NET\r\ntcp_listen: %s\r\ntcp_client: %s\r\n\z
-		tcp_connecting: %s\r\ntcp_halfclose: %s\r\n", info.tcplisten,
-		info.tcpclient, info.connecting, info.tcphalfclose)
-	local b = format("udp_bind: %s\r\nudp_client: %s\r\n",
-		info.udpbind, info.udpclient)
-	local c = format("send_buffer_size: %s\r\n", info.sendsize)
-	return a .. b .. c
-end
-
 function console.task(fd)
 	local buf = {}
 	local tasks = core.tasks()
@@ -162,22 +89,41 @@ function console.socket(_, fd)
 end
 
 function console.info()
-	local tbl = {}
-	local uptime = time.monotonicsec()
-	insert(tbl, "#Server")
-	insert(tbl, format("version: %s", core.version))
-	insert(tbl, format("process_id: %s", core.getpid()))
-	insert(tbl, format("multiplexing_api: %s", metrics.pollapi()))
-	insert(tbl, format("uptime_in_seconds: %s", uptime))
-	insert(tbl, format("uptime_in_days: %.2f\r\n", uptime / (24 * 3600)))
-	insert(tbl, console.cpuinfo())
-	insert(tbl, NULL)
-	insert(tbl, console.qinfo())
-	insert(tbl, NULL)
-	insert(tbl, console.minfo(nil, "MB"))
-	insert(tbl, NULL)
-	insert(tbl, console.timerinfo())
-	return concat(tbl, "\r\n")
+	local buf = {}
+	buf[#buf + 1] = ""
+	buf[#buf + 1] = "#Build"
+	buf[#buf + 1] = format("version:%s", core.version)
+	buf[#buf + 1] = format("git_sha1:%s", core.gitsha1)
+	buf[#buf + 1] = format("multiplexing_api:%s", metrics.pollapi())
+	buf[#buf + 1] = format("memory_allocator:%s", metrics.memallocator())
+	buf[#buf + 1] = format("timer_resolution:%s ms", metrics.timerresolution())
+	buf[#buf + 1] = ""
+	local list = {}
+	local collectors = prometheus.registry()
+	for i = 1, #collectors do
+		local collector = collectors[i]
+		local n = collector:collect(list, 0)
+		local name = collector.name
+		buf[#buf + 1] = "#" .. name
+		if name == "Process" then
+			buf[#buf + 1] = format("process_id:%s", core.pid)
+		end
+		for j = 1, n do
+			local m = list[j]
+			local name = m.name
+			if m.labelnames then
+				for j = 1, #m do
+					local v = m[j]
+					buf[#buf + 1] = format('%s%s:%s',
+						name, v[2], v[1])
+				end
+			else
+				buf[#buf + 1] = format('%s:%s', name, m[1])
+			end
+		end
+		buf[#buf + 1] = ""
+	end
+	return concat(buf, "\r\n")
 end
 
 function console.inject(_, filepath)
