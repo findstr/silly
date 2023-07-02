@@ -125,6 +125,8 @@ struct silly_socket {
 	uint8_t *cmdbuf;
 	//reserve id(for socket fd remap)
 	int reserveid;
+	//netstat
+	struct silly_netstat netstat;
 };
 
 //for read one complete packet once system call, fix the packet length
@@ -307,6 +309,15 @@ allocsocket(struct silly_socket *ss, int fd,
 	return NULL;
 }
 
+static inline void
+netstat_close(struct silly_socket *ss, struct socket *s)
+{
+	if (s->protocol != PROTOCOL_TCP) {
+		return ;
+	}
+	ss->netstat.tcpclient--;
+}
+
 
 static inline void
 freesocket(struct silly_socket *ss, struct socket *s)
@@ -323,6 +334,7 @@ freesocket(struct silly_socket *ss, struct socket *s)
 	}
 	wlist_free(s);
 	assert(s->wlhead == NULL);
+	netstat_close(ss, s);
 	atomic_barrier();
 	s->type = STYPE_RESERVE;
 }
@@ -494,6 +506,7 @@ report_accept(struct silly_socket *ss, struct socket *listen)
 	*sa->data = namelen;
 	memcpy(sa->data + 1, namebuf, namelen);
 	silly_worker_push(tocommon(sa));
+	ss->netstat.tcpclient++;
 	return ;
 }
 
@@ -599,6 +612,7 @@ report_connected(struct silly_socket *ss, struct socket *s)
 	sc->type = SILLY_SCONNECTED;
 	sc->sid = s->sid;
 	silly_worker_push(tocommon(sc));
+	ss->netstat.tcpclient++;
 	return ;
 }
 
@@ -720,6 +734,7 @@ forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 			if (sz < half)
 				s->presize = half;
 		}
+		ss->netstat.recvsize += sz;
 	} else {
 		silly_free(buf);
 		if (sz < 0) {
@@ -727,6 +742,7 @@ forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 			freesocket(ss, s);
 			return -1;
 		}
+		ss->netstat.recvsize += sz;
 		return 0;
 	}
 	return sz;
@@ -748,6 +764,7 @@ forward_msg_udp(struct silly_socket *ss, struct socket *s)
 	memcpy(data, udpbuf, n);
 	memcpy(data + n, &addr, sa_len);
 	report_data(ss, s, SILLY_SUDP, data, n);
+	ss->netstat.recvsize += n;
 	return n;
 }
 
@@ -1111,6 +1128,7 @@ tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 			freesocket(ss, s);
 		} else {
 			write_enable(ss, s, 1);
+			ss->netstat.connecting++;
 		}
 	}
 	return ;
@@ -1320,6 +1338,7 @@ trysend(struct silly_socket *ss, struct cmdsend *cmd)
 			"sid:%d type:%d\n", sid, s->type);
 		return 0;
 	}
+	ss->netstat.sendsize += sz;
 	if (wlist_empty(s) && s->type == STYPE_SOCKET) {//try send
 		ssize_t n = sendn(s->fd, data, sz);
 		if (n < 0) {
@@ -1365,6 +1384,7 @@ tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 		return 0;
 	}
 	size = cmd->send.size;
+	ss->netstat.sendsize += size;
 	if (s->type == STYPE_UDPBIND) {
 		//only udp server need address
 		addr = &cmd->addr;
@@ -1521,6 +1541,7 @@ silly_socket_poll()
 		case STYPE_CONNECTING:
 			s->type = STYPE_SOCKET;
 			report_connected(ss, s);
+			ss->netstat.connecting--;
 			continue;
 		case STYPE_RESERVE:
 			silly_log_error("[socket] poll reserve socket\n");
@@ -1663,41 +1684,20 @@ silly_socket_pollapi()
 	return SOCKET_POLL_API;
 }
 
-void
-silly_socket_netinfo(struct silly_netinfo *info)
+int
+silly_socket_ctrlcount()
 {
-	int i;
-	struct socket *s;
-	s = &SSOCKET->socketpool[0];
-	memset(info, 0, sizeof(*info));
-	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
-		enum stype type = s->type;
-		switch (type) {
-		case STYPE_SOCKET:
-			if (s->protocol == PROTOCOL_TCP)
-				++info->tcpclient;
-			else if (s->protocol == PROTOCOL_UDP)
-				++info->udpclient;
-			info->sendsize += silly_socket_sendsize(s->sid);
-			break;
-		case STYPE_SHUTDOWN:
-			++info->tcphalfclose;
-			break;
-		case STYPE_LISTEN:
-			++info->tcplisten;
-			break;
-		case STYPE_UDPBIND:
-			++info->udpbind;
-			break;
-		default:
-			break;
-		}
-		++s;
-	}
+	return SSOCKET->ctrlcount;
+}
+
+struct silly_netstat *
+silly_socket_netstat()
+{
+	return &SSOCKET->netstat;
 }
 
 void
-silly_socket_socketinfo(int sid, struct silly_socketinfo *info)
+silly_socket_socketstat(int sid, struct silly_socketstat *info)
 {
 	struct socket *s;
 	s = &SSOCKET->socketpool[HASH(sid)];

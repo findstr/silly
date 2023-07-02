@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local metrics = require "sys.metrics"
+local metrics = require "sys.metrics.c"
 local json = require "sys.json"
 local tcp = require "sys.net.tcp"
 local tls = require "sys.tls"
@@ -428,13 +428,22 @@ local function test_close(port)
 	testaux.asserteq(dat, dat1, "client read connect")
 end
 
+local function netstat()
+	local connecting, tcpclient, ctrlcount = metrics.netstat()
+	return {
+		connecting = connecting,
+		tcpclient = tcpclient,
+		ctrlcount = ctrlcount,
+	}
+end
+
 return function()
-	local info1 = metrics.netinfo()
+	local info1 = netstat()
 	print(json.encode(info1))
 	testaux.module("socet")
 	test_limit(":10001")
 	core.sleep(100)
-	local info2 = metrics.netinfo()
+	local info2 = netstat()
 	print(json.encode(info2))
 	testaux.asserteq(info1, info2, "check limit clear")
 	IO = tcp
@@ -442,7 +451,7 @@ return function()
 	test_read(":10001")
 	test_close(":10001")
 	core.sleep(100)
-	local info3 = metrics.netinfo()
+	local info3 = netstat()
 	testaux.asserteq(info1, info3, "check tcp clear")
 
 	IO = tls
@@ -451,7 +460,7 @@ return function()
 	test_read(":10002")
 	test_close(":10002")
 	core.sleep(100)
-	local info4 = metrics.netinfo()
+	local info4 = netstat()
 	testaux.asserteq(info1, info4, "check tls clear")
 end
 
