@@ -1,6 +1,6 @@
 local tcp = require "sys.net.tcp"
+local tls = require "sys.net.tls"
 local dns = require "sys.dns"
-local tls = require "sys.tls"
 local tonumber = tonumber
 local format = string.format
 local setmetatable = setmetatable

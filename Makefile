@@ -91,6 +91,7 @@ all: \
 	$(LUACLIB_PATH)/sys.so \
 	$(LUACLIB_PATH)/zproto.so \
 	$(LUACLIB_PATH)/http2.so \
+	$(LUACLIB_PATH)/pb.so \
 	$(LUACLIB_PATH)/test.so \
 
 $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)

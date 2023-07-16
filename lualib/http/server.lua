@@ -1,7 +1,7 @@
 local core = require "sys.core"
 local logger = require "sys.logger"
 local tcp = require "sys.net.tcp"
-local tls = require "sys.tls"
+local tls = require "sys.net.tls"
 local stream = require "http.stream"
 
 local assert = assert
