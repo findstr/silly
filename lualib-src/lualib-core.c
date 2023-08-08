@@ -38,7 +38,7 @@ dispatch(lua_State *L, struct silly_message *sm)
 	switch (sm->type) {
 	case SILLY_TEXPIRE:
 		lua_pushinteger(L, totexpire(sm)->session);
-		lua_pushlightuserdata(L, sm);
+		lua_pushinteger(L, totexpire(sm)->userdata);
 		args += 2;
 		break;
 	case SILLY_SACCEPT:
@@ -154,10 +154,26 @@ static int
 ltimeout(lua_State *L)
 {
 	uint32_t expire;
-	uint32_t session;
+	uint32_t userdata;
+	uint64_t session;
 	expire = luaL_checkinteger(L, 1);
-	session = silly_timer_timeout(expire);
-	lua_pushinteger(L, session);
+	userdata = luaL_optinteger(L, 2, 0);
+	session = silly_timer_timeout(expire, userdata);
+	lua_pushinteger(L, (lua_Integer)session);
+	return 1;
+}
+
+static int
+ltimercancel(lua_State *L)
+{
+	uint32_t ud;
+	uint64_t session = (uint64_t)luaL_checkinteger(L, 1);
+	int ok = silly_timer_cancel(session, &ud);
+	if (ok) {
+		lua_pushinteger(L, ud);
+	} else {
+		lua_pushnil(L);
+	}
 	return 1;
 }
 
@@ -490,6 +506,7 @@ luaopen_sys_core_c(lua_State *L)
 		{"version", lversion},
 		{"dispatch", ldispatch},
 		{"timeout", ltimeout},
+		{"timercancel", ltimercancel},
 		{"genid", lgenid},
 		{"tostring", ltostring},
 		{"getpid", lgetpid},

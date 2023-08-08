@@ -27,10 +27,29 @@
 #define SR_MASK		(SR_SIZE - 1)
 #define SL_MASK		(SL_SIZE - 1)
 
+struct page;
+
 struct node {
 	uint32_t expire;
-	uint32_t session;
+	uint32_t version;
+	uint32_t cookie;	//page_id * PAGE_SIZE + page_offset
+	uint32_t userdata;
 	struct node *next;
+	struct node **prev;
+};
+
+
+#define PAGE_SIZE	(4096/sizeof(struct node))
+
+struct page {
+	struct node buf[PAGE_SIZE];
+};
+
+struct pool {
+	uint32_t cap;
+	uint32_t count;
+	struct node *free;
+	struct page **buf;
 };
 
 struct slot_root {
@@ -43,6 +62,7 @@ struct slot_level {
 
 struct silly_timer {
 	spinlock_t lock;
+	struct pool pool;
 	uint32_t expire;
 	uint64_t ticktime;
 	uint64_t clocktime;
@@ -55,25 +75,6 @@ struct silly_timer {
 
 static struct silly_timer *T;
 
-static inline struct node *
-newnode()
-{
-	atomic_add(&T->active_count, 1);
-	atomic_add(&T->expired_count, 1);
-	struct node *n = silly_malloc(sizeof(*n));
-	uint32_t session = silly_worker_genid();
-	n->session = session;
-	return n;
-}
-
-static inline void
-freenode(struct node *n)
-{
-	atomic_sub(&T->active_count, 1);
-	silly_free(n);
-	return ;
-}
-
 static inline void
 lock(struct silly_timer *timer)
 {
@@ -84,6 +85,94 @@ static inline void
 unlock(struct silly_timer *timer)
 {
 	spinlock_unlock(&timer->lock);
+}
+
+static struct page *
+pool_newpage(struct pool *pool)
+{
+	uint32_t i;
+	struct page *p;
+	struct node *n;
+	uint32_t page_id  = pool->count++;
+	assert(pool->free == NULL);
+	if (pool->count >= pool->cap) {
+		size_t newsz;
+		pool->cap = 2 * pool->count;
+		newsz = pool->cap * sizeof(pool->buf[0]);
+		pool->buf = (struct page **)silly_realloc(pool->buf, newsz);
+	}
+	p = silly_malloc(sizeof(*p));
+	pool->buf[page_id] = p;
+	for (i = 0; i < PAGE_SIZE; i++) {
+		n = &p->buf[i];
+		n->prev = NULL;
+		n->next = n+1;
+		n->version = 0;
+		n->cookie = page_id * PAGE_SIZE + i;
+	}
+	n->next = NULL;
+	return p;
+}
+
+static inline struct node *
+pool_locate(struct pool *pool, uint32_t cookie)
+{
+	uint32_t page_id = cookie / PAGE_SIZE;
+	uint32_t page_offset = cookie % PAGE_SIZE;
+	assert(page_id < pool->count);
+	return &pool->buf[page_id]->buf[page_offset];
+}
+
+static inline void
+pool_init(struct pool *pool)
+{
+	struct page *p;
+	pool->cap = 0;
+	pool->count = 0;
+	pool->buf = NULL;
+	p = pool_newpage(pool);
+	pool->free = &p->buf[0];
+}
+
+static void
+pool_free(struct pool *p)
+{
+	uint32_t i;
+	for (i = 0; i < p->count; i++)
+		silly_free(p->buf[i]);
+	silly_free(p->buf);
+}
+
+static inline struct node *
+pool_newnode(struct silly_timer *t, struct pool *pool)
+{
+	struct node *n;
+	if (pool->free == NULL) {
+		struct page *p;
+		unlock(t);
+		p = pool_newpage(pool);
+		lock(t);
+		p->buf[PAGE_SIZE-1].next = pool->free;
+		pool->free = &p->buf[0];
+	}
+	n = pool->free;
+	pool->free = n->next;
+	n->version++;
+	return n;
+}
+
+static inline void
+pool_freenode(struct pool *pool, struct node *n)
+{
+	n->next = pool->free;
+	pool->free = n;
+}
+
+static inline void
+pool_freelist(struct pool *pool, struct node *head, struct node **tail)
+{
+	*tail = pool->free;
+	pool->free = head;
 }
 
 uint64_t
@@ -123,8 +212,22 @@ silly_timer_info(uint32_t *expired)
 static inline void
 linklist(struct node **list, struct node *n)
 {
+	if (*list != NULL) {
+		(*list)->prev = &n->next;
+	}
 	n->next = *list;
 	*list = n;
+	n->prev = list;
+}
+
+static inline void
+unlink(struct node *n)
+{
+	*n->prev = n->next;
+	if (n->next != NULL)
+		n->next->prev = n->prev;
+	n->prev = NULL;
+	n->next = NULL;
 }
 
 static void
@@ -156,32 +259,75 @@ add_node(struct silly_timer *timer, struct node *n)
 	return ;
 }
 
-uint32_t
-silly_timer_timeout(uint32_t expire)
+static inline uint64_t
+session_of(struct node *n)
 {
-	uint32_t session;
-	struct node *n = newnode();
-	if (unlikely(n == NULL)) {
-		silly_log_error("silly timer alloc node failed\n");
-		return -1;
-	}
-	session = n->session;
+	return (uint64_t)n->version << 32 | n->cookie;
+}
+
+static inline uint32_t
+version_of(uint64_t session)
+{
+	return session >> 32;
+}
+
+static inline uint32_t
+cookie_of(uint64_t session)
+{
+	return (uint32_t)session;
+}
+
+
+uint64_t
+silly_timer_timeout(uint32_t expire, uint32_t userdata)
+{
+	uint64_t session;
+	struct node *n;
+	atomic_add(&T->active_count, 1);
+	atomic_add(&T->expired_count, 1);
 	lock(T);
+	n = pool_newnode(T, &T->pool);
+	n->userdata = userdata;
+	session = session_of(n);
 	n->expire = expire / TIMER_RESOLUTION + T->ticktime;
-	assert((int32_t)(n->expire - T->expire) >= 0);
 	add_node(T, n);
 	unlock(T);
 	return session;
 }
 
+int
+silly_timer_cancel(uint64_t session, uint32_t *ud)
+{
+	struct node *n;
+	uint32_t version = version_of(session);
+	uint32_t cookie = cookie_of(session);
+	atomic_sub(&T->active_count, 1);
+	lock(T);
+	n = pool_locate(&T->pool, cookie);
+	if (n->version != version) {
+		unlock(T);
+		*ud = 0;
+		silly_log_warn("[timer] cancel session late:%d %d", version, n->version);
+		return 0;
+	}
+	unlink(n);
+	*ud = n->userdata;
+	pool_freenode(&T->pool, n);
+	unlock(T);
+	return 1;
+}
+
 static void
-timeout(struct silly_timer *t, uint32_t session)
+timeout(struct silly_timer *t, struct node *n)
 {
 	(void)t;
 	struct silly_message_texpire *te;
+	uint64_t session = session_of(n);
+	atomic_sub(&T->active_count, 1);
 	te = silly_malloc(sizeof(*te));
 	te->type = SILLY_TEXPIRE;
 	te->session = session;
+	te->userdata = n->userdata;
 	silly_worker_push(tocommon(te));
 	return ;
 }
@@ -220,7 +366,7 @@ clocktime()
 }
 
 static void
-expire_timer(struct silly_timer *timer)
+expire_timer(struct silly_timer *timer, struct node **tail)
 {
 	int idx = timer->expire & SR_MASK;
 	while (timer->root.slot[idx]) {
@@ -231,8 +377,9 @@ expire_timer(struct silly_timer *timer)
 			struct node *tmp = n;
 			n = n->next;
 			assert((int32_t)(tmp->expire - timer->expire) <= 0);
-			timeout(timer, tmp->session);
-			freenode(tmp);
+			timeout(timer, tmp);
+			*tail = tmp;
+			tail = &tmp->next;
 		}
 		lock(timer);
 	}
@@ -259,11 +406,11 @@ cascade_timer(struct silly_timer *timer, int level)
 }
 
 static void
-update_timer(struct silly_timer *timer)
+update_timer(struct silly_timer *timer, struct node **tail)
 {
 	uint32_t idx;
 	lock(T);
-	expire_timer(timer);
+	expire_timer(timer, tail);
 	idx = ++timer->expire;
 	idx &= SR_MASK;
 	if (idx == 0) {
@@ -274,7 +421,7 @@ update_timer(struct silly_timer *timer)
 				break;
 		}
 	}
-	expire_timer(timer);
+	expire_timer(timer, tail);
 	unlock(T);
 	return ;
 }
@@ -284,6 +431,8 @@ silly_timer_update()
 {
 	int	i;
 	int	delta;
+	struct node *head;
+	struct node **tail;
 	uint64_t time = ticktime();
 	if (T->ticktime == time)
 		return;
@@ -303,8 +452,15 @@ silly_timer_update()
 	atomic_lock(&T->ticktime, time);
 	atomic_add(&T->clocktime, delta);
 	atomic_add(&T->monotonic, delta);
+	head = NULL;
+	tail = &head;
 	for (i = 0; i < delta; i++)
-		update_timer(T);
+		update_timer(T, tail);
+	if (head != NULL) {
+		lock(T);
+		pool_freelist(&T->pool, head, tail);
+		unlock(T);
+	}
 	assert((uint32_t)T->ticktime == T->expire);
 	return ;
 }
@@ -319,31 +475,15 @@ silly_timer_init()
 	T->expire = T->ticktime;
 	T->monotonic = 0;
 	spinlock_init(&T->lock);
-	return ;
-}
-
-static inline void
-freelist(struct node *n)
-{
-	while (n) {
-		struct node *tmp = n;
-		n = n->next;
-		freenode(tmp);
-	}
+	pool_init(&T->pool);
 	return ;
 }
 
 void
 silly_timer_exit()
 {
-	int i, j;
-	for (i = 0; i < SR_SIZE; i++)
-		freelist(T->root.slot[i]);
-	for (i = 0; i < 4; i++) {
-		for (j = 0; j < SL_SIZE; j++)
-			freelist(T->level[i].slot[j]);
-	}
 	spinlock_destroy(&T->lock);
+	pool_free(&T->pool);
 	silly_free(T);
 	return ;
 }

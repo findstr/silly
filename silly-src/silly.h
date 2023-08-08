@@ -53,7 +53,8 @@ struct silly_message {
 
 struct silly_message_texpire {	//timer expire
 	COMMONFIELD
-	uint32_t session;
+	uint64_t session;
+	uint64_t userdata;
 };
 
 struct silly_message_socket {	//socket accept
