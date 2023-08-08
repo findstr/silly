@@ -164,6 +164,7 @@ end
 local wakeup_task_queue = {}
 local wakeup_task_param = {}
 local sleep_session_task = {}
+local timer_user_data = {}
 
 local dispatch_wakeup
 
@@ -222,6 +223,7 @@ function core.wakeup2(t, ...)
 end
 
 local timeout = c.timeout
+local timercancel = c.timercancel
 function core.sleep(ms)
 	local t = task_running
 	local status = task_status[t]
@@ -231,17 +233,31 @@ function core.sleep(ms)
 	task_yield("SLEEP")
 end
 
-function core.timeout(ms, func)
-	local session = timeout(ms)
+function core.timeout(ms, func, ud)
+	local userid
+	if ud then
+		userid = #timer_user_data + 1
+		timer_user_data[userid] = ud
+	end
+	local session = timeout(ms, userid)
 	sleep_session_task[session] = func
 	return session
 end
 
+local function nop(s) end
 function core.timercancel(session)
 	local f = sleep_session_task[session]
 	if f then
 		assert(type(f) == "function")
-		sleep_session_task[session] = nil
+		local ud = timercancel(session)
+		if ud then
+			if ud ~= 0 then
+				timer_user_data[ud] = nil
+			end
+			sleep_session_task[session] = nil
+		else
+			sleep_session_task[session] = nop
+		end
 	end
 end
 
@@ -369,14 +385,21 @@ end
 
 --the message handler can't be yield
 local MSG = {
-[1] = function(session)					--SILLY_TEXPIRE = 1
+[1] = function(session, userid)				--SILLY_TEXPIRE = 1
 	local t = sleep_session_task[session]
 	if t then
 		sleep_session_task[session] = nil
 		if type(t) == "function" then
 			t = task_create(t)
 		end
-		task_resume(t, session)
+		local ud
+		if userid == 0 then --has no user data
+			ud = session
+		else
+			ud = timer_user_data[userid]
+			timer_user_data[userid] = nil
+		end
+		task_resume(t, ud)
 	end
 end,
 [2] = function(fd, _, portid, addr)			--SILLY_SACCEPT = 2
