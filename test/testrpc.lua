@@ -30,6 +30,9 @@ local function case_two(msg, cmd, fd)
 	return cmd, msg
 end
 
+local function case_three(msg, cmd, fd)
+end
+
 local case = case_one
 
 local server = rpc.listen {
@@ -63,11 +66,28 @@ local function request(fd, index, count, cmd)
 	end
 end
 
+local function timeout(fd, index, count, cmd)
+	return function()
+		for i = 1, count do
+			local test = {
+				name = "hello",
+				age = index,
+				rand = crypto.randomkey(8),
+			}
+			local body, ack = client:call(cmd, test)
+			testaux.asserteq(body, nil, "rpc timeout, body is nil")
+			testaux.asserteq(ack, "timeout", "rpc timeout, ack is timeout")
+		end
+	end
+end
+
+
+
 local function client_part()
 	client = rpc.connect {
 		addr = "127.0.0.1:8989",
 		proto = logic,
-		timeout = 5000,
+		timeout = 1000,
 		close = function(fd, errno)
 		end,
 	}
@@ -90,6 +110,14 @@ local function client_part()
 		core.sleep(100)
 	end
 	wg:wait()
+	print("case two finish")
+	case = case_three
+	for i = 1, 20 do
+		wg:fork(timeout(client, i, 2, "foo"))
+		core.sleep(10)
+	end
+	wg:wait()
+	print("case three finish")
 end
 
 return function()

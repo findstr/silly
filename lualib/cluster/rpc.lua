@@ -111,54 +111,16 @@ end
 local client = {}
 local clientmt = {__index = client, __gc = gc}
 
-local function wakeup_all_timeout(self)
-	local timeout = self.timeout
+local function wakeup_all_calling(self)
 	local waitpool = self.waitpool
 	local ackcmd = self.ackcmd
-	for _, wk in pairs(timeout) do
-		for k, v in pairs(wk) do
-			local co = waitpool[v]
-			if co then
-				logger.info("[rpc.client] wakeupall session", v)
-				ackcmd[v] = "closed"
-				core.wakeup(co)
-				waitpool[v] = nil
-			end
-			wk[k] = nil
-		end
+	for session, co in pairs(waitpool) do
+		waitpool[session] = nil
+		logger.info("[rpc.client] wakeupall session", v)
+		ackcmd[co] = "closed"
+		core.wakeup(co)
 	end
 end
-
-local function clienttimer(self)
-	local wheel
-	wheel = function()
-		if self.closed then
-			return
-		end
-		core.timeout(1000, wheel)
-		local idx = self.nowwheel + 1
-		idx = idx % self.totalwheel
-		self.nowwheel = idx
-		local wk = self.timeout[idx]
-		if not wk then
-			return
-		end
-		local waitpool = self.waitpool
-		local ackcmd = self.ackcmd
-		for k, v in pairs(wk) do
-			local co = waitpool[v]
-			if co then
-				logger.warn("[rpc.client] timeout session", v)
-				ackcmd[v] = "timeout"
-				core.wakeup(co)
-				waitpool[v] = nil
-			end
-			wk[k] = nil
-		end
-	end
-	core.timeout(1000, wheel)
-end
-
 
 local function wakeup_all_connect(self)
 	local q = self.connectqueue
@@ -173,6 +135,8 @@ local function doconnect(self)
 	local addr  = self.__addr
 	local close = self.__close
 	local proto = self.__proto
+	local ackcmd = self.ackcmd
+	local waitpool = self.waitpool
 	function EVENT.close(fd, errno)
 		if close then
 			local ok, err = core.pcall(close, fd, errno)
@@ -201,7 +165,6 @@ local function doconnect(self)
 				return
 			end
 			--ack
-			local waitpool = self.waitpool
 			local co = waitpool[session]
 			if not co then --timeout
 				logger.warn("[rpc.client] late session",
@@ -209,7 +172,7 @@ local function doconnect(self)
 				return
 			end
 			waitpool[session] = nil
-			self.ackcmd[session] = cmd
+			ackcmd[co] = cmd
 			core.wakeup(co, body)
 			--next
 			fd, d, sz, cmd, session, _ = np.rpcpop(queue)
@@ -260,26 +223,39 @@ local function checkconnect(self)
 	end
 end
 
-local function waitfor(self, session)
-	local co = core.running()
-	local expire = self.timeoutwheel + self.nowwheel
-	expire = expire % self.totalwheel
-	local timeout = self.timeout
-	local t = timeout[expire]
-	if not t then
-		t = {}
-		timeout[expire] = t
-	end
-	t[#t + 1] = session
-	self.waitpool[session] = co
-	local body = core.wait()
+local timeout = core.timeout
+local timercancel = core.timercancel
+local function waitfor(self, expire)
+	local waitpool = self.waitpool
 	local ackcmd = self.ackcmd
-	local cmd = ackcmd[session]
-	ackcmd[session] = nil
-	return body, cmd
+	local timer_func = function(session)
+		if self.closed then
+			return
+		end
+		local co = waitpool[session]
+		if not co then
+			logger.error("[rpc.client] timer error session:", session)
+			return
+		end
+		waitpool[session] = nil
+		ackcmd[co] = "timeout"
+		core.wakeup(co)
+	end
+	return function(session)
+		local co = core.running()
+		local timer = timeout(expire, timer_func, session)
+		waitpool[session] = co
+		local body = core.wait()
+		if body then
+			timercancel(timer)
+		end
+		local cmd = ackcmd[co]
+		ackcmd[co] = nil
+		return body, cmd
+	end
 end
 
-local function send_request(self, cmd, body) 
+local function send_request(self, cmd, body)
 	local ok = checkconnect(self)
 	if not ok then
 		return false, "closed"
@@ -306,7 +282,7 @@ function client.call(self, cmd, body)
 	if not ok then
 		return false, session
 	end
-	return waitfor(self, session)
+	return self.waitfor(session)
 end
 
 function client.close(self)
@@ -316,7 +292,7 @@ function client.close(self)
 	gc(self)
 	self.closed = true
 	wakeup_all_connect(self)
-	wakeup_all_timeout(self)
+	wakeup_all_calling(self)
 end
 
 -----rpc
@@ -326,18 +302,15 @@ function rpc.connect(config)
 		fd = false,	--false disconnected, -1 conncting, >=0 conncted
 		closed = false,
 		connectqueue = {},
-		timeout = {},
 		waitpool = {},
 		ackcmd = {},
-		nowwheel = 0,
-		totalwheel = totalwheel,
-		timeoutwheel = totalwheel - 1,
+		waitfor = nil,
 		__addr = config.addr,
 		__proto = config.proto,
 		__close = config.close,
 	}
+	obj.waitfor = waitfor(obj, config.timeout)
 	setmetatable(obj, clientmt)
-	clienttimer(obj)
 	checkconnect(obj)
 	return obj
 end
