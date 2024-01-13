@@ -98,7 +98,7 @@ local function try_wakeup_connect(ch)
 	for i = 1, m do
 		local co = wait[i]
 		wait[i] = nil
-		wakeup(co, true, "ok")
+		wakeup(co, "ok")
 	end
 	ch.stream_count = ch.stream_count + m
 	if m < n then
@@ -262,7 +262,7 @@ local function frame_rst(ch, id, flag, dat)
 		end
 		local co = s.co
 		if co then
-			core.wakeup(co, nil, "rst")
+			core.wakeup(co, "rst")
 		end
 	end
 end
@@ -270,7 +270,7 @@ end
 local function frame_goaway(ch, _, flag, dat)
 	local wait = ch.wait_for_conn
 	for i = 1, #wait do
-		wakeup(wait[i], false, "goaway")
+		wakeup(wait[i], "goaway")
 	end
 	tls_close(ch.fd)
 	ch.fd = nil
@@ -283,7 +283,7 @@ local function frame_goaway(ch, _, flag, dat)
 		streams[k] = nil
 		local co = s.co
 		if co then
-			wakeup(co, nil, "goaway")
+			wakeup(co, "goaway")
 		end
 	end
 end
@@ -339,7 +339,7 @@ local function common_dispatch(ch, frame_process)
 	for _, v in pairs(t) do
 		local co = v.co
 		if co then
-			wakeup(co, nil, "channel closed")
+			wakeup(co, "channel closed")
 		end
 		v.channel = nil
 		v.localclose = true
@@ -356,7 +356,7 @@ local function client_dispatch(ch)
 		end
 		local wait = ch.wait_for_conn
 		for i = 1, #wait do
-			wakeup(wait[i], false, "channel closed")
+			wakeup(wait[i], "channel closed")
 		end
 	end
 end
@@ -487,16 +487,16 @@ function M.connect(host, port)
 		else
 			client_channel[tag] = nil
 			for i = 1, #wait do
-				wakeup(wait[i], false, reason)
+				wakeup(wait[i], reason)
 			end
 			return ok, reason
 		end
 	elseif not ch.fd or ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
 		t[#t + 1] = core.running()
-		local ok, reason = core.wait()
-		if not ok then
-			return ok, reason
+		local reason = core.wait()
+		if reason ~= "ok" then
+			return false, reason
 		end
 	end
 	local id = ch.stream_idx

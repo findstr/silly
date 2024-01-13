@@ -1,11 +1,11 @@
 local M = {}
-step = 3
+STEP = 3
 local a, b = 1, 1
 
 function M.foo()
-	step = 4
-	a = a + step
-	b = b + step
+	STEP = 4
+	a = a + STEP
+	b = b + STEP
 end
 
 function M.bar()

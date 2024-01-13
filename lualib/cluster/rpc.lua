@@ -116,7 +116,7 @@ local function wakeup_all_calling(self)
 	local ackcmd = self.ackcmd
 	for session, co in pairs(waitpool) do
 		waitpool[session] = nil
-		logger.info("[rpc.client] wakeupall session", v)
+		logger.info("[rpc.client] wakeupall session", session)
 		ackcmd[co] = "closed"
 		core.wakeup(co)
 	end

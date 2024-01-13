@@ -34,7 +34,7 @@ local function suspend(s)
 	assert(not s.co)
 	local co = core.running()
 	s.co = co
-	return core.wait(co)
+	return core.wait()
 end
 
 local function wakeup(s, dat)

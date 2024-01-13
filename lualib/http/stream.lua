@@ -77,7 +77,7 @@ local function recv_request(sock)
 	local first = sock:readline()
 	local header = readheader(sock)
 	if not header then
-		return
+		return nil, nil
 	end
 	local typ = header["content-type"]
 	if typ and typ:find("multipart/form-data", 1, true) then

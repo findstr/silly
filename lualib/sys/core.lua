@@ -18,8 +18,8 @@ local traceback = debug.traceback
 local weakmt = {__mode="kv"}
 
 --misc
-local log_info = logger.info
-local log_error = logger.error
+local log_info = assert(logger.info)
+local log_error = assert(logger.error)
 local readctrl = assert(c.readctrl)
 local trace_new = assert(c.trace_new)
 local trace_set = assert(c.trace_set)
@@ -42,7 +42,7 @@ end
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
 local task_status = setmetatable({}, weakmt)
 local task_traceid = setmetatable({}, weakmt)
-local task_running = nil
+local task_running = "NIL"
 local cocreate = coroutine.create
 local corunning = coroutine.running
 local coyield = coroutine.yield
