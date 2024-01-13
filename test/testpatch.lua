@@ -268,9 +268,9 @@ local function case5(P)
 	]], nil, "t", ENV)()
 
 	fix(P, ENV, M1, M2, "$.foo._ENV")
-	testaux.asserteq(bar, 3, "global variable")
+	testaux.asserteq(_ENV.bar, 3, "global variable")
 	M1.foo()
-	testaux.asserteq(bar, 4, "global variable")
+	testaux.asserteq(_ENV.bar, 4, "global variable")
 end
 
 return function()

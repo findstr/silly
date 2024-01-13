@@ -29,7 +29,7 @@ function M.unsample(fn)
 	R:unsample(fn)
 end
 
-function M:registry()
+function M.registry()
 	return R
 end
 
