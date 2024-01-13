@@ -7,12 +7,12 @@ console {
 		foo = function()
 			run.foo()
 			local a, b = run.dump()
-			return string.format("a:%s,b:%s,step:%s", a, b, tostring(step))
+			return string.format("a:%s,b:%s,step:%s", a, b, tostring(STEP))
 		end,
 		bar = function()
 			run.bar()
 			local a, b = run.dump()
-			return string.format("a:%s,b:%s,step:%s", a, b, tostring(step))
+			return string.format("a:%s,b:%s,step:%s", a, b, tostring(STEP))
 		end
 	}
 }

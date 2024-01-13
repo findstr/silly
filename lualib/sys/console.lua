@@ -130,10 +130,11 @@ function console.inject(_, filepath)
 	if not filepath then
 		return "ERR lost the filepath"
 	end
+	local ok
 	local ENV = setmetatable({}, envmt)
-	local ok, err = pcall(loadfile, filepath, "bt", ENV)
-	if ok then
-		ok, err = pcall(err)
+	local chunk, err = loadfile(filepath, "bt", ENV)
+	if chunk then
+		ok, err = pcall(chunk)
 	end
 	local fmt = "Inject file:%s %s"
 	if ok then

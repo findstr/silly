@@ -28,8 +28,7 @@ local function test_timer()
 		local s = core.timeout(100 + n, f)
 		context[s] = n
 	end
-	WAIT = core.running()
-	core.wait(WAIT)
+	core.wait()
 end
 
 local function test_userdata()

@@ -190,8 +190,7 @@ local function test_read(port)
 			core.sleep(0)
 		end
 	end
-	WAIT = core.running()
-	core.wait(WAIT)
+	core.wait()
 	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
 	testaux.asserteq(recv_sum, send_sum, "tcp send checksum")
 	IO.close(fd)
@@ -456,7 +455,7 @@ return function()
 
 	IO = tls
 	testaux.module("tls")
-	IO.limit = function() end
+	IO.limit = function(fd, limit) end
 	test_read(":10002")
 	test_close(":10002")
 	core.sleep(100)

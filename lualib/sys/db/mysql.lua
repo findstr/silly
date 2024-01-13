@@ -798,9 +798,9 @@ local function read_prepare_result(self, sock)
     return true, resp
 end
 
-local function _prepare_resp(self, sql)
+local function _prepare_resp(self)
     return function(sock)
-        return read_prepare_result(self, sock, sql)
+        return read_prepare_result(self, sock)
     end
 end
 

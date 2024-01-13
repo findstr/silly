@@ -116,13 +116,12 @@ local function testcase5()
 	wg:fork(function()
 		local lock1 = mutex:lock(key)
 		local lock = mutex:lock(key)
-		local n = x
 		local flag = false
 		lock:unlock()
 		local parent = core.running()
 		core.fork(function()
 			core.wakeup(parent)
-			local key = mutex:lock(key)
+			local x = mutex:lock(key)
 			flag = true
 		end)
 		core.wait()
@@ -139,14 +138,13 @@ local function testcase6()
 	wg:fork(function()
 		local lock1 = mutex:lock(key)
 		local lock = mutex:lock(key)
-		local n = x
 		local flag = false
 		lock:unlock()
 		lock1:unlock()
 		local parent = core.running()
 		core.fork(function()
 			core.wakeup(parent)
-			local key = mutex:lock(key)
+			local k = mutex:lock(key)
 			flag = true
 		end)
 		core.wait()
