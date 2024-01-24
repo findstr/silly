@@ -131,7 +131,7 @@ local function httpd(scheme, handler)
 			end
 			--request line
 			local method, uri, ver =
-				first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
+			    first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
 			assert(method and uri and ver)
 			res.method = method
 			res.version = ver
@@ -173,8 +173,7 @@ local server = {
 			fd2 = tls.listen {
 				disp = httpd("https", handler),
 				port = conf.tls_port,
-				key = conf.tls_key,
-				cert = conf.tls_cert,
+				certs = conf.tls_certs,
 			}
 		end
 		return fd1, fd2

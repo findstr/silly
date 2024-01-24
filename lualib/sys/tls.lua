@@ -88,7 +88,7 @@ function EVENT.data(fd, message)
 		return
 	end
 	local delim = s.delim
-	tls.message(s.ssl, message)
+		tls.message(s.ssl, message)
 	if not delim then	--non suspend read
 		return
 	end
@@ -150,6 +150,7 @@ end
 function M.listen(conf)
 	assert(conf.port)
 	assert(conf.disp)
+	assert(#conf.certs > 0)
 	local portid = core.tcp_listen(conf.port, socket_dispatch, conf.backlog)
 	if not portid then
 		return nil
@@ -157,7 +158,7 @@ function M.listen(conf)
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
 	local mode = alpn_mode[conf.alpn]
-	local c = ctx.server(conf.cert, conf.key, conf.ciphers, mode)
+	local c = ctx.server(conf.certs, conf.ciphers, mode)
 	local s = new_socket(portid, c, nil, nil)
 	s.ctx = c
 	s.disp = conf.disp
