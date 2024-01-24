@@ -18,8 +18,12 @@ end)
 
 local tlsfd = tls.listen {
 	port = ":10002",
-	cert = "test/cert.pem",
-	key = "test/key.pem",
+	certs = {
+		{
+			cert= "test/cert.pem",
+			cert_key = "test/key.pem",
+		},
+	},
 	disp = function(fd, addr)
 		if listen_cb then
 			listen_cb(fd)

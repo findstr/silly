@@ -14,8 +14,12 @@ return function()
 	end
 	http2.listen {
 		tls_port = ":8081",
-		tls_cert= "test/cert.pem",
-		tls_key = "test/key.pem",
+		tls_certs = {
+			{
+				cert = "test/cert.pem",
+				cert_key = "test/key.pem",
+			}
+		},
 		handler = function(stream)
 			core.sleep(math.random(1, 300))
 			local header = stream:read()
