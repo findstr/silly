@@ -5,8 +5,12 @@ local listen_cb
 websocket.listen {
 	port = ":10003",
 	tls_port = ":10004",
-	tls_cert= "test/cert.pem",
-	tls_key = "test/key.pem",
+	tls_certs = {
+		{
+			cert = "test/cert.pem",
+			cert_key = "test/key.pem",
+		}
+	},
 	handler = function(sock)
 		local dat, typ = sock:read()
 		testaux.asserteq(typ, "ping", "server read type `ping`")

@@ -303,23 +303,23 @@ local function frame_winupdate(ch, id, flag, dat)
 end
 
 local frame_client = {
-[FRAME_HEADERS] = frame_header_client,
-[FRAME_DATA] = frame_data,
-[FRAME_RST] = frame_rst,
-[FRAME_SETTINGS] = frame_settings,
-[FRAME_PING] = frame_ping,
-[FRAME_GOAWAY] = frame_goaway,
-[FRAME_WINUPDATE] = frame_winupdate,
+	[FRAME_HEADERS] = frame_header_client,
+	[FRAME_DATA] = frame_data,
+	[FRAME_RST] = frame_rst,
+	[FRAME_SETTINGS] = frame_settings,
+	[FRAME_PING] = frame_ping,
+	[FRAME_GOAWAY] = frame_goaway,
+	[FRAME_WINUPDATE] = frame_winupdate,
 }
 
 local frame_server = {
-[FRAME_HEADERS] = frame_header_server,
-[FRAME_DATA] = frame_data,
-[FRAME_RST] = frame_rst,
-[FRAME_SETTINGS] = frame_settings,
-[FRAME_PING] = frame_ping,
-[FRAME_GOAWAY] = frame_goaway,
-[FRAME_WINUPDATE] = frame_winupdate,
+	[FRAME_HEADERS] = frame_header_server,
+	[FRAME_DATA] = frame_data,
+	[FRAME_RST] = frame_rst,
+	[FRAME_SETTINGS] = frame_settings,
+	[FRAME_PING] = frame_ping,
+	[FRAME_GOAWAY] = frame_goaway,
+	[FRAME_WINUPDATE] = frame_winupdate,
 }
 
 local function common_dispatch(ch, frame_process)
@@ -516,9 +516,8 @@ end
 function M.listen(conf)
 	return tls_listen {
 		disp = httpd(conf.handler),
+		certs = conf.tls_certs,
 		port = conf.tls_port,
-		key = conf.tls_key,
-		cert = conf.tls_cert,
 		alpn = "h2"
 	}
 end
@@ -558,7 +557,6 @@ function M.ack(s, status, header, endstream)
 	local dat = build_header(s.id, ch.frame_max_size, hdr, endstream)
 	return tls_write(ch.fd, dat)
 end
-
 
 function M.write(s, dat, continue)
 	local ch = s.channel
