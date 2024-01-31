@@ -1,11 +1,11 @@
-local client = require "http.client"
-local server = require "http.server"
+local http = require "http"
+local helper = require "http.helper"
 local crypto = require "sys.crypto"
-local json = require "sys.json"
 local pairs = pairs
 local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
+local parseurl = helper.parseurl
 
 local M = {}
 local NIL = ""
@@ -156,24 +156,23 @@ local function wrap_close(c)
 	return f
 end
 
-local function handshake(req)
-	local sock = req.sock
-	local header = req.header
-	local write = server.write
-	if req.method ~= "GET" then
-		write(sock, 400)
+local function handshake(stream)
+	local header = stream.header
+	local write = stream.respond
+	if stream.method ~= "GET" then
+		write(stream, 400)
 		return
 	end
 	for k, v in pairs(checklist) do
 		local verify = header[k]
 		if verify and verify ~= v then
-			write(sock, 400)
+			write(stream, 400)
 			return
 		end
 	end
 	local key = header["sec-websocket-key"]
 	if not key then
-		write(sock, 400)
+		write(stream, 400)
 		return
 	end
 	key = crypto.base64encode(crypto.sha1(key .. guid))
@@ -182,13 +181,13 @@ local function handshake(req)
 		["upgrade"] = "websocket",
 		["sec-websocket-accept"] = key,
 	}
-	return write(sock, 101, ack)
+	return write(stream, 101, ack)
 end
 
 local function wrap_handshake(handler)
-	return function(req)
-		local sock = req.sock
-		if handshake(req) then
+	return function(stream)
+		local sock = stream:socket()
+		if handshake(stream) then
 			--hook origin read function
 			sock.read = wrap_read(sock.read)
 			sock.write = wrap_write(sock.write, 0)
@@ -202,21 +201,30 @@ end
 
 function M.listen(conf)
 	conf.handler = wrap_handshake(conf.handler)
-	return server.listen(conf)
+	return http.listen(conf)
 end
 
 function M.connect(uri, param)
+	if param then
+		local buf = helper.urlencode(param)
+		if uri:find("?", 1, true) then
+			uri = uri .. "&" .. buf
+		else
+			uri = uri .. "?" .. buf
+		end
+	end
 	local key = crypto.base64encode(crypto.randomkey(16))
-	local req = client.request("GET", uri, {
+	local req = http.request("GET", uri, {
 		["connection"] = "Upgrade",
 		["upgrade"] = "websocket",
 		["sec-websocket-version"] = 13,
 		["sec-websocket-key"] = key,
-	}, param)
-	if not req or req.status ~= 101 then
+	})
+	local status, header = req:readheader()
+	if not status or status ~= 101 then
 		return nil, "websocket.connect fail"
 	end
-	local sock = req.sock
+	local sock = req:socket()
 	sock.read = wrap_read(sock.read)
 	sock.write = wrap_write(sock.write, 1)
 	sock.close = wrap_close(sock.close)

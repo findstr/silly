@@ -1,12 +1,9 @@
 local core = require "sys.core"
-local dns = require "sys.dns"
-local tls = require "sys.tls"
+local helper = require "http.helper"
 local hpack = require "http2.hpack"
 local builder = require "http2.framebuilder"
 
 local pairs = pairs
-local assert = assert
-local tostring = tostring
 local wakeup = core.wakeup
 local move = table.move
 local remove = table.remove
@@ -15,12 +12,7 @@ local format = string.format
 local pack = string.pack
 local unpack = string.unpack
 local setmetatable = setmetatable
-
-local tls_connect = tls.connect
-local tls_listen = tls.listen
-local tls_close = tls.close
-local tls_read = tls.read
-local tls_write = tls.write
+local parseuri = helper.parseuri
 
 local hpack_new = hpack.new
 local hpack_pack = hpack.pack
@@ -76,13 +68,14 @@ local mt = {__index = M}
 local client_channel = {}
 local server_stream_q = {}
 
-local function read_frame(fd)
-	local x9 = tls_read(fd, 9)
+local function read_frame(socket)
+	local read = socket.read
+	local x9 = read(socket, 9)
 	if not x9 then
 		return nil
 	end
 	local n, t, f, id = unpack(">I3I1I1I4", x9)
-	local dat = n > 0 and tls_read(fd, n) or ""
+	local dat = n > 0 and read(socket, n) or ""
 	return t, f, dat, id
 end
 
@@ -127,10 +120,10 @@ local function try_read_header(ch, flag, dat)
 	if flag & END_HEADERS == END_HEADERS then --all headers
 		header = hpack_unpack(ch.recv_hpack, dat)
 	else
-		local fd = ch.fd
+		local socket = ch.socket
 		local tbl = {dat}
 		repeat
-			local t, f, d = read_frame(fd)
+			local t, f, d = read_frame(socket)
 			if not t and t ~= FRAME_CONTINUATION then
 				--todo:check t, maybe should ack error
 				return nil
@@ -140,6 +133,24 @@ local function try_read_header(ch, flag, dat)
 		header = hpack_unpack(ch.recv_pack, tbl)
 	end
 	return header
+end
+
+local function local_close(s)
+	s.localclose = true
+	if s.active and s.remoteclose then
+		local ch = s.channel
+		ch.stream_count = ch.stream_count - 1
+		try_wakeup_connect(s.channel)
+	end
+end
+
+local function remote_close(s)
+	s.remoteclose = true
+	if s.active and s.localclose then
+		local ch = s.channel
+		ch.stream_count = ch.stream_count - 1
+		try_wakeup_connect(ch)
+	end
 end
 
 local function frame_header_client(ch, id, flag, dat)
@@ -153,27 +164,32 @@ local function frame_header_client(ch, id, flag, dat)
 	if not header then
 		return
 	end
-	s[1] = header
+	s.header = header
 	if flag & END_STREAM == END_STREAM then
 		streams[id] = nil
-		s.remoteclose = true
-		if s.active and s.localclose then
-			ch.stream_count = ch.stream_count - 1
-			try_wakeup_connect(ch)
-		end
+		remote_close(s)
 	end
 	local co = s.co
 	if co then
 		s.co = nil
-		core.wakeup(co)
+		core.wakeup(co, "ok")
 	end
 end
 
 local function frame_header_server(ch, id, flag, dat)
+	local header = try_read_header(ch, flag, dat)
+	if not header then
+		return
+	end
+	local uri = header[':path']
+	local path, form = parseuri(uri)
 	local s = setmetatable({
-		[1] = false,
-		method = false,
-		path = false,
+		version = "HTTP/2",
+		header = header,
+		method = header[':method'],
+		path = path,
+		form = form,
+		--private members
 		id = id,
 		co = false,
 		active = false,
@@ -181,16 +197,6 @@ local function frame_header_server(ch, id, flag, dat)
 		localclose = false,
 		remoteclose = false,
 	}, mt)
-
-	local header = try_read_header(ch, flag, dat)
-	if not header then
-		return
-	end
-	s.scheme = header[':scheme']; header[':scheme'] = nil
-	s.method = header[':method']; header[':method'] = nil
-	s.path = header[':path']; header[':path'] = nil
-	s.authority = header[':authority']; header[':authority'] = nil
-	s[1] = header
 	if flag & END_STREAM == END_STREAM then
 		s.remoteclose = true
 	else
@@ -211,7 +217,7 @@ local function frame_data(ch, id, flag, dat)
 		dat = dat:sub(2,-1)
 	end
 	if flag & END_STREAM == END_STREAM then
-		tls_write(ch.fd, build_winupdate(0, 0, #dat))
+		ch.socket:write(build_winupdate(0, 0, #dat))
 		s.remoteclose = true
 		if s.active and s.localclose then
 			ch.stream_count = ch.stream_count - 1
@@ -219,7 +225,7 @@ local function frame_data(ch, id, flag, dat)
 		end
 		streams[id] = nil
 	else
-		tls_write(ch.fd, build_winupdate(id, 0, #dat))
+		ch.socket:write(build_winupdate(id, 0, #dat))
 	end
 	local co = s.co
 	if co then
@@ -245,8 +251,7 @@ local function frame_settings(ch, _, flag, dat)
 end
 
 local function frame_ping(ch, _, flag, dat)
-	local fd = ch.fd
-	tls_write(fd, pack(">I3I1I1I4", #dat, FRAME_PING, 1, 0) .. dat)
+	ch.socket:write(pack(">I3I1I1I4", #dat, FRAME_PING, 1, 0) .. dat)
 end
 
 local function frame_rst(ch, id, flag, dat)
@@ -269,11 +274,12 @@ end
 
 local function frame_goaway(ch, _, flag, dat)
 	local wait = ch.wait_for_conn
+	local err = "goaway:" .. dat
 	for i = 1, #wait do
-		wakeup(wait[i], "goaway")
+		wakeup(wait[i], err)
 	end
-	tls_close(ch.fd)
-	ch.fd = nil
+	ch.socket:close()
+	ch.socket = nil
 	local wakeup = core.wakeup
 	local streams = ch.streams
 	for k, s in pairs(streams) do
@@ -283,7 +289,7 @@ local function frame_goaway(ch, _, flag, dat)
 		streams[k] = nil
 		local co = s.co
 		if co then
-			wakeup(co, "goaway")
+			wakeup(co, err)
 		end
 	end
 end
@@ -295,7 +301,7 @@ local function frame_winupdate(ch, id, flag, dat)
 			local dat = remove(ch, 1)
 			if dat then
 				n = n - #dat
-				tls_write(ch.fd, dat)
+				ch.socket:write(dat)
 			end
 		end
 		ch.window_size = n
@@ -323,11 +329,11 @@ local frame_server = {
 }
 
 local function common_dispatch(ch, frame_process)
-	local fd = ch.fd
-	while ch.fd do
-		local t,f,d,id = read_frame(fd)
+	local socket = ch.socket
+	while ch.socket do
+		local t,f,d,id = read_frame(socket)
 		if not t then
-			ch.fd = nil
+			ch.socket = nil
 			break
 		end
 		local func = frame_process[t]
@@ -361,31 +367,25 @@ local function client_dispatch(ch)
 	end
 end
 
-local function handshake_as_client(ch, host, port)
-	local ip = dns.lookup(host, dns.A)
-	assert(ip, host)
-	local addr = format("%s:%s", ip, port)
-	local fd = tls_connect(addr, nil, host, "h2")
-	if not fd then
-		return false, "connect fail"
-	end
+local function handshake_as_client(ch, socket)
 	ch.send_hpack = hpack_new(default_header_table_size)
 	ch.recv_hpack = hpack_new(default_header_table_size)
-	tls_write(fd, client_preface)
+	local write = socket.write
+	write(socket, client_preface)
 	local dat = build_setting(0x0,
 		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, 100,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
 	)
-	tls_write(fd, dat)
-	local t, f, dat, id = read_frame(fd)
+	write(socket, dat)
+	local t, f, dat, id = read_frame(socket)
 	if not t or t ~= FRAME_SETTINGS then
 		return false, "expect settings"
 	end
 	frame_settings(ch, id, f, dat)
-	tls_write(fd, build_setting(0x01))
-	tls_write(fd, build_winupdate(0, 0, 1*1024*1024))
+	write(socket, build_setting(0x01))
+	write(socket, build_winupdate(0, 0, 1*1024*1024))
 	while true do
-		local t,f,dat,id = read_frame(fd)
+		local t,f,dat,id = read_frame(socket)
 		if not t then
 			return false, "handshake closed"
 		end
@@ -397,30 +397,34 @@ local function handshake_as_client(ch, host, port)
 			break
 		end
 	end
-	ch.fd = fd
 	ch.dispatchco = core.fork(client_dispatch(ch))
 	return true, "ok"
 end
 
-local function handshake_as_server(fd, ch)
+local function handshake_as_server(socket, ch)
 	local dat = build_setting(0x0,
 		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, 100,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
 	)
-	tls_write(fd, dat)
-	dat = tls_read(fd, client_preface_size)
+	local write = socket.write
+	local read = socket.read
+	local ok = write(socket, dat)
+	if not ok then
+		return false
+	end
+	dat = read(socket, client_preface_size)
 	if dat ~= client_preface then
 		return false
 	end
-	local t,f,dat,id = read_frame(fd)
+	local t,f,dat,id = read_frame(socket)
 	if not t or t ~= FRAME_SETTINGS then
 		return false
 	end
 	frame_settings(ch, id, f, dat)
-	tls_write(fd, build_setting(0x01))
-	tls_write(fd, build_winupdate(0, 0, 1*1024*1024))
+	write(socket, build_setting(0x01))
+	write(socket, build_winupdate(0, 0, 1*1024*1024))
 	while true do
-		local t,f,dat,id = read_frame(fd)
+		local t,f,dat,id = read_frame(socket)
 		if not t then
 			return false
 		end
@@ -435,11 +439,11 @@ local function handshake_as_server(fd, ch)
 	return true
 end
 
-local function httpd(handler)
-	return function(fd, addr)
+function M.httpd(handler)
+	return function(socket, addr)
 		local ch = {
 			--client and server common
-			fd = fd,
+			socket = socket,
 			streams = {},
 			send_hpack = hpack_new(default_header_table_size),
 			recv_hpack = hpack_new(default_header_table_size),
@@ -448,50 +452,18 @@ local function httpd(handler)
 			frame_max_size = default_frame_size,
 			--server more
 			handler = function()
-				local s = remove(server_stream_q, 1)
-				handler(s)
+				handler(remove(server_stream_q, 1))
 			end
 		}
-		local ok = handshake_as_server(fd, ch)
+		local ok = handshake_as_server(socket, ch)
 		if ok then
 			common_dispatch(ch, frame_server)
 		end
 	end
 end
 
-function M.connect(host, port)
-	local tag = format("%s:%s", host, port)
-	local ch = client_channel[tag]
-	if not ch then
-		local wait = {}
-		ch = {
-			--client and server common
-			fd = false,
-			streams = {},
-			send_hpack = false,
-			recv_hpack = false,
-			stream_max = 1000,
-			window_size = default_window_size,
-			frame_max_size = default_frame_size,
-			--client more
-			tag = tag,
-			dispatchco = false,
-			wait_for_conn = wait,
-			stream_idx = 1,
-			stream_count = 1,
-		}
-		client_channel[tag] = ch
-		local ok, reason = handshake_as_client(ch, host, port)
-		if ok then
-			try_wakeup_connect(ch)
-		else
-			client_channel[tag] = nil
-			for i = 1, #wait do
-				wakeup(wait[i], reason)
-			end
-			return ok, reason
-		end
-	elseif not ch.fd or ch.stream_count >= ch.stream_max then
+local function open_stream(ch)
+	if ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
 		t[#t + 1] = core.running()
 		local reason = core.wait()
@@ -508,21 +480,54 @@ function M.connect(host, port)
 		channel = ch,
 		localclose = false,
 		remoteclose = false,
+		header = false,
+		sendheader = nil,
+		version = "HTTP/2",
 	}, mt)
 	ch.streams[id] = stream
-	return stream
+	return stream, "ok"
 end
 
-function M.listen(conf)
-	return tls_listen {
-		disp = httpd(conf.handler),
-		certs = conf.tls_certs,
-		port = conf.tls_port,
-		alpn = "h2"
-	}
+function M.new(tag, socket)
+	local ch = client_channel[tag]
+	if not ch then
+		if not socket then
+			return nil, "socket required"
+		end
+		local wait = {}
+		ch = {
+			--client and server common
+			socket = socket,
+			header = false,
+			streams = {},
+			send_hpack = false,
+			recv_hpack = false,
+			stream_max = 1000,
+			window_size = default_window_size,
+			frame_max_size = default_frame_size,
+			--client more
+			tag = tag,
+			dispatchco = false,
+			wait_for_conn = wait,
+			stream_idx = 1,
+			stream_count = 1,
+		}
+		client_channel[tag] = ch
+		local ok, reason = handshake_as_client(ch, socket)
+		if ok then
+			try_wakeup_connect(ch)
+		else
+			client_channel[tag] = nil
+			for i = 1, #wait do
+				wakeup(wait[i], reason)
+			end
+			return ok, reason
+		end
+	end
+	return open_stream(ch)
 end
 
-function M.req(s, method, path, header, endstream)
+function M.request(s, method, path, header, close)
 	local ch = s.channel
 	if not ch then
 		return false, "channel closed"
@@ -530,18 +535,35 @@ function M.req(s, method, path, header, endstream)
 	if s.localclose then
 		return false, "local closed"
 	end
+	local host = header[":authority"]
+	header[":authority"] = nil
 	local hdr = hpack_pack(ch.send_hpack, header,
+		":authority", host,
 		":method", method,
 		":path", path,
 		":scheme", "https")
-	if endstream then
-		s.localclose = true
+	if close then
+		local_close(s)
 	end
-	local dat = build_header(s.id, ch.frame_max_size, hdr, endstream)
-	return tls_write(ch.fd, dat)
+	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
+	return ch.socket:write(dat)
 end
 
-function M.ack(s, status, header, endstream)
+function M.readheader(s)
+	local header = s.header
+	if not header then
+		local co = core.running()
+		s.co = co
+		local reason = core.wait()
+		if reason ~= "ok" then
+			return false, reason
+		end
+		header = s.header
+	end
+	return tonumber(header[':status']), header
+end
+
+function M.respond(s, status, header, close)
 	local ch = s.channel
 	if not ch then
 		return false, "channel closed"
@@ -549,39 +571,57 @@ function M.ack(s, status, header, endstream)
 	if s.localclose then
 		return false, "local closed"
 	end
-	if endstream then
-		s.localclose = true
-	end
-	status = tostring(status)
 	local hdr = hpack_pack(ch.send_hpack, header, ":status", status)
-	local dat = build_header(s.id, ch.frame_max_size, hdr, endstream)
-	return tls_write(ch.fd, dat)
+	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
+	if close then
+		local_close(s)
+		return ch.socket:write(dat)
+	else
+		s.sendheader = dat
+	end
 end
 
-function M.write(s, dat, continue)
-	local ch = s.channel
-	if not ch then
-		return false, "channel closed"
-	end
-	if s.localclose then
-		return false, "local closed"
-	end
-	local endx = not continue
-	if endx then
-		s.localclose = true
-		if s.active and s.remoteclose then
-			ch.stream_count = ch.stream_count - 1
-			try_wakeup_connect(s.channel)
+local function write_func(close)
+	return function(s, dat)
+		local ch = s.channel
+		if not ch then
+			return false, "channel closed"
+		end
+		if s.localclose then
+			return false, "local closed"
+		end
+		if close then
+			local_close(s)
+		end
+		local header = s.sendheader
+		if header then
+			s.sendheader = nil
+			ch.socket:write(header)
+		end
+		dat = build_body(s.id, ch.frame_max_size, dat, close)
+		local win = ch.window_size
+		if win <= 0 then
+			ch[#ch + 1] = dat
+			return true, "ok"
+		else
+			ch.window_size = win - #dat
+			return ch.socket:write(dat)
 		end
 	end
-	local dat = build_body(s.id, ch.frame_max_size, dat, endx)
-	local win = ch.window_size
-	if win <= 0 then
-		ch[#ch + 1] = dat
-		return true, "ok"
-	else
-		ch.window_size = win - #dat
-		return tls_write(ch.fd, dat)
+end
+
+M.write = write_func(false)
+local write_end = write_func(true)
+function M.close(s, data)
+	local header = s.sendheader
+	if header then
+		s.sendheader = nil
+		s.channel.socket:write(header)
+	end
+	if not s.localclose then
+		data = data or ""
+		write_end(s, data)
+		local_close(s)
 	end
 end
 
@@ -612,16 +652,8 @@ function M.readall(s)
 	return concat(s)
 end
 
-function M.close(s)
-	if not s.localclose then
-		M.write(s, "", true)
-		s.localclose = true
-		if s.active and s.remoteclose then
-			local ch = s.channel
-			ch.stream_count = ch.stream_count - 1
-			try_wakeup_connect(s.channel)
-		end
-	end
+function M.socket(s)
+	return s.channel.socket
 end
 
 return M

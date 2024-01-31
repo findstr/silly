@@ -23,7 +23,8 @@ struct ctx_entry {
 
 struct ctx {
 	int mode;
-	int alpn;
+	int alpn_size;
+	const unsigned char *alpn_protos;
 	int entry_count;
 	struct ctx_entry entries[1];
 };
@@ -72,19 +73,18 @@ ltls_free(lua_State *L)
 
 
 static struct ctx *
-new_tls_ctx(lua_State *L, int mode, int ctx_count)
+new_tls_ctx(lua_State *L, int mode, int ctx_count, int nupval)
 {
 	int size;
 	struct ctx *ctx;
-	size = offsetof(struct ctx, entries) + ctx_count * sizeof(struct ctx_entry);
-	ctx = (struct ctx*)lua_newuserdatauv(L, size, 0);
+	size = offsetof(struct ctx, entries) + ctx_count * sizeof(struct ctx_entry); 
+	ctx = (struct ctx*)lua_newuserdatauv(L, size, nupval);
 	if (luaL_newmetatable(L, "TLS_CTX")) {
 		lua_pushcfunction(L, lctx_free);
 		lua_setfield(L, -2, "__gc");
 	}
 	memset(ctx, 0, size);
 	ctx->mode = mode;
-	ctx->alpn = 0;
 	ctx->entry_count = ctx_count;
 	lua_setmetatable(L, -2);
 	return ctx;
@@ -120,41 +120,21 @@ lctx_client(lua_State *L)
 		lua_pushstring(L, "SSL_CTX_new fail");
 		return 2;
 	}
-	ctx = new_tls_ctx(L, 'C', 1);
+	ctx = new_tls_ctx(L, 'C', 1, 0);
 	ctx->entries[0].ptr = ptr;
 	return 1;
 }
-
-static unsigned char alpn_h2[] = {
-	2, 'h', '2',
-};
-static unsigned char alpn_h1[] = {
-	8, 'h', 't', 't', 'p', '/', '1', '.', '1'
-};
-
-
-#define ALPN_NONE	(0)
-#define ALPN_H2		(1)
 
 int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
 	const unsigned char *in, unsigned int inlen, void *arg)
 {
 	int ret;
-	unsigned int size;
-	unsigned char *alpn;
 	unsigned char *outx;
 	(void)ssl;
 	struct ctx *ctx = (struct ctx *)arg;
 	if (ctx->entry_count == 0)
 		return SSL_TLSEXT_ERR_NOACK;
-	if (ctx->alpn == 1) {
-		alpn = alpn_h2;
-		size = sizeof(alpn_h2);
-	} else {
-		alpn = alpn_h1;
-		size = sizeof(alpn_h1);
-	}
-	ret = SSL_select_next_proto(&outx, outlen, alpn, size, in, inlen);
+	ret = SSL_select_next_proto(&outx, outlen, ctx->alpn_protos, ctx->alpn_size, in, inlen);
 	if (ret == OPENSSL_NPN_NEGOTIATED) {
 		*out = outx;
 		return SSL_TLSEXT_ERR_OK;
@@ -257,10 +237,15 @@ lctx_server(lua_State *L)
 {
 	SSL_CTX *ptr;
 	struct ctx *ctx;
+	int i, ncert, r;
+	size_t alpn_size;
 	const char *err = NULL;
-	int i, ncert, r, alpn;
+	const unsigned char *alpn_protos = NULL;
 	ncert = luaL_len(L, 1);
-	ctx = new_tls_ctx(L, 'S', ncert);
+	alpn_protos = (const unsigned char *)luaL_optlstring(L, 3, NULL, &alpn_size);
+	ctx = new_tls_ctx(L, 'S', ncert, alpn_protos != NULL ? 1 : 0);
+	ctx->alpn_protos = alpn_protos;
+	ctx->alpn_size = alpn_size;
 	for (i = 0; i < ctx->entry_count; i++) {
 		int absidx;
 		struct ctx_entry *entry;
@@ -295,9 +280,7 @@ lctx_server(lua_State *L)
 			}
 		}
 	}
-	alpn = luaL_optinteger(L, 3, 0);
-	if (alpn == 1) {
-		ctx->alpn = alpn;
+	if (ctx->alpn_protos != NULL) {
 		for (i = 0; i < ctx->entry_count; i++) {
 			SSL_CTX *ptr = ctx->entries[i].ptr;
 			SSL_CTX_set_alpn_select_cb(ptr, alpn_cb, ctx);
@@ -309,22 +292,22 @@ lctx_server(lua_State *L)
 static int
 ltls_open(lua_State *L)
 {
-	int fd, alpn;
+	int fd;
+	size_t alpn_size;
 	struct ctx *ctx;
 	struct tls *tls;
 	const char *hostname;
+	const unsigned char *alpn_protos;
 	ctx = luaL_checkudata(L, 1, "TLS_CTX");
 	fd = luaL_checkinteger(L, 2);
 	hostname = lua_tostring(L, 3);
-	alpn = luaL_optinteger(L, 4, 0);
+	alpn_protos = (const unsigned char *)luaL_optlstring(L, 4, NULL, &alpn_size);
 	tls = new_tls(L, fd);
 	tls->ssl = SSL_new(ctx->entries[0].ptr);
 	if (tls->ssl == NULL)
 		luaL_error(L, "SSL_new fail");
-	if (alpn == 1)
-		SSL_set_alpn_protos(tls->ssl, alpn_h2, sizeof(alpn_h2));
-	else
-		SSL_set_alpn_protos(tls->ssl, alpn_h1, sizeof(alpn_h1));
+	if (alpn_protos != NULL) 
+		SSL_set_alpn_protos(tls->ssl, alpn_protos, alpn_size);
 	tls->in_bio = BIO_new(BIO_s_mem());
 	if (tls->in_bio == NULL)
 		luaL_error(L, "BIO_new fail");
@@ -446,8 +429,16 @@ ltls_handshake(lua_State *L)
 	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	ret = SSL_do_handshake(tls->ssl);
 	lua_pushboolean(L, ret > 0);
+	if (ret > 0) {
+		unsigned int len;
+		const unsigned char *data;
+		SSL_get0_alpn_selected(tls->ssl, &data, &len);
+		lua_pushlstring(L, (const char *)data, len);
+	} else {
+		lua_pushliteral(L, "");
+	}
 	flushwrite(tls);
-	return 1;
+	return 2;
 }
 
 static int

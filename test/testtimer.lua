@@ -29,7 +29,7 @@ local function test_timer()
 		context[s] = n
 	end
 	WAIT = core.running()
-	core.wait(WAIT)
+	core.wait()
 end
 
 local function test_userdata()
