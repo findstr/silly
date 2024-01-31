@@ -1,10 +1,10 @@
 local core = require "sys.core"
-local httpd = require "http.server"
-local httpc = require "http.client"
+local json = require "sys.json"
+local http = require "http"
 
-httpd.listen {
+http.listen {
 	port = "127.0.0.1:8080",
-	handler = function(req)
+	handler = function(stream)
 		local html = [[
 <html>
 	<head>Hello World</head>
@@ -13,12 +13,15 @@ httpd.listen {
 	</body>
 </html>
 ]]
-		httpd.write(req.sock, 200, {"Conteng-Type:text/html"}, html)
+		stream:respond(200, {
+			["Conteng-Type"] = "text/html",
+			["content-length"] = #html,
+		})
+		stream:close(html, true)
 	end
 }
 
 core.start(function()
-	local res = httpc.GET("http://127.0.0.1:8080")
-	print(res.body)
+	local res, err = http.GET("http://127.0.0.1:8080")
+	print(res and res.body, err)
 end)
-
