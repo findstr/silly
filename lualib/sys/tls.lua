@@ -1,4 +1,5 @@
 local core = require "sys.core"
+local time = require "sys.time"
 local logger = require "sys.logger"
 local type = type
 local concat = table.concat
@@ -12,19 +13,35 @@ local ctx
 local tls
 local client_ctx
 
-local alpn_mode = {
-	["h2"] = 1
-}
+--"http/1.1"
+--"h2"
+local char = string.char
+local alpnwired = setmetatable({}, {__index = function(t, k)
+	local v = char(#k) .. k
+	t[k] = v
+	return v
+end})
 
-local function new_socket(fd, ctx, hostname, alpn)
-	local mode = alpn_mode[alpn]
+local function wire_alpn_protos(alpnprotos)
+	local buf = {}
+	for _, v in ipairs(alpnprotos) do
+		buf[#buf+1] = alpnwired[v]
+	end
+	return concat(buf)
+end
+
+local function new_socket(fd, ctx, hostname, alpnprotos)
+	if alpnprotos then
+		alpnprotos = wire_alpn_protos(alpnprotos)
+	end
 	local s = {
 		nil,
 		fd = fd,
 		delim = false,
 		co = false,
-		ssl = tls.open(ctx, fd, hostname, mode),
+		ssl = tls.open(ctx, fd, hostname, alpnprotos),
 		closing = false,
+		alpnproto = nil,
 	}
 	socket_pool[fd] = s
 	return s
@@ -48,8 +65,9 @@ local function suspend(s)
 end
 
 local function handshake(s)
-	local ok = tls.handshake(s.ssl)
+	local ok, alpnproto = tls.handshake(s.ssl)
 	if ok then
+		s.alpnproto = alpnproto
 		return ok
 	end
 	s.delim = "~"
@@ -57,7 +75,7 @@ local function handshake(s)
 end
 
 function EVENT.accept(fd, _, portid, addr)
-	local lc = socket_pool[portid];
+	local lc = socket_pool[portid]
 	local s = new_socket(fd, lc.ctx, nil, nil)
 	local ok = handshake(s)
 	if not ok then
@@ -112,8 +130,9 @@ function EVENT.data(fd, message)
 			wakeup(s, dat)
 		end
 	elseif delim == "~" then
-		local ok = tls.handshake(s.ssl)
+		local ok, alpnproto = tls.handshake(s.ssl)
 		if ok then
+			s.alpnproto = alpnproto
 			s.delim = false
 			wakeup(s, true)
 		end
@@ -125,12 +144,12 @@ local function socket_dispatch(type, fd, message, ...)
 end
 
 
-local function connect_normal(ip, bind, hostname, alpn)
+local function connect_normal(ip, bind, hostname, alpnprotos)
 	local fd = core.tcp_connect(ip, socket_dispatch, bind)
 	if not fd then
 		return nil
 	end
-	local s = new_socket(fd, client_ctx, hostname, alpn)
+	local s = new_socket(fd, client_ctx, hostname, alpnprotos)
 	local ok = handshake(s)
 	if ok then
 		return fd
@@ -157,8 +176,12 @@ function M.listen(conf)
 	end
 	tls = require "sys.tls.tls"
 	ctx = ctx or require "sys.tls.ctx"
-	local mode = alpn_mode[conf.alpn]
-	local c = ctx.server(conf.certs, conf.ciphers, mode)
+	local alpns = conf.alpnprotos
+	if alpns then
+		alpns = wire_alpn_protos(alpns)
+	end
+	local c, err = ctx.server(conf.certs, conf.ciphers, alpns)
+	assert(c, err)
 	local s = new_socket(portid, c, nil, nil)
 	s.ctx = c
 	s.disp = conf.disp
@@ -245,5 +268,12 @@ function M.write(fd, str)
 	return tls.write(s.ssl, str)
 end
 
-return M
+function M.alpnproto(fd)
+	local s = socket_pool[fd]
+	if not s then
+		return nil
+	end
+	return s.alpnproto
+end
 
+return M

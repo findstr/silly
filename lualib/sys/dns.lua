@@ -26,21 +26,19 @@ local hosts = env.get("sys.dns.hosts") or "/etc/hosts"
 local name_cache = {}
 local wait_coroutine = {}
 
-local RR_A = 1
-local RR_CNAME = 5
-local RR_AAAA = 28
-local RR_SRV = 33
+local RR_A<const> = 1
+local RR_CNAME<const> = 5
+local RR_AAAA<const> = 28
+local RR_SRV<const> = 33
 
 local function guesstype(str)
 	if str:match("^[%d%.]+$") then
-		return "A"
+		return RR_A
 	end
-
 	if str:find(":") then
-		return "AAAA"
+		return RR_AAAA
 	end
-
-	return "NAME"
+	return RR_CNAME
 end
 
 --[[
@@ -380,7 +378,7 @@ local dns = {
 }
 
 function dns.lookup(name, qtype, timeout)
-	if guesstype(name) ~= "NAME" then
+	if guesstype(name) ~= RR_CNAME then
 		return name
 	end
 	local rr = resolve(name, qtype, timeout, 1)
@@ -391,7 +389,7 @@ function dns.lookup(name, qtype, timeout)
 end
 
 function dns.resolve(name, qtype, timeout)
-	if guesstype(name) ~= "NAME" then
+	if guesstype(name) ~= RR_CNAME then
 		return {name}
 	end
 	return resolve(name, qtype, timeout, 1)
@@ -402,7 +400,7 @@ function dns.server(ip)
 end
 
 function dns.isname(name)
-	return guesstype(name) == "NAME"
+	return guesstype(name) == RR_CNAME
 end
 
 return dns

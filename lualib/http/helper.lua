@@ -1,6 +1,9 @@
 local format = string.format
 local gsub = string.gsub
+local find = string.find
+local sub = string.sub
 local match = string.match
+local gmatch = string.gmatch
 local insert = table.insert
 local concat = table.concat
 local char = utf8.char
@@ -20,7 +23,7 @@ local html_unescape = {
 
 function helper.htmlunescape(html)
 	html = gsub(html, "&#(%d+);", function(s)
-		return char(tonumber(s))
+		return char(tonumber(s, 10))
 	end)
 	html = gsub(html, "&(%a+);", html_unescape)
 	return html
@@ -85,6 +88,21 @@ function helper.parseurl(url)
 		default = true
 	end
 	return scheme, host, port, path, default
+end
+
+function helper.parseuri(str)
+	local form = {}
+	local start = find(str, "?", 1, true)
+	if not start then
+		return str, form
+	end
+	assert(start > 1)
+	local uri = sub(str, 1, start - 1)
+	local f = sub(str, start + 1)
+	for k, v in gmatch(f, "([^=&]+)=([^&]+)") do
+		form[k] = v
+	end
+	return uri, form
 end
 
 return helper

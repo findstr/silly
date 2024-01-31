@@ -1,11 +1,10 @@
-local server = require "http.server"
-local client = require "http.client"
 local json = require "sys.json"
+local tcp = require "sys.net.tcp"
+local http = require "http"
 local testaux = require "testaux"
-local write = server.write
 local dispatch = {}
 
-dispatch["/"] = function(req)
+dispatch["/"] = function(stream)
 	local body = [[
 		<html>
 			<head>Hello Stupid</head>
@@ -20,47 +19,77 @@ dispatch["/"] = function(req)
 	local head = {
 		["Content-Type"] = "text/html",
 	}
-	write(req.sock, 200, head, body)
+	stream:respond(200, head)
+	stream:close(body)
 end
 
 local content = ""
 
-dispatch["/download"] = function(req)
-	write(req.sock, 200, {["Content-Type"] = "text/plain"}, content)
+dispatch["/download"] = function(stream)
+	stream:respond(200, {
+		["Content-Type"] = "text/plain",
+		["content-length"] = #content,
+	})
+	stream:close(content)
 end
 
-dispatch["/upload"] = function(req)
-	if req.form.Hello then
-		content = req.form.Hello
+dispatch["/upload"] = function(stream)
+	if stream.form.Hello then
+		content = stream.form.Hello
 	end
 	local body = "Upload"
 	local head = {["Content-Type"] = "text/plain"}
-	write(req.sock, 200, head, body)
+	stream:respond(200, head)
+	stream:close(body)
 end
 
 return function()
-	server.listen {
-		port = ":8080",
-		handler = function(req)
-			local c = dispatch[req.uri]
-			if c then
-				c(req)
-			else
-				print("Unsupport uri", req.uri)
-				write(req.sock, 404,
-					{["Content-Type"] = "text/plain"},
-					"404 Page Not Found")
-			end
+	local handler = function(stream)
+		local header = stream.header
+		local body = stream:readall()
+		print("handler", stream.path, json.encode(header), body, stream.form and json.encode(stream.form))
+		local c = dispatch[stream.path]
+		if c then
+			c(stream)
+		else
+			local txt = "404 Page Not Found"
+			stream:respond(200, {
+				["Content-Type"] = "text/plain",
+				['content-length'] = #txt,
+			})
+			stream:close(txt)
 		end
+	end
+	local fd1 = http.listen {
+		port = ":8080",
+		handler = handler,
 	}
-	local res = client.POST("http://localhost:8080/upload",
+	assert(fd1, "listen 8080 fail")
+	local fd2 = http.listen {
+		tls = true,
+		port = ":8081",
+		certs = {
+			{
+				cert = "./test/cert.pem",
+				cert_key = "./test/key.pem",
+			},
+		},
+		handler = handler,
+	}
+	assert(fd2, "listen 8081 fail")
+	local ack, err = http.POST("http://localhost:8080/upload",
 			{["Content-Type"] = "application/x-www-form-urlencoded"},
-			"Hello=findstr&")
-	local res = client.GET("http://localhost:8080/download")
+			"Hello=findstr")
+	if not ack then
+		print("ERROR", err)
+		return
+	end
+	print(ack.status, json.encode(ack.header), ack.body)
+	local res = http.GET("https://localhost:8081/download")
 	print(json.encode(res))
 	testaux.asserteq(res.body, "findstr", "http GET data validate")
 	testaux.asserteq(res.status, 200, "http GET status validate")
-	local res = client.GET("http://www.baidu.com")
+	local res = http.GET("http://www.baidu.com")
 	testaux.asserteq(res.status, 200, "http GET status validate")
 end
 

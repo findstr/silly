@@ -1206,9 +1206,12 @@ silly_socket_close(int sid)
 		return -1;
 	}
 	type = s->type;
-	if (unlikely(type == STYPE_CTRL || type == STYPE_RESERVE)) {
-		silly_log_error("[socket] silly_socket_close "
-			"unsupport type %d:%d\n", sid, type);
+	if (unlikely(type == STYPE_CTRL)) {
+		silly_log_error("[socket] silly_socket_close ctrl socket:%d\n", sid);
+		return -1;
+	}
+	if (unlikely(type == STYPE_RESERVE)) {
+		silly_log_warn("[socket] silly_socket_close reserve socket:%d\n", sid);
 		return -1;
 	}
 	cmd.type = 'K';

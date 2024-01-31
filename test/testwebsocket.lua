@@ -2,22 +2,30 @@ local core = require "sys.core"
 local websocket = require "http.websocket"
 local testaux = require "testaux"
 local listen_cb
+
+local handler = function(sock)
+	local dat, typ = sock:read()
+	testaux.asserteq(typ, "ping", "server read type `ping`")
+	testaux.asserteq(dat, "hello", "server read data `hello`")
+	sock:write("world", "pong")
+	sock:close()
+end
+
 websocket.listen {
 	port = ":10003",
-	tls_port = ":10004",
-	tls_certs = {
+	handler = handler,
+}
+
+websocket.listen {
+	tls = true,
+	port = ":10004",
+	certs = {
 		{
 			cert = "test/cert.pem",
 			cert_key = "test/key.pem",
 		}
 	},
-	handler = function(sock)
-		local dat, typ = sock:read()
-		testaux.asserteq(typ, "ping", "server read type `ping`")
-		testaux.asserteq(dat, "hello", "server read data `hello`")
-		sock:write("world", "pong")
-		sock:close()
-	end
+	handler = handler,
 }
 
 local function client(scheme, port)

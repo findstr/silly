@@ -194,6 +194,7 @@ local function test_read(port)
 			core.sleep(0)
 		end
 	end
+	WAIT = core.running()
 	core.wait()
 	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
 	testaux.asserteq(recv_sum, send_sum, "tcp send checksum")
