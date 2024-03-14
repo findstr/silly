@@ -1,5 +1,5 @@
 local console = require "sys.console"
-local run = require "patch.run"
+local run = require "examples.patch.run"
 
 console {
 	addr = "127.0.0.1:2345",

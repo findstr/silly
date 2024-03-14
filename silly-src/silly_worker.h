@@ -15,6 +15,8 @@ void silly_worker_dispatch();
 uint32_t silly_worker_genid();
 size_t silly_worker_msgsize();
 
+char **silly_worker_args(int *argc);
+
 void silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message *msg));
 
 #endif

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local patch = require "sys.patch"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local function fix(P, ENV, M1, M2, skip)
 	local up1 = P:collectupval(M1)
 	local up2 = P:collectupval(M2)
@@ -273,11 +273,9 @@ local function case5(P)
 	testaux.asserteq(_ENV.bar, 4, "global variable")
 end
 
-return function()
-	local P = patch:create()
-	case1(P)
-	case2(P)
-	case3(P)
-	case4(P)
-	case5(P)
-end
+local P = patch:create()
+case1(P)
+case2(P)
+case3(P)
+case4(P)
+case5(P)

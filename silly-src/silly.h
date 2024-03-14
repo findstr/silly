@@ -2,9 +2,14 @@
 #define _SILLY_H
 #include <assert.h>
 #include <stdint.h>
+#include <limits.h>
 #include "silly_conf.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
+
+#ifndef PATH_MAX
+#define PATH_MAX 256
+#endif
 
 #ifndef SILLY_GIT_SHA1
 #define SILLY_GIT_SHA1 0
@@ -29,12 +34,14 @@ struct silly_config {
 	int socketaffinity;
 	int workeraffinity;
 	int timeraffinity;
+	int argc;
+	char **argv;
 	const char *selfname;
-	char bootstrap[128];
-	char lualib_path[256];
-	char lualib_cpath[256];
-	char logpath[256];
-	char pidfile[256];
+	char bootstrap[PATH_MAX];
+	char lualib_path[PATH_MAX];
+	char lualib_cpath[PATH_MAX];
+	char logpath[PATH_MAX];
+	char pidfile[PATH_MAX];
 };
 
 

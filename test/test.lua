@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local env = require "sys.env"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 
 local modules = {
 	"testjson",
@@ -33,33 +33,20 @@ local gprint = print
 local function print(...)
 	gprint(M, ...)
 end
-
+assert(not env.load("test/test.conf"))
 assert(env.get("hello.1.1") == "world")
 env.set("hello.1.1", "hello")
 assert(env.get("hello.1.1") == "hello")
 
 _ENV.print = print
-
-local ok, res = pcall(core.wait)
-assert(not ok)
-
-core.start(function()
-	local entry = {}
-	for k, v in pairs(modules) do
-		entry[k] = require(v)
-	end
-	for k, v in ipairs(modules) do
-		M = v .. ":"
-		print("=========start=========")
-		testaux.module(v)
-		local ok, err = pcall(entry[k])
-		if not ok then
-			print(err)
-			core.exit(1)
-		end
-		print("======success==========")
-	end
-end)
+core.sleep(1000)
+for k, v in ipairs(modules) do
+	M = v .. ":"
+	print("=========start=========")
+	testaux.module(v)
+	dofile("test/" .. v .. ".lua")
+	print("======success==========")
+end
 
 
 

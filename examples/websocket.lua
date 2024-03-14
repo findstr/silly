@@ -2,17 +2,29 @@ local core = require "sys.core"
 local crypto = require "sys.crypto"
 local websocket = require "http.websocket"
 
+local handler = function(sock)
+	local dat, typ = sock:read()
+	print("server read:", dat, typ)
+	sock:write(dat, "pong")
+	sock:close()
+end
+
+
 websocket.listen {
 	port = "127.0.0.1:9999",
-	tls_port = "127.0.0.1:8888",
-	tls_cert = "test/cert.pem",
-	tls_key = "test/key.pem",
-	handler = function(sock)
-		local dat, typ = sock:read()
-		print("server read:", dat, typ)
-		sock:write(dat, "pong")
-		sock:close()
-	end
+	handler = handler
+}
+
+websocket.listen {
+	tls = true,
+	port = "127.0.0.1:8888",
+	certs = {
+		{
+			cert = "test/cert.pem",
+			cert_key = "test/key.pem",
+		}
+	},
+	handler = handler,
 }
 
 core.start(function()

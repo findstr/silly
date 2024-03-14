@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local channel = require "sys.sync.channel"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local c1 = channel.channel()
 
 local queue = {}
@@ -16,28 +16,27 @@ local function test()
 	core.sleep(1)
 end
 
+-------------
+
 core.fork(test)
 
-return function()
-	local a, b, c, d
-	core.sleep(10)
-	for i = 1, 3 do
-		a = "hello" .. i
-		b = nil
-		c = "world" .. i
-		d = nil
-		table.insert(queue, table.pack(a, b, c, d))
-		c1:push2(a, b, c, d)
-	end
-	core.sleep(1000)
-	for i = 4, 6 do
-		a = "hello" .. i
-		b = nil
-		c = "world" .. i
-		d = nil
-		table.insert(queue, table.pack(a, b, c, d))
-		c1:push2(a, b, c, d)
-		core.sleep(1)
-	end
+local a, b, c, d
+core.sleep(10)
+for i = 1, 3 do
+	a = "hello" .. i
+	b = nil
+	c = "world" .. i
+	d = nil
+	table.insert(queue, table.pack(a, b, c, d))
+	c1:push2(a, b, c, d)
 end
-
+core.sleep(1000)
+for i = 4, 6 do
+	a = "hello" .. i
+	b = nil
+	c = "world" .. i
+	d = nil
+	table.insert(queue, table.pack(a, b, c, d))
+	c1:push2(a, b, c, d)
+	core.sleep(1)
+end

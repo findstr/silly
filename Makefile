@@ -65,7 +65,6 @@ SRC_FILE = \
       silly_timer.c \
       silly_run.c \
       silly_daemon.c \
-      silly_env.c \
       silly_malloc.c \
       silly_log.c \
       silly_trace.c \
@@ -120,7 +119,7 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer -DSILLY_TEST
 test: LDFLAG += -fsanitize=address -fno-omit-frame-pointer
 test: $(PLATS)
-	./$(TARGET) test/test.conf
+	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)

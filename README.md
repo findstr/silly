@@ -15,23 +15,16 @@
 - `make`
 - `make TLS=off` (disable TLS function)
 
-## Configuration
-
-- `daemon`, 1 --> run as daemon, 0 --> normal
-- `bootstrap`, lua entry file
-- `lualib_path`, will append the package.path (in luaVM)
-- `lualib_cpath`, will append the package.cpath (int luaVM)
-- `logpath`, if running in daemon mode, all print messages will be written to the  `[logpath]/silly-[pid].log` file
-- `loglevel`, is used to control the log level limits, it can be set to `debug`, `info`, `warn`, or `error`, default is `info`
-- `pidfile`,  if running in daemon mode, `pidfile` will used by run only once in a system
-
 ## Running
-    ./silly <config>
+    ./silly <main.lua> [options]
+
+## Options
+    ./silly -h
 
 ## Test
 
 - Tests are in the test folder
-- Run `./silly test/test.conf` to test all modules
+- Run `./silly test/test.lua --lualib_path="test/?.lua` to test all modules
 
 ## Examples
 

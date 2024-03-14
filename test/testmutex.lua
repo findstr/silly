@@ -1,5 +1,5 @@
 local core = require "sys.core"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local waitgroup = require "sys.sync.waitgroup"
 local mutex = require "sys.sync.mutex"
 
@@ -156,12 +156,10 @@ end
 
 
 
-return function()
-	testcase1()
-	testcase2()
-	testcase3()
-	testcase4()
-	testcase5()
-	testcase6()
-end
+testcase1()
+testcase2()
+testcase3()
+testcase4()
+testcase5()
+testcase6()
 

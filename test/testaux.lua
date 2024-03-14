@@ -1,4 +1,3 @@
-local core = require "sys.core"
 local time = require "sys.time"
 local json = require "sys.json"
 local c = require "test.aux.c"

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local time = require "sys.time"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 
 local context = {}
 local total = 30
@@ -53,9 +53,7 @@ local function test_cancel()
 	testaux.assertneq(key, "bar", "test timer cancel")
 end
 
-return function()
-	test_timer()
-	test_userdata()
-	test_cancel()
-end
+test_timer()
+test_userdata()
+test_cancel()
 

@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local crypto = require "sys.crypto"
-local socket = require "sys.socket"
+local socket = require "sys.net.tcp"
 
 socket.listen("127.0.0.1:9999", function(fd, addr)
 	print("accept", fd, addr)

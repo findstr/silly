@@ -11,7 +11,6 @@
 #include "compiler.h"
 #include "silly_trace.h"
 #include "silly_log.h"
-#include "silly_env.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
 #include "silly_socket.h"
