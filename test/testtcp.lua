@@ -4,7 +4,7 @@ local json = require "sys.json"
 local tcp = require "sys.net.tcp"
 local tls = require "sys.tls"
 local crypto = require "sys.crypto"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local IO
 local listen_cb
 local listenfd = tcp.listen(":10001", function(fd, addr)
@@ -441,30 +441,29 @@ local function netstat()
 	}
 end
 
-return function()
-	local info1 = netstat()
-	print(json.encode(info1))
-	testaux.module("socet")
-	test_limit(":10001")
-	core.sleep(100)
-	local info2 = netstat()
-	print(json.encode(info2))
-	testaux.asserteq(info1, info2, "check limit clear")
-	IO = tcp
-	testaux.module("socet")
-	test_read(":10001")
-	test_close(":10001")
-	core.sleep(100)
-	local info3 = netstat()
-	testaux.asserteq(info1, info3, "check tcp clear")
+core.sleep(1000)
+local info1 = netstat()
+print(json.encode(info1))
+testaux.module("socet")
+test_limit(":10001")
+core.sleep(100)
+local info2 = netstat()
+print(json.encode(info2))
+testaux.asserteq(info1, info2, "check limit clear")
+IO = tcp
+testaux.module("socet")
+test_read(":10001")
+test_close(":10001")
+core.sleep(100)
+local info3 = netstat()
+testaux.asserteq(info1, info3, "check tcp clear")
 
-	IO = tls
-	testaux.module("tls")
-	IO.limit = function(fd, limit) end
-	test_read(":10002")
-	test_close(":10002")
-	core.sleep(100)
-	local info4 = netstat()
-	testaux.asserteq(info1, info4, "check tls clear")
-end
+IO = tls
+testaux.module("tls")
+IO.limit = function(fd, limit) end
+test_read(":10002")
+test_close(":10002")
+core.sleep(100)
+local info4 = netstat()
+testaux.asserteq(info1, info4, "check tls clear")
 

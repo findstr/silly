@@ -17,6 +17,8 @@
 #define WARNING_THRESHOLD (64)
 
 struct silly_worker {
+	int argc;
+	char **argv;
 	lua_State *L;
 	uint32_t id;
 	size_t maxmsg;
@@ -144,17 +146,34 @@ ltraceback(lua_State *L)
 	return 1;
 }
 
+static void
+fetch_core_start(lua_State *L)
+{
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "sys.core");
+	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+		silly_log_error("[worker] require sys.core fail,%s\n",
+			lua_tostring(L, -1));
+		exit(-1);
+	}
+	lua_getfield(L, -1, "start");
+	lua_remove(L, -2);
+}
+
 void
 silly_worker_start(const struct silly_config *config)
 {
 	int err;
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
+	W->argc = config->argc;
+	W->argv = config->argv;
 #if LUA_GC_MODE == LUA_GC_INC
 	lua_gc(L, LUA_GCINC, 0, 0, 0);
 #else
 	lua_gc(L, LUA_GCGEN, 0, 0);
 #endif
+	setlibpath(L, DEFAULT_LUA_PATH, DEFAULT_LUA_CPATH);
 	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
 	if (unlikely(err != 0)) {
 		silly_log_error("[worker] set lua libpath fail,%s\n",
@@ -163,8 +182,15 @@ silly_worker_start(const struct silly_config *config)
 		exit(-1);
 	}
 	lua_pushcfunction(L, ltraceback);
+	fetch_core_start(L);
 	err = luaL_loadfile(L, config->bootstrap);
-	if (unlikely(err) || unlikely(lua_pcall(L, 0, 0, 1))) {
+	if (unlikely(err)) {
+		silly_log_error("[worker] load %s %s\n",
+			config->bootstrap, lua_tostring(L, -1));
+		lua_close(L);
+		exit(-1);
+	}
+	if (unlikely(lua_pcall(L, 1, 0, 1))) {
 		silly_log_error("[worker] call %s %s\n",
 			config->bootstrap, lua_tostring(L, -1));
 		lua_close(L);
@@ -182,6 +208,13 @@ silly_worker_init()
 	W->maxmsg = WARNING_THRESHOLD;
 	W->queue = silly_queue_create();
 	return ;
+}
+
+char **
+silly_worker_args(int *argc)
+{
+	*argc = W->argc;
+	return W->argv;
 }
 
 void

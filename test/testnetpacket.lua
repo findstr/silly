@@ -1,7 +1,6 @@
 local core = require "sys.core"
 local np = require "sys.netpacket"
-local testaux = require "testaux"
-local P = require "print"
+local testaux = require "test.testaux"
 
 local BUFF
 
@@ -145,16 +144,14 @@ local function testexpand()
 	end
 end
 
-return function()
-	collectgarbage("collect")
-	BUFF = np.create()
-	testhashconflict_part1()
-	testpacket(justpush)
-	testpacket(randompush)
-	testclear()
-	testexpand()
-	testhashconflict_part2()
-	BUFF = nil
-	collectgarbage("collect")
-end
+collectgarbage("collect")
+BUFF = np.create()
+testhashconflict_part1()
+testpacket(justpush)
+testpacket(randompush)
+testclear()
+testexpand()
+testhashconflict_part2()
+BUFF = nil
+collectgarbage("collect")
 

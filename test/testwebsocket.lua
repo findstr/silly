@@ -1,7 +1,6 @@
 local core = require "sys.core"
 local websocket = require "http.websocket"
-local testaux = require "testaux"
-local listen_cb
+local testaux = require "test.testaux"
 
 local handler = function(sock)
 	local dat, typ = sock:read()
@@ -46,10 +45,8 @@ local function client(scheme, port)
 	testaux.asserteq(ok, false, "close dummy")
 end
 
-return function()
-	testaux.module("socket")
-	client("ws", ":10003")
-	testaux.module("tls")
-	client("wss", ":10004")
-end
+testaux.module("socket")
+client("ws", ":10003")
+testaux.module("tls")
+client("wss", ":10004")
 

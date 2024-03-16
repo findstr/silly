@@ -1,7 +1,6 @@
 local json = require "sys.json"
-local tcp = require "sys.net.tcp"
 local http = require "http"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local dispatch = {}
 
 dispatch["/"] = function(stream)
@@ -43,53 +42,51 @@ dispatch["/upload"] = function(stream)
 	stream:close(body)
 end
 
-return function()
-	local handler = function(stream)
-		local header = stream.header
-		local body = stream:readall()
-		print("handler", stream.path, json.encode(header), body, stream.form and json.encode(stream.form))
-		local c = dispatch[stream.path]
-		if c then
-			c(stream)
-		else
-			local txt = "404 Page Not Found"
-			stream:respond(200, {
-				["Content-Type"] = "text/plain",
-				['content-length'] = #txt,
-			})
-			stream:close(txt)
-		end
+local handler = function(stream)
+	local header = stream.header
+	local body = stream:readall()
+	print("handler", stream.path, json.encode(header), body, stream.form and json.encode(stream.form))
+	local c = dispatch[stream.path]
+	if c then
+		c(stream)
+	else
+		local txt = "404 Page Not Found"
+		stream:respond(200, {
+			["Content-Type"] = "text/plain",
+			['content-length'] = #txt,
+		})
+		stream:close(txt)
 	end
-	local fd1 = http.listen {
-		port = ":8080",
-		handler = handler,
-	}
-	assert(fd1, "listen 8080 fail")
-	local fd2 = http.listen {
-		tls = true,
-		port = ":8081",
-		certs = {
-			{
-				cert = "./test/cert.pem",
-				cert_key = "./test/key.pem",
-			},
-		},
-		handler = handler,
-	}
-	assert(fd2, "listen 8081 fail")
-	local ack, err = http.POST("http://localhost:8080/upload",
-			{["Content-Type"] = "application/x-www-form-urlencoded"},
-			"Hello=findstr")
-	if not ack then
-		print("ERROR", err)
-		return
-	end
-	print(ack.status, json.encode(ack.header), ack.body)
-	local res = http.GET("https://localhost:8081/download")
-	print(json.encode(res))
-	testaux.asserteq(res.body, "findstr", "http GET data validate")
-	testaux.asserteq(res.status, 200, "http GET status validate")
-	local res = http.GET("http://www.baidu.com")
-	testaux.asserteq(res.status, 200, "http GET status validate")
 end
+local fd1 = http.listen {
+	port = ":8080",
+	handler = handler,
+}
+assert(fd1, "listen 8080 fail")
+local fd2 = http.listen {
+	tls = true,
+	port = ":8081",
+	certs = {
+		{
+			cert = "./test/cert.pem",
+			cert_key = "./test/key.pem",
+		},
+	},
+	handler = handler,
+}
+assert(fd2, "listen 8081 fail")
+local ack, err = http.POST("http://localhost:8080/upload",
+		{["Content-Type"] = "application/x-www-form-urlencoded"},
+		"Hello=findstr")
+if not ack then
+	print("ERROR", err)
+	return
+end
+print(ack.status, json.encode(ack.header), ack.body)
+local res = http.GET("https://localhost:8081/download")
+print(json.encode(res))
+testaux.asserteq(res.body, "findstr", "http GET data validate")
+testaux.asserteq(res.status, 200, "http GET status validate")
+local res = http.GET("http://www.baidu.com")
+testaux.asserteq(res.status, 200, "http GET status validate")
 
