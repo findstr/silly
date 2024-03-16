@@ -1,6 +1,6 @@
 local core = require "sys.core"
 local redis = require "sys.db.redis"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 
 local function asserteq(cmd, expect_success, expect_value, success, value)
 	if type(value) == "table" then
@@ -42,32 +42,30 @@ local function testbasic()
 	asserteq("HGETALL hash", true, "k1", db:hgetall("hash"))
 end
 
-return function()
-	local testcount = 1024
-	local finish = 0
-	local idx = 0
-	print("-----test basic-----")
-	testbasic()
-	print("-----test cocurrent:", testcount)
-	db:del("foo")
-	for i = 1, testcount do
-		core.fork(function()
-			idx = idx + 1
-			local id = idx
-			local ok, get = db:incr("foo")
-			core.sleep(math.random(1, 100))
-			testaux.asserteq(ok, true, "INCR foo")
-			testaux.asserteq(id, get, "INCR foo")
-			finish = finish + 1
-			print("----finish:", finish)
-		end)
-		core.sleep(math.random(1, 10))
+local testcount = 1024
+local finish = 0
+local idx = 0
+print("-----test basic-----")
+testbasic()
+print("-----test cocurrent:", testcount)
+db:del("foo")
+for i = 1, testcount do
+	core.fork(function()
+		idx = idx + 1
+		local id = idx
+		local ok, get = db:incr("foo")
+		core.sleep(math.random(1, 100))
+		testaux.asserteq(ok, true, "INCR foo")
+		testaux.asserteq(id, get, "INCR foo")
+		finish = finish + 1
+		print("----finish:", finish)
+	end)
+	core.sleep(math.random(1, 10))
+end
+while true do
+	if finish == testcount then
+		break
 	end
-	while true do
-		if finish == testcount then
-			break
-		end
-		core.sleep(500)
-	end
+	core.sleep(500)
 end
 

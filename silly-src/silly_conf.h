@@ -21,6 +21,13 @@
 #define LUA_GC_STEP	(100) //KiB
 #endif
 
+#ifndef DEFAULT_LUA_PATH
+#define DEFAULT_LUA_PATH "lualib/?.lua"
+#endif
+
+#ifndef DEFAULT_LUA_CPATH
+#define DEFAULT_LUA_CPATH "luaclib/?.so"
+#endif
 
 
 //(1 << 16) = 65536

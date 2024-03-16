@@ -2,7 +2,7 @@ local core = require "sys.core"
 local waitgroup = require "sys.sync.waitgroup"
 local rpc = require "cluster.rpc"
 local crypto = require "sys.crypto"
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local zproto = require "zproto"
 
 local logic = zproto:parse [[
@@ -120,9 +120,6 @@ local function client_part()
 	print("case three finish")
 end
 
-return function()
-	client_part()
-	client:close()
-	server:close()
-end
-
+client_part()
+client:close()
+server:close()
