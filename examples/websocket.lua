@@ -1,6 +1,6 @@
-local core = require "sys.core"
-local crypto = require "sys.crypto"
-local websocket = require "http.websocket"
+local core = require "core"
+local crypto = require "core.crypto"
+local websocket = require "core.websocket"
 
 local handler = function(sock)
 	local dat, typ = sock:read()

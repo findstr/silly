@@ -1,4 +1,4 @@
-local core = require "sys.core"
+local core = require "core"
 local testaux = require "test.testaux"
 local fork_queue = {}
 local nxt = 1

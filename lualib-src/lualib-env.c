@@ -124,7 +124,7 @@ load_args(lua_State *L)
 }
 
 int
-luaopen_sys_env(lua_State *L)
+luaopen_core_env(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"load", lload},

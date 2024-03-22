@@ -1,6 +1,6 @@
-local core = require "sys.core"
-local json = require "sys.json"
-local http = require "http"
+local core = require "core"
+local json = require "core.json"
+local http = require "core.http"
 
 http.listen {
 	port = "127.0.0.1:8080",

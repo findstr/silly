@@ -1,6 +1,6 @@
-local core = require "sys.core"
-local udp = require "sys.net.udp"
-local crypto = require "sys.crypto"
+local core = require "core"
+local udp = require "core.net.udp"
+local crypto = require "core.crypto"
 local testaux = require "test.testaux"
 
 local server_fd

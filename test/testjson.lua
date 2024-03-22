@@ -1,4 +1,4 @@
-local json = require "sys.json"
+local json = require "core.json"
 local testaux = require "test.testaux"
 
 local obj = {

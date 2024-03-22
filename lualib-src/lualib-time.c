@@ -52,7 +52,7 @@ ltimemonotonicsec(lua_State *L)
 }
 
 int
-luaopen_sys_time(lua_State *L)
+luaopen_core_time(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"now", ltimenow},

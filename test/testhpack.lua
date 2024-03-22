@@ -1,4 +1,4 @@
-local crypto = require "sys.crypto"
+local crypto = require "core.crypto"
 local hpack = require "http2.hpack"
 local testaux = require "test.testaux"
 local send_hpack = hpack.new(4096)

@@ -150,7 +150,7 @@ static void
 fetch_core_start(lua_State *L)
 {
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "sys.core");
+	lua_pushstring(L, "core");
 	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
 		silly_log_error("[worker] require sys.core fail,%s\n",
 			lua_tostring(L, -1));

@@ -1,7 +1,7 @@
-local core = require "sys.core"
+local core = require "core"
 local testaux = require "test.testaux"
-local waitgroup = require "sys.sync.waitgroup"
-local mutex = require "sys.sync.mutex"
+local waitgroup = require "core.sync.waitgroup"
+local mutex = require "core.sync.mutex"
 
 local mutex = mutex.new()
 

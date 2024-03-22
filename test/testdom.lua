@@ -1,4 +1,4 @@
-local dom = require "http.dom"
+local dom = require "core.http.dom"
 local testaux = require "test.testaux"
 local tree = dom.parse [[
 	<hello foo=bar class="c1 c2">

@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local np = require "sys.netpacket"
+local core = require "core"
+local np = require "core.netpacket"
 local testaux = require "test.testaux"
 
 local BUFF

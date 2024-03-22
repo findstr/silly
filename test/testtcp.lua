@@ -1,9 +1,9 @@
-local core = require "sys.core"
-local metrics = require "sys.metrics.c"
-local json = require "sys.json"
-local tcp = require "sys.net.tcp"
-local tls = require "sys.tls"
-local crypto = require "sys.crypto"
+local core = require "core"
+local metrics = require "core.metrics.c"
+local json = require "core.json"
+local tcp = require "core.net.tcp"
+local tls = require "core.net.tls"
+local crypto = require "core.crypto"
 local testaux = require "test.testaux"
 local IO
 local listen_cb

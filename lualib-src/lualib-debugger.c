@@ -92,7 +92,7 @@ lhook(lua_State *L)
 }
 
 int
-luaopen_sys_debugger_helper(lua_State *L)
+luaopen_core_debugger_helper(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"hook", lhook},

@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local dns = require "sys.dns"
+local core = require "core"
+local dns = require "core.dns"
 local testaux = require "test.testaux"
 
 print("testA")

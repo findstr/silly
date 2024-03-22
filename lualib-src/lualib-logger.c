@@ -205,7 +205,7 @@ lerror(lua_State *L)
 }
 
 int
-luaopen_sys_logger_c(lua_State *L)
+luaopen_core_logger_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"getlevel", lgetlevel},
