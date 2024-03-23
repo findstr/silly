@@ -1,4 +1,4 @@
-local crypto = require "sys.crypto"
+local crypto = require "core.crypto"
 local testaux = require "test.testaux"
 local P = require "print"
 

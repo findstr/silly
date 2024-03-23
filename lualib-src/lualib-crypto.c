@@ -541,7 +541,7 @@ setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 }
 
 int
-luaopen_sys_crypto(lua_State *L)
+luaopen_core_crypto(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"xor", lxor},

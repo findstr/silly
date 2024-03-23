@@ -1,4 +1,4 @@
-local core = require "sys.core"
+local core = require "core"
 
 core.fork(function()
 	print("-------1")

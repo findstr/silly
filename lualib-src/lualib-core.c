@@ -498,7 +498,7 @@ ltraceget(lua_State *L)
 }
 
 int
-luaopen_sys_core_c(lua_State *L)
+luaopen_core_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core

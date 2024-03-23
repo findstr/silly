@@ -1,6 +1,6 @@
-local core = require "sys.core"
+local core = require "core"
 local testaux = require "test.testaux"
-local msg = require "cluster.msg"
+local msg = require "core.cluster.msg"
 local zproto = require "zproto"
 local logic = zproto:parse [[
 test 0xff {

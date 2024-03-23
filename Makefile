@@ -87,7 +87,7 @@ LIB_SRC = lualib-core.c \
 
 all: \
 	$(TARGET) \
-	$(LUACLIB_PATH)/sys.so \
+	$(LUACLIB_PATH)/core.so \
 	$(LUACLIB_PATH)/zproto.so \
 	$(LUACLIB_PATH)/http2.so \
 	$(LUACLIB_PATH)/test.so \
@@ -98,7 +98,7 @@ $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
-$(LUACLIB_PATH)/sys.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/core.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED) $(TLSFLAG)
 $(LUACLIB_PATH)/zproto.so: $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)

@@ -198,7 +198,7 @@ ltimerresolution(lua_State *L)
 }
 
 int
-luaopen_sys_metrics_c(lua_State *L)
+luaopen_core_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//build

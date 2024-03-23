@@ -77,7 +77,7 @@ new_tls_ctx(lua_State *L, int mode, int ctx_count, int nupval)
 {
 	int size;
 	struct ctx *ctx;
-	size = offsetof(struct ctx, entries) + ctx_count * sizeof(struct ctx_entry); 
+	size = offsetof(struct ctx, entries) + ctx_count * sizeof(struct ctx_entry);
 	ctx = (struct ctx*)lua_newuserdatauv(L, size, nupval);
 	if (luaL_newmetatable(L, "TLS_CTX")) {
 		lua_pushcfunction(L, lctx_free);
@@ -306,7 +306,7 @@ ltls_open(lua_State *L)
 	tls->ssl = SSL_new(ctx->entries[0].ptr);
 	if (tls->ssl == NULL)
 		luaL_error(L, "SSL_new fail");
-	if (alpn_protos != NULL) 
+	if (alpn_protos != NULL)
 		SSL_set_alpn_protos(tls->ssl, alpn_protos, alpn_size);
 	tls->in_bio = BIO_new(BIO_s_mem());
 	if (tls->in_bio == NULL)
@@ -463,7 +463,7 @@ ltls_message(lua_State *L)
 #endif
 
 int
-luaopen_sys_tls_ctx(lua_State *L)
+luaopen_core_tls_ctx(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
@@ -500,7 +500,7 @@ luaopen_sys_tls_ctx(lua_State *L)
 
 
 int
-luaopen_sys_tls_tls(lua_State *L)
+luaopen_core_tls_tls(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL

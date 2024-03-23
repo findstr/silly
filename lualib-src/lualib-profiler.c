@@ -272,7 +272,7 @@ newmetatable(lua_State *L)
 	return ;
 }
 
-int luaopen_sys_profiler(lua_State *L)
+int luaopen_core_profiler(lua_State *L)
 {
 	int mi;
 	luaL_Reg tbl[] = {

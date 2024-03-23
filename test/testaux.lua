@@ -1,5 +1,5 @@
-local time = require "sys.time"
-local json = require "sys.json"
+local time = require "core.time"
+local json = require "core.json"
 local c = require "test.aux.c"
 local type = type
 local pairs = pairs

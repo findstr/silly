@@ -1,8 +1,7 @@
-local http = require "http"
-local core = require "sys.core"
-local crypto = require "sys.crypto"
-local json = require "sys.json"
-local waitgroup = require "sys.sync.waitgroup"
+local http = require "core.http"
+local core = require "core"
+local crypto = require "core.crypto"
+local waitgroup = require "core.sync.waitgroup"
 local testaux = require "test.testaux"
 
 local f<const> = io.open("./a.txt", "w")

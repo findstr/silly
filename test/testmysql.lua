@@ -1,4 +1,4 @@
-local mysql = require "sys.db.mysql"
+local mysql = require "core.db.mysql"
 local testaux = require "test.testaux"
 
 local db = mysql.connect{

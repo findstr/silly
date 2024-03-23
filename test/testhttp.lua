@@ -1,5 +1,5 @@
-local json = require "sys.json"
-local http = require "http"
+local json = require "core.json"
+local http = require "core.http"
 local testaux = require "test.testaux"
 local dispatch = {}
 

@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local crypto = require "sys.crypto"
+local core = require "core"
+local crypto = require "core.crypto"
 local rpc = require "cluster.rpc"
 local zproto = require "zproto"
 

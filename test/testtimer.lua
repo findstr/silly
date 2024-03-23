@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local time = require "sys.time"
+local core = require "core"
+local time = require "core.time"
 local testaux = require "test.testaux"
 
 local context = {}
