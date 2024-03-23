@@ -1,4 +1,4 @@
-local core = require "sys.core"
+local core = require "core"
 local P = {}
 
 function P.hex(str)

@@ -501,7 +501,7 @@ tpush(lua_State *L)
 	return 0;
 }
 
-int luaopen_sys_netstream(lua_State *L)
+int luaopen_core_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{"new", lnew},

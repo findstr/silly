@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local redis = require "sys.db.redis"
+local core = require "core"
+local redis = require "core.db.redis"
 local testaux = require "test.testaux"
 
 local function asserteq(cmd, expect_success, expect_value, success, value)

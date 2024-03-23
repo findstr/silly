@@ -1,4 +1,4 @@
-local core = require "sys.core"
+local core = require "core"
 
 local function timer(session)
 	print("timer even expired", session)

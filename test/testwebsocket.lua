@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local websocket = require "http.websocket"
+local core = require "core"
+local websocket = require "core.websocket"
 local testaux = require "test.testaux"
 
 local handler = function(sock)

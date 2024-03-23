@@ -1,5 +1,5 @@
-local core = require "sys.core"
-local env = require "sys.env"
+local core = require "core"
+local env = require "core.env"
 local testaux = require "test.testaux"
 
 local modules = {
