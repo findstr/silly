@@ -138,6 +138,10 @@ local stream_mt = {
 		s.header = header
 		return tonumber(status), header
 	end,
+	readtrailer = function(s)
+		--TODO: don't implement
+		return nil
+	end,
 	read = function(s)
 		local sock = s.sock
 		local header = s.header
@@ -164,16 +168,20 @@ local stream_mt = {
 	socket = function(s)
 		return s.sock
 	end,
-	__index = nil
+	__index = nil,
+	__close = function(s)
+		s:close()
+	end,
 }
 stream_mt.readall = stream_mt.read
 stream_mt.__index = stream_mt
 
-function M.new(socket)
+function M.new(scheme, socket)
 	return setmetatable({
 		sock = socket,
 		version = "HTTP/1.1",
 		header = false,
+		scheme = scheme,
 	}, stream_mt)
 end
 

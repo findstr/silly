@@ -824,6 +824,7 @@ luaopen_http2_hpack(lua_State *L)
 
 #define FRAME_DATA		0
 #define FRAME_HEADERS		1
+#define FRAME_RST		3
 #define FRAME_SETTINGS		4
 #define FRAME_WINUPDATE		8
 #define	FRAME_CONTINUATION	9
@@ -978,6 +979,23 @@ lframe_build_winupdate(lua_State *L)
 	return 1;
 }
 
+//rst(id, errorcode)
+static int
+lframe_build_rst(lua_State *L)
+{
+	char *p;
+	luaL_Buffer b;
+	unsigned int id = luaL_checkinteger(L, 1);
+	int errorcode = luaL_checkinteger(L, 2);
+	p = luaL_buffinitsize(L, &b, FRAME_HDR_SIZE + 4);
+	write_frame_header(p,  4, FRAME_RST, 0, id);
+	p += FRAME_HDR_SIZE;
+	write_int(p, errorcode);
+	p += 4;
+	luaL_pushresultsize(&b, p - luaL_buffaddr(&b));
+	return 1;
+}
+
 int
 luaopen_http2_framebuilder(lua_State *L)
 {
@@ -986,6 +1004,7 @@ luaopen_http2_framebuilder(lua_State *L)
 		{"body", lframe_build_body},
 		{"setting", lframe_build_setting},
 		{"winupdate", lframe_build_winupdate},
+		{"rst", lframe_build_rst},
 		{NULL, NULL}
 	};
 	luaL_newlib(L,tbl);

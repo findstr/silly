@@ -1,6 +1,6 @@
 local crypto = require "core.crypto"
 local testaux = require "test.testaux"
-local P = require "print"
+local P = require "test.print"
 
 ---------------------test hamc
 local hmac_key = "test"
