@@ -10,6 +10,7 @@ local modules = {
 	"testudp",
 	"testdns",
 	"testrpc",
+	"testgrpc",
 	"testwakeup",
 	"testwaitgroup",
 	"testmutex",

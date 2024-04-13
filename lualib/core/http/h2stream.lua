@@ -4,6 +4,7 @@ local hpack = require "http2.hpack"
 local builder = require "http2.framebuilder"
 
 local pairs = pairs
+local tonumber = tonumber
 local wakeup = core.wakeup
 local move = table.move
 local remove = table.remove
@@ -21,6 +22,7 @@ local hpack_hardlimit = hpack.hardlimit
 
 local build_header = builder.header
 local build_body = builder.body
+local build_rst = builder.rst
 local build_setting = builder.setting
 local build_winupdate = builder.winupdate
 
@@ -50,6 +52,12 @@ local END_HEADERS<const>		= 0x04
 local PADDED<const>			= 0x08
 local PRIORITY<const>			= 0x20
 
+local STATE_NONE<const>			= 0x00
+local STATE_HEADER<const>               = 0x01
+local STATE_DATA <const>                = 0x02
+local STATE_TRAILER <const>             = 0x03
+local STATE_CLOSE<const>		= 0x04
+
 local default_header_table_size<const> = 4096
 local default_frame_size<const> = 16384
 local default_window_size<const> = 65535
@@ -64,7 +72,7 @@ local setting_field = {
 	[SETTINGS_MAX_HEADER_SIZE] = "max_header_size",
 }
 
-local mt = {__index = M}
+local mt = {__index = M, __close = function(t) t:close() end}
 local client_channel = {}
 local server_stream_q = {}
 
@@ -135,21 +143,14 @@ local function try_read_header(ch, flag, dat)
 	return header
 end
 
-local function local_close(s)
-	s.localclose = true
-	if s.active and s.remoteclose then
+local function check_close(s)
+	if s.remotestate == STATE_CLOSE and s.localclose then
 		local ch = s.channel
-		ch.stream_count = ch.stream_count - 1
-		try_wakeup_connect(s.channel)
-	end
-end
-
-local function remote_close(s)
-	s.remoteclose = true
-	if s.active and s.localclose then
-		local ch = s.channel
-		ch.stream_count = ch.stream_count - 1
-		try_wakeup_connect(ch)
+		ch.streams[s.id] = nil
+		if s.active then
+			ch.stream_count = ch.stream_count - 1
+			try_wakeup_connect(s.channel)
+		end
 	end
 end
 
@@ -160,14 +161,21 @@ local function frame_header_client(ch, id, flag, dat)
 		--todo:ack error
 		return
 	end
+	local state = s.remotestate
+	if state == STATE_NONE then
+		s.remotestate = STATE_HEADER
+	else
+		s.remotestate = STATE_TRAILER
+	end
 	local header = try_read_header(ch, flag, dat)
 	if not header then
 		return
 	end
-	s.header = header
+	local headers = s.headers
+	headers[#headers + 1] = header
 	if flag & END_STREAM == END_STREAM then
-		streams[id] = nil
-		remote_close(s)
+		s.remotestate = STATE_CLOSE
+		check_close(s)
 	end
 	local co = s.co
 	if co then
@@ -181,29 +189,48 @@ local function frame_header_server(ch, id, flag, dat)
 	if not header then
 		return
 	end
-	local uri = header[':path']
-	local path, form = parseuri(uri)
-	local s = setmetatable({
-		version = "HTTP/2",
-		header = header,
-		method = header[':method'],
-		path = path,
-		form = form,
-		--private members
-		id = id,
-		co = false,
-		active = false,
-		channel = ch,
-		localclose = false,
-		remoteclose = false,
-	}, mt)
-	if flag & END_STREAM == END_STREAM then
-		s.remoteclose = true
-	else
-		ch.streams[id] = s
+	local streams = ch.streams
+	local s = streams[id]
+	if not s then
+		local uri = header[':path']
+		local path, form = parseuri(uri)
+		local s = setmetatable({
+			version = "HTTP/2",
+			headers = {header},
+			method = header[':method'],
+			path = path,
+			form = form,
+			--private members
+			id = id,
+			co = false,
+			active = false,
+			channel = ch,
+			localclose = false,
+			remotestate = nil,
+			[1] = nil,	--for stash data
+		}, mt)
+		if flag & END_STREAM == END_STREAM then
+			s.remotestate = STATE_CLOSE
+		else
+			s.remotestate = STATE_HEADER
+			ch.streams[id] = s
+		end
+		server_stream_q[#server_stream_q + 1] = s
+		core.fork(ch.handler)
+    else
+		s.remotestate = STATE_TRAILER
+		s.header = header
+		if flag & END_STREAM == END_STREAM then
+			s.remotestate = STATE_CLOSE
+			check_close(s)
+			streams[id] = nil
+		end
+		local co = s.co
+		if co then
+			s.co = nil
+			core.wakeup(co, "ok")
+		end
 	end
-	server_stream_q[#server_stream_q + 1] = s
-	core.fork(ch.handler)
 end
 
 local function frame_data(ch, id, flag, dat)
@@ -213,26 +240,22 @@ local function frame_data(ch, id, flag, dat)
 		--todo: ack error
 		return
 	end
+	s.remotestate = STATE_DATA
 	if flag & PADDED == PADDED then
 		dat = dat:sub(2,-1)
 	end
 	if flag & END_STREAM == END_STREAM then
+		s.remotestate = STATE_CLOSE
 		ch.socket:write(build_winupdate(0, 0, #dat))
-		s.remoteclose = true
-		if s.active and s.localclose then
-			ch.stream_count = ch.stream_count - 1
-			try_wakeup_connect(ch)
-		end
-		streams[id] = nil
+		check_close(s)
 	else
 		ch.socket:write(build_winupdate(id, 0, #dat))
 	end
+	s[#s + 1] = dat
 	local co = s.co
 	if co then
 		s.co = nil
-		wakeup(co, dat)
-	else
-		s[#s + 1] = dat
+		wakeup(co, "ok")
 	end
 end
 
@@ -250,24 +273,25 @@ local function frame_settings(ch, _, flag, dat)
 	end
 end
 
-local function frame_ping(ch, _, flag, dat)
+local function frame_ping(ch, _, _, dat)
 	ch.socket:write(pack(">I3I1I1I4", #dat, FRAME_PING, 1, 0) .. dat)
 end
 
-local function frame_rst(ch, id, flag, dat)
+local function frame_rst(ch, id, _, dat)
 	local streams = ch.streams
 	local s = streams[id]
 	if s then
 		streams[id] = nil
 		s.localclose = true
-		s.remoteclose = true
+		s.remotestate = STATE_CLOSE
 		if s.active then
 			ch.stream_count = ch.stream_count - 1
 			try_wakeup_connect(ch)
 		end
 		local co = s.co
 		if co then
-			core.wakeup(co, "rst")
+			local err = unpack("<I4", dat)
+			core.wakeup(co, format("rst:%d", err))
 		end
 	end
 end
@@ -285,7 +309,7 @@ local function frame_goaway(ch, _, flag, dat)
 	for k, s in pairs(streams) do
 		s.channel = nil
 		s.localclose = true
-		s.remoteclose = true
+		s.remotestate = STATE_CLOSE
 		streams[k] = nil
 		local co = s.co
 		if co then
@@ -349,16 +373,16 @@ local function common_dispatch(ch, frame_process)
 		end
 		v.channel = nil
 		v.localclose = true
-		v.remoteclose = true
+		v.remotestate = STATE_CLOSE
 	end
 end
 
 local function client_dispatch(ch)
 	return function()
 		common_dispatch(ch, frame_client)
-		local tag = ch.tag
-		if client_channel[tag] == ch then
-			client_channel[tag] = nil
+		local socket = ch.socket
+		if client_channel[socket] == ch then
+			client_channel[socket] = nil
 		end
 		local wait = ch.wait_for_conn
 		for i = 1, #wait do
@@ -472,6 +496,9 @@ local function open_stream(ch)
 		end
 	end
 	local id = ch.stream_idx
+	if id > 0x7ffffffff then
+		id = 0
+	end
 	ch.stream_idx = id + 2
 	local stream = setmetatable({
 		id = id,
@@ -479,17 +506,18 @@ local function open_stream(ch)
 		active = true,
 		channel = ch,
 		localclose = false,
-		remoteclose = false,
-		header = false,
+		remotestate = STATE_NONE,
+		headers = {},
 		sendheader = nil,
 		version = "HTTP/2",
+		[1] = nil,	--for stash data
 	}, mt)
 	ch.streams[id] = stream
 	return stream, "ok"
 end
 
-function M.new(tag, socket)
-	local ch = client_channel[tag]
+function M.new(scheme, socket)
+	local ch = client_channel[socket]
 	if not ch then
 		if not socket then
 			return nil, "socket required"
@@ -498,7 +526,7 @@ function M.new(tag, socket)
 		ch = {
 			--client and server common
 			socket = socket,
-			header = false,
+			headers = {},
 			streams = {},
 			send_hpack = false,
 			recv_hpack = false,
@@ -506,18 +534,18 @@ function M.new(tag, socket)
 			window_size = default_window_size,
 			frame_max_size = default_frame_size,
 			--client more
-			tag = tag,
 			dispatchco = false,
 			wait_for_conn = wait,
 			stream_idx = 1,
 			stream_count = 1,
+			scheme = scheme,
 		}
-		client_channel[tag] = ch
+		client_channel[socket] = ch
 		local ok, reason = handshake_as_client(ch, socket)
 		if ok then
 			try_wakeup_connect(ch)
 		else
-			client_channel[tag] = nil
+			client_channel[socket] = nil
 			for i = 1, #wait do
 				wakeup(wait[i], reason)
 			end
@@ -541,27 +569,83 @@ function M.request(s, method, path, header, close)
 		":authority", host,
 		":method", method,
 		":path", path,
-		":scheme", "https")
+		":scheme", s.scheme)
 	if close then
-		local_close(s)
+		s.localclose = true
+		check_close(s)
 	end
 	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
 	return ch.socket:write(dat)
 end
 
-function M.readheader(s)
-	local header = s.header
-	if not header then
-		local co = core.running()
-		s.co = co
-		local reason = core.wait()
-		if reason ~= "ok" then
-			return false, reason
-		end
-		header = s.header
+local NO_ERROR<const>			=0x00	--Graceful shutdown	[RFC9113, Section 7]
+local PROTOCOL_ERROR<const>		=0x01	--Protocol error detected	[RFC9113, Section 7]
+local INTERNAL_ERROR<const> 		=0x02	--Implementation fault	[RFC9113, Section 7]
+local FLOW_CONTROL_ERROR<const>		=0x03	--Flow-control limits exceeded	[RFC9113, Section 7]
+local SETTINGS_TIMEOUT<const>		=0x04	--Settings not acknowledged	[RFC9113, Section 7]
+local STREAM_CLOSED<const> 		=0x05	--Frame received for closed stream	[RFC9113, Section 7]
+local FRAME_SIZE_ERROR			=0x06	--Frame size incorrect	[RFC9113, Section 7]
+local REFUSED_STREAM<const> 		=0x07	--Stream not processed	[RFC9113, Section 7]
+local CANCEL<const> 			=0x08	--Stream cancelled	[RFC9113, Section 7]
+local COMPRESSION_ERROR<const>		=0x09	--Compression state not updated	[RFC9113, Section 7]
+local CONNECT_ERROR<const> 		=0x0a	--TCP connection error for CONNECT method	[RFC9113, Section 7]
+local ENHANCE_YOUR_CALM<const>		=0x0b	--Processing capacity exceeded	[RFC9113, Section 7]
+local INADEQUATE_SECURITY<const>	=0x0c	--Negotiated TLS parameters not acceptable	[RFC9113, Section 7]
+local HTTP_1_1_REQUIRED<const>		=0x0d	--Use HTTP/1.1 for the request	[RFC9113, Section 7]
+
+local function read_timer(s)
+	s.localclose = true
+	s.remotestate = STATE_CLOSE
+	check_close(s)
+	local rst = build_rst(s.id, CANCEL)
+	s.channel.socket:write(rst)
+	local co = s.co
+	if co then
+		s.co = nil
+		core.wakeup(co, "timeout")
 	end
-	return tonumber(header[':status']), header
 end
+
+local function wait(s, expire)
+	local reason
+	if expire then
+		local timer = core.timeout(expire, read_timer, s)
+		reason = core.wait()
+		if reason ~= "timeout" then
+			core.timercancel(timer)
+		end
+	else
+		reason = core.wait()
+	end
+	return reason
+end
+
+local function read_header(s, expire)
+	local headers = s.headers
+	local header = remove(headers, 1)
+	if not header then
+		if s.remotestate == STATE_CLOSE then
+			return nil, "stream closed"
+		end
+		s.co = core.running()
+		local reason = wait(s, expire)
+		if reason ~= "ok" then
+			return nil, reason
+		end
+		header = remove(headers ,1)
+	end
+	return header, "ok"
+end
+
+function M.readheader(s, expire)
+	local header, reason = read_header(s, expire)
+	if not header then
+		return nil, reason
+	end
+	return tonumber(header[':status']) or 200, header
+end
+
+M.readtrailer = read_header
 
 function M.respond(s, status, header, close)
 	local ch = s.channel
@@ -571,14 +655,17 @@ function M.respond(s, status, header, close)
 	if s.localclose then
 		return false, "local closed"
 	end
-	local hdr = hpack_pack(ch.send_hpack, header, ":status", status)
-	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
 	if close then
-		local_close(s)
-		return ch.socket:write(dat)
+		s.localclose = true
+		check_close(s)
+		local hdr = hpack_pack(ch.send_hpack, header, ":status", status)
+		local dat = build_header(s.id, ch.frame_max_size, hdr, close)
+		return ch.socket:write(dat), "ok"
 	else
-		s.sendheader = dat
+		s.status = status
+		s.sendheader = header
 	end
+	return true, "ok"
 end
 
 local function write_func(close)
@@ -591,13 +678,29 @@ local function write_func(close)
 			return false, "local closed"
 		end
 		if close then
-			local_close(s)
+			s.localclose = true
+			check_close(s)
 		end
 		local header = s.sendheader
 		if header then
 			s.sendheader = nil
-			ch.socket:write(header)
+			local hdr
+			local status = s.status
+			if status then
+				s.status = nil
+				hdr = hpack_pack(ch.send_hpack, header, ":status", status)
+			else
+				hdr = hpack_pack(ch.send_hpack, header)
+			end
+			if close and not dat then
+				local data = build_header(s.id, ch.frame_max_size, hdr, close)
+				return ch.socket:write(data)
+			else
+				local data = build_header(s.id, ch.frame_max_size, hdr, false)
+				ch.socket:write(data)
+			end
 		end
+		dat = dat or ""
 		dat = build_body(s.id, ch.frame_max_size, dat, close)
 		local win = ch.window_size
 		if win <= 0 then
@@ -610,50 +713,74 @@ local function write_func(close)
 	end
 end
 
-M.write = write_func(false)
+local write = write_func(false)
 local write_end = write_func(true)
-function M.close(s, data)
-	local header = s.sendheader
-	if header then
-		s.sendheader = nil
-		s.channel.socket:write(header)
+M.write = write
+
+function M.close(s, data, trailer)
+	if s.localclose then
+		return
 	end
-	if not s.localclose then
-		data = data or ""
+	if not trailer then
 		write_end(s, data)
-		local_close(s)
+	else
+		write(s, data)
+		s.sendheader = trailer
+		write_end(s, nil)
+	end
+	s.localclose = true
+	check_close(s)
+	local co = s.co
+	if co then
+		s.co = nil
+		core.wakeup(co, "closed")
 	end
 end
 
-function M.read(s)
-	local rc = s.remoteclose
-	local dat = s[1]
-	if not dat then
-		if rc then
-			return "", rc
-		end
-		s.co = core.running()
-		core.wait()
-		rc = s.remoteclose
+
+local function read(s, expire)
+	local dat = remove(s, 1)
+	if dat then
+		return dat, nil
+	end
+	if s.remotestate >= STATE_TRAILER then
+		return "", "end of stream"
+	end
+	s.co = core.running()
+	local reason = wait(s, expire)
+	if reason ~= "ok" then
+		return nil, reason
 	end
 	dat = remove(s, 1)
-	return dat, rc
+	if dat then
+		return dat, nil
+	end
+	return "", "end of stream"
 end
 
-function M.readall(s)
-	local co = core.running()
-	while not s.remoteclose do
-		s.co = co
-		local dat, _ = core.wait()
-		if dat then
-			s[#s + 1] = dat
+M.read = read
+function M.readall(s, expire)
+	local read = read
+	local buf = {}
+	while true do
+		local dat, reason = read(s, expire)
+		if not dat then
+			return nil, reason
 		end
+		if dat == "" then
+			break
+		end
+		buf[#buf + 1] = dat
 	end
-	return concat(s)
+	return concat(buf), nil
 end
 
 function M.socket(s)
 	return s.channel.socket
+end
+
+function M.channels()
+	return client_channel
 end
 
 return M

@@ -73,4 +73,5 @@ for i = 1, 2000 do
 	end)
 end
 wg:wait()
+print("test http2 done")
 

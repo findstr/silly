@@ -90,6 +90,7 @@ all: \
 	$(LUACLIB_PATH)/core.so \
 	$(LUACLIB_PATH)/zproto.so \
 	$(LUACLIB_PATH)/http2.so \
+	$(LUACLIB_PATH)/pb.so \
 	$(LUACLIB_PATH)/test.so \
 
 $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
@@ -104,6 +105,8 @@ $(LUACLIB_PATH)/zproto.so: $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zprot
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/http2.so: $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+$(LUACLIB_PATH)/pb.so: $(LIB_PATH)/pb.c | $(LUACLIB_PATH)
+	$(CC) $(CCFLAG) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
 

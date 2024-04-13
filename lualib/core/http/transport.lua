@@ -75,18 +75,25 @@ local scheme_connect = {
 
 local setmetatable = setmetatable
 
-local connect_mutex = mutex.new()
-local function connect(scheme, host, port, alpnprotos)
-	local tag = format("%s:%s", host, port)
-	local stream, _ = h2.new(tag, nil)
-	if stream then
-		return stream
+
+local socket_mutex = mutex.new()
+local socket_pool = setmetatable({}, {__gc = function(t)
+	for k, s in pairs(t) do
+		t[k] = nil
+		s:close()
 	end
-	local lock<close> = connect_mutex:lock(tag)
-	--double check
-	local stream, _ = h2.new(tag, nil)
-	if stream then
-		return stream
+end})
+
+local function connect(scheme, host, port, alpnprotos, reuse)
+	local tag, lock
+	if scheme == "https" or reuse then
+		--https try reuse connects
+		tag = format("%s:%s", host, port)
+		local socket = socket_pool[tag]
+		if socket then
+			return socket
+		end
+		lock = socket_mutex:lock(tag)
 	end
 	local ip = dns.lookup(host, dns.A)
 	assert(ip, host)
@@ -96,14 +103,14 @@ local function connect(scheme, host, port, alpnprotos)
 	if not fd then
 		return nil, err
 	end
-	local sock = setmetatable({fd}, scheme_io[scheme])
-	if sock:alpnproto() == "h2" then --http2
-		stream, err = h2.new(tag, sock)
-	else
-		stream, err = h1.new(sock)
+	local socket = setmetatable({fd}, scheme_io[scheme])
+	if lock then
+		socket_pool[tag] = socket
+		lock:unlock()
 	end
-	return stream, err
+	return socket
 end
+
 
 local function httpd(scheme, handler)
 	local http2d
@@ -123,6 +130,7 @@ local function httpd(scheme, handler)
 end
 
 local M = {
+	scheme_io = scheme_io,
 	connect = connect,
 	httpd = httpd,
 }

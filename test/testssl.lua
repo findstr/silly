@@ -1,4 +1,5 @@
 local dns = require "core.dns"
+local ssl = require "core.net.tls"
 local ip = dns.lookup("www.baidu.com", dns.A)
 local fd = ssl.connect(ip..":443")
 print("connect", fd)
