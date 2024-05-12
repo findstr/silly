@@ -147,6 +147,7 @@ int main(int argc, char *argv[])
 	struct silly_config config;
 	config.argc = argc;
 	config.argv = argv;
+	config.selfpath = argv[0];
 	config.selfname = selfname(argv[0]);
 	if (argc < 2) {
 		print_help(config.selfname);

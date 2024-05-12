@@ -13,8 +13,8 @@
 #include "silly_monitor.h"
 #include "silly_worker.h"
 
-#define max(a, b)	((a) > (b) ? (a) : (b))
-#define WARNING_THRESHOLD (64)
+#define max(a, b)		((a) > (b) ? (a) : (b))
+#define WARNING_THRESHOLD 	(64)
 
 struct silly_worker {
 	int argc;
@@ -91,38 +91,26 @@ silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message
 	return ;
 }
 
-static int
-setlibpath(lua_State *L, const char *libpath, const char *clibpath)
+static void
+setlibpath(lua_State *L, const char *pathname, const char *libpath)
 {
-	const char *path;
-	const char *cpath;
-	size_t sz1 = strlen(libpath);
-	size_t sz2 = strlen(clibpath);
-	size_t sz3;
-	size_t sz4;
+	size_t sz1;
+	size_t sz2 = strlen(libpath);
 	size_t need_sz;
-
+	const char *path;
+	if (sz2 == 0)
+		return ;
 	lua_getglobal(L, "package");
-	lua_getfield(L, -1, "path");
-	path = luaL_checklstring(L, -1, &sz3);
-
-	lua_getfield(L, -2, "cpath");
-	cpath = luaL_checklstring(L, -1, &sz4);
-
-	need_sz = max(sz1, sz2) + max(sz3, sz4) + 1;
+	lua_getfield(L, -1, pathname);
+	path = luaL_checklstring(L, -1, &sz1);
+	need_sz = sz2 + sz1 + 1;
 	char new_path[need_sz];
-
 	snprintf(new_path, need_sz, "%s;%s", libpath, path);
 	lua_pushstring(L, new_path);
-	lua_setfield(L, -4, "path");
-
-	snprintf(new_path, need_sz, "%s;%s", clibpath, cpath);
-	lua_pushstring(L, new_path);
-	lua_setfield(L, -4, "cpath");
-
+	lua_setfield(L, -3, pathname);
 	//clear the stack
 	lua_settop(L, 0);
-	return 0;
+	return ;
 }
 
 static void *
@@ -164,6 +152,8 @@ void
 silly_worker_start(const struct silly_config *config)
 {
 	int err;
+	int dir_len;
+	int lib_len;
 	lua_State *L = lua_newstate(lua_alloc, NULL);
 	luaL_openlibs(L);
 	W->argc = config->argc;
@@ -173,14 +163,20 @@ silly_worker_start(const struct silly_config *config)
 #else
 	lua_gc(L, LUA_GCGEN, 0, 0);
 #endif
-	setlibpath(L, DEFAULT_LUA_PATH, DEFAULT_LUA_CPATH);
-	err = setlibpath(L, config->lualib_path, config->lualib_cpath);
-	if (unlikely(err != 0)) {
-		silly_log_error("[worker] set lua libpath fail,%s\n",
-			lua_tostring(L, -1));
-		lua_close(L);
-		exit(-1);
-	}
+	//set load path
+	lib_len = max(sizeof("lualib/?.lua"), sizeof("luaclib/?.so"));
+	dir_len = config->selfname - config->selfpath;
+	char buf[dir_len + lib_len];
+	setlibpath(L, "path", config->lualib_path);
+	setlibpath(L, "cpath", config->lualib_cpath);
+	setlibpath(L, "path", "./lualib/?.lua");
+	setlibpath(L, "cpath", "./luaclib/?.so");
+	memcpy(buf, config->selfpath, dir_len);
+	memcpy(buf + dir_len, "lualib/?.lua", sizeof("lualib/?.lua"));
+	setlibpath(L, "path", buf);
+	memcpy(buf + dir_len, "luaclib/?.so", sizeof("luaclib/?.so"));
+	setlibpath(L, "cpath", buf);
+	//exec core.start()
 	lua_pushcfunction(L, ltraceback);
 	fetch_core_start(L);
 	err = luaL_loadfile(L, config->bootstrap);

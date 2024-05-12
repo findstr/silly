@@ -36,6 +36,7 @@ struct silly_config {
 	int timeraffinity;
 	int argc;
 	char **argv;
+	const char *selfpath;
 	const char *selfname;
 	char bootstrap[PATH_MAX];
 	char lualib_path[PATH_MAX];
