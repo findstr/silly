@@ -180,12 +180,12 @@ silly_run(const struct silly_config *config)
 	silly_worker_init();
 	silly_monitor_init();
 	srand(time(NULL));
-	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
-	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
-	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
 	silly_log_info("%s %s is running ...\n", config->selfname, SILLY_RELEASE);
 	silly_log_info("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
 		config->timeraffinity, config->socketaffinity, config->workeraffinity);
+	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
+	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
+	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
 	monitor_check();
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
