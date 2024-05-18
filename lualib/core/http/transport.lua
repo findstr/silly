@@ -1,3 +1,4 @@
+local core = require "core"
 local tcp = require "core.net.tcp"
 local tls = require "core.net.tls"
 local dns = require "core.dns"
@@ -38,6 +39,7 @@ local tls_mt = {
 	write = wrap_one(tls.write),
 	readline = wrap_one(tls.readline),
 	alpnproto = wrap_one(tls.alpnproto),
+	isalive = wrap_one(tls.isalive),
 	__gc = gc,
 	__index = nil,
 }
@@ -49,6 +51,7 @@ local tcp_mt = {
 	write = wrap_one(tcp.write),
 	readline = wrap_one(tcp.readline),
 	alpnproto = function() return nil end,
+	isalive = wrap_one(tls.isalive),
 	__gc = gc,
 	__index = nil,
 }
@@ -84,23 +87,43 @@ local socket_pool = setmetatable({}, {__gc = function(t)
 	end
 end})
 
+local function check_alive_timer(_)
+	for k, s in pairs(socket_pool) do
+		if not s:isalive() then
+			socket_pool[k] = nil
+		end
+	end
+	core.timeout(1000, check_alive_timer)
+end
+
+core.timeout(1000, check_alive_timer)
+
 local function connect(scheme, host, port, alpnprotos, reuse)
 	local tag, lock
 	if scheme == "https" or reuse then
 		--https try reuse connects
 		tag = format("%s:%s", host, port)
 		local socket = socket_pool[tag]
-		if socket then
+		if socket and socket:isalive() then
 			return socket
 		end
 		lock = socket_mutex:lock(tag)
 	end
 	local ip = dns.lookup(host, dns.A)
+	if not ip then
+		if lock then
+			lock:unlock()
+		end
+		return nil, "dns lookup failed"
+	end
 	assert(ip, host)
 	local addr = format("%s:%s", ip, port)
 	local connect_fn = scheme_connect[scheme]
 	local fd, err = connect_fn(addr, nil, host, alpnprotos)
 	if not fd then
+		if lock then
+			lock:unlock()
+		end
 		return nil, err
 	end
 	local socket = setmetatable({fd}, scheme_io[scheme])
@@ -108,7 +131,7 @@ local function connect(scheme, host, port, alpnprotos, reuse)
 		socket_pool[tag] = socket
 		lock:unlock()
 	end
-	return socket
+	return socket, "ok"
 end
 
 
