@@ -276,4 +276,12 @@ function M.alpnproto(fd)
 	return s.alpnproto
 end
 
+function M.isalive(fd)
+	local s = socket_pool[fd]
+	if s and not s.closing then
+		return true
+	end
+	return false
+end
+
 return M

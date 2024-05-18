@@ -199,5 +199,13 @@ end
 socket.write = core.tcp_send
 socket.sendsize = core.sendsize
 
+function socket.isalive(fd)
+	local s = socket_pool[fd]
+	if s and not s.closing then
+		return true
+	end
+	return false
+end
+
 return socket
 

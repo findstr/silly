@@ -108,6 +108,108 @@ end
 
 local alpn_protos = {"h2"}
 
+local function streaming_write_wrapper(stream, method, timeout)
+	local itype = method.input_type
+	local write = stream.write
+	return function(stream, req)
+		local reqdat = pb.encode(itype, req)
+		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
+		return write(stream, reqdat)
+	end
+end
+
+local function streaming_read_wrapper(stream, method, timeout)
+	local need_header = true
+	local read = stream.read
+	local otype = method.output_type
+	return function(steam)
+		if need_header then
+			local status, header = stream:readheader(timeout)
+			if not status then
+				return nil, header
+			end
+			need_header = false
+		end
+		--TODO: support multi frame
+		local body, reason = read(stream)
+		if not body then
+			return nil, reason
+		end
+		if #body < HDR_SIZE then
+			return nil, "grpc: invalid body"
+		end
+		local resp = pb.decode(otype, body:sub(HDR_SIZE+1))
+		if not resp then
+			return nil, "decode error"
+		end
+		return resp, nil
+	end
+end
+
+local function stream_call(timeout, connect, method, fullname)
+	return function()
+		local stream, err = connect(fullname)
+		if not stream then
+			return nil, nil, err
+		end
+		stream.write = streaming_write_wrapper(stream, method, timeout)
+		stream.read = streaming_read_wrapper(stream, method, timeout)
+		return stream, nil
+	end
+end
+
+local function general_call(timeout, connect, method, fullname)
+	local itype = method.input_type
+	local otype = method.output_type
+	return function(req)
+		local stream<close>, err = connect(fullname)
+		if not stream then
+			return nil, err
+		end
+		local reqdat = pb.encode(itype, req)
+		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
+		local ok, err = stream:write(reqdat)
+		if not ok then
+			return nil, err
+		end
+		local status, header = stream:readheader(timeout)
+		if not status then
+			return nil, header
+		end
+		local body
+		local grpc_message
+		local grpc_status = header['grpc-status']
+		if not grpc_status then	--normal header
+			local reason
+			body, reason = stream:readall(timeout)
+			if not body then
+				return nil, reason
+			end
+			if #body < HDR_SIZE then
+				return nil, "grpc: invalid body"
+			end
+			local trailer, reason = stream:readtrailer(timeout)
+			if not trailer then
+				return nil, reason
+			end
+			grpc_status = trailer['grpc-status']
+			grpc_message = trailer['grpc-message']
+		else
+			grpc_message = header['grpc-message']
+		end
+		grpc_status = tonumber(grpc_status)
+		if grpc_status ~= code.OK then
+			return nil, format("code = %s desc = %s",
+				codename[grpc_status], grpc_message)
+		end
+		local resp = pb.decode(otype, body:sub(HDR_SIZE+1))
+		if not resp then
+			return nil, "decode error"
+		end
+		return resp, nil
+	end
+end
+
 function M.newclient(conf)
 	local service_name = conf.service
 	local endpoints = {}
@@ -121,85 +223,50 @@ function M.newclient(conf)
 	local proto = conf.proto
 	local scheme = conf.tls and "https" or "http"
 	local package = proto.package
-	local input_name = {}
-	local output_name = {}
+	local methods = {}
 	local service = find_service(proto, service_name)
 	if not service then
 		return nil, "grpc: service not found"
 	end
 	for _, method in pairs(service['method']) do
-		local name = method.name
-		local input_type = method.input_type
-		local output_type = method.output_type
-		input_name[name] = input_type
-		output_name[name] = output_type
+		methods[method.name] = method
 	end
 	local timeout = conf.timeout
-	local round_robin = 0
+	local round_robin = 1
 	local endpoint_count = #endpoints
+	local connect = function(fullname)
+		local endpoint = endpoints[round_robin]
+		round_robin = (round_robin % endpoint_count) + 1
+		local host, port = endpoint[1], endpoint[2]
+		local socket, err = transport.connect(scheme, host, port, alpn_protos, true)
+		if not socket then
+			return nil, err
+		end
+		local stream, err = h2.new(scheme, socket)
+		if not stream then
+			return nil, err
+		end
+		local ok, err = stream:request("POST", fullname, {
+			[":authority"] = host,
+			["content-type"] = "application/grpc",
+		}, false)
+		if not ok then
+			return nil, err
+		end
+		return stream, nil
+	end
 	local mt = {
 		__index = function(t, k)
+			local method = methods[k]
 			local full_name = format("/%s.%s/%s", package, service_name, k)
-			local itype = input_name[k]
-			local otype = output_name[k]
-			local fn = function(req)
-				local endpoint = endpoints[round_robin]
-				round_robin = (round_robin % endpoint_count) + 1
-				local host, port = endpoint[1], endpoint[2]
-				local socket, err = transport.connect(scheme, host, port, alpn_protos, true)
-				if not socket then
-					return nil, err
-				end
-				local stream<close>, err = h2.new(scheme, socket)
-				if not stream then
-					return nil, err
-				end
-				local ok, err = stream:request("POST", full_name, {
-					[":authority"] = host,
-					["content-type"] = "application/grpc",
-				}, false)
-				if not ok then
-					return nil, err
-				end
-				local reqdat = pb.encode(itype, req)
-				reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
-				stream:write(reqdat)
-				local status, header = stream:readheader(timeout)
-				if not status then
-					return nil, header
-				end
-				local body
-				local grpc_message
-				local grpc_status = header['grpc-status']
-				if not grpc_status then	--normal header
-					local reason
-					body, reason = stream:readall(timeout)
-					if not body then
-						return nil, reason
-					end
-					if #body < HDR_SIZE then
-						return nil, "grpc: invalid body"
-					end
-					local trailer, reason = stream:readtrailer(timeout)
-					if not trailer then
-						return nil, reason
-					end
-					grpc_status = trailer['grpc-status']
-					grpc_message = trailer['grpc-message']
-				else
-					grpc_message = header['grpc-message']
-				end
-				grpc_status = tonumber(grpc_status)
-				if grpc_status ~= code.OK then
-					return nil, format("code = %s desc = %s",
-						codename[grpc_status], grpc_message)
-				end
-				local resp = pb.decode(otype, body:sub(HDR_SIZE+1))
-				if not resp then
-					return nil, "decode error"
-				end
-				return resp, nil
+			local cs, ss = method.client_streaming, method.server_streaming
+			local callx
+			if cs or ss then
+				callx = stream_call
+			else
+				callx = general_call
 			end
+			local fn = callx(timeout, connect, method, full_name)
 			t[k] = fn
 			return fn
 		end,
