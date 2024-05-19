@@ -137,8 +137,8 @@ log_field(lua_State *L, struct log_buffer *b, int stk, int type, int deep)
 		log_buffer_append(b, LOG_NIL_STR, sizeof(LOG_NIL_STR) - 1);
 		break;
 	default:
-		luaL_error(L, "log unspport param#%d type:%s",
-			stk, lua_typename(L, type));
+		str = lua_tolstring(L, stk, &sz);
+		log_buffer_append(b, str, sz);
 		break;
 	}
 }
