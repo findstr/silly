@@ -63,6 +63,7 @@ local default_frame_size<const> = 16384
 local default_window_size<const> = 65535
 local client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 local client_preface_size = #client_preface
+local max_stream_per_channel<const> = 65535
 
 local setting_field = {
 	[SETTINGS_ENABLE_PUSH] = "enable_push",
@@ -471,7 +472,7 @@ function M.httpd(handler)
 			streams = {},
 			send_hpack = hpack_new(default_header_table_size),
 			recv_hpack = hpack_new(default_header_table_size),
-			stream_max = 100,
+			stream_max = max_stream_per_channel,
 			window_size = default_window_size,
 			frame_max_size = default_frame_size,
 			--server more
@@ -496,8 +497,15 @@ local function open_stream(ch)
 		end
 	end
 	local id = ch.stream_idx
-	if id > 0x7ffffffff then
-		id = 0
+	while true do
+		if id > 0x7ffffffff then
+			id = 0
+		end
+		if ch.streams[id] then
+			id = id + 2
+		else
+			break
+		end
 	end
 	ch.stream_idx = id + 2
 	local stream = setmetatable({
@@ -530,7 +538,7 @@ function M.new(scheme, socket)
 			streams = {},
 			send_hpack = false,
 			recv_hpack = false,
-			stream_max = 1000,
+			stream_max = max_stream_per_channel,
 			window_size = default_window_size,
 			frame_max_size = default_frame_size,
 			--client more
