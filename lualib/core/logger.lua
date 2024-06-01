@@ -44,3 +44,4 @@ function logger.setlevel(level)
 end
 
 return logger
+
