@@ -628,6 +628,91 @@ ldefault(lua_State *L)
 }
 
 
+static int
+ltravel_struct(lua_State *L)
+{
+	const struct zproto_starray *sts;
+	lua_Integer i = luaL_checkinteger(L, 2);
+	sts = (struct zproto_starray *)lua_touserdata(L, 1);
+	if (sts != NULL && i < sts->count) {
+		struct zproto_struct *st = sts->buf[i];
+		i = luaL_intop(+, i, 1);
+		lua_pushinteger(L, i);
+		lua_pushstring(L, zproto_name(st));
+		lua_pushlightuserdata(L, st);
+	} else {
+		lua_pushnil(L);
+		lua_pushnil(L);
+		lua_pushnil(L);
+	}
+	return 3;
+}
+
+static int
+ltravel_field(lua_State *L)
+{
+	const struct zproto_struct *st;
+	lua_Integer i = luaL_checkinteger(L, 2);
+	st = (struct zproto_struct *)lua_touserdata(L, 1);
+	if (i < st->fieldcount) {
+		struct zproto_field *f = st->fields[i];
+		i = luaL_intop(+, i, 1);
+		lua_pushinteger(L, i);
+		lua_newtable(L);
+		lua_pushstring(L, f->name);
+		lua_setfield(L, -2, "name");
+		lua_pushinteger(L, f->tag);
+		lua_setfield(L, -2, "tag");
+		if (f->seminfo != NULL) {
+			lua_pushstring(L, zproto_name(f->seminfo));
+		} else {
+			lua_pushstring(L, zproto_typename(f->type));
+		}
+		lua_setfield(L, -2, "type");
+		lua_pushboolean(L, f->isarray);
+		lua_setfield(L, -2, "array");
+		if (f->mapkey != NULL) {
+			lua_pushstring(L, f->mapkey->name);
+			lua_setfield(L, -2, "mapkey");
+		}
+	} else {
+		lua_pushnil(L);
+		lua_pushnil(L);
+	}
+	return 2;
+
+}
+
+static int
+ltravel(lua_State *L)
+{
+	size_t n;
+	const char *mod;
+	struct zproto *z;
+	struct zproto_struct *st;
+	z = zproto(L);
+	mod = luaL_optlstring(L, 2, "field", &n);
+	if (strcmp(mod, "struct") == 0) {
+		const struct zproto_starray *sts;
+		st = (struct zproto_struct *)lua_touserdata(L, 3);
+		sts = (st == NULL) ? zproto_root(z) : st->child;
+		lua_pushcfunction(L, ltravel_struct);
+		lua_pushlightuserdata(L, (void *)sts);
+		lua_pushinteger(L, 0);
+	} else if (strcmp(mod, "field") == 0) {
+		st = (struct zproto_struct *)lua_touserdata(L, 3);
+		if (st == NULL) {
+			return luaL_error(L, "travel field: 'struct' is null");
+		}
+		lua_pushcfunction(L, ltravel_field);
+		lua_pushlightuserdata(L, (void *)st);
+		lua_pushinteger(L, 0);
+	} else {
+		return luaL_error(L, "travel: 'mod' can only be [struct|field]");
+	}
+	return 3;
+}
+
 
 static int
 lpack(lua_State *L)
@@ -715,6 +800,7 @@ luaopen_zproto_c(lua_State *L)
 		{"query", lquery},
 		{"decode", ldecode},
 		{"default", ldefault},
+		{"travel", ltravel},
 		{NULL, NULL},
 	};
 

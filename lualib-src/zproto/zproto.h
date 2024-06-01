@@ -25,7 +25,30 @@ enum {
 #define ZPROTO_ERROR (-3)
 
 struct zproto;
-struct zproto_struct;
+
+struct zproto_field {
+	short tag;
+	unsigned char type;
+	unsigned char isarray;
+	const char *name;
+	struct zproto_struct *seminfo;
+	struct zproto_field *mapkey;
+};
+
+struct zproto_struct {
+	int tag;
+	int basetag;
+	int iscontinue;
+	int fieldcount;
+	const char *name;
+	struct zproto_starray *child;
+	struct zproto_field **fields;
+};
+
+struct zproto_starray {
+	int count;
+	struct zproto_struct *buf[1];
+};
 
 struct zproto_parser {
 	char error[256];
@@ -62,8 +85,9 @@ int zproto_tag(struct zproto_struct *st);
 const char *zproto_name(struct zproto_struct *st);
 
 //travel
-struct zproto_struct *const*zproto_child(struct zproto *z, struct zproto_struct *st, int *count);
-void zproto_travel(struct zproto_struct *st, zproto_cb_t cb, void *ud);
+const struct zproto_starray *zproto_root(struct zproto *z);
+const char *zproto_typename(int type);
+
 
 int zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, void *ud);
 int zproto_decode(struct zproto_struct *st, const uint8_t *buff, int sz, zproto_cb_t cb, void *ud);
