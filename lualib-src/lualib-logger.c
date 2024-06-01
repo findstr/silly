@@ -35,7 +35,13 @@ log_buffer_space(struct log_buffer *b)
 	return (size_t)(&b->buf[LOG_BUF_SIZE] - b->ptr);
 }
 
-static void
+static inline void
+log_buffer_addsize(struct log_buffer *b, size_t len)
+{
+	b->ptr += len;
+}
+
+static inline void
 log_buffer_append(struct log_buffer *b, const char *str, size_t len)
 {
 	if (log_buffer_space(b) < len)
@@ -154,6 +160,21 @@ llog(lua_State *L, enum silly_log_level log_level)
 	top = lua_gettop(L);
 	silly_log_head(log_level);
 	log_buffer_init(&buffer);
+#ifdef LOG_ENABLE_FILE_LINE
+	{
+		lua_Debug ar;
+		if (lua_getstack(L, 1, &ar)) {  /* check function at level */
+			lua_getinfo(L, "Sl", &ar);  /* get info about it */
+			if (ar.currentline > 0) {  /* is there info? */
+				size_t space = log_buffer_space(&buffer);
+				int n = snprintf(buffer.ptr, space, "%s:%d ", ar.short_src, ar.currentline);
+				if (n >= 0 && n < (int)space) {
+					log_buffer_addsize(&buffer, n);
+				}
+			}
+		}
+	}
+#endif
 	for (stk = 1; stk <= top; stk++) {
 		int type = lua_type(L, stk);
 		log_field(L, &buffer, stk, type, 0);

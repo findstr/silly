@@ -10,13 +10,10 @@
 #include "silly_trace.h"
 #include "silly_log.h"
 
-static char pid[16];
-static int pidlen;
 static enum silly_log_level log_level;
 static __thread struct {
 	char buf[64];
 	char *sstr;
-	char *mstr;
 	char *tstr;
 	char *term;
 	time_t sec;
@@ -24,7 +21,6 @@ static __thread struct {
 	silly_trace_id_t traceid;
 } head_cache = {
 	"",
-	NULL,
 	NULL,
 	NULL,
 	NULL,
@@ -50,7 +46,6 @@ static char hex[] = {
 void
 silly_log_init()
 {
-	pidlen = snprintf(pid, sizeof(pid), "%d ", getpid());
 	log_level = SILLY_LOG_INFO;
 	return ;
 }
@@ -71,11 +66,9 @@ silly_log_getlevel()
 	return log_level;
 }
 
-#define BUILD_PID   (0)
 #define BUILD_SEC   (1)
-#define BUILD_MSEC  (2)
-#define BUILD_TRACE (3)
-#define BUILD_NONE  (4)
+#define BUILD_TRACE (2)
+#define BUILD_NONE  (3)
 
 static inline void
 fmttime()
@@ -85,17 +78,14 @@ fmttime()
 	struct tm tm;
 	uint64_t now = silly_timer_now();
 	time_t sec = now / 1000;
-	int ms = now % 1000;
 	silly_trace_id_t traceid = silly_trace_get();
 	int build_step;
 	if (head_cache.sstr == NULL) {
-		build_step = BUILD_PID;
+		build_step = BUILD_SEC;
+		head_cache.sstr = head_cache.buf;
 	} else if (sec != head_cache.sec) {
 		build_step = BUILD_SEC;
 		head_cache.sec= sec;
-	} else if (ms != head_cache.msec) {
-		build_step = BUILD_MSEC;
-		head_cache.msec = ms;
 	} else if (traceid != head_cache.traceid) {
 		build_step = BUILD_TRACE;
 		head_cache.traceid = traceid;
@@ -103,31 +93,15 @@ fmttime()
 		build_step = BUILD_NONE;
 	}
 	switch (build_step) {
-	case BUILD_PID:
-		memcpy(head_cache.buf, pid, pidlen);
-		head_cache.sstr = head_cache.buf + pidlen;
-		//fallthrough
 	case BUILD_SEC:
 		end = &head_cache.buf[sizeof(head_cache.buf)];
 		localtime_r(&sec, &tm);
 		n = strftime(
 			head_cache.sstr,
 			end - head_cache.sstr,
-			"%Y-%m-%d %H:%M:%S", &tm
+			"%Y-%m-%d %H:%M:%S ", &tm
 		);
-		head_cache.mstr = head_cache.sstr + n;
-		//fallthrough
-	case BUILD_MSEC:
-		end = &head_cache.buf[sizeof(head_cache.buf)];
-		//NOTE: the ms is less than 100,
-		//and the head_cache.str is ensure enough
-		//so use sprintf instead of snprintf
-		n = snprintf(
-			head_cache.mstr,
-			end - head_cache.mstr,
-			".%03d ", ms
-		);
-		head_cache.tstr = head_cache.mstr + n;
+		head_cache.tstr = head_cache.sstr + n;
 		//fallthrough
 	case BUILD_TRACE:
 		for (n = 15; n >= 0; n--) {
