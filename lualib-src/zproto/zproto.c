@@ -6,9 +6,6 @@
 #include <sys/stat.h>
 #include "zproto.h"
 
-#define ZPROTO_TYPE (0xffff)
-#define ZPROTO_ARRAY (1 << 16)
-
 #define ARRAYSIZE(n)	(sizeof(n)/sizeof((n)[0]))
 #define TOKEN_SIZE	(64)
 #define TOKEN_STRING	(1)
@@ -25,34 +22,11 @@
 	longjmp(l->exception, 1);\
 }
 
-struct zproto_field {
-	int tag;
-	int type;
-	const char *name;
-	struct zproto_struct *seminfo;
-	struct zproto_field *mapkey;
-};
-
-struct starray {
-	int count;
-	struct zproto_struct *buf[1];
-};
-
-struct zproto_struct {
-	int tag;
-	int basetag;
-	int iscontinue;
-	int fieldcount;
-	const char *name;
-	struct starray *child;
-	struct zproto_field **fields;
-};
-
 struct zproto {
 	union chunk *chunk;
-	struct starray *root;
-	struct starray *namecache;
-	struct starray *tagcache;
+	struct zproto_starray *root;
+	struct zproto_starray *namecache;
+	struct zproto_starray *tagcache;
 };
 
 union alignment {
@@ -232,11 +206,11 @@ lex_freestruct(struct lexstate *l, struct lexstruct *st)
 	l->freestruct = st;
 }
 
-static struct starray *
+static struct zproto_starray *
 lex_collapse(struct lexstate *l, int count, struct lexstruct *ptr)
 {
 	int i = 0;
-	struct starray *arr;
+	struct zproto_starray *arr;
 	int size = sizeof(*arr) + (int)sizeof(arr->buf[0]) * (count - 1);
 	arr = memory_alloc(&l->mem, size);
 	while (ptr != NULL) {
@@ -248,10 +222,10 @@ lex_collapse(struct lexstate *l, int count, struct lexstruct *ptr)
 	return arr;
 }
 
-static struct starray *
-lex_clonearray(struct lexstate *l, const struct starray *arr)
+static struct zproto_starray *
+lex_clonearray(struct lexstate *l, const struct zproto_starray *arr)
 {
-	struct starray *ptr;
+	struct zproto_starray *ptr;
 	int size = sizeof(*arr) + (int)sizeof(arr->buf[0]) * (arr->count - 1);
 	ptr = memory_alloc(&l->mem, size);
 	memcpy(ptr, arr, size);
@@ -502,32 +476,39 @@ lex_uniquefield(struct lexstate *l, const char *name, int tag)
 	return ;
 }
 
+static struct {
+	const char *name;
+	int type;
+} type_id [] = {
+	{"int32", ZPROTO_INTEGER},
+	{"uint32", ZPROTO_UINTEGER},
+	{"int64", ZPROTO_LONG},
+	{"uint64", ZPROTO_ULONG},
+	{"string", ZPROTO_STRING},
+	{"blob", ZPROTO_BLOB},
+	{"boolean", ZPROTO_BOOLEAN},
+	{"float", ZPROTO_FLOAT},
+
+	//depecreated
+	{"integer", ZPROTO_INTEGER},
+	{"uinteger", ZPROTO_UINTEGER},
+	{"long", ZPROTO_LONG},
+	{"ulong", ZPROTO_ULONG},
+	{"short", ZPROTO_SHORT},
+	{"ushort", ZPROTO_USHORT},
+	{"byte", ZPROTO_BYTE},
+	{"ubyte", ZPROTO_UBYTE},
+};
+
 static int
 lex_typeint(struct lexstate *l, struct lexstruct *node,
 	const char *type, struct zproto_struct **seminfo)
 {
 	size_t i;
-	static struct {
-		const char *name;
-		int type;
-	} types[] = {
-		{"integer", ZPROTO_INTEGER},
-		{"uinteger", ZPROTO_UINTEGER},
-		{"long", ZPROTO_LONG},
-		{"ulong", ZPROTO_ULONG},
-		{"short", ZPROTO_SHORT},
-		{"ushort", ZPROTO_USHORT},
-		{"byte", ZPROTO_BYTE},
-		{"ubyte", ZPROTO_UBYTE},
-		{"string", ZPROTO_STRING},
-		{"blob", ZPROTO_BLOB},
-		{"boolean", ZPROTO_BOOLEAN},
-		{"float", ZPROTO_FLOAT},
-	};
 	*seminfo = NULL;
-	for (i = 0; i < sizeof(types)/sizeof(types[0]); i++) {
-		if (strcmp(type, types[i].name) == 0)
-			return types[i].type;
+	for (i = 0; i < sizeof(type_id)/sizeof(type_id[0]); i++) {
+		if (strcmp(type, type_id[i].name) == 0)
+			return type_id[i].type;
 	}
 	*seminfo = lex_findstruct(node, type);
 	if (*seminfo == NULL)
@@ -558,22 +539,25 @@ lex_field(struct lexstate *l, struct lexstruct *node)
 	NEXT_TOKEN(l, ':');
 	//type name
 	NEXT_STRING(l, type);
+	f->isarray = 0;
 	f->type = lex_typeint(l, node, type, &f->seminfo);
 	//[mapkey]
 	ahead = lex_lookahead(l);
 	if (ahead == '[') {	//is a array ?
-		int type = f->type;
 		NEXT_TOKEN(l, '[');
-		f->type |= ZPROTO_ARRAY;
+		f->isarray = 1;
 		ahead = lex_lookahead(l);
 		if (ahead != ']') { //just only a map array ?
 			NEXT_STRING(l, mapkey);
 		} else {
 			mapkey[0] = 0;
-			if (type == ZPROTO_UBYTE) //ubyte[] is blob type
+			if (f->type == ZPROTO_UBYTE) { //ubyte[] is blob type
 				f->type = ZPROTO_BLOB;
-			else if (type == ZPROTO_BYTE) // byte[] is string byte
+				f->isarray = 0;
+			} else if (f->type == ZPROTO_BYTE) { // byte[] is string byte
 				f->type = ZPROTO_STRING;
+				f->isarray = 0;
+			}
 		}
 		NEXT_TOKEN(l, ']');
 	} else {
@@ -591,7 +575,7 @@ lex_field(struct lexstate *l, struct lexstruct *node)
 	if (mapkey[0] == 0)
 		return ;
 	//map index can only be struct array
-	if ((f->type & ZPROTO_TYPE) != ZPROTO_STRUCT)
+	if (f->type != ZPROTO_STRUCT)
 		THROW(l, "only struct array can be specify map index\n");
 	key = lex_findfield(f->seminfo, mapkey);
 	if (key == NULL) {
@@ -602,7 +586,7 @@ lex_field(struct lexstate *l, struct lexstruct *node)
 		fmt = "struct field '%s' can't be mapkey\n";
 		THROW(l, fmt, key->name);
 	}
-	if (key->type & ZPROTO_ARRAY) {
+	if (key->isarray) {
 		fmt = "array field '%s' can't be mapkey\n";
 		THROW(l, fmt, f->name);
 	}
@@ -700,7 +684,7 @@ zproto_parse(struct zproto_parser *p, const char *data)
 	l.p = p;
 	TRY(l) {
 		int count = 0;
-		struct starray *arr, *nc, *tc;
+		struct zproto_starray *arr, *nc, *tc;
 		struct lexstruct root;
 		root.parent = NULL;
 		root.child = NULL;
@@ -772,7 +756,7 @@ end:
 struct zproto_struct *
 zproto_query(struct zproto *z, const char *name)
 {
-	struct starray *root = z->namecache;
+	struct zproto_starray *root = z->namecache;
 	int start = 0, end = root->count;
 	while (start < end) {
 		int mid = (start + end) / 2;
@@ -792,7 +776,7 @@ struct zproto_struct *
 zproto_querytag(struct zproto *z, int tag)
 {
 	int start, end;
-	struct starray *root = z->tagcache;
+	struct zproto_starray *root = z->tagcache;
 	if (root == NULL)
 		return NULL;
 	start = 0;
@@ -822,17 +806,21 @@ zproto_name(struct zproto_struct *st)
 	return st->name;
 }
 
-struct zproto_struct *const*
-zproto_child(struct zproto *z, struct zproto_struct *st, int *count)
+const struct zproto_starray *
+zproto_root(struct zproto *z)
 {
-	struct starray *child;
-	child = st == NULL ? z->root : st->child;
-	if (child) {
-		*count = child->count;
-		return child->buf;
+	return z->root;
+}
+
+const char *
+zproto_typename(int type)
+{
+	size_t i;
+	for (i = 0; i < ARRAYSIZE(type_id); i++) {
+		if (type_id[i].type == type)
+			return type_id[i].name;
 	}
-	*count = 0;
-	return NULL;
+	return "unknown";
 }
 
 static inline void
@@ -840,7 +828,7 @@ fill_args(struct zproto_args *args, struct zproto_field *f, void *ud)
 {
 	args->tag = f->tag;
 	args->name = f->name;
-	args->type = f->type & ZPROTO_TYPE;
+	args->type = f->type;
 	args->sttype = f->seminfo;
 	args->idx = -1;
 	args->len = -1;
@@ -853,21 +841,6 @@ fill_args(struct zproto_args *args, struct zproto_field *f, void *ud)
 		args->mapname = NULL;
 	}
 	return;
-}
-
-void
-zproto_travel(struct zproto_struct *st, zproto_cb_t cb, void *ud)
-{
-	int i;
-	for (i = 0; i < st->fieldcount; i++) {
-		struct zproto_field *f;
-		struct zproto_args args;
-		f = st->fields[i];
-		fill_args(&args, f, ud);
-		if (f->type & ZPROTO_ARRAY)
-			args.idx = 0;
-		cb(&args);
-	}
 }
 
 static struct zproto_field *
@@ -1095,7 +1068,7 @@ zproto_encode(struct zproto_struct *st, uint8_t *buff, int sz, zproto_cb_t cb, v
 		fill_args(&args, f, ud);
 		args.buff = buff;
 		args.buffsz = sz;
-		if (f->type & ZPROTO_ARRAY)
+		if (f->isarray)
 			err = encode_array(&args, cb);
 		else
 			err = encode_field(&args, cb);
@@ -1251,7 +1224,7 @@ zproto_decode(struct zproto_struct *st,
 		fill_args(&args, f, ud);
 		args.buff = (uint8_t *)buff;
 		args.buffsz = size;
-		if (f->type & ZPROTO_ARRAY)
+		if (f->isarray)
 			err = decode_array(&args, cb);
 		else
 			err = decode_field(&args, cb);
@@ -1463,11 +1436,9 @@ dump_struct(struct zproto_struct *st, int level)
 	printf("%*.sstruct %s 0x%x {\n", level * 8, tab, st->name, st->tag);
 	level = level + 1;
 	for (i = 0; i < st->fieldcount; i++) {
-		int type;
 		struct zproto_field *f;
 		f = st->fields[i];
-		type = f->type & ZPROTO_TYPE;
-		if (type == ZPROTO_STRUCT)
+		if (f->type == ZPROTO_STRUCT)
 			dump_struct(f->seminfo, level);
 	}
 	for (i = 0; i < st->fieldcount; i++) {
@@ -1476,8 +1447,8 @@ dump_struct(struct zproto_struct *st, int level)
 		const char *arr = "";
 		struct zproto_field *f;
 		f = st->fields[i];
-		type = f->type & ZPROTO_TYPE;
-		if (f->type & ZPROTO_ARRAY) {
+		type = f->type;
+		if (f->isarray) {
 			arr = "[]";
 			if (f->mapkey)
 				key = f->mapkey->name;
@@ -1499,7 +1470,7 @@ void
 zproto_dump(struct zproto *z)
 {
 	int i;
-	struct starray *root = z->root;
+	struct zproto_starray *root = z->root;
 	for (i = 0; i < root->count; i++)
 		dump_struct(root->buf[i], 0);
 	return ;
