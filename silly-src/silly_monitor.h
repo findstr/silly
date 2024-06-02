@@ -3,7 +3,6 @@
 
 void silly_monitor_init();
 void silly_monitor_check();
-void silly_monitor_trigger(int msgtype);
 
 
 #endif

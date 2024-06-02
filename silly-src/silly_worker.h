@@ -1,5 +1,6 @@
 #ifndef _SILLY_WORKER_H
 #define _SILLY_WORKER_H
+#include <lua.h>
 
 struct silly_message;
 struct lua_State;
@@ -14,6 +15,10 @@ void silly_worker_dispatch();
 
 uint32_t silly_worker_genid();
 size_t silly_worker_msgsize();
+
+uint32_t silly_worker_processid();
+void silly_worker_resume(lua_State *L);
+void silly_worker_warnendless();
 
 char **silly_worker_args(int *argc);
 

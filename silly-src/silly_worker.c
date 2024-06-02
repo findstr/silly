@@ -7,6 +7,7 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "atomic.h"
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -20,14 +21,18 @@ struct silly_worker {
 	int argc;
 	char **argv;
 	lua_State *L;
+	lua_State *running;
 	uint32_t id;
+	uint32_t process_id;
 	size_t maxmsg;
+	lua_Hook oldhook;
+	int oldmask;
+	int oldcount;
 	struct silly_queue *queue;
 	void (*callback)(lua_State *L, struct silly_message *msg);
 };
 
 struct silly_worker *W;
-
 
 void
 silly_worker_push(struct silly_message *msg)
@@ -47,6 +52,7 @@ silly_worker_dispatch()
 	struct silly_message *msg;
 	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
+	atomic_add(&W->process_id, 1);
 	if (msg == NULL) {
 #ifdef LUA_GC_STEP
 		lua_gc(W->L, LUA_GCSTEP, LUA_GC_STEP);
@@ -55,7 +61,7 @@ silly_worker_dispatch()
 	}
 	do {
 		do {
-			silly_monitor_trigger(msg->type);
+			atomic_add(&W->process_id, 1);
 			W->callback(W->L, msg);
 			tmp = msg;
 			msg = msg->next;
@@ -63,7 +69,6 @@ silly_worker_dispatch()
 		} while (msg);
 		msg = silly_queue_pop(W->queue);
 	} while (msg);
-	silly_monitor_trigger(0);
 	W->maxmsg = WARNING_THRESHOLD;
 	return ;
 }
@@ -211,6 +216,40 @@ silly_worker_args(int *argc)
 {
 	*argc = W->argc;
 	return W->argv;
+}
+
+void
+silly_worker_resume(lua_State *L)
+{
+	W->running = L;
+}
+
+
+uint32_t
+silly_worker_processid()
+{
+	return W->process_id;
+}
+
+static void warn_hook(lua_State *L, lua_Debug *ar)
+{
+	(void)ar;
+	int top = lua_gettop(L);;
+	luaL_traceback(L, L, "maybe in an endless loop.", 1);
+	silly_log_warn("[worker] %s\n", lua_tostring(L, -1));
+	lua_settop(L, top);
+	lua_sethook(L,W->oldhook,W->oldmask,W->oldcount);
+}
+
+void
+silly_worker_warnendless()
+{
+	if (W->running == NULL)
+		return;
+	W->oldhook=lua_gethook(W->running);
+	W->oldmask=lua_gethookmask(W->running);
+	W->oldcount=lua_gethookcount(W->running);
+	lua_sethook(W->running,warn_hook,LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT,1);
 }
 
 void
