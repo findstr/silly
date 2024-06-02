@@ -477,14 +477,16 @@ ltracenew(lua_State *L)
 static int
 ltraceset(lua_State *L)
 {
-	silly_trace_id_t traceid;
-	if lua_isnoneornil(L, 1) {
-		traceid = TRACE_WORKER_ID;
-	} else {
-		traceid = (silly_trace_id_t)luaL_checkinteger(L, 1);
-	}
-	traceid = silly_trace_set(traceid);
-	lua_pushinteger(L, (lua_Integer)traceid);
+ 	silly_trace_id_t traceid;
+	lua_State *co = lua_tothread(L, 1);
+ 	silly_worker_resume(co);
+ 	if lua_isnoneornil(L, 2) {
+ 		traceid = TRACE_WORKER_ID;
+ 	} else {
+		traceid = (silly_trace_id_t)luaL_checkinteger(L, 2);
+ 	}
+ 	traceid = silly_trace_set(traceid);
+ 	lua_pushinteger(L, (lua_Integer)traceid);
 	return 1;
 }
 

@@ -52,7 +52,7 @@ local function task_resume(t, ...)
 	local save = task_running
 	task_status[t] = "RUN"
 	task_running = t
-	local traceid = trace_set(task_traceid[t])
+	local traceid = trace_set(t, task_traceid[t])
 	local ok, err = coresume(t, ...)
 	trace_set(traceid)
 	task_running = save
@@ -89,7 +89,7 @@ end
 
 function core.trace(id)
 	task_traceid[task_running] = id
-	return (trace_set(id))
+	return (trace_set(task_running, id))
 end
 
 function core.error(errmsg)
