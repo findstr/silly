@@ -2,14 +2,18 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/file.h>
+
 #include "silly.h"
 #include "compiler.h"
 #include "silly_timer.h"
 #include "silly_trace.h"
 #include "silly_log.h"
 
+static int is_daemon = 0;
 static enum silly_log_level log_level;
 static __thread struct {
 	char buf[64];
@@ -44,9 +48,30 @@ static char hex[] = {
 };
 
 void
-silly_log_init()
+silly_log_openfile(const char *path)
+{
+	int fd;
+	if (!is_daemon) {
+		return;
+	}
+	fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 00666);
+	if (fd >= 0) {
+		dup2(fd, 1);
+		dup2(fd, 2);
+		close(fd);
+		setvbuf(stdout, NULL, _IOFBF, LOG_BUF_SIZE);
+		setvbuf(stderr, NULL, _IOLBF, LOG_BUF_SIZE);
+
+	}
+}
+
+
+void
+silly_log_init(const struct silly_config *config)
 {
 	log_level = SILLY_LOG_INFO;
+	is_daemon = config->daemon;
+	silly_log_openfile(config->logpath);
 	return ;
 }
 

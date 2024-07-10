@@ -153,11 +153,11 @@ int main(int argc, char *argv[])
 		print_help(config.selfname);
 		return -1;
 	}
-	silly_trace_init();
-	silly_log_init();
-	silly_timer_init();
 	strncpy(config.bootstrap, argv[1], ARRAY_SIZE(config.bootstrap) - 1);
 	parse_args(&config, argc, argv);
+	silly_trace_init();
+	silly_log_init(&config);
+	silly_timer_init();
 	status = silly_run(&config);
 	silly_log_info("%s exit, leak memory size:%zu\n",
 		argv[0], silly_memused());

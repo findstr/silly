@@ -186,6 +186,14 @@ llog(lua_State *L, enum silly_log_level log_level)
 }
 
 static int
+lopenfile(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+	silly_log_openfile(path);
+	return 0;
+}
+
+static int
 lgetlevel(lua_State *L)
 {
 	enum silly_log_level level = silly_log_getlevel();
@@ -229,6 +237,7 @@ int
 luaopen_core_logger_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
+		{"openfile", lopenfile},
 		{"getlevel", lgetlevel},
 		{"setlevel", lsetlevel},
 		{"debug", ldebug},
