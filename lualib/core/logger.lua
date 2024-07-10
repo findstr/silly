@@ -1,4 +1,10 @@
+local core = require "core"
+local env = require "core.env"
 local c = require "core.logger.c"
+
+local function nop()
+end
+
 local logger = {
 	--const from silly_log.h
 	DEBUG = 0,
@@ -8,10 +14,10 @@ local logger = {
 	--logger function export
 	getlevel = c.getlevel,
 	setlevel = nil,
-	debug = nil,
-	info = nil,
-	warn = nil,
-	error = nil,
+	debug = nop,
+	info = nop,
+	warn = nop,
+	error = nop,
 }
 
 local func_level = {
@@ -20,10 +26,6 @@ local func_level = {
 	warn = logger.WARN,
 	error = logger.ERROR,
 }
-
-local function nop()
-end
-
 
 local function refresh(visiable_level)
 	for name, level in pairs(func_level) do
@@ -42,6 +44,14 @@ function logger.setlevel(level)
 	refresh(level)
 	c.setlevel(level)
 end
+
+core.signal("SIGUSR1", function(_)
+	local path = env.get("logpath")
+	if not path then
+		return
+	end
+	c.openfile(path)
+end)
 
 return logger
 

@@ -1,6 +1,7 @@
 #ifndef	_SILLY_LOG_H
 #define	_SILLY_LOG_H
 
+struct silly_config;
 
 enum silly_log_level {
 	SILLY_LOG_DEBUG = 0,
@@ -10,6 +11,7 @@ enum silly_log_level {
 };
 
 void silly_log_init();
+void silly_log_openfile(const char *path);
 void silly_log_setlevel(enum silly_log_level level);
 enum silly_log_level silly_log_getlevel();
 void silly_log_head(enum silly_log_level level);

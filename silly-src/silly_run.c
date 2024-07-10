@@ -16,6 +16,7 @@
 #include "silly_socket.h"
 #include "silly_worker.h"
 #include "silly_monitor.h"
+#include "silly_signal.h"
 #include "silly_daemon.h"
 
 #include "silly_run.h"
@@ -134,29 +135,6 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg, int cpuid)
 	return ;
 }
 
-static void
-signal_term(int sig)
-{
-	(void)sig;
-	R.running = 0;
-}
-
-static void
-signal_usr1(int sig)
-{
-	(void)sig;
-	silly_daemon_sigusr1(R.conf);
-}
-
-static int
-signal_init()
-{
-	signal(SIGPIPE, SIG_IGN);
-	signal(SIGTERM, signal_term);
-	signal(SIGINT, signal_term);
-	signal(SIGUSR1, signal_usr1);
-	return 0;
-}
 
 int
 silly_run(const struct silly_config *config)
@@ -170,7 +148,7 @@ silly_run(const struct silly_config *config)
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
 	silly_daemon_start(config);
-	signal_init();
+	silly_signal_init();
 	err = silly_socket_init();
 	if (unlikely(err < 0)) {
 		silly_log_error("%s socket init fail:%d\n", config->selfname, err);

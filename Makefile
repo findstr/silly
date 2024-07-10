@@ -63,6 +63,7 @@ SRC_FILE = \
       silly_queue.c \
       silly_worker.c \
       silly_timer.c \
+      silly_signal.c \
       silly_run.c \
       silly_daemon.c \
       silly_malloc.c \

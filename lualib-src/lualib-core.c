@@ -19,6 +19,7 @@
 #include "silly_socket.h"
 #include "silly_malloc.h"
 #include "silly_timer.h"
+#include "silly_signal.h"
 
 static void
 dispatch(lua_State *L, struct silly_message *sm)
@@ -73,6 +74,10 @@ dispatch(lua_State *L, struct silly_message *sm)
 		lua_pushlightuserdata(L, sm);
 		lua_pushinteger(L, tosocket(sm)->ud);
 		args += 3;
+		break;
+	case SILLY_SIGNAL:
+		lua_pushinteger(L, tosignal(sm)->signum);
+		args += 1;
 		break;
 	default:
 		silly_log_error("[silly.core] callback unknow message type:%d\n",
@@ -171,6 +176,19 @@ ltimercancel(lua_State *L)
 	int ok = silly_timer_cancel(session, &ud);
 	if (ok) {
 		lua_pushinteger(L, ud);
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
+static int
+lsignal(lua_State *L)
+{
+	int signum = luaL_checkinteger(L, 1);
+	int err = silly_signal_watch(signum);
+	if (err != 0) {
+		lua_pushstring(L, strerror(err));
 	} else {
 		lua_pushnil(L);
 	}
@@ -509,6 +527,7 @@ luaopen_core_c(lua_State *L)
 		{"dispatch", ldispatch},
 		{"timeout", ltimeout},
 		{"timercancel", ltimercancel},
+		{"signal", lsignal},
 		{"genid", lgenid},
 		{"tostring", ltostring},
 		{"getpid", lgetpid},

@@ -64,21 +64,6 @@ pidfile_delete(const struct silly_config *conf)
 	return ;
 }
 
-static inline void
-logfileopen(const struct silly_config *conf)
-{
-	int fd;
-	fd = open(conf->logpath, O_CREAT | O_WRONLY | O_APPEND, 00666);
-	if (fd >= 0) {
-		dup2(fd, 1);
-		dup2(fd, 2);
-		close(fd);
-		setvbuf(stdout, NULL, _IOFBF, LOG_BUF_SIZE);
-		setvbuf(stderr, NULL, _IOLBF, LOG_BUF_SIZE);
-
-	}
-}
-
 void
 silly_daemon_start(const struct silly_config *conf)
 {
@@ -93,14 +78,6 @@ silly_daemon_start(const struct silly_config *conf)
 		exit(0);
 	}
 	pidfile_write();
-	logfileopen(conf);
-	return ;
-}
-
-void
-silly_daemon_sigusr1(const struct silly_config *conf)
-{
-	logfileopen(conf);
 	return ;
 }
 

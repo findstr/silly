@@ -26,6 +26,7 @@
 #define tocommon(msg)   ((struct silly_message *)(msg))
 #define totexpire(msg)  ((struct silly_message_texpire *)(msg))
 #define tosocket(msg)   ((struct silly_message_socket *)(msg))
+#define tosignal(msg)   ((struct silly_message_signal *)(msg))
 #define COMMONFIELD struct silly_message *next; enum silly_message_type type;
 
 
@@ -47,12 +48,13 @@ struct silly_config {
 
 
 enum silly_message_type {
-	SILLY_TEXPIRE		= 1,
+	SILLY_TEXPIRE		= 1,	//timer expire
 	SILLY_SACCEPT		= 2,	//new connetiong
-	SILLY_SCLOSE,			//close from client
-	SILLY_SCONNECTED,		//async connect result
-	SILLY_SDATA,			//data packet(raw) from client
-	SILLY_SUDP,			//data packet(raw) from client(udp)
+	SILLY_SCLOSE            = 3,	//close from client
+	SILLY_SCONNECTED        = 4,	//async connect result
+	SILLY_SDATA             = 5,	//data packet(raw) from client
+	SILLY_SUDP 		= 6,	//data packet(raw) from client(udp)
+	SILLY_SIGNAL            = 7,	//signal
 };
 
 struct silly_message {
@@ -73,6 +75,11 @@ struct silly_message_socket {	//socket accept
 	//SDATA/SUDP  used by length
 	int ud;
 	uint8_t *data;
+};
+
+struct silly_message_signal {	//signal
+	COMMONFIELD
+	int signum;
 };
 
 static inline void
