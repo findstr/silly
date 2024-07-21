@@ -22,7 +22,7 @@ static __thread struct {
 	char *term;
 	time_t sec;
 	time_t msec;
-	silly_trace_id_t traceid;
+	silly_traceid_t traceid;
 } head_cache = {
 	"", NULL, NULL, NULL, 0, 0, 0,
 };
@@ -88,7 +88,7 @@ static inline void fmttime()
 	struct tm tm;
 	uint64_t now = silly_timer_now();
 	time_t sec = now / 1000;
-	silly_trace_id_t traceid = silly_trace_get();
+	silly_traceid_t traceid = silly_trace_get();
 	int build_step;
 	if (head_cache.sstr == NULL) {
 		build_step = BUILD_SEC;

@@ -87,6 +87,7 @@ LIB_SRC = lualib-core.c \
 	  lualib-debugger.c\
 
 all: \
+	fmt \
 	$(TARGET) \
 	$(LUACLIB_PATH)/core.so \
 	$(LUACLIB_PATH)/zproto.so \

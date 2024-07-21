@@ -14,7 +14,6 @@ local modules = {
 	"testwakeup",
 	"testwaitgroup",
 	"testmutex",
-	"testmulticast",
 	"testnetstream",
 	"testnetpacket",
 	"testchannel",

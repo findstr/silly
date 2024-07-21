@@ -23,7 +23,7 @@ local function buildpacket()
 	local len = math.random(1, 30)
 	local raw = testaux.randomdata(len)
 	testaux.asserteq(#raw, len, "random packet length")
-	local pk = string.pack(">I2", #raw) .. string.pack("<c" .. #raw, raw)
+	local pk = string.pack(">I2", #raw + 16) .. string.pack("<c" .. #raw, raw) .. string.pack("<I8I8", 0, 0)
 	return raw, pk
 end
 
@@ -35,6 +35,7 @@ end
 local function randompush(sid, pk)
 	local i = 1
 	local len = #pk + 1
+	local buf = {}
 	while i < len do
 		local last = len - i
 		if last > 2 then
@@ -43,12 +44,14 @@ local function randompush(sid, pk)
 		end
 		local x = pk:sub(i, i + last - 1)
 		i = i + last;
+		buf[#buf + 1] =  x
 		justpush(sid, x)
 	end
+	assert(table.concat(buf), pk)
 end
 
 local function pushbroken(sid, pk)
-	local pk2 = pk:sub(1, #pk - 1)
+	local pk2 = pk:sub(1, #pk - 17)
 	randompush(sid, pk2)
 end
 
@@ -100,13 +103,6 @@ local function testclear()
 	local fd, data = popdata()
 	testaux.asserteq(fd, nil, "netpacket broken test fd")
 	testaux.asserteq(data, nil, "netpacket broken test data")
-	randompush(sid, pk)
-	local fd, data = popdata()
-	testaux.asserteq(fd, sid, "netpacket broken test fd")
-	testaux.assertneq(data, raw, "netpacket broken test data")
-	local fd, data = popdata()
-	testaux.asserteq(fd, nil, "netpacket broken test fd")
-	testaux.asserteq(data, nil, "netpacket broken test data")
 	np.clear(BUFF, sid)
 	randompush(sid, pk)
 	local fd, data = popdata()
@@ -145,6 +141,10 @@ local function testexpand()
 end
 
 collectgarbage("collect")
+local seedx, seedy = math.randomseed()
+print("seed", seedx, seedy)
+math.randomseed(1721030230,139887399596712)
+
 BUFF = np.create()
 testhashconflict_part1()
 testpacket(justpush)

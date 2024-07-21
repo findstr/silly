@@ -505,15 +505,15 @@ static int lsendsize(lua_State *L)
 
 static int ltracespan(lua_State *L)
 {
-	silly_trace_span_t span;
-	span = (silly_trace_span_t)luaL_checkinteger(L, 1);
+	silly_tracespan_t span;
+	span = (silly_tracespan_t)luaL_checkinteger(L, 1);
 	silly_trace_span(span);
 	return 0;
 }
 
 static int ltracenew(lua_State *L)
 {
-	silly_trace_id_t traceid;
+	silly_traceid_t traceid;
 	traceid = silly_trace_new();
 	lua_pushinteger(L, (lua_Integer)traceid);
 	return 1;
@@ -521,13 +521,13 @@ static int ltracenew(lua_State *L)
 
 static int ltraceset(lua_State *L)
 {
-	silly_trace_id_t traceid;
+	silly_traceid_t traceid;
 	lua_State *co = lua_tothread(L, 1);
 	silly_worker_resume(co);
 	if lua_isnoneornil (L, 2) {
 		traceid = TRACE_WORKER_ID;
 	} else {
-		traceid = (silly_trace_id_t)luaL_checkinteger(L, 2);
+		traceid = (silly_traceid_t)luaL_checkinteger(L, 2);
 	}
 	traceid = silly_trace_set(traceid);
 	lua_pushinteger(L, (lua_Integer)traceid);
@@ -536,7 +536,7 @@ static int ltraceset(lua_State *L)
 
 static int ltraceget(lua_State *L)
 {
-	silly_trace_id_t traceid;
+	silly_traceid_t traceid;
 	traceid = silly_trace_get();
 	lua_pushinteger(L, (lua_Integer)traceid);
 	return 1;

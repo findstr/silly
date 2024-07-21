@@ -11,6 +11,7 @@
 #include "silly_trace.h"
 #include "silly_malloc.h"
 
+#define ACK_BIT (1UL << 31)
 #define DEFAULT_QUEUE_SIZE 2048
 #define HASH_SIZE 2048
 #define HASH(a) (a % HASH_SIZE)
@@ -43,6 +44,7 @@ struct netpacket {
 	struct incomplete *hash[HASH_SIZE];
 };
 
+static session_t session_idx = 0;
 static int lcreate(lua_State *L)
 {
 	struct netpacket *r = lua_newuserdatauv(L, sizeof(struct netpacket), 0);
@@ -216,16 +218,13 @@ static void clear_incomplete(lua_State *L, int sid)
 	return;
 }
 
-static inline const char *getbuffer(lua_State *L, int *stk, size_t *sz)
+static inline const char *getbuffer(lua_State *L, int stk, size_t *sz)
 {
-	int n = *stk;
-	if (lua_type(L, n) == LUA_TSTRING) {
-		*stk = n + 1;
-		return lua_tolstring(L, n, sz);
+	if (lua_type(L, stk) == LUA_TSTRING) {
+		return lua_tolstring(L, stk, sz);
 	} else {
-		*stk = n + 2;
-		*sz = luaL_checkinteger(L, n + 1);
-		return lua_touserdata(L, n);
+		*sz = luaL_checkinteger(L, stk + 1);
+		return lua_touserdata(L, stk);
 	}
 	return NULL;
 }
@@ -245,137 +244,111 @@ static inline struct packet *pop_packet(lua_State *L)
 	}
 }
 
+//rpc_cookie {traceid(uint64),cmd(uint32),session(uint32)}
+
+#define req_cookie_size \
+	(sizeof(silly_traceid_t) + sizeof(cmd_t) + sizeof(session_t))
+#define req_traceid_ref(ptr) (*(silly_traceid_t *)(ptr))
+#define req_cmd_ref(ptr) (*(cmd_t *)(ptr + sizeof(silly_traceid_t)))
+#define req_session_ref(ptr) \
+	(*(session_t *)(ptr + sizeof(silly_traceid_t) + sizeof(cmd_t)))
+
+#define ack_cookie_size (sizeof(session_t))
+#define ack_session_ref(ptr) (*(session_t *)(ptr))
+
 static int lpop(lua_State *L)
 {
-	struct packet *pk = pop_packet(L);
-	if (pk == NULL)
-		return 0;
-	lua_pushinteger(L, pk->fd);
-	lua_pushlightuserdata(L, pk->buff);
-	lua_pushinteger(L, pk->size);
-	return 3;
-}
-
-static int lpack(lua_State *L)
-{
-	uint8_t *p;
-	int stk = 1;
-	size_t size;
-	const char *str;
-	str = getbuffer(L, &stk, &size);
-	if (size > USHRT_MAX)
-		luaL_error(L, "netpacket.pack data large then:%d\n", USHRT_MAX);
-	p = silly_malloc(2 + size);
-	p[0] = (size >> 8) & 0xff;
-	p[1] = size & 0xff;
-	memcpy(p + 2, str, size);
-	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, 2 + size);
-	return 2;
-}
-
-static int lmsgpop(lua_State *L)
-{
 	int size;
 	char *buf;
-	cmd_t cmd;
-	struct packet *pk = pop_packet(L);
-	if (pk == NULL)
-		return 0;
-	size = pk->size - sizeof(cmd_t);
-	buf = pk->buff;
-	if (size < 0)
-		return 0;
-	//WARN: pointer cast may not align, can't cross platform
-	cmd = *(cmd_t *)(buf + size);
-	lua_pushinteger(L, pk->fd);
-	lua_pushlightuserdata(L, buf);
-	lua_pushinteger(L, size);
-	lua_pushinteger(L, cmd);
-	return 4;
-}
-
-static int lmsgpack(lua_State *L)
-{
-	uint8_t *p;
-	const char *str;
-	size_t size, body;
-	int cmd, stk = 1;
-	str = getbuffer(L, &stk, &size);
-	if (size > (USHRT_MAX - sizeof(cmd_t))) {
-		luaL_error(L, "netpacket.pack data large then:%d\n",
-			   USHRT_MAX - sizeof(cmd_t));
-	}
-	cmd = luaL_checkinteger(L, stk);
-	body = size + sizeof(cmd_t);
-	p = silly_malloc(2 + body);
-	p[0] = (body >> 8) & 0xff;
-	p[1] = body & 0xff;
-	memcpy(p + 2, str, size);
-	//WARN: pointer cast may not align, can't cross platform
-	*(cmd_t *)&p[size + 2] = cmd;
-	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, 2 + body);
-	return 2;
-}
-
-struct rpc_cookie {
-	cmd_t cmd;
 	session_t session;
-	silly_trace_id_t traceid;
-};
-
-static int lrpcpop(lua_State *L)
-{
-	int size;
-	char *buf;
-	struct rpc_cookie *rpc;
 	struct packet *pk = pop_packet(L);
 	if (pk == NULL)
 		return 0;
-	size = pk->size - sizeof(struct rpc_cookie);
+	size = pk->size - ack_cookie_size;
 	buf = pk->buff;
 	if (size < 0)
 		return 0;
 	//WARN: pointer cast may not align, can't cross platform
-	rpc = (struct rpc_cookie *)(buf + size);
-	lua_pushinteger(L, pk->fd);
-	lua_pushlightuserdata(L, buf);
-	lua_pushinteger(L, size);
-	lua_pushinteger(L, rpc->cmd);
-	lua_pushinteger(L, rpc->session);
-	lua_pushinteger(L, (lua_Integer)rpc->traceid);
+	session = ack_session_ref(buf + size);
+	if ((session & ACK_BIT) == ACK_BIT) { //rpc ack
+		lua_pushinteger(L, pk->fd);
+		lua_pushlightuserdata(L, buf);
+		lua_pushinteger(L, size);
+		lua_pushinteger(L, (lua_Integer)(session & ~ACK_BIT));
+		lua_pushnil(L);        //cmd
+		lua_pushinteger(L, 0); //traceid
+	} else {
+		void *cookie;
+		size = pk->size - req_cookie_size;
+		cookie = (void *)(buf + size);
+		lua_pushinteger(L, pk->fd);
+		lua_pushlightuserdata(L, buf);
+		lua_pushinteger(L, size);
+		lua_pushinteger(L, session);
+		lua_pushinteger(L, req_cmd_ref(cookie));
+		lua_pushinteger(L, (lua_Integer)req_traceid_ref(cookie));
+	}
 	return 6;
 }
 
-static int lrpcpack(lua_State *L)
+static int lrequest(lua_State *L)
 {
 	cmd_t cmd;
 	uint8_t *p;
 	const char *str;
+	void *cookie;
 	size_t size, body;
-	struct rpc_cookie *rpc;
-	int stk = 1;
 	session_t session;
-	silly_trace_id_t traceid;
-	str = getbuffer(L, &stk, &size);
-	if (size > (USHRT_MAX - sizeof(struct rpc_cookie))) {
+	silly_traceid_t traceid;
+	cmd = luaL_checkinteger(L, 1);
+	traceid = luaL_checkinteger(L, 2);
+	str = getbuffer(L, 3, &size);
+	if (size > (USHRT_MAX - req_cookie_size)) {
 		luaL_error(L, "netpacket.pack data large then:%d\n",
-			   USHRT_MAX - sizeof(struct rpc_cookie));
+			   USHRT_MAX - req_cookie_size);
 	}
-	cmd = luaL_checkinteger(L, stk);
-	session = luaL_checkinteger(L, stk + 1);
-	traceid = luaL_checkinteger(L, stk + 2);
-	body = size + sizeof(struct rpc_cookie);
+	session = session_idx++;
+	if (session >= ACK_BIT) {
+		session_idx = 0;
+		session = 0;
+	}
+	body = size + req_cookie_size;
 	p = silly_malloc(2 + body);
 	p[0] = (body >> 8) & 0xff;
 	p[1] = body & 0xff;
 	memcpy(p + 2, str, size);
 	//WARN: pointer cast may not align, can't cross platform
-	rpc = (struct rpc_cookie *)&p[2 + size];
-	rpc->cmd = cmd;
-	rpc->session = session;
-	rpc->traceid = traceid;
+	cookie = (void *)&p[2 + size];
+	req_cmd_ref(cookie) = cmd;
+	req_session_ref(cookie) = session;
+	req_traceid_ref(cookie) = traceid;
+	lua_pushinteger(L, session);
+	lua_pushlightuserdata(L, p);
+	lua_pushinteger(L, 2 + body);
+	return 3;
+}
+
+static int lresponse(lua_State *L)
+{
+	uint8_t *p;
+	const char *str;
+	void *cookie;
+	size_t size, body;
+	session_t session;
+	session = luaL_checkinteger(L, 1) | ACK_BIT;
+	str = getbuffer(L, 2, &size);
+	if (size > (USHRT_MAX - ack_cookie_size)) {
+		luaL_error(L, "netpacket.pack data large then:%d\n",
+			   USHRT_MAX - ack_cookie_size);
+	}
+	body = size + ack_cookie_size;
+	p = silly_malloc(2 + body);
+	p[0] = (body >> 8) & 0xff;
+	p[1] = body & 0xff;
+	memcpy(p + 2, str, size);
+	//WARN: pointer cast may not align, can't cross platform
+	cookie = (void *)&p[2 + size];
+	ack_session_ref(cookie) = session;
 	lua_pushlightuserdata(L, p);
 	lua_pushinteger(L, 2 + body);
 	return 2;
@@ -459,17 +432,14 @@ int luaopen_core_netpacket(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "create",   lcreate   },
-                { "pop",      lpop      },
-		{ "pack",     lpack     },
-                { "msgpop",   lmsgpop   },
-		{ "msgpack",  lmsgpack  },
-                { "rpcpop",   lrpcpop   },
-		{ "rpcpack",  lrpcpack  },
-                { "clear",    lclear    },
+		{ "pop",      lpop      },
+		{ "request",  lrequest  },
+		{ "response", lresponse },
+		{ "clear",    lclear    },
+		{ "drop",     ldrop     },
 		{ "tostring", ltostring },
-                { "drop",     ldrop     },
 		{ "message",  lmessage  },
-                { NULL,       NULL      },
+		{ NULL,       NULL      },
 	};
 	luaL_checkversion(L);
 	luaL_newmetatable(L, "netpacket");
