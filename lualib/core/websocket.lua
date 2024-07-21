@@ -68,9 +68,9 @@ local function write_frame(w, sock, fin, op, mask, dat)
 	end
 	local h, l = fin << 7 | op, mask << 7 | len
 	if len == 126 then
-		hdr = pack("<I1I1I2", h, l, #dat)
+		hdr = pack(">I1I1I2", h, l, #dat)
 	else
-		hdr = pack("<I1I1", h, l)
+		hdr = pack(">I1I1", h, l)
 	end
 	if mask == 1 then
 		local masking_key = crypto.randomkey(4)
