@@ -24,7 +24,7 @@ function M.listen(conf)
 	end
 	return fd
 end
-local alpn_protos = {"h2"}
+local alpn_protos = {"http/1.1", "h2"}
 
 function M.request(method, url, header, close, alpn_protos)
 	local scheme, host, port, path = parseurl(url)
