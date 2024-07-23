@@ -73,6 +73,38 @@ local setting_field = {
 	[SETTINGS_MAX_HEADER_SIZE] = "max_header_size",
 }
 
+local NO_ERROR<const>			=0x00	--Graceful shutdown	[RFC9113, Section 7]
+local PROTOCOL_ERROR<const>		=0x01	--Protocol error detected	[RFC9113, Section 7]
+local INTERNAL_ERROR<const> 		=0x02	--Implementation fault	[RFC9113, Section 7]
+local FLOW_CONTROL_ERROR<const>		=0x03	--Flow-control limits exceeded	[RFC9113, Section 7]
+local SETTINGS_TIMEOUT<const>		=0x04	--Settings not acknowledged	[RFC9113, Section 7]
+local STREAM_CLOSED<const> 		=0x05	--Frame received for closed stream	[RFC9113, Section 7]
+local FRAME_SIZE_ERROR			=0x06	--Frame size incorrect	[RFC9113, Section 7]
+local REFUSED_STREAM<const> 		=0x07	--Stream not processed	[RFC9113, Section 7]
+local CANCEL<const> 			=0x08	--Stream cancelled	[RFC9113, Section 7]
+local COMPRESSION_ERROR<const>		=0x09	--Compression state not updated	[RFC9113, Section 7]
+local CONNECT_ERROR<const> 		=0x0a	--TCP connection error for CONNECT method	[RFC9113, Section 7]
+local ENHANCE_YOUR_CALM<const>		=0x0b	--Processing capacity exceeded	[RFC9113, Section 7]
+local INADEQUATE_SECURITY<const>	=0x0c	--Negotiated TLS parameters not acceptable	[RFC9113, Section 7]
+local HTTP_1_1_REQUIRED<const>		=0x0d	--Use HTTP/1.1 for the request	[RFC9113, Section 7]
+
+local err_str = {
+	[0x00] = "Graceful shutdown",
+	[0x01] = "Protocol error detected",
+	[0x02] = "Implementation fault",
+	[0x03] = "Flow-control limits exceeded",
+	[0x04] = "Settings not acknowledged",
+	[0x05] = "Frame received for closed stream",
+	[0x06] = "Frame size incorrect",
+	[0x07] = "Stream not processed",
+	[0x08] = "Stream cancelled",
+	[0x09] = "Compression state not updated",
+	[0x0a] = "TCP connection error for CONNECT method",
+	[0x0b] = "Processing capacity exceeded",
+	[0x0c] = "Negotiated TLS parameters not acceptable",
+	[0x0d] = "Use HTTP/1.1 for the request",
+}
+
 local mt = {__index = M, __close = function(t) t:close() end}
 local client_channel = {}
 local server_stream_q = {}
@@ -291,8 +323,8 @@ local function frame_rst(ch, id, _, dat)
 		end
 		local co = s.co
 		if co then
-			local err = unpack("<I4", dat)
-			core.wakeup(co, format("rst:%d", err))
+			local err = unpack(">I4", dat)
+			core.wakeup(co, err_str[err])
 		end
 	end
 end
@@ -577,7 +609,7 @@ function M.request(s, method, path, header, close)
 		":authority", host,
 		":method", method,
 		":path", path,
-		":scheme", s.scheme)
+		":scheme", ch.scheme)
 	if close then
 		s.localclose = true
 		check_close(s)
@@ -585,21 +617,6 @@ function M.request(s, method, path, header, close)
 	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
 	return ch.socket:write(dat)
 end
-
-local NO_ERROR<const>			=0x00	--Graceful shutdown	[RFC9113, Section 7]
-local PROTOCOL_ERROR<const>		=0x01	--Protocol error detected	[RFC9113, Section 7]
-local INTERNAL_ERROR<const> 		=0x02	--Implementation fault	[RFC9113, Section 7]
-local FLOW_CONTROL_ERROR<const>		=0x03	--Flow-control limits exceeded	[RFC9113, Section 7]
-local SETTINGS_TIMEOUT<const>		=0x04	--Settings not acknowledged	[RFC9113, Section 7]
-local STREAM_CLOSED<const> 		=0x05	--Frame received for closed stream	[RFC9113, Section 7]
-local FRAME_SIZE_ERROR			=0x06	--Frame size incorrect	[RFC9113, Section 7]
-local REFUSED_STREAM<const> 		=0x07	--Stream not processed	[RFC9113, Section 7]
-local CANCEL<const> 			=0x08	--Stream cancelled	[RFC9113, Section 7]
-local COMPRESSION_ERROR<const>		=0x09	--Compression state not updated	[RFC9113, Section 7]
-local CONNECT_ERROR<const> 		=0x0a	--TCP connection error for CONNECT method	[RFC9113, Section 7]
-local ENHANCE_YOUR_CALM<const>		=0x0b	--Processing capacity exceeded	[RFC9113, Section 7]
-local INADEQUATE_SECURITY<const>	=0x0c	--Negotiated TLS parameters not acceptable	[RFC9113, Section 7]
-local HTTP_1_1_REQUIRED<const>		=0x0d	--Use HTTP/1.1 for the request	[RFC9113, Section 7]
 
 local function read_timer(s)
 	s.localclose = true
