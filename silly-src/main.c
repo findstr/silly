@@ -8,6 +8,7 @@
 #include <lauxlib.h>
 #include <string.h>
 #include "silly.h"
+#include "silly_daemon.h"
 #include "silly_trace.h"
 #include "silly_log.h"
 #include "silly_timer.h"
@@ -145,6 +146,7 @@ int main(int argc, char *argv[])
 {
 	int status;
 	struct silly_config config;
+	memset(&config, 0, sizeof(config));
 	config.argc = argc;
 	config.argv = argv;
 	config.selfpath = argv[0];
@@ -156,9 +158,11 @@ int main(int argc, char *argv[])
 	strncpy(config.bootstrap, argv[1], ARRAY_SIZE(config.bootstrap) - 1);
 	parse_args(&config, argc, argv);
 	silly_trace_init();
+	silly_daemon_start(&config);
 	silly_log_init(&config);
 	silly_timer_init();
 	status = silly_run(&config);
+	silly_daemon_stop(&config);
 	silly_log_info("%s exit, leak memory size:%zu\n",
 		argv[0], silly_memused());
 	silly_log_flush();
