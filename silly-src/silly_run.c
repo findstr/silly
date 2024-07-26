@@ -17,7 +17,6 @@
 #include "silly_worker.h"
 #include "silly_monitor.h"
 #include "silly_signal.h"
-#include "silly_daemon.h"
 
 #include "silly_run.h"
 
@@ -147,13 +146,11 @@ silly_run(const struct silly_config *config)
 	R.exitstatus = 0;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
-	silly_daemon_start(config);
 	silly_signal_init();
 	err = silly_socket_init();
 	if (unlikely(err < 0)) {
 		silly_log_error("%s socket init fail:%d\n", config->selfname, err);
-		silly_daemon_stop(config);
-		exit(-1);
+		return -err;
 	}
 	silly_worker_init();
 	silly_monitor_init();
@@ -168,7 +165,6 @@ silly_run(const struct silly_config *config)
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
 	silly_log_flush();
-	silly_daemon_stop(config);
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
 	silly_worker_exit();
