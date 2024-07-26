@@ -35,49 +35,8 @@ end
 
 --signal
 local signal = c.signal
+local signal_map = c.signalmap()
 local signal_dispatch = {}
-local signal_map = {}
-do
-	local sig_list = {
-		SIGINT		= 2,	-- Interactive attention signal.
-		SIGILL		= 4,	-- Illegal instruction.
-		SIGABRT		= 6,	-- Abnormal termination.
-		SIGFPE		= 8,	-- Erroneous arithmetic operation.
-		SIGSEGV		= 11,	-- Invalid access to storage.
-		SIGTERM		= 15,	-- Termination request.
-
-		--Historical signals specified by POSIX.
-		SIGHUP	 	= 1,	-- Hangup.
-		SIGQUIT	 	= 3,	-- Quit.
-		SIGTRAP	 	= 5,	-- Trace/breakpoint trap.
-		SIGKILL	 	= 9,	-- Killed.
-		SIGBUS	 	= 10,	-- Bus error.
-		SIGSYS	 	= 12,	-- Bad system call.
-		SIGPIPE	 	= 13,	-- Broken pipe.
-		SIGALRM	 	= 14,	-- Alarm clock.
-
-		--New(er) POSIX signals (1003.1-2008, 1003.1-2013).
-
-		SIGURG		= 16,	-- Urgent data is available at a socket.
-		SIGSTOP		= 17,	-- Stop, unblockable.
-		SIGTSTP		= 18,	-- Keyboard stop.
-		SIGCONT		= 19,	-- Continue.
-		SIGCHLD		= 20,	-- Child terminated or stopped.
-		SIGTTIN		= 21,	-- Background read from control terminal.
-		SIGTTOU		= 22,	-- Background write to control terminal.
-		SIGPOLL		= 23,	-- Pollable event occurred (System V).
-		SIGXCPU		= 24,	-- CPU time limit exceeded.
-		SIGXFSZ		= 25,	-- File size limit exceeded.
-		SIGVTALRM	= 26,	-- Virtual timer expired.
-		SIGPROF		= 27,	-- Profiling timer expired.
-		SIGUSR1		= 30,	-- User-defined signal 1.
-		SIGUSR2		= 31,	-- User-defined signal 2.
-	}
-	for k, v in pairs(sig_list) do
-		signal_map[k] = v
-		signal_map[v] = k
-	end
-end
 
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)

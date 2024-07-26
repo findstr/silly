@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <assert.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -178,6 +179,53 @@ ltimercancel(lua_State *L)
 		lua_pushinteger(L, ud);
 	} else {
 		lua_pushnil(L);
+	}
+	return 1;
+}
+
+static int
+lsignalmap(lua_State *L)
+{
+	size_t i;
+	lua_newtable(L);
+	struct signal {
+		const char *name;
+		int signum;
+	} signals[] = {
+		{"SIGINT", SIGINT},
+		{"SIGILL", SIGILL},
+		{"SIGABRT", SIGABRT},
+		{"SIGFPE", SIGFPE},
+		{"SIGSEGV", SIGSEGV},
+		{"SIGTERM", SIGTERM},
+		{"SIGHUP", SIGHUP},
+		{"SIGQUIT", SIGQUIT},
+		{"SIGTRAP", SIGTRAP},
+		{"SIGKILL", SIGKILL},
+		{"SIGBUS", SIGBUS},
+		{"SIGSYS", SIGSYS},
+		{"SIGPIPE", SIGPIPE},
+		{"SIGALRM", SIGALRM},
+		{"SIGURG", SIGURG},
+		{"SIGSTOP", SIGSTOP},
+		{"SIGTSTP", SIGTSTP},
+		{"SIGCONT", SIGCONT},
+		{"SIGCHLD", SIGCHLD},
+		{"SIGTTIN", SIGTTIN},
+		{"SIGTTOU", SIGTTOU},
+		{"SIGPOLL", SIGPOLL},
+		{"SIGXCPU", SIGXCPU},
+		{"SIGXFSZ", SIGXFSZ},
+		{"SIGVTALRM", SIGVTALRM},
+		{"SIGPROF", SIGPROF},
+		{"SIGUSR1", SIGUSR1},
+		{"SIGUSR2", SIGUSR2},
+	};
+	for (i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
+		lua_pushinteger(L, signals[i].signum);
+		lua_setfield(L, -2, signals[i].name);
+		lua_pushstring(L, signals[i].name);
+		lua_seti(L, -2, signals[i].signum);
 	}
 	return 1;
 }
@@ -527,6 +575,7 @@ luaopen_core_c(lua_State *L)
 		{"dispatch", ldispatch},
 		{"timeout", ltimeout},
 		{"timercancel", ltimercancel},
+		{"signalmap", lsignalmap},
 		{"signal", lsignal},
 		{"genid", lgenid},
 		{"tostring", ltostring},
