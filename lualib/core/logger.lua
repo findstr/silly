@@ -2,7 +2,7 @@ local core = require "core"
 local env = require "core.env"
 local c = require "core.logger.c"
 
-local function nop()
+local function nop(...)
 end
 
 local logger = {
