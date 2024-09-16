@@ -357,7 +357,8 @@ local function frame_winupdate(ch, id, flag, dat)
 		if n > 0 then
 			local dat = remove(ch, 1)
 			if dat then
-				n = n - #dat
+				local len = remove(ch, 1)
+				n = n - len
 				ch.socket:write(dat)
 			end
 		end
@@ -440,7 +441,6 @@ local function handshake_as_client(ch, socket)
 	end
 	frame_settings(ch, id, f, dat)
 	write(socket, build_setting(0x01))
-	write(socket, build_winupdate(0, 0, 1*1024*1024))
 	while true do
 		local t,f,dat,id = read_frame(socket)
 		if not t then
@@ -479,7 +479,6 @@ local function handshake_as_server(socket, ch)
 	end
 	frame_settings(ch, id, f, dat)
 	write(socket, build_setting(0x01))
-	write(socket, build_winupdate(0, 0, 1*1024*1024))
 	while true do
 		local t,f,dat,id = read_frame(socket)
 		if not t then
@@ -726,13 +725,15 @@ local function write_func(close)
 			end
 		end
 		dat = dat or ""
+		local body_len = #dat
 		dat = build_body(s.id, ch.frame_max_size, dat, close)
 		local win = ch.window_size
 		if win <= 0 then
 			ch[#ch + 1] = dat
+			ch[#ch + 1] = body_len
 			return true, "ok"
 		else
-			ch.window_size = win - #dat
+			ch.window_size = win - body_len
 			return ch.socket:write(dat)
 		end
 	end
