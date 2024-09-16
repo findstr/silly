@@ -6,6 +6,38 @@ local testaux = require "test.testaux"
 
 local f<const> = io.open("./a.txt", "w")
 
+local data = crypto.randomkey(65*1024)
+
+local alpn_protos = {"http/1.1", "h2"}
+local function POST(url, header, body)
+	if body then
+		header = header or {}
+		header["content-length"] = #body * 2
+	end
+	local stream<close>, err = http.request("POST", url, header, false, alpn_protos)
+	if not stream then
+		return nil, err
+	end
+	local version = stream.version
+	if version == "HTTP/2" then
+		stream:write(body)
+		stream:close(body)
+	else
+		stream:write(body)
+	end
+	local status, header = stream:readheader()
+	if not status then
+		return nil, header
+	end
+	testaux.asserteq(stream.channel.window_size, 65535, "http2.client window_size")
+	local body = stream:readall()
+	return {
+		status = status,
+		header = header,
+		body = body,
+	}
+end
+
 if not crypto.digestsign then
 	print("not enable openssl")
 	return
@@ -29,7 +61,7 @@ http.listen {
 		testaux.asserteq(stream.path, "/test", "http2.server path")
 		testaux.asserteq(header['hello'], "world", "http2.server header")
 		local body = stream:readall()
-		testaux.asserteq(body, "http2", "http2 body")
+		testaux.asserteq(body, data .. data, "http2 body")
 		stream:respond(200, {["foo"] = header['foo']})
 		stream:close("http2")
 	end
@@ -62,14 +94,14 @@ print("test http2 server")
 local wg = waitgroup:create()
 for i = 1, 2000 do
 	wg:fork(function()
-		local key = crypto.randomkey(1028)
-		local ack, err = http.POST("https://localhost:8082/test", {
-			['hello'] = 'world',
-			['foo'] = key,
-		}, "http2")
-		testaux.asserteq(ack.status, 200, "http2.client status")
-		testaux.asserteq(ack.header['foo'], key, "http2.client header")
-		testaux.asserteq(ack.body, 'http2', "http2.client body")
+	local key = crypto.randomkey(1028)
+		local ack, err = POST("https://localhost:8082/test", {
+		['hello'] = 'world',
+		['foo'] = key,
+	}, data)
+	testaux.asserteq(ack.status, 200, "http2.client status")
+	testaux.asserteq(ack.header['foo'], key, "http2.client header")
+	testaux.asserteq(ack.body, 'http2', "http2.client body")
 	end)
 end
 wg:wait()
