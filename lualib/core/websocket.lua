@@ -38,7 +38,10 @@ local data_type = {
 local function read_frame(r, sock)
 	local dat
 	local tmp = r(sock, 2)
-	local op, mask, payload, masking_key
+	if not tmp then
+		return 1, nil, ""
+	end
+	local masking_key
 	local h,l = tmp:byte(1), tmp:byte(2)
 	local fin, op, mask, payload =
 		(h & 0x80) >> 7, h & 0x0f,
