@@ -43,7 +43,7 @@ local function read_response(sock)
 	local data = sock:readline("\r\n")
 	local head = data:byte(1)
 	local func = response_header[head]
-	return func(sock, sub(data, 2))
+	return func(sock, sub(data, 2, -3))
 end
 
 response_header[header:byte(4)] = function (sock, res)        --'*'
