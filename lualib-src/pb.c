@@ -340,7 +340,7 @@ static uint64_t lpb_tointegerx(lua_State *L, int idx, int *isint) {
     } else {
         for (; *s != '\0'; ++s) {
             int n = lpb_hexchar(*s);
-            if (n < 0 || n > 10) break;
+            if (n < 0 || n > 9) break;
             v = v * 10 + n;
         }
     }
@@ -409,8 +409,10 @@ static size_t lpb_addtype(lua_State *L, pb_Buffer *b, int idx, int type, int *pe
     size_t len = 0;
     switch (type) {
     case PB_Tbool:
-        len = pb_addvarint32(b, ret = lua_toboolean(L, idx));
+        v.u32 = lua_toboolean(L, idx);
+        len = pb_addvarint32(b, v.u32);
         ret = 1;
+        if (v.u32 == 0) has_data = 0;
         break;
     case PB_Tdouble:
         v.lnum = lua_tonumberx(L, idx, &ret);
@@ -435,7 +437,7 @@ static size_t lpb_addtype(lua_State *L, pb_Buffer *b, int idx, int type, int *pe
     case PB_Tint32:
         v.u64 = lpb_tointegerx(L, idx, &ret);
         if (ret) len = pb_addvarint64(b, pb_expandsig((uint32_t)v.u64));
-        if (v.u64 == 0) has_data = 0;
+        if (v.u64 == 0) has_data = 0; 
         break;
     case PB_Tuint32:
         v.u64 = lpb_tointegerx(L, idx, &ret);
@@ -1624,17 +1626,18 @@ static size_t lpbE_enum(lpb_Env *e, const pb_Field *f, int *pexist, int idx) {
                     lpb_name(e->LS, lpb_toslice(L, idx)))) != NULL) {
         if (pexist) *pexist = (ev->number != 0);
         return lpb_checkmem(L, pb_addvarint32(b, ev->number));
-    } else if (type != LUA_TSTRING) {
-        argcheck(L, 0, 2, "number/string expected at field '%s', got %s",
-                (const char*)f->name, luaL_typename(L, idx));
-        return 0;
-    } else {
+    } else if (type == LUA_TSTRING) {
         uint64_t v = lpb_tointegerx(L, idx, &type);
         if (pexist) *pexist = (v != 0);
         if (!type)
             argcheck(L, 0, 2, "can not encode unknown enum '%s' at field '%s'",
                     lua_tostring(L, -1), (const char*)f->name);
-        return lpb_checkmem(L, pb_addvarint64(b, v));
+        return lpb_checkmem(L, pb_addvarint64(b, v)); 
+    } else {
+        argcheck(L, 0, 2, "number/string expected at field '%s', got %s",
+                (const char*)f->name, luaL_typename(L, idx));
+        if (pexist) *pexist = 0;
+        return 0;
     }
 }
 
