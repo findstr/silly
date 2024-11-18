@@ -133,11 +133,13 @@ lquery(lua_State *L)
 	if (r == NULL) {
 		lua_pushnil(L);
 		lua_pushnil(L);
+		lua_pushnil(L);
 	} else {
 		lua_pushlightuserdata(L, r);
 		lua_pushinteger(L, zproto_tag(r));
+		lua_pushstring(L, zproto_name(r));
 	}
-	return 2;
+	return 3;
 }
 
 struct lencode_ud {
