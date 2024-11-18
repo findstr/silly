@@ -31,26 +31,33 @@ pidfile_create(const struct silly_config *conf)
 	if (err == -1) {
 		char pid[128];
 		FILE *fp = fdopen(pidfile, "r+");
-		fscanf(fp , "%s\n", pid);
+		err = fscanf(fp , "%s\n", pid);
+		(void)err;
 		silly_log_error("[pidfile] lock '%s' fail,"
 			"another instace of '%s' alread run\n",
 			path, pid);
 		fclose(fp);
 		exit(-1);
 	}
-	ftruncate(pidfile, 0);
+	err = ftruncate(pidfile, 0);
+	(void)err;
 	return ;
 }
 
 static inline void
 pidfile_write()
 {
-	int sz;
+	ssize_t sz;
+	ssize_t writen;
 	char pid[128];
 	if (pidfile == -1)
 		return ;
 	sz = sprintf(pid, "%d\n", (int)getpid());
-	write(pidfile, pid, sz);
+	writen = write(pidfile, pid, sz);
+	if (writen == -1 || writen != sz) {
+		perror("write pidfile");
+		exit(1);
+	}
 	return ;
 }
 
