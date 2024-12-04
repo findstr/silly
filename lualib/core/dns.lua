@@ -225,25 +225,27 @@ end
 
 do --parse hosts
 	local f<close> = io.open(hosts)
-	for line in f:lines() do
-		local ip, names = line:match("^%s*([%[%]%x%.%:]+)%s+([^#;]+)")
-		if not ip or not names then
-			goto continue
-		end
+	if f then
+		for line in f:lines() do
+			local ip, names = line:match("^%s*([%[%]%x%.%:]+)%s+([^#;]+)")
+			if not ip or not names then
+				goto continue
+			end
 
-		local typename = guesstype(ip)
-		if typename == "NAME" then
-			goto continue
-		end
+			local typename = guesstype(ip)
+			if typename == "NAME" then
+				goto continue
+			end
 
-		for name in names:gmatch("%S+") do
-			name = name:lower()
-			local rr = answers[name][typename]
-			rr[#rr + 1] = ip
+			for name in names:gmatch("%S+") do
+				name = name:lower()
+				local rr = answers[name][typename]
+				rr[#rr + 1] = ip
+			end
+			::continue::
 		end
-		::continue::
+		merge_answers()
 	end
-	merge_answers()
 end
 
 local function callback(msg, _)
@@ -285,19 +287,26 @@ local function suspend(session, timeout)
 	return core.wait()
 end
 
+local function find_dns_server()
+	local f<close> = io.open(resolv_conf, "r")
+	if not f then
+		return
+	end
+	for l in f:lines() do
+		dns_server = l:match("^%s*nameserver%s+([^%s]+)")
+		if dns_server then
+			if dns_server:find(':') then
+				dns_server = '[' .. dns_server .. ']'
+			end
+			dns_server = format("%s:53", dns_server)
+			break
+		end
+	end
+end
+
 local function connectserver()
 	if not dns_server then
-		local f<close> = io.open(resolv_conf, "r")
-		for l in f:lines() do
-			dns_server = l:match("^%s*nameserver%s+([^%s]+)")
-			if dns_server then
-				if dns_server:find(':') then
-					dns_server = '[' .. dns_server .. ']'
-				end
-				dns_server = format("%s:53", dns_server)
-				break
-			end
-		end
+		find_dns_server()
 	end
 	assert(dns_server)
 	logger.info("[dns] server ip:", dns_server)

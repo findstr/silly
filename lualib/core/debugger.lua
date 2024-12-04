@@ -6,31 +6,32 @@ local getinfo = debug.getinfo
 local getlocal = debug.getlocal
 local getupvalue = debug.getupvalue
 local format = string.format
-local coresume, coyield
+local coresume
 
 local prompt
 local writedat
 local debuglock
 local cwrite, cread
 
+local NIL = setmetatable({}, {__newindex = function() error("Can't write NIL") end})
 local breakidx = 0
 local breakcount = 0
-local breaksource = nil
-local breakline = nil
+local breaksource = NIL
+local breakline = NIL
 
 local lastfile = nil
 local lastline = nil
-local calllevel = nil
+local calllevel = math.maxinteger
 local nextlevel = nil
-local stepmode = false
-local calltrigger = nil
+local stepmode = nil
+local calltrigger = NIL
 
 local hookmask = nil
 local hookfunc = nil
 
 local lockthread = nil
 
-local livethread = nil
+local livethread = NIL
 
 
 local function cleardat(tbl)
@@ -343,6 +344,11 @@ function CMD.d(id)
 		clearallpoint()
 	else
 		id = tonumber(id)
+		if not id then
+			writedat[1] = "Invalid breakpoint id\n"
+			writedat[2] = prompt
+			return writedat
+		end
 		clearpoint(id)
 	end
 	writedat[1] = format("Delete breakpoint $%s\n", id or "ALL")
@@ -452,9 +458,9 @@ local function enter()
 
 	lastfile = nil
 	lastline = nil
-	calllevel = nil
+	calllevel = math.maxinteger
 	nextlevel = nil
-	stepmode = false
+	stepmode = nil
 	calltrigger = {}
 
 	hookmask = nil
@@ -473,23 +479,23 @@ local function leave()
 	prompt = nil
 
 	clearallpoint()
-	breakidx = nil
-	breakcount = nil
-	breaksource = nil
-	breakline = nil
+	breakidx = 0
+	breakcount = 0
+	breaksource = NIL
+	breakline = NIL
 
 	lastfile = nil
 	lastline = nil
-	calllevel = nil
+	calllevel = math.maxinteger
 	nextlevel = nil
 	stepmode = nil
-	calltrigger = nil
+	calltrigger = NIL
 
 	hookmask = nil
 	hookfunc = nil
 
 	lockthread = nil
-	livethread = nil
+	livethread = NIL
 end
 
 function CMD.q()
@@ -549,7 +555,7 @@ start = function(read, write)
 	enter()
 	cread = read
 	cwrite = write
-	coresume, coyield = core.task_hook(hook_create, hook_term)
+	coresume, _ = core.task_hook(hook_create, hook_term)
 	local ok, err = core.pcall(cmdline)
 	core.task_hook()
 	CMD.q()
