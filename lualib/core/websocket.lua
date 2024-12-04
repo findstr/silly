@@ -1,6 +1,7 @@
 local http = require "core.http"
 local helper = require "core.http.helper"
 local crypto = require "core.crypto"
+local logger = require "core.logger"
 local pairs = pairs
 local concat = table.concat
 local pack = string.pack
@@ -216,17 +217,21 @@ function M.connect(uri, param)
 		end
 	end
 	local key = crypto.base64encode(crypto.randomkey(16))
-	local req = http.request("GET", uri, {
+	local stream, err = http.request("GET", uri, {
 		["connection"] = "Upgrade",
 		["upgrade"] = "websocket",
 		["sec-websocket-version"] = 13,
 		["sec-websocket-key"] = key,
 	})
-	local status, header = req:readheader()
+	if not stream then
+		logger.error("websocket.connect", uri, "fail", err)
+		return nil
+	end
+	local status, _ = stream:readheader()
 	if not status or status ~= 101 then
 		return nil, "websocket.connect fail"
 	end
-	local sock = req:socket()
+	local sock = stream:socket()
 	sock.read = wrap_read(sock.read)
 	sock.write = wrap_write(sock.write, 1)
 	sock.close = wrap_close(sock.close)

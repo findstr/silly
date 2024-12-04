@@ -1,5 +1,4 @@
 local M = {}
-local pairs = table.pairs
 local remove = table.remove
 local setmetatable = setmetatable
 

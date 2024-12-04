@@ -1,25 +1,18 @@
 local core = require "core"
-local time = require "core.time"
 local metrics = require "core.metrics.c"
 local prometheus = require "core.metrics.prometheus"
 local logger = require "core.logger"
-local patch = require "core.patch"
 local tcp = require "core.net.tcp"
 local debugger = require "core.debugger"
 local type = type
 local pairs = pairs
 local pcall = pcall
-local assert = assert
-local select = select
 local loadfile = loadfile
-local tonumber = tonumber
 local lower = string.lower
 local format = string.format
 local concat = table.concat
-local insert = table.insert
 local unpack = table.unpack
 
-local NULL = ""
 local prompt = "console> "
 local desc = {
 "HELP: List command description. [HELP]",

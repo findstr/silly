@@ -79,7 +79,7 @@ local scheme_connect = {
 local setmetatable = setmetatable
 
 
-local socket_mutex = mutex.new()
+local socket_mutex = mutex:new()
 local socket_pool = setmetatable({}, {__gc = function(t)
 	for k, s in pairs(t) do
 		t[k] = nil

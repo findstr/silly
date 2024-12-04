@@ -175,6 +175,7 @@ local function parsenode(str, start)
 	end
 	assert(tk == "<")
 	name, start = nexttoken(str, start)
+	name = name or "unknown"
 	local attr = {}
 	local class = {}
 	local child = {}
@@ -188,7 +189,7 @@ local function parsenode(str, start)
 	while true do
 		local x, val
 		tk, start = nexttoken(str, start)
-		if tk == ">" or tk == "/>" then
+		if not tk or tk == ">" or tk == "/>" then
 			break
 		end
 		back = start
@@ -196,7 +197,7 @@ local function parsenode(str, start)
 		if x == "=" then
 			local v
 			v, start = nexttoken(str, start)
-			if tk == "class" then
+			if v and tk == "class" then
 				for c in v:gmatch("[^%s]+") do
 					class[#class + 1] = c
 				end
