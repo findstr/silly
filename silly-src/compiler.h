@@ -1,5 +1,5 @@
-#ifndef	_COMPILER_H
-#define	_COMPILER_H
+#ifndef _COMPILER_H
+#define _COMPILER_H
 
 #if defined __GNUC__
 
@@ -8,10 +8,9 @@
 
 #else
 
-#define likely(x)	(x)
-#define unlikely(x)	(x)
+#define likely(x) (x)
+#define unlikely(x) (x)
 
 #endif
 
 #endif
-

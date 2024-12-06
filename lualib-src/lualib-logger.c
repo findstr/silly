@@ -23,26 +23,23 @@ struct log_buffer {
 	char *ptr;
 };
 
-static inline void
-log_buffer_init(struct log_buffer *b)
+static inline void log_buffer_init(struct log_buffer *b)
 {
 	b->ptr = b->buf;
 }
 
-static inline size_t
-log_buffer_space(struct log_buffer *b)
+static inline size_t log_buffer_space(struct log_buffer *b)
 {
 	return (size_t)(&b->buf[LOG_BUF_SIZE] - b->ptr);
 }
 
-static inline void
-log_buffer_addsize(struct log_buffer *b, size_t len)
+static inline void log_buffer_addsize(struct log_buffer *b, size_t len)
 {
 	b->ptr += len;
 }
 
-static inline void
-log_buffer_append(struct log_buffer *b, const char *str, size_t len)
+static inline void log_buffer_append(struct log_buffer *b, const char *str,
+				     size_t len)
 {
 	if (log_buffer_space(b) < len)
 		return;
@@ -51,16 +48,14 @@ log_buffer_append(struct log_buffer *b, const char *str, size_t len)
 	return;
 }
 
-static void
-log_buffer_addchar(struct log_buffer *b, char c)
+static void log_buffer_addchar(struct log_buffer *b, char c)
 {
 	if (log_buffer_space(b) < 1)
 		return;
 	*b->ptr++ = c;
 }
 
-static char *
-inttostr(lua_Integer n, char *begin, char *end)
+static char *inttostr(lua_Integer n, char *begin, char *end)
 {
 	int neg = 0;
 	if (n < 0) {
@@ -77,8 +72,8 @@ inttostr(lua_Integer n, char *begin, char *end)
 	return end;
 }
 
-static inline void
-log_field(lua_State *L, struct log_buffer *b, int stk, int type, int deep)
+static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
+			     int type, int deep)
 {
 	size_t sz;
 	const char *str;
@@ -94,7 +89,7 @@ log_field(lua_State *L, struct log_buffer *b, int stk, int type, int deep)
 		if (lua_isinteger(L, stk)) {
 			char buf[32];
 			lua_Integer n = lua_tointeger(L, stk);
-			char *end = &buf[sizeof(buf)/sizeof(buf[0])];
+			char *end = &buf[sizeof(buf) / sizeof(buf[0])];
 			char *start = inttostr(n, buf, end);
 			log_buffer_append(b, start, end - start);
 		} else {
@@ -107,9 +102,11 @@ log_field(lua_State *L, struct log_buffer *b, int stk, int type, int deep)
 		break;
 	case LUA_TBOOLEAN:
 		if (lua_toboolean(L, stk))
-			log_buffer_append(b, LOG_TRUE_STR, sizeof(LOG_TRUE_STR) - 1);
+			log_buffer_append(b, LOG_TRUE_STR,
+					  sizeof(LOG_TRUE_STR) - 1);
 		else
-			log_buffer_append(b, LOG_FALSE_STR, sizeof(LOG_FALSE_STR) - 1);
+			log_buffer_append(b, LOG_FALSE_STR,
+					  sizeof(LOG_FALSE_STR) - 1);
 		break;
 	case LUA_TTABLE:
 		log_buffer_addchar(b, '{');
@@ -149,8 +146,7 @@ log_field(lua_State *L, struct log_buffer *b, int stk, int type, int deep)
 	}
 }
 
-static int
-llog(lua_State *L, enum silly_log_level log_level)
+static int llog(lua_State *L, enum silly_log_level log_level)
 {
 	int stk, top;
 	struct log_buffer buffer;
@@ -163,11 +159,12 @@ llog(lua_State *L, enum silly_log_level log_level)
 #ifdef LOG_ENABLE_FILE_LINE
 	{
 		lua_Debug ar;
-		if (lua_getstack(L, 1, &ar)) {  /* check function at level */
-			lua_getinfo(L, "Sl", &ar);  /* get info about it */
+		if (lua_getstack(L, 1, &ar)) {     /* check function at level */
+			lua_getinfo(L, "Sl", &ar); /* get info about it */
 			if (ar.currentline > 0) {  /* is there info? */
 				size_t space = log_buffer_space(&buffer);
-				int n = snprintf(buffer.ptr, space, "%s:%d ", ar.short_src, ar.currentline);
+				int n = snprintf(buffer.ptr, space, "%s:%d ",
+						 ar.short_src, ar.currentline);
 				if (n >= 0 && n < (int)space) {
 					log_buffer_addsize(&buffer, n);
 				}
@@ -185,71 +182,62 @@ llog(lua_State *L, enum silly_log_level log_level)
 	return 0;
 }
 
-static int
-lopenfile(lua_State *L)
+static int lopenfile(lua_State *L)
 {
 	const char *path = luaL_checkstring(L, 1);
 	silly_log_openfile(path);
 	return 0;
 }
 
-static int
-lgetlevel(lua_State *L)
+static int lgetlevel(lua_State *L)
 {
 	enum silly_log_level level = silly_log_getlevel();
 	lua_pushinteger(L, level);
 	return 1;
 }
 
-static int
-lsetlevel(lua_State *L)
+static int lsetlevel(lua_State *L)
 {
 	int level = luaL_optinteger(L, 1, (lua_Integer)SILLY_LOG_INFO);
 	silly_log_setlevel(level);
 	return 0;
 }
 
-static int
-ldebug(lua_State *L)
+static int ldebug(lua_State *L)
 {
 	return llog(L, SILLY_LOG_DEBUG);
 }
 
-static int
-linfo(lua_State *L)
+static int linfo(lua_State *L)
 {
 	return llog(L, SILLY_LOG_INFO);
 }
 
-static int
-lwarn(lua_State *L)
+static int lwarn(lua_State *L)
 {
 	return llog(L, SILLY_LOG_WARN);
 }
 
-static int
-lerror(lua_State *L)
+static int lerror(lua_State *L)
 {
 	return llog(L, SILLY_LOG_ERROR);
 }
 
-int
-luaopen_core_logger_c(lua_State *L)
+int luaopen_core_logger_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"openfile", lopenfile},
-		{"getlevel", lgetlevel},
-		{"setlevel", lsetlevel},
-		{"debug", ldebug},
-		{"info", linfo},
-		{"warn", lwarn},
-		{"error", lerror},
+		{ "openfile", lopenfile },
+		{ "getlevel", lgetlevel },
+		{ "setlevel", lsetlevel },
+		{ "debug",    ldebug    },
+		{ "info",     linfo     },
+		{ "warn",     lwarn     },
+		{ "error",    lerror    },
 		//end
-		{NULL, NULL},
+		{ NULL,       NULL      },
 	};
 
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
 	return 1;
 }
-

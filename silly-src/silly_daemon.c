@@ -13,14 +13,13 @@
 static int pidfile;
 extern int daemon(int, int);
 
-static void
-pidfile_create(const struct silly_config *conf)
+static void pidfile_create(const struct silly_config *conf)
 {
 	int err;
 	const char *path = conf->pidfile;
 	pidfile = -1;
 	if (path[0] == '\0')
-		return ;
+		return;
 	pidfile = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 	if (pidfile == -1) {
 		silly_log_error("[pidfile] create '%s' fail:%s\n", path,
@@ -31,52 +30,49 @@ pidfile_create(const struct silly_config *conf)
 	if (err == -1) {
 		char pid[128];
 		FILE *fp = fdopen(pidfile, "r+");
-		err = fscanf(fp , "%s\n", pid);
+		err = fscanf(fp, "%s\n", pid);
 		(void)err;
 		silly_log_error("[pidfile] lock '%s' fail,"
-			"another instace of '%s' alread run\n",
-			path, pid);
+				"another instace of '%s' alread run\n",
+				path, pid);
 		fclose(fp);
 		exit(-1);
 	}
 	err = ftruncate(pidfile, 0);
 	(void)err;
-	return ;
+	return;
 }
 
-static inline void
-pidfile_write()
+static inline void pidfile_write()
 {
 	ssize_t sz;
 	ssize_t writen;
 	char pid[128];
 	if (pidfile == -1)
-		return ;
+		return;
 	sz = sprintf(pid, "%d\n", (int)getpid());
 	writen = write(pidfile, pid, sz);
 	if (writen == -1 || writen != sz) {
 		perror("write pidfile");
 		exit(1);
 	}
-	return ;
+	return;
 }
 
-static inline void
-pidfile_delete(const struct silly_config *conf)
+static inline void pidfile_delete(const struct silly_config *conf)
 {
 	if (pidfile == -1)
-		return ;
+		return;
 	close(pidfile);
 	unlink(conf->pidfile);
-	return ;
+	return;
 }
 
-void
-silly_daemon_start(const struct silly_config *conf)
+void silly_daemon_start(const struct silly_config *conf)
 {
 	int err;
 	if (!conf->daemon)
-		return ;
+		return;
 	pidfile_create(conf);
 	err = daemon(1, 0);
 	if (err < 0) {
@@ -85,14 +81,13 @@ silly_daemon_start(const struct silly_config *conf)
 		exit(0);
 	}
 	pidfile_write();
-	return ;
+	return;
 }
 
-void
-silly_daemon_stop(const struct silly_config *conf)
+void silly_daemon_stop(const struct silly_config *conf)
 {
 	if (!conf->daemon)
-		return ;
+		return;
 	pidfile_delete(conf);
-	return ;
+	return;
 }

@@ -22,7 +22,7 @@ void silly_worker_warnendless();
 
 char **silly_worker_args(int *argc);
 
-void silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message *msg));
+void silly_worker_callback(void (*callback)(struct lua_State *L,
+					    struct silly_message *msg));
 
 #endif
-

@@ -18,18 +18,17 @@
 #define UV_TIME 3
 #define UV_CALL 4
 #define UV_START 5
-#define	UV_COSTAMP 6
-#define	UV_COTIME 7
+#define UV_COSTAMP 6
+#define UV_COTIME 7
 
-static uint64_t
-timestamp()
+static uint64_t timestamp()
 {
 	uint64_t ms;
 #ifdef __macosx__
 	struct task_thread_times_info info;
 	mach_msg_type_number_t count = TASK_THREAD_TIMES_INFO_COUNT;
 	kern_return_t kr = task_info(mach_task_self(), TASK_THREAD_TIMES_INFO,
-			(task_info_t)&info, &count);
+				     (task_info_t)&info, &count);
 	if (kr != KERN_SUCCESS)
 		return 0;
 	ms = info.user_time.seconds * 1000 * 1000;
@@ -45,15 +44,12 @@ timestamp()
 	return ms;
 }
 
-static inline lua_Integer
-diff(lua_Integer last, lua_Integer now)
+static inline lua_Integer diff(lua_Integer last, lua_Integer now)
 {
-	return (uint64_t)now - (uint64_t) last;
+	return (uint64_t)now - (uint64_t)last;
 }
 
-
-static inline lua_Integer
-gettuv(lua_State *L, int upidx)
+static inline lua_Integer gettuv(lua_State *L, int upidx)
 {
 	lua_Integer v;
 	lua_pushthread(L);
@@ -63,17 +59,15 @@ gettuv(lua_State *L, int upidx)
 	return v;
 }
 
-static inline void
-settuv(lua_State *L, int t, lua_Integer v)
+static inline void settuv(lua_State *L, int t, lua_Integer v)
 {
 	lua_pushthread(L);
 	lua_pushinteger(L, v);
 	lua_rawset(L, lua_upvalueindex(t));
-	return ;
+	return;
 }
 
-static lua_Integer
-coupdate(lua_State *L, lua_Integer stamp)
+static lua_Integer coupdate(lua_State *L, lua_Integer stamp)
 {
 	lua_Integer time;
 	lua_Integer last;
@@ -85,8 +79,7 @@ coupdate(lua_State *L, lua_Integer stamp)
 	return time;
 }
 
-static inline lua_Integer
-coinit(lua_State *L, lua_Integer stamp)
+static inline lua_Integer coinit(lua_State *L, lua_Integer stamp)
 {
 	lua_Integer time;
 	lua_pushthread(L);
@@ -102,8 +95,7 @@ coinit(lua_State *L, lua_Integer stamp)
 	return time;
 }
 
-static inline lua_Integer
-getkuv(lua_State *L, int k)
+static inline lua_Integer getkuv(lua_State *L, int k)
 {
 	lua_Integer v;
 	lua_pushvalue(L, lua_upvalueindex(k));
@@ -113,26 +105,23 @@ getkuv(lua_State *L, int k)
 	return v;
 }
 
-static inline void
-setkuv(lua_State *L, int k, lua_Integer v)
+static inline void setkuv(lua_State *L, int k, lua_Integer v)
 {
 	lua_pushvalue(L, lua_upvalueindex(k));
 	lua_pushinteger(L, v);
 	lua_rawset(L, -3);
-	return ;
+	return;
 }
 
-static inline void
-setkt(lua_State *L, lua_Integer v)
+static inline void setkt(lua_State *L, lua_Integer v)
 {
 	lua_pushthread(L);
 	lua_pushinteger(L, v);
 	lua_rawset(L, -3);
-	return ;
+	return;
 }
 
-static inline lua_Integer
-getkt(lua_State *L)
+static inline lua_Integer getkt(lua_State *L)
 {
 	lua_Integer v;
 	lua_pushthread(L);
@@ -142,8 +131,7 @@ getkt(lua_State *L)
 	return v;
 }
 
-static inline lua_Integer
-fetchsetkt(lua_State *L, lua_Integer v)
+static inline lua_Integer fetchsetkt(lua_State *L, lua_Integer v)
 {
 	lua_Integer res;
 	lua_pushthread(L);
@@ -157,8 +145,7 @@ fetchsetkt(lua_State *L, lua_Integer v)
 	return res;
 }
 
-static int
-lstart(lua_State *L)
+static int lstart(lua_State *L)
 {
 	lua_Integer stamp = timestamp();
 	stamp = coinit(L, stamp);
@@ -180,9 +167,10 @@ lstart(lua_State *L)
 		lua_Integer call;
 		last = fetchsetkt(L, stamp);
 		if (last != 0) {
-			return luaL_error(L,
-					"profiler.start and profiler.stop should in pairs:%d",
-					last);
+			return luaL_error(
+				L,
+				"profiler.start and profiler.stop should in pairs:%d",
+				last);
 		}
 		//update 'call'
 		call = getkuv(L, UV_CALL);
@@ -192,22 +180,24 @@ lstart(lua_State *L)
 	return 0;
 }
 
-static int
-lstop(lua_State *L)
+static int lstop(lua_State *L)
 {
 	lua_Integer now;
 	lua_Integer time;
 	lua_Integer stamp;
 	now = timestamp();
 	now = coupdate(L, now);
-	lua_pushvalue(L, -1);	//name
+	lua_pushvalue(L, -1); //name
 	lua_rawget(L, lua_upvalueindex(UV_G));
 	if (lua_isnil(L, -1))
-		return luaL_error(L, "profiler.stop incorrect stop:%s", luaL_checkstring(L, 1));
+		return luaL_error(L, "profiler.stop incorrect stop:%s",
+				  luaL_checkstring(L, 1));
 	//update
 	stamp = getkt(L);
 	if (stamp == 0)
-		return luaL_error(L, "number of profiler.start and profiler.stop don't equal");
+		return luaL_error(
+			L,
+			"number of profiler.start and profiler.stop don't equal");
 	time = getkuv(L, UV_TIME);
 	time += now - stamp;
 	setkuv(L, UV_TIME, time);
@@ -218,8 +208,7 @@ lstop(lua_State *L)
 	return 0;
 }
 
-static int
-lyield(lua_State *L)
+static int lyield(lua_State *L)
 {
 	lua_Integer stamp;
 	stamp = timestamp();
@@ -231,11 +220,9 @@ lyield(lua_State *L)
 	return 0;
 }
 
-
-static int
-lresume(lua_State *L)
+static int lresume(lua_State *L)
 {
-	lua_Integer stamp ;
+	lua_Integer stamp;
 	stamp = timestamp();
 
 	lua_pushvalue(L, 1);
@@ -249,8 +236,7 @@ lresume(lua_State *L)
 	return 0;
 }
 
-static int
-ldump(lua_State *L)
+static int ldump(lua_State *L)
 {
 	int n = lua_gettop(L);
 	if (n == 0) { //dump all
@@ -263,25 +249,24 @@ ldump(lua_State *L)
 	return 1;
 }
 
-static inline void
-newmetatable(lua_State *L)
+static inline void newmetatable(lua_State *L)
 {
 	lua_newtable(L);
 	lua_pushliteral(L, "k");
 	lua_setfield(L, -2, "__mode");
-	return ;
+	return;
 }
 
 int luaopen_core_profiler(lua_State *L)
 {
 	int mi;
 	luaL_Reg tbl[] = {
-		{"start", lstart},
-		{"stop", lstop},
-		{"yield", lyield},
-		{"resume", lresume},
-		{"dump", ldump},
-		{NULL, NULL},
+		{ "start",  lstart  },
+                { "stop",   lstop   },
+                { "yield",  lyield  },
+		{ "resume", lresume },
+                { "dump",   ldump   },
+                { NULL,     NULL    },
 	};
 
 	luaL_checkversion(L);
@@ -313,4 +298,3 @@ int luaopen_core_profiler(lua_State *L)
 
 	return 1;
 }
-

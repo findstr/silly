@@ -5,4 +5,3 @@ int silly_signal_init();
 int silly_signal_watch(int signum);
 
 #endif
-

@@ -16,5 +16,3 @@ struct silly_message *silly_queue_pop(struct silly_queue *q);
 size_t silly_queue_size(struct silly_queue *q);
 
 #endif
-
-

@@ -52,8 +52,7 @@ static const char *load_config = "\
 	eval('', config)\
 	";
 
-static const char *
-skipcode(const char *str)
+static const char *skipcode(const char *str)
 {
 	while (*str && *str++ != ']')
 		;
@@ -62,13 +61,12 @@ skipcode(const char *str)
 	return str;
 }
 
-static int
-lload(lua_State *L)
+static int lload(lua_State *L)
 {
 	int err;
 	err = luaL_loadstring(L, load_config);
 	assert(err == LUA_OK);
-	lua_pushvalue(L, lua_upvalueindex(1));	//env_table
+	lua_pushvalue(L, lua_upvalueindex(1)); //env_table
 	lua_pushvalue(L, 1);
 	err = lua_pcall(L, 2, 0, 0);
 	if (err != LUA_OK) {
@@ -82,27 +80,24 @@ lload(lua_State *L)
 	return 1;
 }
 
-static int
-lget(lua_State *L)
+static int lget(lua_State *L)
 {
-	lua_pushvalue(L, lua_upvalueindex(1));	//env_table
+	lua_pushvalue(L, lua_upvalueindex(1)); //env_table
 	lua_pushvalue(L, 1);
 	lua_gettable(L, -2);
 	return 1;
 }
 
-static int
-lset(lua_State *L)
+static int lset(lua_State *L)
 {
-	lua_pushvalue(L, lua_upvalueindex(1));	//env_table
+	lua_pushvalue(L, lua_upvalueindex(1)); //env_table
 	lua_pushvalue(L, 1);
 	lua_pushvalue(L, 2);
 	lua_settable(L, -3);
 	return 0;
 }
 
-static void
-load_args(lua_State *L)
+static void load_args(lua_State *L)
 {
 	int i, argc;
 	char **argv;
@@ -123,20 +118,19 @@ load_args(lua_State *L)
 	}
 }
 
-int
-luaopen_core_env(lua_State *L)
+int luaopen_core_env(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"load", lload},
-		{"get", lget},
-		{"set", lset},
+		{ "load", lload },
+		{ "get",  lget  },
+		{ "set",  lset  },
 		//end
-		{NULL, NULL},
+		{ NULL,   NULL  },
 	};
 	luaL_checkversion(L);
-	luaL_newlibtable(L,tbl);
+	luaL_newlibtable(L, tbl);
 	lua_newtable(L);
 	load_args(L);
-	luaL_setfuncs(L,tbl,1);
+	luaL_setfuncs(L, tbl, 1);
 	return 1;
 }

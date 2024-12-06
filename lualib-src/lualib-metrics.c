@@ -26,8 +26,7 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-static int
-lmemallocator(lua_State *L)
+static int lmemallocator(lua_State *L)
 {
 	const char *ver;
 	ver = silly_allocator();
@@ -35,11 +34,10 @@ lmemallocator(lua_State *L)
 	return 1;
 }
 
-static int
-lcpustat(lua_State *L)
+static int lcpustat(lua_State *L)
 {
 	struct rusage ru;
-	float stime,utime;
+	float stime, utime;
 	getrusage(RUSAGE_SELF, &ru);
 	stime = (float)ru.ru_stime.tv_sec;
 	stime += (float)ru.ru_stime.tv_usec / 1000000;
@@ -50,8 +48,7 @@ lcpustat(lua_State *L)
 	return 2;
 }
 
-static int
-lmaxfds(lua_State *L)
+static int lmaxfds(lua_State *L)
 {
 	struct rlimit rlim;
 	int ret = getrlimit(RLIMIT_NOFILE, &rlim);
@@ -60,13 +57,12 @@ lmaxfds(lua_State *L)
 		rlim.rlim_cur = 0;
 		rlim.rlim_max = 0;
 	}
-	lua_pushinteger(L, rlim.rlim_cur);	//soft
-	lua_pushinteger(L, rlim.rlim_max);	//hard
+	lua_pushinteger(L, rlim.rlim_cur); //soft
+	lua_pushinteger(L, rlim.rlim_max); //hard
 	return 2;
 }
 
-static int
-lopenfds(lua_State *L)
+static int lopenfds(lua_State *L)
 {
 	int fd_count = 0;
 	struct dirent *entry;
@@ -86,17 +82,14 @@ lopenfds(lua_State *L)
 	return 1;
 }
 
-
-static int
-lmemstat(lua_State *L)
+static int lmemstat(lua_State *L)
 {
 	lua_pushinteger(L, silly_memrss());
 	lua_pushinteger(L, silly_memused());
 	return 2;
 }
 
-static int
-ljestat(lua_State *L)
+static int ljestat(lua_State *L)
 {
 	uint64_t epoch = 1;
 	size_t allocated, active, resident, retained;
@@ -118,8 +111,7 @@ ljestat(lua_State *L)
 	return 4;
 }
 
-static int
-lworkerstat(lua_State *L)
+static int lworkerstat(lua_State *L)
 {
 	size_t sz;
 	sz = silly_worker_msgsize();
@@ -127,30 +119,27 @@ lworkerstat(lua_State *L)
 	return 1;
 }
 
-static int
-lpollapi(lua_State *L)
+static int lpollapi(lua_State *L)
 {
 	const char *api = silly_socket_pollapi();
 	lua_pushstring(L, api);
 	return 1;
 }
 
-static inline void
-table_set_int(lua_State *L, int table, const char *k, int v)
+static inline void table_set_int(lua_State *L, int table, const char *k, int v)
 {
 	lua_pushinteger(L, v);
-	lua_setfield(L, table-1, k);
+	lua_setfield(L, table - 1, k);
 }
 
-static inline void
-table_set_str(lua_State *L, int table, const char *k, const char *v)
+static inline void table_set_str(lua_State *L, int table, const char *k,
+				 const char *v)
 {
 	lua_pushstring(L, v);
-	lua_setfield(L, table-1, k);
+	lua_setfield(L, table - 1, k);
 }
 
-static int
-lnetstat(lua_State *L)
+static int lnetstat(lua_State *L)
 {
 	struct silly_netstat *stat;
 	stat = silly_socket_netstat();
@@ -162,8 +151,7 @@ lnetstat(lua_State *L)
 	return 5;
 }
 
-static int
-ltimerstat(lua_State *L)
+static int ltimerstat(lua_State *L)
 {
 	uint32_t active, expired;
 	active = silly_timer_info(&expired);
@@ -172,8 +160,7 @@ ltimerstat(lua_State *L)
 	return 2;
 }
 
-static int
-lsocketstat (lua_State *L)
+static int lsocketstat(lua_State *L)
 {
 	int sid;
 	struct silly_socketstat info;
@@ -190,41 +177,38 @@ lsocketstat (lua_State *L)
 	return 1;
 }
 
-static int
-ltimerresolution(lua_State *L)
+static int ltimerresolution(lua_State *L)
 {
 	lua_pushinteger(L, TIMER_RESOLUTION);
 	return 1;
 }
 
-int
-luaopen_core_metrics_c(lua_State *L)
+int luaopen_core_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//build
-		{"pollapi", lpollapi},
-		{"memallocator", lmemallocator},
-		{"timerresolution", ltimerresolution},
+		{ "pollapi",         lpollapi         },
+		{ "memallocator",    lmemallocator    },
+		{ "timerresolution", ltimerresolution },
 		//process
-		{"cpustat", lcpustat},
-		{"maxfds", lmaxfds},
-		{"openfds", lopenfds},
+		{ "cpustat",         lcpustat         },
+		{ "maxfds",          lmaxfds          },
+		{ "openfds",         lopenfds         },
 		//memory
-		{"memstat", lmemstat},
+		{ "memstat",         lmemstat         },
 #ifndef DISABLE_JEMALLOC
-		{"jestat", ljestat},
+		{ "jestat",          ljestat          },
 #endif
 		//core
-		{"workerstat", lworkerstat},
-		{"timerstat", ltimerstat},
-		{"netstat", lnetstat},
-		{"socketstat", lsocketstat},
+		{ "workerstat",      lworkerstat      },
+		{ "timerstat",       ltimerstat       },
+		{ "netstat",         lnetstat         },
+		{ "socketstat",      lsocketstat      },
 		//end
-		{NULL, NULL},
+		{ NULL,              NULL             },
 	};
 
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
 	return 1;
 }
-

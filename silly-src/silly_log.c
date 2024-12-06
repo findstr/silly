@@ -24,13 +24,7 @@ static __thread struct {
 	time_t msec;
 	silly_trace_id_t traceid;
 } head_cache = {
-	"",
-	NULL,
-	NULL,
-	NULL,
-	0,
-	0,
-	0,
+	"", NULL, NULL, NULL, 0, 0, 0,
 };
 
 static char level_names[] = {
@@ -41,14 +35,11 @@ static char level_names[] = {
 };
 
 static char hex[] = {
-	'0', '1', '2', '3',
-	'4', '5', '6', '7',
-	'8', '9', 'a', 'b',
-	'c', 'd', 'e', 'f',
+	'0', '1', '2', '3', '4', '5', '6', '7',
+	'8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 };
 
-void
-silly_log_openfile(const char *path)
+void silly_log_openfile(const char *path)
 {
 	int fd;
 	if (!is_daemon) {
@@ -61,22 +52,18 @@ silly_log_openfile(const char *path)
 		close(fd);
 		setvbuf(stdout, NULL, _IOFBF, LOG_BUF_SIZE);
 		setvbuf(stderr, NULL, _IOLBF, LOG_BUF_SIZE);
-
 	}
 }
 
-
-void
-silly_log_init(const struct silly_config *config)
+void silly_log_init(const struct silly_config *config)
 {
 	log_level = SILLY_LOG_INFO;
 	is_daemon = config->daemon;
 	silly_log_openfile(config->logpath);
-	return ;
+	return;
 }
 
-void
-silly_log_setlevel(enum silly_log_level level)
+void silly_log_setlevel(enum silly_log_level level)
 {
 	if (level >= sizeof(level_names) / sizeof(level_names[0])) {
 		//TODO:
@@ -85,18 +72,16 @@ silly_log_setlevel(enum silly_log_level level)
 	log_level = level;
 }
 
-enum silly_log_level
-silly_log_getlevel()
+enum silly_log_level silly_log_getlevel()
 {
 	return log_level;
 }
 
-#define BUILD_SEC   (1)
+#define BUILD_SEC (1)
 #define BUILD_TRACE (2)
-#define BUILD_NONE  (3)
+#define BUILD_NONE (3)
 
-static inline void
-fmttime()
+static inline void fmttime()
 {
 	int n;
 	char *end;
@@ -110,7 +95,7 @@ fmttime()
 		head_cache.sstr = head_cache.buf;
 	} else if (sec != head_cache.sec) {
 		build_step = BUILD_SEC;
-		head_cache.sec= sec;
+		head_cache.sec = sec;
 	} else if (traceid != head_cache.traceid) {
 		build_step = BUILD_TRACE;
 		head_cache.traceid = traceid;
@@ -121,11 +106,8 @@ fmttime()
 	case BUILD_SEC:
 		end = &head_cache.buf[sizeof(head_cache.buf)];
 		localtime_r(&sec, &tm);
-		n = strftime(
-			head_cache.sstr,
-			end - head_cache.sstr,
-			"%Y-%m-%d %H:%M:%S ", &tm
-		);
+		n = strftime(head_cache.sstr, end - head_cache.sstr,
+			     "%Y-%m-%d %H:%M:%S ", &tm);
 		head_cache.tstr = head_cache.sstr + n;
 		//fallthrough
 	case BUILD_TRACE:
@@ -140,36 +122,30 @@ fmttime()
 	return;
 }
 
-
-void
-silly_log_head(enum silly_log_level level)
+void silly_log_head(enum silly_log_level level)
 {
 	fmttime();
 	head_cache.term[0] = level_names[level];
 	head_cache.term[1] = ' ';
 	fwrite(head_cache.buf, sizeof(char),
-		head_cache.term + 2 - head_cache.buf, stdout);
+	       head_cache.term + 2 - head_cache.buf, stdout);
 }
 
-void
-silly_log_fmt(const char *fmt, ...)
+void silly_log_fmt(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
 	vfprintf(stdout, fmt, ap);
 	va_end(ap);
-	return ;
+	return;
 }
 
-void
-silly_log_append(const char *str, size_t sz)
+void silly_log_append(const char *str, size_t sz)
 {
 	fwrite(str, sizeof(char), sz, stdout);
 }
 
-void
-silly_log_flush()
+void silly_log_flush()
 {
 	fflush(stdout);
 }
-

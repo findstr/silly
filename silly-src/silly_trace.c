@@ -12,45 +12,37 @@ static uint16_t seq_idx = 0;
 //spanid(16bit),time(16bit),seq(16bit),spanid(16bit)
 static __thread silly_trace_id_t trace_ctx = 0;
 
-void
-silly_trace_init()
+void silly_trace_init()
 {
 	silly_trace_span((silly_trace_span_t)getpid());
 }
 
-void
-silly_trace_span(silly_trace_span_t id)
+void silly_trace_span(silly_trace_span_t id)
 {
 	spanid = id;
 }
 
-silly_trace_id_t
-silly_trace_set(silly_trace_id_t id)
+silly_trace_id_t silly_trace_set(silly_trace_id_t id)
 {
 	silly_trace_id_t old = trace_ctx;
 	trace_ctx = id;
 	return old;
 }
 
-silly_trace_id_t
-silly_trace_get()
+silly_trace_id_t silly_trace_get()
 {
 	return trace_ctx;
 }
 
-silly_trace_id_t
-silly_trace_new()
+silly_trace_id_t silly_trace_new()
 {
-	if (trace_ctx > 0 ) {
-		return (trace_ctx & ~((silly_trace_id_t)0xFF)) | (uint64_t)spanid;
+	if (trace_ctx > 0) {
+		return (trace_ctx & ~((silly_trace_id_t)0xFF)) |
+		       (uint64_t)spanid;
 	}
 	uint16_t time = (uint16_t)(silly_timer_nowsec());
 	uint16_t seq = atomic_add_return(&seq_idx, 1);
-	silly_trace_id_t id = (uint64_t)spanid << 48 |
-		(uint64_t)time << 32 |
-		(uint64_t)seq  << 16 |
-		(uint64_t)spanid;
+	silly_trace_id_t id = (uint64_t)spanid << 48 | (uint64_t)time << 32 |
+			      (uint64_t)seq << 16 | (uint64_t)spanid;
 	return id;
 }
-
-

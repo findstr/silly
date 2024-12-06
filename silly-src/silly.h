@@ -22,13 +22,13 @@
 #define SILLY_VERSION STR(SILLY_VERSION_MAJOR) "." STR(SILLY_VERSION_MINOR)
 #define SILLY_RELEASE SILLY_VERSION "." STR(SILLY_VERSION_RELEASE)
 
-
-#define tocommon(msg)   ((struct silly_message *)(msg))
-#define totexpire(msg)  ((struct silly_message_texpire *)(msg))
-#define tosocket(msg)   ((struct silly_message_socket *)(msg))
-#define tosignal(msg)   ((struct silly_message_signal *)(msg))
-#define COMMONFIELD struct silly_message *next; enum silly_message_type type;
-
+#define tocommon(msg) ((struct silly_message *)(msg))
+#define totexpire(msg) ((struct silly_message_texpire *)(msg))
+#define tosocket(msg) ((struct silly_message_socket *)(msg))
+#define tosignal(msg) ((struct silly_message_signal *)(msg))
+#define COMMONFIELD                 \
+	struct silly_message *next; \
+	enum silly_message_type type;
 
 struct silly_config {
 	int daemon;
@@ -46,28 +46,27 @@ struct silly_config {
 	char pidfile[PATH_MAX];
 };
 
-
 enum silly_message_type {
-	SILLY_TEXPIRE		= 1,	//timer expire
-	SILLY_SACCEPT		= 2,	//new connetiong
-	SILLY_SCLOSE            = 3,	//close from client
-	SILLY_SCONNECTED        = 4,	//async connect result
-	SILLY_SDATA             = 5,	//data packet(raw) from client
-	SILLY_SUDP 		= 6,	//data packet(raw) from client(udp)
-	SILLY_SIGNAL            = 7,	//signal
+	SILLY_TEXPIRE = 1,    //timer expire
+	SILLY_SACCEPT = 2,    //new connetiong
+	SILLY_SCLOSE = 3,     //close from client
+	SILLY_SCONNECTED = 4, //async connect result
+	SILLY_SDATA = 5,      //data packet(raw) from client
+	SILLY_SUDP = 6,       //data packet(raw) from client(udp)
+	SILLY_SIGNAL = 7,     //signal
 };
 
 struct silly_message {
 	COMMONFIELD
 };
 
-struct silly_message_texpire {	//timer expire
+struct silly_message_texpire { //timer expire
 	COMMONFIELD
 	uint64_t session;
 	uint64_t userdata;
 };
 
-struct silly_message_socket {	//socket accept
+struct silly_message_socket { //socket accept
 	COMMONFIELD
 	int sid;
 	//SACCEPT, it used as portid,
@@ -77,13 +76,12 @@ struct silly_message_socket {	//socket accept
 	uint8_t *data;
 };
 
-struct silly_message_signal {	//signal
+struct silly_message_signal { //signal
 	COMMONFIELD
 	int signum;
 };
 
-static inline void
-silly_message_free(struct silly_message *msg)
+static inline void silly_message_free(struct silly_message *msg)
 {
 	int type = msg->type;
 	if (type == SILLY_SDATA || type == SILLY_SUDP)
@@ -92,4 +90,3 @@ silly_message_free(struct silly_message *msg)
 }
 
 #endif
-

@@ -12,12 +12,11 @@
 
 char num_to_char[] = "0123456789abcdef";
 
-static int
-lmd5(lua_State *L)
+static int lmd5(lua_State *L)
 {
 	size_t sz;
 	uint8_t out[16];
-	char str[2*16];
+	char str[2 * 16];
 	const uint8_t *dat;
 	unsigned i = 0, j = 0;
 	struct MD5Context ctx;
@@ -34,8 +33,7 @@ lmd5(lua_State *L)
 	return 1;
 }
 
-static int
-lxor(lua_State *L)
+static int lxor(lua_State *L)
 {
 	size_t i;
 	const char *key;
@@ -56,20 +54,20 @@ lxor(lua_State *L)
 	return 1;
 }
 
-static int
-lsha256(lua_State *L)
+static int lsha256(lua_State *L)
 {
 	size_t i, j, sz;
 	sha256_context ctx;
-	uint8_t keybuf[256/8];
-	char strbuf[256/8 * 2];
+	uint8_t keybuf[256 / 8];
+	char strbuf[256 / 8 * 2];
 	const char *str = luaL_checklstring(L, 1, &sz);
 	int binary = luaL_optinteger(L, 2, 0);
 	sha256_starts(&ctx);
 	sha256_update(&ctx, (const uint8_t *)str, sz);
 	sha256_finish(&ctx, keybuf);
 	if (binary == 0) {
-		for (i = 0, j = 0; i < sizeof(keybuf) / sizeof(keybuf[0]); i++) {
+		for (i = 0, j = 0; i < sizeof(keybuf) / sizeof(keybuf[0]);
+		     i++) {
 			uint8_t n = keybuf[i];
 			strbuf[j++] = num_to_char[n >> 4];
 			strbuf[j++] = num_to_char[n & 0xf];
@@ -81,8 +79,7 @@ lsha256(lua_State *L)
 	return 1;
 }
 
-static int
-lrandomkey(lua_State *L)
+static int lrandomkey(lua_State *L)
 {
 	int i;
 	luaL_Buffer b;
@@ -94,19 +91,17 @@ lrandomkey(lua_State *L)
 	return 1;
 }
 
-#define	AESBUFF_LEN (512)
+#define AESBUFF_LEN (512)
 #define AESKEY_LEN (32)
 #define AES128_KEY (16)
 #define AES192_KEY (24)
 #define AES256_KEY (32)
 #define AESGROUP_LEN (16)
-#define	AESGROUP_LEN_POWER (4)
+#define AESGROUP_LEN_POWER (4)
 #define AESIV ((uint32_t *)("!*^$~)_+=-)(87^$#Dfhjklmnb<>,k./;KJl"))
 
-static void
-aes_encode(const uint8_t *key, int keybits,
-	const uint32_t *iv,
-	const uint8_t *src, uint8_t *dst, int sz)
+static void aes_encode(const uint8_t *key, int keybits, const uint32_t *iv,
+		       const uint8_t *src, uint8_t *dst, int sz)
 {
 	int i;
 	int group;
@@ -130,18 +125,16 @@ aes_encode(const uint8_t *key, int keybits,
 		dst += AESGROUP_LEN;
 	}
 	if (last == 0)
-		return ;
+		return;
 	//OFB
 	aes_encrypt(&ctx, (uint8_t *)iv, tail);
 	for (i = 0; i < last; i++)
 		dst[i] = src[i] ^ tail[i];
-	return ;
+	return;
 }
 
-static void
-aes_decode(const uint8_t *key, int keybits,
-	const uint32_t *iv,
-	const uint8_t *src, uint8_t *dst, int sz)
+static void aes_decode(const uint8_t *key, int keybits, const uint32_t *iv,
+		       const uint8_t *src, uint8_t *dst, int sz)
 {
 	int i;
 	int last;
@@ -165,7 +158,7 @@ aes_decode(const uint8_t *key, int keybits,
 			dst[i] = src[i] ^ tail[i];
 	}
 	if (group == 0)
-		return ;
+		return;
 	//CBC
 	src -= AESGROUP_LEN;
 	dst -= AESGROUP_LEN;
@@ -187,16 +180,13 @@ aes_decode(const uint8_t *key, int keybits,
 	ptr32[1] = ptr32[1] ^ iv[1];
 	ptr32[2] = ptr32[2] ^ iv[2];
 	ptr32[3] = ptr32[3] ^ iv[3];
-	return ;
+	return;
 }
 
-typedef void (* aes_func_t)(
-	const uint8_t *key, int keybits,
-	const uint32_t *iv,
-	const uint8_t *src, uint8_t *dst,int sz);
+typedef void (*aes_func_t)(const uint8_t *key, int keybits, const uint32_t *iv,
+			   const uint8_t *src, uint8_t *dst, int sz);
 
-static inline uint8_t *
-aes_getbuffer(lua_State *L, size_t need)
+static inline uint8_t *aes_getbuffer(lua_State *L, size_t need)
 {
 	uint8_t *data;
 	int idx = lua_upvalueindex(1);
@@ -210,8 +200,8 @@ aes_getbuffer(lua_State *L, size_t need)
 	return data;
 }
 
-static inline const uint32_t *
-aes_getiv(lua_State *L, int idx, uint8_t group[AESGROUP_LEN])
+static inline const uint32_t *aes_getiv(lua_State *L, int idx,
+					uint8_t group[AESGROUP_LEN])
 {
 	size_t size;
 	const uint8_t *iv;
@@ -230,8 +220,7 @@ aes_getiv(lua_State *L, int idx, uint8_t group[AESGROUP_LEN])
 	}
 }
 
-static inline int
-aes_do(lua_State *L, aes_func_t func)
+static inline int aes_do(lua_State *L, aes_func_t func)
 {
 	int data_type;
 	uint8_t *keyptr;
@@ -285,20 +274,17 @@ aes_do(lua_State *L, aes_func_t func)
 	}
 }
 
-static int
-laesencode(lua_State *L)
+static int laesencode(lua_State *L)
 {
 	return aes_do(L, aes_encode);
 }
 
-static int
-laesdecode(lua_State *L)
+static int laesdecode(lua_State *L)
 {
 	return aes_do(L, aes_decode);
 }
 
-static inline unsigned int
-undict(int ch)
+static inline unsigned int undict(int ch)
 {
 	int v;
 	if (ch == '+' || ch == '-')
@@ -316,8 +302,7 @@ undict(int ch)
 	return v;
 }
 
-static int
-lbase64encode(lua_State *L)
+static int lbase64encode(lua_State *L)
 {
 	size_t sz;
 	int i, j;
@@ -339,11 +324,11 @@ lbase64encode(lua_State *L)
 	need = (sz + 2) / 3 * 4;
 	ptr = luaL_buffinitsize(L, &lbuf, need);
 	for (i = 0, j = 0; i < (int)sz - 2; i += 3, j += 4) {
-		n = (dat[i+0] << 16) | (dat[i+1] << 8) | dat[i+2];
-		ptr[j+0] = dict[(n >> 18) & 0x3f];
-		ptr[j+1] = dict[(n >> 12) & 0x3f];
-		ptr[j+2] = dict[(n >> 6) & 0x3f];
-		ptr[j+3] = dict[n & 0x3f];
+		n = (dat[i + 0] << 16) | (dat[i + 1] << 8) | dat[i + 2];
+		ptr[j + 0] = dict[(n >> 18) & 0x3f];
+		ptr[j + 1] = dict[(n >> 12) & 0x3f];
+		ptr[j + 2] = dict[(n >> 6) & 0x3f];
+		ptr[j + 3] = dict[n & 0x3f];
 	}
 	switch (sz - i) {
 	case 1:
@@ -356,7 +341,7 @@ lbase64encode(lua_State *L)
 		}
 		break;
 	case 2:
-		n = dat[i] << 16 | dat[i+1] << 8;
+		n = dat[i] << 16 | dat[i + 1] << 8;
 		ptr[j++] = dict[n >> 18];
 		ptr[j++] = dict[(n >> 12) & 0x3f];
 		ptr[j++] = dict[(n >> 6) & 0x3f];
@@ -368,8 +353,7 @@ lbase64encode(lua_State *L)
 	return 1;
 }
 
-static int
-lbase64decode(lua_State *L)
+static int lbase64decode(lua_State *L)
 {
 	size_t sz;
 	char *dst;
@@ -390,28 +374,25 @@ lbase64decode(lua_State *L)
 			--k;
 		switch (k - i + 1) {
 		case 4:
-			n =	undict(dat[i+3])	|
-				undict(dat[i+2]) << 6	|
-				undict(dat[i+1]) << 12	|
-				undict(dat[i+0]) << 18;
+			n = undict(dat[i + 3]) | undict(dat[i + 2]) << 6 |
+			    undict(dat[i + 1]) << 12 | undict(dat[i + 0]) << 18;
 			dst[j++] = (n >> 16) & 0xff;
 			dst[j++] = (n >> 8) & 0xff;
 			dst[j++] = n & 0xff;
 			break;
 		case 3:
-			n =	undict(dat[i+2]) << 6	|
-				undict(dat[i+1]) << 12	|
-				undict(dat[i+0]) << 18;
+			n = undict(dat[i + 2]) << 6 | undict(dat[i + 1]) << 12 |
+			    undict(dat[i + 0]) << 18;
 			dst[j++] = (n >> 16) & 0xff;
 			dst[j++] = (n >> 8) & 0xff;
 			break;
 		case 2:
-			n = undict(dat[i+1]) << 12 | undict(dat[i+0]) << 18;
+			n = undict(dat[i + 1]) << 12 | undict(dat[i + 0]) << 18;
 			dst[j++] = (n >> 16) & 0xff;
 			break;
 
 		case 1:
-			n = undict(dat[i+0]) << 18;
+			n = undict(dat[i + 0]) << 18;
 			dst[j++] = (n >> 16) & 0xff;
 			break;
 		}
@@ -426,8 +407,7 @@ lbase64decode(lua_State *L)
 #include <openssl/err.h>
 #include <openssl/evp.h>
 
-static int
-ldigestsign(lua_State *L)
+static int ldigestsign(lua_State *L)
 {
 	int ok = 0;
 	const EVP_MD *md;
@@ -467,13 +447,12 @@ ldigestsign(lua_State *L)
 		EVP_PKEY_free(pk);
 	if (ok != 1) {
 		return luaL_error(L, "digest sign error:%s",
-			ERR_error_string(ERR_get_error(), NULL));
+				  ERR_error_string(ERR_get_error(), NULL));
 	}
 	return 1;
 }
 
-static int
-ldigestverify(lua_State *L)
+static int ldigestverify(lua_State *L)
 {
 	int ok = 0;
 	int verifyok = 0;
@@ -520,7 +499,7 @@ ldigestverify(lua_State *L)
 		EVP_PKEY_free(pk);
 	if (ok != 1) {
 		return luaL_error(L, "digest verify error:%s",
-			ERR_error_string(ERR_get_error(), NULL));
+				  ERR_error_string(ERR_get_error(), NULL));
 	}
 	lua_pushboolean(L, verifyok);
 	return 1;
@@ -528,8 +507,7 @@ ldigestverify(lua_State *L)
 
 #endif
 
-static inline void
-setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
+static inline void setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 {
 	while (tbl->name) {
 		lua_newuserdatauv(L, AESBUFF_LEN, 0);
@@ -537,33 +515,32 @@ setfuncs_withbuffer(lua_State *L, luaL_Reg tbl[])
 		lua_setfield(L, -2, tbl->name);
 		++tbl;
 	}
-	return ;
+	return;
 }
 
-int
-luaopen_core_crypto(lua_State *L)
+int luaopen_core_crypto(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"xor", lxor},
-		{"md5", lmd5},
-		{"sha1", lsha1},
-		{"sha256", lsha256},
-		{"hmac", lhmac_sha1},
-		{"randomkey", lrandomkey},
-		{"aesencode", laesencode},
-		{"aesdecode", laesdecode},
-		{"base64encode", lbase64encode},
-		{"base64decode", lbase64decode},
+		{ "xor",          lxor          },
+		{ "md5",          lmd5          },
+		{ "sha1",         lsha1         },
+		{ "sha256",       lsha256       },
+		{ "hmac",         lhmac_sha1    },
+		{ "randomkey",    lrandomkey    },
+		{ "aesencode",    laesencode    },
+		{ "aesdecode",    laesdecode    },
+		{ "base64encode", lbase64encode },
+		{ "base64decode", lbase64decode },
 #ifdef USE_OPENSSL
-		{"digestsign", ldigestsign},
-		{"digestverify", ldigestverify},
+		{ "digestsign",   ldigestsign   },
+		{ "digestverify", ldigestverify },
 #endif
-		{NULL, NULL},
+		{ NULL,           NULL          },
 	};
 	luaL_Reg tbl_b[] = {
-		{"aesencode", laesencode},
-		{"aesdecode", laesdecode},
-		{NULL, NULL},
+		{ "aesencode", laesencode },
+		{ "aesdecode", laesdecode },
+		{ NULL,        NULL       },
 	};
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);

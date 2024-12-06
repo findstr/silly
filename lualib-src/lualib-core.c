@@ -22,8 +22,7 @@
 #include "silly_timer.h"
 #include "silly_signal.h"
 
-static void
-dispatch(lua_State *L, struct silly_message *sm)
+static void dispatch(lua_State *L, struct silly_message *sm)
 {
 	int type;
 	int err;
@@ -33,8 +32,9 @@ dispatch(lua_State *L, struct silly_message *sm)
 	type = lua_rawgetp(L, LUA_REGISTRYINDEX, dispatch);
 	if (unlikely(type != LUA_TFUNCTION)) {
 		silly_log_error("[silly.core] callback need function"
-			"but got:%s\n", lua_typename(L, type));
-		return ;
+				"but got:%s\n",
+				lua_typename(L, type));
+		return;
 	}
 	lua_pushinteger(L, sm->type);
 	switch (sm->type) {
@@ -81,7 +81,8 @@ dispatch(lua_State *L, struct silly_message *sm)
 		args += 1;
 		break;
 	default:
-		silly_log_error("[silly.core] callback unknow message type:%d\n",
+		silly_log_error(
+			"[silly.core] callback unknow message type:%d\n",
 			sm->type);
 		assert(0);
 		break;
@@ -89,15 +90,14 @@ dispatch(lua_State *L, struct silly_message *sm)
 	/*the first stack slot of main thread is always trace function */
 	err = lua_pcall(L, args, 0, 1);
 	if (unlikely(err != LUA_OK)) {
-		silly_log_error("[silly.core] callback call fail:%d:%s\n",
-			err, lua_tostring(L, -1));
+		silly_log_error("[silly.core] callback call fail:%d:%s\n", err,
+				lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
-	return ;
+	return;
 }
 
-static int
-lexit(lua_State *L)
+static int lexit(lua_State *L)
 {
 	int status;
 	status = luaL_optinteger(L, 1, 0);
@@ -105,16 +105,14 @@ lexit(lua_State *L)
 	return 0;
 }
 
-static int
-lgenid(lua_State *L)
+static int lgenid(lua_State *L)
 {
 	uint32_t id = silly_worker_genid();
 	lua_pushinteger(L, id);
 	return 1;
 }
 
-static int
-ltostring(lua_State *L)
+static int ltostring(lua_State *L)
 {
 	char *buff;
 	int size;
@@ -124,31 +122,27 @@ ltostring(lua_State *L)
 	return 1;
 }
 
-static int
-lgetpid(lua_State *L)
+static int lgetpid(lua_State *L)
 {
 	int pid = getpid();
 	lua_pushinteger(L, pid);
 	return 1;
 }
 
-static int
-lgitsha1(lua_State *L)
+static int lgitsha1(lua_State *L)
 {
 	lua_pushstring(L, STR(SILLY_GIT_SHA1));
 	return 1;
 }
 
-static int
-lversion(lua_State *L)
+static int lversion(lua_State *L)
 {
 	const char *ver = SILLY_VERSION;
 	lua_pushstring(L, ver);
 	return 1;
 }
 
-static int
-ldispatch(lua_State *L)
+static int ldispatch(lua_State *L)
 {
 	lua_pushlightuserdata(L, dispatch);
 	lua_insert(L, -2);
@@ -156,8 +150,7 @@ ldispatch(lua_State *L)
 	return 0;
 }
 
-static int
-ltimeout(lua_State *L)
+static int ltimeout(lua_State *L)
 {
 	uint32_t expire;
 	uint32_t userdata;
@@ -169,8 +162,7 @@ ltimeout(lua_State *L)
 	return 1;
 }
 
-static int
-ltimercancel(lua_State *L)
+static int ltimercancel(lua_State *L)
 {
 	uint32_t ud;
 	uint64_t session = (uint64_t)luaL_checkinteger(L, 1);
@@ -183,43 +175,25 @@ ltimercancel(lua_State *L)
 	return 1;
 }
 
-static int
-lsignalmap(lua_State *L)
+static int lsignalmap(lua_State *L)
 {
+#define SIG_NAME(name) { #name, name }
 	size_t i;
 	lua_newtable(L);
 	struct signal {
 		const char *name;
 		int signum;
 	} signals[] = {
-		{"SIGINT", SIGINT},
-		{"SIGILL", SIGILL},
-		{"SIGABRT", SIGABRT},
-		{"SIGFPE", SIGFPE},
-		{"SIGSEGV", SIGSEGV},
-		{"SIGTERM", SIGTERM},
-		{"SIGHUP", SIGHUP},
-		{"SIGQUIT", SIGQUIT},
-		{"SIGTRAP", SIGTRAP},
-		{"SIGKILL", SIGKILL},
-		{"SIGBUS", SIGBUS},
-		{"SIGSYS", SIGSYS},
-		{"SIGPIPE", SIGPIPE},
-		{"SIGALRM", SIGALRM},
-		{"SIGURG", SIGURG},
-		{"SIGSTOP", SIGSTOP},
-		{"SIGTSTP", SIGTSTP},
-		{"SIGCONT", SIGCONT},
-		{"SIGCHLD", SIGCHLD},
-		{"SIGTTIN", SIGTTIN},
-		{"SIGTTOU", SIGTTOU},
-		{"SIGPOLL", SIGPOLL},
-		{"SIGXCPU", SIGXCPU},
-		{"SIGXFSZ", SIGXFSZ},
-		{"SIGVTALRM", SIGVTALRM},
-		{"SIGPROF", SIGPROF},
-		{"SIGUSR1", SIGUSR1},
-		{"SIGUSR2", SIGUSR2},
+		SIG_NAME(SIGINT),    SIG_NAME(SIGILL),  SIG_NAME(SIGABRT),
+		SIG_NAME(SIGFPE),    SIG_NAME(SIGSEGV), SIG_NAME(SIGTERM),
+		SIG_NAME(SIGHUP),    SIG_NAME(SIGQUIT), SIG_NAME(SIGTRAP),
+		SIG_NAME(SIGKILL),   SIG_NAME(SIGBUS),  SIG_NAME(SIGSYS),
+		SIG_NAME(SIGPIPE),   SIG_NAME(SIGALRM), SIG_NAME(SIGURG),
+		SIG_NAME(SIGSTOP),   SIG_NAME(SIGTSTP), SIG_NAME(SIGCONT),
+		SIG_NAME(SIGCHLD),   SIG_NAME(SIGTTIN), SIG_NAME(SIGTTOU),
+		SIG_NAME(SIGPOLL),   SIG_NAME(SIGXCPU), SIG_NAME(SIGXFSZ),
+		SIG_NAME(SIGVTALRM), SIG_NAME(SIGPROF), SIG_NAME(SIGUSR1),
+		SIG_NAME(SIGUSR2),
 	};
 	for (i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
 		lua_pushinteger(L, signals[i].signum);
@@ -228,10 +202,10 @@ lsignalmap(lua_State *L)
 		lua_seti(L, -2, signals[i].signum);
 	}
 	return 1;
+#undef SIG_NAME
 }
 
-static int
-lsignal(lua_State *L)
+static int lsignal(lua_State *L)
 {
 	int signum = luaL_checkinteger(L, 1);
 	int err = silly_signal_watch(signum);
@@ -250,11 +224,10 @@ struct multicasthdr {
 	uint8_t data[1];
 };
 
-#define	MULTICAST_SIZE offsetof(struct multicasthdr, data)
+#define MULTICAST_SIZE offsetof(struct multicasthdr, data)
 
 //NOTE:this function may cocurrent
-static void
-multifinalizer(void *buff)
+static void multifinalizer(void *buff)
 {
 	struct multicasthdr *hdr;
 	uint8_t *ptr = (uint8_t *)buff;
@@ -263,11 +236,10 @@ multifinalizer(void *buff)
 	uint32_t refcount = __sync_sub_and_fetch(&hdr->ref, 1);
 	if (refcount == 0)
 		silly_free(hdr);
-	return ;
+	return;
 }
 
-static int
-lmultipack(lua_State *L)
+static int lmultipack(lua_State *L)
 {
 	size_t size;
 	uint8_t *buf;
@@ -295,16 +267,14 @@ lmultipack(lua_State *L)
 	return 2;
 }
 
-static int
-lmultifree(lua_State *L)
+static int lmultifree(lua_State *L)
 {
 	uint8_t *buf = lua_touserdata(L, 1);
 	multifinalizer(buf);
 	return 0;
 }
 
-static inline void *
-stringbuffer(lua_State *L, int idx, size_t *size)
+static inline void *stringbuffer(lua_State *L, int idx, size_t *size)
 {
 	size_t sz;
 	const char *str = lua_tolstring(L, idx, &sz);
@@ -314,15 +284,13 @@ stringbuffer(lua_State *L, int idx, size_t *size)
 	return p;
 }
 
-static inline void *
-udatabuffer(lua_State *L, int idx, size_t *size)
+static inline void *udatabuffer(lua_State *L, int idx, size_t *size)
 {
 	*size = luaL_checkinteger(L, idx + 1);
 	return lua_touserdata(L, idx);
 }
 
-static inline void *
-tablebuffer(lua_State *L, int idx, size_t *size)
+static inline void *tablebuffer(lua_State *L, int idx, size_t *size)
 {
 	int i;
 	const char *str;
@@ -348,11 +316,10 @@ tablebuffer(lua_State *L, int idx, size_t *size)
 	return p;
 }
 
-typedef int (connect_t)(const char *ip, const char *port,
-		const char *bip, const char *bport);
+typedef int(connect_t)(const char *ip, const char *port, const char *bip,
+		       const char *bport);
 
-static int
-socketconnect(lua_State *L, connect_t *connect)
+static int socketconnect(lua_State *L, connect_t *connect)
 {
 	int err;
 	const char *ip;
@@ -368,14 +335,12 @@ socketconnect(lua_State *L, connect_t *connect)
 	return 1;
 }
 
-static int
-ltcpconnect(lua_State *L)
+static int ltcpconnect(lua_State *L)
 {
 	return socketconnect(L, silly_socket_connect);
 }
 
-static int
-ltcplisten(lua_State *L)
+static int ltcplisten(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
@@ -385,9 +350,7 @@ ltcplisten(lua_State *L)
 	return 1;
 }
 
-
-static int
-ltcpsend(lua_State *L)
+static int ltcpsend(lua_State *L)
 {
 	int err;
 	int sid;
@@ -407,15 +370,14 @@ ltcpsend(lua_State *L)
 		break;
 	default:
 		return luaL_error(L, "netstream.pack unsupport:%s",
-			lua_typename(L, 2));
+				  lua_typename(L, 2));
 	}
 	err = silly_socket_send(sid, buff, size, NULL);
 	lua_pushboolean(L, err < 0 ? 0 : 1);
 	return 1;
 }
 
-static int
-ltcpmulticast(lua_State *L)
+static int ltcpmulticast(lua_State *L)
 {
 	int err;
 	int sid;
@@ -429,14 +391,12 @@ ltcpmulticast(lua_State *L)
 	return 1;
 }
 
-static int
-ludpconnect(lua_State *L)
+static int ludpconnect(lua_State *L)
 {
 	return socketconnect(L, silly_socket_udpconnect);
 }
 
-static int
-ludpbind(lua_State *L)
+static int ludpbind(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
@@ -445,8 +405,7 @@ ludpbind(lua_State *L)
 	return 1;
 }
 
-static int
-ludpsend(lua_State *L)
+static int ludpsend(lua_State *L)
 {
 	int idx;
 	int err;
@@ -472,7 +431,7 @@ ludpsend(lua_State *L)
 		break;
 	default:
 		return luaL_error(L, "netstream.pack unsupport:%s",
-			lua_typename(L, 2));
+				  lua_typename(L, 2));
 	}
 	if (!lua_isnoneornil(L, idx))
 		addr = (const uint8_t *)luaL_checklstring(L, idx, &addrlen);
@@ -481,8 +440,7 @@ ludpsend(lua_State *L)
 	return 1;
 }
 
-static int
-lntop(lua_State *L)
+static int lntop(lua_State *L)
 {
 	int size;
 	const char *addr;
@@ -493,8 +451,7 @@ lntop(lua_State *L)
 	return 1;
 }
 
-static int
-lclose(lua_State *L)
+static int lclose(lua_State *L)
 {
 	int err;
 	int sid;
@@ -504,8 +461,7 @@ lclose(lua_State *L)
 	return 1;
 }
 
-static int
-lreadctrl(lua_State *L)
+static int lreadctrl(lua_State *L)
 {
 	int sid = luaL_checkinteger(L, 1);
 	int ctrl = lua_toboolean(L, 2);
@@ -513,8 +469,7 @@ lreadctrl(lua_State *L)
 	return 0;
 }
 
-static int
-lsendsize(lua_State *L)
+static int lsendsize(lua_State *L)
 {
 	int sid = luaL_checkinteger(L, 1);
 	int size = silly_socket_sendsize(sid);
@@ -522,8 +477,7 @@ lsendsize(lua_State *L)
 	return 1;
 }
 
-static int
-ltracespan(lua_State *L)
+static int ltracespan(lua_State *L)
 {
 	silly_trace_span_t span;
 	span = (silly_trace_span_t)luaL_checkinteger(L, 1);
@@ -531,8 +485,7 @@ ltracespan(lua_State *L)
 	return 0;
 }
 
-static int
-ltracenew(lua_State *L)
+static int ltracenew(lua_State *L)
 {
 	silly_trace_id_t traceid;
 	traceid = silly_trace_new();
@@ -540,24 +493,22 @@ ltracenew(lua_State *L)
 	return 1;
 }
 
-static int
-ltraceset(lua_State *L)
+static int ltraceset(lua_State *L)
 {
- 	silly_trace_id_t traceid;
+	silly_trace_id_t traceid;
 	lua_State *co = lua_tothread(L, 1);
- 	silly_worker_resume(co);
- 	if lua_isnoneornil(L, 2) {
- 		traceid = TRACE_WORKER_ID;
- 	} else {
+	silly_worker_resume(co);
+	if lua_isnoneornil (L, 2) {
+		traceid = TRACE_WORKER_ID;
+	} else {
 		traceid = (silly_trace_id_t)luaL_checkinteger(L, 2);
- 	}
- 	traceid = silly_trace_set(traceid);
- 	lua_pushinteger(L, (lua_Integer)traceid);
+	}
+	traceid = silly_trace_set(traceid);
+	lua_pushinteger(L, (lua_Integer)traceid);
 	return 1;
 }
 
-static int
-ltraceget(lua_State *L)
+static int ltraceget(lua_State *L)
 {
 	silly_trace_id_t traceid;
 	traceid = silly_trace_get();
@@ -565,43 +516,42 @@ ltraceget(lua_State *L)
 	return 1;
 }
 
-int
-luaopen_core_c(lua_State *L)
+int luaopen_core_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core
-		{"gitsha1", lgitsha1},
-		{"version", lversion},
-		{"dispatch", ldispatch},
-		{"timeout", ltimeout},
-		{"timercancel", ltimercancel},
-		{"signalmap", lsignalmap},
-		{"signal", lsignal},
-		{"genid", lgenid},
-		{"tostring", ltostring},
-		{"getpid", lgetpid},
-		{"exit", lexit},
+		{ "gitsha1",       lgitsha1      },
+		{ "version",       lversion      },
+		{ "dispatch",      ldispatch     },
+		{ "timeout",       ltimeout      },
+		{ "timercancel",   ltimercancel  },
+		{ "signalmap",     lsignalmap    },
+		{ "signal",        lsignal       },
+		{ "genid",         lgenid        },
+		{ "tostring",      ltostring     },
+		{ "getpid",        lgetpid       },
+		{ "exit",          lexit         },
 		//trace
-		{"trace_span", ltracespan},
-		{"trace_new", ltracenew},
-		{"trace_set", ltraceset},
-		{"trace_get", ltraceget},
+		{ "trace_span",    ltracespan    },
+		{ "trace_new",     ltracenew     },
+		{ "trace_set",     ltraceset     },
+		{ "trace_get",     ltraceget     },
 		//socket
-		{"tcp_connect", ltcpconnect},
-		{"tcp_listen", ltcplisten},
-		{"tcp_send", ltcpsend},
-		{"tcp_multicast", ltcpmulticast},
-		{"udp_bind", ludpbind},
-		{"udp_connect", ludpconnect},
-		{"udp_send", ludpsend},
-		{"sendsize", lsendsize},
-		{"multipack", lmultipack},
-		{"multifree", lmultifree},
-		{"readctrl", lreadctrl},
-		{"ntop", lntop},
-		{"close", lclose},
+		{ "tcp_connect",   ltcpconnect   },
+		{ "tcp_listen",    ltcplisten    },
+		{ "tcp_send",      ltcpsend      },
+		{ "tcp_multicast", ltcpmulticast },
+		{ "udp_bind",      ludpbind      },
+		{ "udp_connect",   ludpconnect   },
+		{ "udp_send",      ludpsend      },
+		{ "sendsize",      lsendsize     },
+		{ "multipack",     lmultipack    },
+		{ "multifree",     lmultifree    },
+		{ "readctrl",      lreadctrl     },
+		{ "ntop",          lntop         },
+		{ "close",         lclose        },
 		//end
-		{NULL, NULL},
+		{ NULL,            NULL          },
 	};
 
 	luaL_checkversion(L);
@@ -617,4 +567,3 @@ luaopen_core_c(lua_State *L)
 
 	return 1;
 }
-

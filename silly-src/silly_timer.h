@@ -15,5 +15,3 @@ time_t silly_timer_monotonicsec();
 uint32_t silly_timer_info(uint32_t *expired);
 
 #endif
-
-

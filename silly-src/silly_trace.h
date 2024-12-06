@@ -1,5 +1,5 @@
-#ifndef	_SILLY_TRACE_H
-#define	_SILLY_TRACE_H
+#ifndef _SILLY_TRACE_H
+#define _SILLY_TRACE_H
 
 #include <stdint.h>
 
@@ -14,4 +14,3 @@ silly_trace_id_t silly_trace_new();
 silly_trace_id_t silly_trace_propagate();
 
 #endif
-

@@ -12,4 +12,3 @@ size_t silly_memused();
 size_t silly_memrss();
 
 #endif
-
