@@ -11,23 +11,23 @@
 #include <sys/socket.h>
 #endif
 
-#define SP_INVALID	NULL
-#define SP_RD_FLAG	0x01
-#define SP_WR_FLAG	0x02
-#define SP_ER_FLAG	0x04
-#define SP_MAX		64
+#define SP_INVALID NULL
+#define SP_RD_FLAG 0x01
+#define SP_WR_FLAG 0x02
+#define SP_ER_FLAG 0x04
+#define SP_MAX 64
 
-#define SP_READ(e)   (e->rwstatus & SP_RD_FLAG)
-#define SP_WRITE(e)  (e->rwstatus & SP_WR_FLAG)
-#define SP_ERR(e)    (e->rwstatus & SP_ER_FLAG)
-#define SP_UD(e)     (e->ud)
+#define SP_READ(e) (e->rwstatus & SP_RD_FLAG)
+#define SP_WRITE(e) (e->rwstatus & SP_WR_FLAG)
+#define SP_ERR(e) (e->rwstatus & SP_ER_FLAG)
+#define SP_UD(e) (e->ud)
 
-#define SP_IN        SP_RD_FLAG
-#define SP_OUT       SP_WR_FLAG
+#define SP_IN SP_RD_FLAG
+#define SP_OUT SP_WR_FLAG
 
 typedef struct sp_event {
 	int fd;
-	int rwctrl; /* 0x01 --> read, 0x02 --> write */
+	int rwctrl;   /* 0x01 --> read, 0x02 --> write */
 	int rwstatus; /* 0x01 --> read, 0x02 --> write, 0x04 --> error*/
 	void *ud;
 } sp_event_t;
@@ -36,9 +36,7 @@ typedef struct sp_poll {
 	sp_event_t event[SP_MAX];
 } *sp_t;
 
-
-static inline sp_t
-sp_create(int nr)
+static inline sp_t sp_create(int nr)
 {
 	int i;
 	(void)nr;
@@ -51,14 +49,12 @@ sp_create(int nr)
 	return sp;
 }
 
-static inline void
-sp_free(sp_t fd)
+static inline void sp_free(sp_t fd)
 {
 	silly_free(fd);
 }
 
-static inline int
-sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
+static inline int sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 {
 	int i;
 	int ei;
@@ -103,8 +99,7 @@ sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 	return ei;
 }
 
-static inline int
-sp_add(sp_t sp, int fd, void *ud)
+static inline int sp_add(sp_t sp, int fd, void *ud)
 {
 	int i;
 	for (i = 0; i < SP_MAX; i++) {
@@ -118,8 +113,7 @@ sp_add(sp_t sp, int fd, void *ud)
 	return -1;
 }
 
-static inline int
-sp_del(sp_t sp, int fd)
+static inline int sp_del(sp_t sp, int fd)
 {
 	int i;
 	for (i = 0; i < SP_MAX; i++) {
@@ -131,8 +125,7 @@ sp_del(sp_t sp, int fd)
 	return -1;
 }
 
-static inline int
-sp_ctrl(sp_t sp, int fd, void *ud, int flag)
+static inline int sp_ctrl(sp_t sp, int fd, void *ud, int flag)
 {
 	int i;
 	for (i = 0; i < SP_MAX; i++) {
@@ -144,8 +137,6 @@ sp_ctrl(sp_t sp, int fd, void *ud, int flag)
 		}
 	}
 	return -1;
-
 }
 
 #endif
-

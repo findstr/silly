@@ -29,9 +29,7 @@ struct {
 	pthread_cond_t cond;
 } R;
 
-
-static void *
-thread_timer(void *arg)
+static void *thread_timer(void *arg)
 {
 	(void)arg;
 	struct timespec req;
@@ -52,9 +50,7 @@ thread_timer(void *arg)
 	return NULL;
 }
 
-
-static void *
-thread_socket(void *arg)
+static void *thread_socket(void *arg)
 {
 	(void)arg;
 	silly_trace_set(TRACE_SOCKET_ID);
@@ -70,8 +66,7 @@ thread_socket(void *arg)
 	return NULL;
 }
 
-static void *
-thread_worker(void *arg)
+static void *thread_worker(void *arg)
 {
 	const struct silly_config *c;
 	c = (struct silly_config *)arg;
@@ -94,8 +89,7 @@ thread_worker(void *arg)
 	return NULL;
 }
 
-static void
-monitor_check()
+static void monitor_check()
 {
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
@@ -109,11 +103,11 @@ monitor_check()
 		silly_monitor_check();
 	}
 	silly_log_info("[monitor] stop\n");
-	return ;
+	return;
 }
 
-static void
-thread_create(pthread_t *tid, void *(*start)(void *), void *arg, int cpuid)
+static void thread_create(pthread_t *tid, void *(*start)(void *), void *arg,
+			  int cpuid)
 {
 	int err;
 	err = pthread_create(tid, NULL, start, arg);
@@ -123,7 +117,7 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg, int cpuid)
 	}
 #ifdef USE_CPU_AFFINITY
 	if (cpuid < 0)
-		return ;
+		return;
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
 	CPU_SET(cpuid, &cpuset);
@@ -131,12 +125,10 @@ thread_create(pthread_t *tid, void *(*start)(void *), void *arg, int cpuid)
 #else
 	(void)cpuid;
 #endif
-	return ;
+	return;
 }
 
-
-int
-silly_run(const struct silly_config *config)
+int silly_run(const struct silly_config *config)
 {
 	int i;
 	int err;
@@ -149,18 +141,22 @@ silly_run(const struct silly_config *config)
 	silly_signal_init();
 	err = silly_socket_init();
 	if (unlikely(err < 0)) {
-		silly_log_error("%s socket init fail:%d\n", config->selfname, err);
+		silly_log_error("%s socket init fail:%d\n", config->selfname,
+				err);
 		return -err;
 	}
 	silly_worker_init();
 	silly_monitor_init();
 	srand(time(NULL));
-	silly_log_info("%s %s is running ...\n", config->selfname, SILLY_RELEASE);
+	silly_log_info("%s %s is running ...\n", config->selfname,
+		       SILLY_RELEASE);
 	silly_log_info("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
-		config->timeraffinity, config->socketaffinity, config->workeraffinity);
+		       config->timeraffinity, config->socketaffinity,
+		       config->workeraffinity);
 	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
-	thread_create(&pid[2], thread_worker, (void *)config, config->workeraffinity);
+	thread_create(&pid[2], thread_worker, (void *)config,
+		      config->workeraffinity);
 	monitor_check();
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
@@ -174,10 +170,8 @@ silly_run(const struct silly_config *config)
 	return R.exitstatus;
 }
 
-void
-silly_exit(int status)
+void silly_exit(int status)
 {
 	R.running = 0;
 	R.exitstatus = status;
 }
-

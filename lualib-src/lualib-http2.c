@@ -7,15 +7,15 @@
 #include "http2_table.h"
 #include "silly_malloc.h"
 
-#define STATIC_TBL_SIZE	(61)
+#define STATIC_TBL_SIZE (61)
 #ifdef SILLY_TEST
-#define HTTP2_HEADER_SIZE	(4096)
+#define HTTP2_HEADER_SIZE (4096)
 #else
-#define HTTP2_HEADER_SIZE	(250)
+#define HTTP2_HEADER_SIZE (250)
 #endif
-#define FIELD_BUFSZ	(HTTP2_HEADER_SIZE + 6)
-#define FIELD_FMT	"%s: %s"
-#define FRAME_HDR_SIZE	(9)
+#define FIELD_BUFSZ (HTTP2_HEADER_SIZE + 6)
+#define FIELD_FMT "%s: %s"
+#define FRAME_HDR_SIZE (9)
 
 struct hpack {
 	int hard_limit;
@@ -48,7 +48,7 @@ struct pack_ctx {
 struct node {
 	uint8_t sym;
 	int8_t codelen;
-	int children[256];//TODO:optimise children to pointer
+	int children[256]; //TODO:optimise children to pointer
 };
 
 struct root {
@@ -58,15 +58,14 @@ struct root {
 	struct node *pool;
 };
 
-static struct node *
-alloc(struct root *huffman)
+static struct node *alloc(struct root *huffman)
 {
 	struct node *n;
 	if (huffman->free >= huffman->size) {
 		int newsz = (huffman->size + 64);
 		huffman->size = newsz;
 		huffman->pool = silly_realloc(huffman->pool,
-			newsz * sizeof(huffman->pool[0]));
+					      newsz * sizeof(huffman->pool[0]));
 	}
 	n = &huffman->pool[huffman->free++];
 	n->codelen = -1;
@@ -74,8 +73,8 @@ alloc(struct root *huffman)
 	return n;
 }
 
-static void
-add_node(struct root *huffman, uint8_t sym, uint32_t code, int codelen)
+static void add_node(struct root *huffman, uint8_t sym, uint32_t code,
+		     int codelen)
 {
 	int i, shift, start, end, id;
 	struct node *n;
@@ -106,8 +105,7 @@ add_node(struct root *huffman, uint8_t sym, uint32_t code, int codelen)
 	}
 }
 
-static int
-huffman_len(const char *str, int sz)
+static int huffman_len(const char *str, int sz)
 {
 	int i;
 	uint64_t n = 0;
@@ -116,9 +114,7 @@ huffman_len(const char *str, int sz)
 	return (n + 7) / 8;
 }
 
-
-static int
-huffman_encode(luaL_Buffer *b, const char *str, int sz)
+static int huffman_encode(luaL_Buffer *b, const char *str, int sz)
 {
 	int i;
 	int rembits = 8;
@@ -154,8 +150,7 @@ huffman_encode(luaL_Buffer *b, const char *str, int sz)
 	return 0;
 }
 
-static int
-huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
+static int huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 {
 	uint32_t mask;
 	const uint8_t *dat, *end;
@@ -204,8 +199,7 @@ huffman_decode(struct unpack_ctx *uctx, int size, luaL_Buffer *buf)
 	return 0;
 }
 
-static int
-huffman_gc(lua_State *L)
+static int huffman_gc(lua_State *L)
 {
 	struct root *huffman = luaL_checkudata(L, 1, "http2.huffman");
 	if (huffman->pool != NULL) {
@@ -217,8 +211,7 @@ huffman_gc(lua_State *L)
 	return 0;
 }
 
-static void
-create_huffman_tree(lua_State *L)
+static void create_huffman_tree(lua_State *L)
 {
 	size_t i;
 	struct root *huffman = lua_newuserdatauv(L, sizeof(*huffman), 0);
@@ -235,14 +228,12 @@ create_huffman_tree(lua_State *L)
 		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
-static inline size_t
-field_size(size_t ksz, size_t vsz)
+static inline size_t field_size(size_t ksz, size_t vsz)
 {
 	return ksz + vsz + 32;
 }
 
-static int
-lhpack_new(lua_State *L)
+static int lhpack_new(lua_State *L)
 {
 	struct hpack *ctx;
 	ctx = lua_newuserdatauv(L, sizeof(*ctx), 1);
@@ -258,8 +249,7 @@ lhpack_new(lua_State *L)
 	return 1;
 }
 
-static void
-write_varint(luaL_Buffer *b, uint8_t flag, uint32_t I, int bits)
+static void write_varint(luaL_Buffer *b, uint8_t flag, uint32_t I, int bits)
 {
 	uint32_t max = ((1 << bits) - 1);
 	if (I < max) {
@@ -276,30 +266,26 @@ write_varint(luaL_Buffer *b, uint8_t flag, uint32_t I, int bits)
 	}
 }
 
-static inline uint32_t
-dynamic_id(struct hpack *ctx, int id)
+static inline uint32_t dynamic_id(struct hpack *ctx, int id)
 {
 	int size = ctx->queue_head;
 	assert(size > id);
 	return (size - id) + STATIC_TBL_SIZE;
 }
 
-static inline uint32_t
-dynamic_index(struct hpack *ctx, int id)
+static inline uint32_t dynamic_index(struct hpack *ctx, int id)
 {
 	int size = ctx->queue_head;
 	assert(size > (id - STATIC_TBL_SIZE));
 	return size - (id - STATIC_TBL_SIZE);
 }
 
-static inline void
-write_index_kv(luaL_Buffer *b, uint32_t id)
+static inline void write_index_kv(luaL_Buffer *b, uint32_t id)
 {
 	write_varint(b, 0x01, id, 7);
 }
 
-static inline void
-write_literal(luaL_Buffer *b, const char *s, int sz)
+static inline void write_literal(luaL_Buffer *b, const char *s, int sz)
 {
 	int len = huffman_len(s, sz);
 	if (len < sz) {
@@ -311,8 +297,8 @@ write_literal(luaL_Buffer *b, const char *s, int sz)
 	}
 }
 
-static inline void
-write_ik_sv(luaL_Buffer *b, uint32_t kid, const char *vs, size_t vsz, int cache)
+static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid, const char *vs,
+			       size_t vsz, int cache)
 {
 	if (cache) {
 		write_varint(b, 0x01, kid, 6);
@@ -322,9 +308,8 @@ write_ik_sv(luaL_Buffer *b, uint32_t kid, const char *vs, size_t vsz, int cache)
 	write_literal(b, vs, vsz);
 }
 
-static inline void
-write_sk_sv(luaL_Buffer *b, const char *ks, size_t ksz,
-	const char *vs, size_t vsz, int cache)
+static inline void write_sk_sv(luaL_Buffer *b, const char *ks, size_t ksz,
+			       const char *vs, size_t vsz, int cache)
 {
 	if (cache) {
 		luaL_addchar(b, 0x40);
@@ -336,10 +321,9 @@ write_sk_sv(luaL_Buffer *b, const char *ks, size_t ksz,
 }
 
 #define format_field(buf, ks, vs) \
-	snprintf(buf, sizeof(buf)/sizeof(buf[0]), "%s: %s", ks, vs)
+	snprintf(buf, sizeof(buf) / sizeof(buf[0]), "%s: %s", ks, vs)
 
-static void
-prune(lua_State *L, struct hpack *ctx, int dyna)
+static void prune(lua_State *L, struct hpack *ctx, int dyna)
 {
 	int idx = 0;
 	int i, type;
@@ -371,12 +355,11 @@ prune(lua_State *L, struct hpack *ctx, int dyna)
 	}
 	ctx->queue_used_min -= (ctx->queue_tail - 1);
 	ctx->queue_tail = 1;
-	ctx->queue_head = idx+1;
+	ctx->queue_head = idx + 1;
 	ctx->evict_count = 0;
 }
 
-static inline int
-try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
+static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 {
 	if ((ctx->soft_limit - ctx->table_size) >= left)
 		return 1;
@@ -412,9 +395,8 @@ try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 	return (ctx->soft_limit - ctx->table_size) >= left;
 }
 
-static inline int
-add_to_table(lua_State *L, struct hpack *ctx, int dyna,
-	int k, int v, int kv, int ksz, int vsz)
+static inline int add_to_table(lua_State *L, struct hpack *ctx, int dyna, int k,
+			       int v, int kv, int ksz, int vsz)
 {
 	int fsz = field_size(ksz, vsz);
 	if (!try_evict(L, ctx, dyna, fsz))
@@ -435,8 +417,7 @@ add_to_table(lua_State *L, struct hpack *ctx, int dyna,
 	return 1;
 }
 
-static inline void
-pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
+static inline void pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
 {
 	int cancache;
 	size_t ksz, vsz, kv;
@@ -456,7 +437,7 @@ pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
 		type = lua_gettable(L, pctx->stat);
 		if (type == LUA_TNUMBER) {
 			write_index_kv(b, lua_tointeger(L, -1));
-			return ;
+			return;
 		}
 		lua_pop(L, 1);
 
@@ -468,12 +449,11 @@ pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
 			if (idx < ctx->queue_used_min)
 				ctx->queue_used_min = idx;
 			write_index_kv(b, id);
-			return ;
+			return;
 		}
 	}
 	if (cancache) {
-		cancache = add_to_table(L, ctx, pctx->dyna,
-				k, v, kv, ksz, vsz);
+		cancache = add_to_table(L, ctx, pctx->dyna, k, v, kv, ksz, vsz);
 	}
 	lua_pushvalue(L, k);
 	if (lua_gettable(L, pctx->stat) == LUA_TNUMBER) {
@@ -482,13 +462,11 @@ pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
 	} else {
 		write_sk_sv(b, ks, ksz, vs, vsz, cancache);
 	}
-	return ;
+	return;
 }
 
-
 //hpack.pack(ctx, header)
-static int
-lhpack_pack(lua_State *L)
+static int lhpack_pack(lua_State *L)
 {
 	int i, top;
 	struct pack_ctx pctx;
@@ -496,17 +474,18 @@ lhpack_pack(lua_State *L)
 	pctx.hpack->queue_used_min = pctx.hpack->queue_head;
 	top = lua_gettop(L);
 	luaL_buffinit(L, &pctx.b);
-	lua_pushvalue(L, lua_upvalueindex(1));	//static_table
-	lua_getiuservalue(L, 1, 1);		//dynamic_table
+	lua_pushvalue(L, lua_upvalueindex(1)); //static_table
+	lua_getiuservalue(L, 1, 1);            //dynamic_table
 	pctx.dyna = lua_gettop(L);
 	pctx.stat = pctx.dyna - 1;
 	for (i = 3; i < top; i += 2)
-		pack_field(L, &pctx, i, i+1);
+		pack_field(L, &pctx, i, i + 1);
 	if (lua_type(L, 2) != LUA_TNIL) {
 		lua_pushnil(L);
 		while (lua_next(L, 2) != 0) {
 			top = lua_gettop(L);
-			pack_field(L, &pctx, lua_absindex(L, -2), lua_absindex(L, -1));
+			pack_field(L, &pctx, lua_absindex(L, -2),
+				   lua_absindex(L, -1));
 			lua_settop(L, top - 1);
 		}
 	}
@@ -514,8 +493,7 @@ lhpack_pack(lua_State *L)
 	return 1;
 }
 
-static void
-concat_table(lua_State *L, struct unpack_ctx *ctx, int t)
+static void concat_table(lua_State *L, struct unpack_ctx *ctx, int t)
 {
 	int i = 0;
 	size_t sz = 0;
@@ -545,9 +523,7 @@ concat_table(lua_State *L, struct unpack_ctx *ctx, int t)
 	}
 }
 
-
-static int
-read_varint(struct unpack_ctx *ctx, int bits)
+static int read_varint(struct unpack_ctx *ctx, int bits)
 {
 	int M = 0;
 	unsigned int max, I;
@@ -569,8 +545,7 @@ read_varint(struct unpack_ctx *ctx, int bits)
 	return I;
 }
 
-static int
-push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
+static int push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 {
 	int tx, type;
 	if (id < STATIC_TBL_SIZE) {
@@ -593,8 +568,7 @@ push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 	return 0;
 }
 
-static int
-push_sv(lua_State *L, struct unpack_ctx *uctx)
+static int push_sv(lua_State *L, struct unpack_ctx *uctx)
 {
 	int ret, len;
 	len = read_varint(uctx, 7);
@@ -613,8 +587,7 @@ push_sv(lua_State *L, struct unpack_ctx *uctx)
 	return 0;
 }
 
-static int
-read_index_kv(lua_State *L, struct unpack_ctx *uctx)
+static int read_index_kv(lua_State *L, struct unpack_ctx *uctx)
 {
 	int tx, type;
 	int id = read_varint(uctx, 7);
@@ -632,8 +605,7 @@ read_index_kv(lua_State *L, struct unpack_ctx *uctx)
 	return 0;
 }
 
-static int
-read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
+static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 {
 	int ret;
 	unsigned char n = *uctx->p;
@@ -652,8 +624,7 @@ read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 }
 
 //hpack.unpack(ctx, header)
-static int
-lhpack_unpack(lua_State *L)
+static int lhpack_unpack(lua_State *L)
 {
 	int htbl, top;
 	struct unpack_ctx uctx;
@@ -697,7 +668,8 @@ lhpack_unpack(lua_State *L)
 			len = snprintf(p, bufsz, FIELD_FMT, ks, vs);
 			luaL_pushresultsize(&b, len);
 			stk = lua_absindex(L, -3);
-			add_to_table(L, uctx.hpack, uctx.dyna, stk, stk+1, stk+2, ksz, vsz);
+			add_to_table(L, uctx.hpack, uctx.dyna, stk, stk + 1,
+				     stk + 2, ksz, vsz);
 			lua_pop(L, 1);
 		} else if ((n & 0xf0) == 0x0 || (n & 0xf0) == 0x10) { //bit4
 			if ((ret = read_ik_sv(L, &uctx, 4)) < 0)
@@ -715,8 +687,7 @@ lhpack_unpack(lua_State *L)
 	return 1;
 }
 
-static int
-lhpack_hardlimit(lua_State *L)
+static int lhpack_hardlimit(lua_State *L)
 {
 	struct hpack *hpack;
 	hpack = luaL_checkudata(L, 1, "HPACK");
@@ -728,14 +699,12 @@ lhpack_hardlimit(lua_State *L)
 	return 0;
 }
 
-
-static void
-create_static_table(lua_State *L)
+static void create_static_table(lua_State *L)
 {
 	size_t i, t;
 	lua_createtable(L, 61, 61);
 	t = lua_gettop(L);
-	for (i = 0; i < sizeof(static_tbl)/sizeof(static_tbl[0]); i++) {
+	for (i = 0; i < sizeof(static_tbl) / sizeof(static_tbl[0]); i++) {
 		int type;
 		int id = i + 1;
 		const char *k = static_tbl[i][0];
@@ -771,20 +740,18 @@ create_static_table(lua_State *L)
 }
 
 #ifdef SILLY_TEST
-static int
-dbg_evictcount(lua_State *L)
+static int dbg_evictcount(lua_State *L)
 {
 	struct hpack *hpack = luaL_checkudata(L, 1, "HPACK");
 	lua_pushinteger(L, hpack->evict_count);
 	return 1;
 }
 
-static int
-dbg_stringid(lua_State *L)
+static int dbg_stringid(lua_State *L)
 {
 	int len, type;
 	char buf[FIELD_BUFSZ];
-	lua_getiuservalue(L, 1, 1);		//dynamic_table
+	lua_getiuservalue(L, 1, 1); //dynamic_table
 	int dyna = lua_gettop(L);
 	size_t ksz, vsz;
 	const char *ks = luaL_tolstring(L, 2, &ksz);
@@ -801,39 +768,38 @@ dbg_stringid(lua_State *L)
 
 #endif
 
-int
-luaopen_http2_hpack(lua_State *L)
+int luaopen_http2_hpack(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"new", lhpack_new},
-		{"pack", lhpack_pack},
-		{"unpack", lhpack_unpack},
-		{"hardlimit", lhpack_hardlimit},
+		{ "new",            lhpack_new       },
+		{ "pack",           lhpack_pack      },
+		{ "unpack",         lhpack_unpack    },
+		{ "hardlimit",      lhpack_hardlimit },
 #ifdef SILLY_TEST
-		{"dbg_evictcount", dbg_evictcount},
-		{"dbg_stringid", dbg_stringid},
+		{ "dbg_evictcount", dbg_evictcount   },
+		{ "dbg_stringid",   dbg_stringid     },
 #endif
-		{NULL, NULL},
+		{ NULL,             NULL             },
 	};
-	luaL_newlibtable(L,tbl);
+	luaL_newlibtable(L, tbl);
 	create_static_table(L);
 	create_huffman_tree(L);
-	luaL_setfuncs(L,tbl,2);
+	luaL_setfuncs(L, tbl, 2);
 	return 1;
 }
 
-#define FRAME_DATA		0
-#define FRAME_HEADERS		1
-#define FRAME_RST		3
-#define FRAME_SETTINGS		4
-#define FRAME_WINUPDATE		8
-#define	FRAME_CONTINUATION	9
+#define FRAME_DATA 0
+#define FRAME_HEADERS 1
+#define FRAME_RST 3
+#define FRAME_SETTINGS 4
+#define FRAME_WINUPDATE 8
+#define FRAME_CONTINUATION 9
 
-#define END_STREAM	0x01
-#define END_HEADERS	0x04
+#define END_STREAM 0x01
+#define END_HEADERS 0x04
 
-static inline void
-write_frame_header(char *p, int len, int type, int flag, unsigned int id)
+static inline void write_frame_header(char *p, int len, int type, int flag,
+				      unsigned int id)
 {
 	//frame.length
 	p[0] = (char)(len >> 16);
@@ -851,8 +817,7 @@ write_frame_header(char *p, int len, int type, int flag, unsigned int id)
 }
 
 //build(id, framesize, header, endstream)
-static int
-lframe_build_header(lua_State *L)
+static int lframe_build_header(lua_State *L)
 {
 	luaL_Buffer b;
 	char *p;
@@ -865,7 +830,7 @@ lframe_build_header(lua_State *L)
 	framesize = luaL_checkinteger(L, 2);
 	hdr = luaL_checklstring(L, 3, &sz);
 	need = sz + (sz + framesize - 1) / framesize * FRAME_HDR_SIZE;
-	flag = lua_toboolean(L, 4) ? END_STREAM :0;
+	flag = lua_toboolean(L, 4) ? END_STREAM : 0;
 	type = FRAME_HEADERS;
 	p = luaL_buffinitsize(L, &b, need + FRAME_HDR_SIZE);
 	while (sz > framesize) {
@@ -887,8 +852,7 @@ lframe_build_header(lua_State *L)
 }
 
 //build(id, framesize, body, endstream)
-static int
-lframe_build_body(lua_State *L)
+static int lframe_build_body(lua_State *L)
 {
 	char *p;
 	const char *dat;
@@ -918,8 +882,7 @@ lframe_build_body(lua_State *L)
 }
 
 //build(flag, id, val, id, val,...)
-static int
-lframe_build_setting(lua_State *L)
+static int lframe_build_setting(lua_State *L)
 {
 	char *p;
 	luaL_Buffer b;
@@ -930,11 +893,11 @@ lframe_build_setting(lua_State *L)
 	flag = luaL_checkinteger(L, 1);
 	need = ((top - 1) / 2) * 6;
 	p = luaL_buffinitsize(L, &b, need + FRAME_HDR_SIZE);
-	write_frame_header(p,  need, FRAME_SETTINGS, flag, 0);
+	write_frame_header(p, need, FRAME_SETTINGS, flag, 0);
 	p += FRAME_HDR_SIZE;
 	for (i = 2; i < top; i += 2) {
 		unsigned int id = luaL_checkinteger(L, i);
-		unsigned int val = luaL_checkinteger(L, i+1);
+		unsigned int val = luaL_checkinteger(L, i + 1);
 		*p++ = (unsigned char)(id >> 8);
 		*p++ = (unsigned char)(id);
 		*p++ = (unsigned char)(val >> 24);
@@ -946,8 +909,7 @@ lframe_build_setting(lua_State *L)
 	return 1;
 }
 
-static void
-write_int(char *p, unsigned int size)
+static void write_int(char *p, unsigned int size)
 {
 	p[0] = (unsigned char)(size >> 24);
 	p[1] = (unsigned char)(size >> 16);
@@ -956,8 +918,7 @@ write_int(char *p, unsigned int size)
 }
 
 //build(id, flag, size)
-static int
-lframe_build_winupdate(lua_State *L)
+static int lframe_build_winupdate(lua_State *L)
 {
 	char *p;
 	luaL_Buffer b;
@@ -980,15 +941,14 @@ lframe_build_winupdate(lua_State *L)
 }
 
 //rst(id, errorcode)
-static int
-lframe_build_rst(lua_State *L)
+static int lframe_build_rst(lua_State *L)
 {
 	char *p;
 	luaL_Buffer b;
 	unsigned int id = luaL_checkinteger(L, 1);
 	int errorcode = luaL_checkinteger(L, 2);
 	p = luaL_buffinitsize(L, &b, FRAME_HDR_SIZE + 4);
-	write_frame_header(p,  4, FRAME_RST, 0, id);
+	write_frame_header(p, 4, FRAME_RST, 0, id);
 	p += FRAME_HDR_SIZE;
 	write_int(p, errorcode);
 	p += 4;
@@ -996,18 +956,16 @@ lframe_build_rst(lua_State *L)
 	return 1;
 }
 
-int
-luaopen_http2_framebuilder(lua_State *L)
+int luaopen_http2_framebuilder(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"header", lframe_build_header},
-		{"body", lframe_build_body},
-		{"setting", lframe_build_setting},
-		{"winupdate", lframe_build_winupdate},
-		{"rst", lframe_build_rst},
-		{NULL, NULL}
+		{ "header",    lframe_build_header    },
+		{ "body",      lframe_build_body      },
+		{ "setting",   lframe_build_setting   },
+		{ "winupdate", lframe_build_winupdate },
+		{ "rst",       lframe_build_rst       },
+		{ NULL,        NULL                   }
 	};
-	luaL_newlib(L,tbl);
+	luaL_newlib(L, tbl);
 	return 1;
 }
-

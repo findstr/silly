@@ -15,7 +15,7 @@
 #define HASH_SIZE 2048
 #define HASH(a) (a % HASH_SIZE)
 
-#define min(a, b)		((a) > (b) ? (b) : (a))
+#define min(a, b) ((a) > (b) ? (b) : (a))
 
 typedef uint32_t cmd_t;
 typedef uint32_t session_t;
@@ -36,15 +36,14 @@ struct incomplete {
 };
 
 struct netpacket {
-	int cap;			//default DEFAULT_QUEUE_SIZE
+	int cap; //default DEFAULT_QUEUE_SIZE
 	int head;
 	int tail;
 	struct packet *queue;
 	struct incomplete *hash[HASH_SIZE];
 };
 
-static int
-lcreate(lua_State *L)
+static int lcreate(lua_State *L)
 {
 	struct netpacket *r = lua_newuserdatauv(L, sizeof(struct netpacket), 0);
 	memset(r, 0, sizeof(*r));
@@ -55,14 +54,12 @@ lcreate(lua_State *L)
 	return 1;
 }
 
-static inline struct netpacket *
-get_netpacket(lua_State *L)
+static inline struct netpacket *get_netpacket(lua_State *L)
 {
 	return luaL_checkudata(L, 1, "netpacket");
 }
 
-static struct incomplete *
-get_incomplete(struct netpacket *p, int fd)
+static struct incomplete *get_incomplete(struct netpacket *p, int fd)
 {
 	int idx = HASH(fd);
 	struct incomplete *i;
@@ -79,8 +76,7 @@ get_incomplete(struct netpacket *p, int fd)
 	return NULL;
 }
 
-static void
-put_incomplete(struct netpacket *p, struct incomplete *ic)
+static void put_incomplete(struct netpacket *p, struct incomplete *ic)
 {
 	int idx = HASH(ic->fd);
 	struct incomplete *i;
@@ -90,11 +86,10 @@ put_incomplete(struct netpacket *p, struct incomplete *ic)
 	p->hash[HASH(ic->fd)] = ic;
 	if (i != NULL)
 		i->prev = &ic->next;
-	return ;
+	return;
 }
 
-static void
-expand_queue(lua_State *L, struct netpacket *np)
+static void expand_queue(lua_State *L, struct netpacket *np)
 {
 	int i, h, count;
 	struct packet *queue, *newqueue;
@@ -112,11 +107,11 @@ expand_queue(lua_State *L, struct netpacket *np)
 	silly_free(queue);
 	luaL_getmetatable(L, "netpacket");
 	lua_setmetatable(L, -2);
-	return ;
+	return;
 }
 
-static void
-push_complete(lua_State *L, struct netpacket *p, struct incomplete *ic)
+static void push_complete(lua_State *L, struct netpacket *p,
+			  struct incomplete *ic)
 {
 	struct packet *pk;
 	int h = p->head;
@@ -134,22 +129,21 @@ push_complete(lua_State *L, struct netpacket *p, struct incomplete *ic)
 		silly_log_warn("packet queue full\n");
 		expand_queue(L, p);
 	}
-	return ;
+	return;
 }
 
-static int
-push_once(lua_State *L, int fd, int size, const uint8_t *buff)
+static int push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 {
 	int eat;
 	struct netpacket *p = get_netpacket(L);
 	struct incomplete *ic = get_incomplete(p, fd);
-	if (ic) {	//continue it
-		if (ic->rsize >= 0) {	//have already alloc memory
+	if (ic) {                     //continue it
+		if (ic->rsize >= 0) { //have already alloc memory
 			assert(ic->buff);
 			eat = min(ic->psize - ic->rsize, size);
 			memcpy(&ic->buff[ic->rsize], buff, eat);
 			ic->rsize += eat;
-		} else {		//have no enough psize info
+		} else { //have no enough psize info
 			assert(ic->rsize == -1);
 			ic->psize |= *buff;
 			ic->buff = (uint8_t *)silly_malloc(ic->psize);
@@ -163,9 +157,9 @@ push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 			eat = min(ic->psize - ic->rsize, size);
 			memcpy(&ic->buff[ic->rsize], buff, eat);
 			ic->rsize += eat;
-			eat += 1;		//for the length header
+			eat += 1; //for the length header
 		}
-	} else {	//new incomplete
+	} else { //new incomplete
 		ic = silly_malloc(sizeof(*ic));
 		ic->fd = fd;
 		ic->buff = NULL;
@@ -195,8 +189,7 @@ push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 	return eat;
 }
 
-static void
-push(lua_State *L, int sid, uint8_t *data, int data_size)
+static void push(lua_State *L, int sid, uint8_t *data, int data_size)
 {
 	int n;
 	int left;
@@ -209,23 +202,21 @@ push(lua_State *L, int sid, uint8_t *data, int data_size)
 		d += n;
 	} while (left);
 
-	return ;
+	return;
 }
 
-static void
-clear_incomplete(lua_State *L, int sid)
+static void clear_incomplete(lua_State *L, int sid)
 {
 	struct netpacket *p = get_netpacket(L);
 	struct incomplete *ic = get_incomplete(p, sid);
 	if (ic == NULL)
-		return ;
+		return;
 	silly_free(ic->buff);
 	silly_free(ic);
-	return ;
+	return;
 }
 
-static inline const char *
-getbuffer(lua_State *L, int *stk, size_t *sz)
+static inline const char *getbuffer(lua_State *L, int *stk, size_t *sz)
 {
 	int n = *stk;
 	if (lua_type(L, n) == LUA_TSTRING) {
@@ -239,14 +230,13 @@ getbuffer(lua_State *L, int *stk, size_t *sz)
 	return NULL;
 }
 
-static inline struct packet *
-pop_packet(lua_State *L)
+static inline struct packet *pop_packet(lua_State *L)
 {
 	struct netpacket *p;
 	p = luaL_checkudata(L, 1, "netpacket");
 	assert(p->head < p->cap);
 	assert(p->tail < p->cap);
-	if (p->tail == p->head) {	//empty
+	if (p->tail == p->head) { //empty
 		return NULL;
 	} else {
 		int t = p->tail;
@@ -255,8 +245,7 @@ pop_packet(lua_State *L)
 	}
 }
 
-static int
-lpop(lua_State *L)
+static int lpop(lua_State *L)
 {
 	struct packet *pk = pop_packet(L);
 	if (pk == NULL)
@@ -267,8 +256,7 @@ lpop(lua_State *L)
 	return 3;
 }
 
-static int
-lpack(lua_State *L)
+static int lpack(lua_State *L)
 {
 	uint8_t *p;
 	int stk = 1;
@@ -286,8 +274,7 @@ lpack(lua_State *L)
 	return 2;
 }
 
-static int
-lmsgpop(lua_State *L)
+static int lmsgpop(lua_State *L)
 {
 	int size;
 	char *buf;
@@ -308,8 +295,7 @@ lmsgpop(lua_State *L)
 	return 4;
 }
 
-static int
-lmsgpack(lua_State *L)
+static int lmsgpack(lua_State *L)
 {
 	uint8_t *p;
 	const char *str;
@@ -318,7 +304,7 @@ lmsgpack(lua_State *L)
 	str = getbuffer(L, &stk, &size);
 	if (size > (USHRT_MAX - sizeof(cmd_t))) {
 		luaL_error(L, "netpacket.pack data large then:%d\n",
-			USHRT_MAX - sizeof(cmd_t));
+			   USHRT_MAX - sizeof(cmd_t));
 	}
 	cmd = luaL_checkinteger(L, stk);
 	body = size + sizeof(cmd_t);
@@ -327,7 +313,7 @@ lmsgpack(lua_State *L)
 	p[1] = body & 0xff;
 	memcpy(p + 2, str, size);
 	//WARN: pointer cast may not align, can't cross platform
-	*(cmd_t *)&p[size+2] = cmd;
+	*(cmd_t *)&p[size + 2] = cmd;
 	lua_pushlightuserdata(L, p);
 	lua_pushinteger(L, 2 + body);
 	return 2;
@@ -339,8 +325,7 @@ struct rpc_cookie {
 	silly_trace_id_t traceid;
 };
 
-static int
-lrpcpop(lua_State *L)
+static int lrpcpop(lua_State *L)
 {
 	int size;
 	char *buf;
@@ -363,8 +348,7 @@ lrpcpop(lua_State *L)
 	return 6;
 }
 
-static int
-lrpcpack(lua_State *L)
+static int lrpcpack(lua_State *L)
 {
 	cmd_t cmd;
 	uint8_t *p;
@@ -377,11 +361,11 @@ lrpcpack(lua_State *L)
 	str = getbuffer(L, &stk, &size);
 	if (size > (USHRT_MAX - sizeof(struct rpc_cookie))) {
 		luaL_error(L, "netpacket.pack data large then:%d\n",
-			USHRT_MAX - sizeof(struct rpc_cookie));
+			   USHRT_MAX - sizeof(struct rpc_cookie));
 	}
 	cmd = luaL_checkinteger(L, stk);
-	session = luaL_checkinteger(L, stk+1);
-	traceid = luaL_checkinteger(L, stk+2);
+	session = luaL_checkinteger(L, stk + 1);
+	traceid = luaL_checkinteger(L, stk + 2);
 	body = size + sizeof(struct rpc_cookie);
 	p = silly_malloc(2 + body);
 	p[0] = (body >> 8) & 0xff;
@@ -397,8 +381,7 @@ lrpcpack(lua_State *L)
 	return 2;
 }
 
-static int
-lclear(lua_State *L)
+static int lclear(lua_State *L)
 {
 	int sid = luaL_checkinteger(L, 2);
 	assert(sid >= 0);
@@ -407,8 +390,7 @@ lclear(lua_State *L)
 	return 0;
 }
 
-static int
-ltostring(lua_State *L)
+static int ltostring(lua_State *L)
 {
 	char *buff;
 	int size;
@@ -419,12 +401,12 @@ ltostring(lua_State *L)
 	return 1;
 }
 
-static int
-ldrop(lua_State *L)
+static int ldrop(lua_State *L)
 {
 	int type = lua_type(L, 1);
 	if (type != LUA_TLIGHTUSERDATA)
-		return luaL_error(L, "netpacket.drop can only drop lightuserdata");
+		return luaL_error(L,
+				  "netpacket.drop can only drop lightuserdata");
 	void *p = lua_touserdata(L, 1);
 	silly_free(p);
 	return 0;
@@ -434,10 +416,9 @@ ldrop(lua_State *L)
 //	netpacket
 //	type
 //	fd
-static int
-lmessage(lua_State *L)
+static int lmessage(lua_State *L)
 {
-	struct silly_message_socket *sm= tosocket(lua_touserdata(L, 2));
+	struct silly_message_socket *sm = tosocket(lua_touserdata(L, 2));
 	lua_settop(L, 1);
 	switch (sm->type) {
 	case SILLY_SDATA:
@@ -456,8 +437,7 @@ lmessage(lua_State *L)
 	}
 }
 
-static int
-packet_gc(lua_State *L)
+static int packet_gc(lua_State *L)
 {
 	int i;
 	struct netpacket *pk = get_netpacket(L);
@@ -478,18 +458,18 @@ packet_gc(lua_State *L)
 int luaopen_core_netpacket(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"create", lcreate},
-		{"pop", lpop},
-		{"pack", lpack},
-		{"msgpop", lmsgpop},
-		{"msgpack", lmsgpack},
-		{"rpcpop", lrpcpop},
-		{"rpcpack", lrpcpack},
-		{"clear", lclear},
-		{"tostring", ltostring},
-		{"drop", ldrop},
-		{"message", lmessage},
-		{NULL, NULL},
+		{ "create",   lcreate   },
+                { "pop",      lpop      },
+		{ "pack",     lpack     },
+                { "msgpop",   lmsgpop   },
+		{ "msgpack",  lmsgpack  },
+                { "rpcpop",   lrpcpop   },
+		{ "rpcpack",  lrpcpack  },
+                { "clear",    lclear    },
+		{ "tostring", ltostring },
+                { "drop",     ldrop     },
+		{ "message",  lmessage  },
+                { NULL,       NULL      },
 	};
 	luaL_checkversion(L);
 	luaL_newmetatable(L, "netpacket");

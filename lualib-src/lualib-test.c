@@ -6,8 +6,7 @@
 
 #include "silly.h"
 
-static int
-lmsggc(lua_State *L)
+static int lmsggc(lua_State *L)
 {
 	struct silly_message_socket *sm;
 	sm = tosocket(luaL_checkudata(L, 1, "sillymessage"));
@@ -17,8 +16,7 @@ lmsggc(lua_State *L)
 	return 0;
 }
 
-static struct silly_message *
-newmsg(lua_State *L, size_t sz)
+static struct silly_message *newmsg(lua_State *L, size_t sz)
 {
 	struct silly_message *sm = lua_newuserdatauv(L, sz, 0);
 	if (luaL_newmetatable(L, "sillymessage")) {
@@ -29,8 +27,7 @@ newmsg(lua_State *L, size_t sz)
 	return sm;
 }
 
-static int
-lnewdatamsg(lua_State *L)
+static int lnewdatamsg(lua_State *L)
 {
 	size_t sz;
 	struct silly_message_socket *sm;
@@ -40,17 +37,16 @@ lnewdatamsg(lua_State *L)
 	sm->type = SILLY_SDATA;
 	sm->sid = sid;
 	sm->ud = sz;
-	sm->data= silly_malloc(sz);
+	sm->data = silly_malloc(sz);
 	memcpy(sm->data, buff, sz);
 	return 1;
 };
 
-int
-luaopen_test_aux_c(lua_State *L)
+int luaopen_test_aux_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"newdatamsg", lnewdatamsg},
-		{NULL, NULL},
+		{ "newdatamsg", lnewdatamsg },
+		{ NULL,         NULL        },
 	};
 
 	luaL_checkversion(L);
@@ -58,4 +54,3 @@ luaopen_test_aux_c(lua_State *L)
 	luaL_setfuncs(L, tbl, 0);
 	return 1;
 }
-

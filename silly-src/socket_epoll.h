@@ -2,40 +2,36 @@
 #define _SOCKET_EPOLL_H
 #include <sys/epoll.h>
 
-#define SP_IN		EPOLLIN
-#define SP_OUT		EPOLLOUT
+#define SP_IN EPOLLIN
+#define SP_OUT EPOLLOUT
 
-#define SP_READ(e)	(e->events & EPOLLIN)
-#define SP_WRITE(e)	(e->events & EPOLLOUT)
-#define SP_ERR(e)	(e->events & (EPOLLERR | EPOLLHUP))
-#define SP_UD(e)	(e->data.ptr)
-#define SP_INVALID	(-1)
+#define SP_READ(e) (e->events & EPOLLIN)
+#define SP_WRITE(e) (e->events & EPOLLOUT)
+#define SP_ERR(e) (e->events & (EPOLLERR | EPOLLHUP))
+#define SP_UD(e) (e->data.ptr)
+#define SP_INVALID (-1)
 
 typedef int sp_t;
 typedef struct epoll_event sp_event_t;
 
-static inline int
-sp_create(int nr)
+static inline int sp_create(int nr)
 {
 	return epoll_create(nr);
 }
 
-static inline void
-sp_free(sp_t fd)
+static inline void sp_free(sp_t fd)
 {
 	close(fd);
 }
 
-static inline int
-sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
+static inline int sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
 {
 	int ret;
 	ret = epoll_wait(sp, event_buff, cnt, -1);
 	return ret;
 }
 
-static inline int
-sp_add(sp_t sp, int fd, void *ud)
+static inline int sp_add(sp_t sp, int fd, void *ud)
 {
 	struct epoll_event event;
 	event.data.ptr = ud;
@@ -43,14 +39,12 @@ sp_add(sp_t sp, int fd, void *ud)
 	return epoll_ctl(sp, EPOLL_CTL_ADD, fd, &event);
 }
 
-static inline int
-sp_del(sp_t sp, int fd)
+static inline int sp_del(sp_t sp, int fd)
 {
 	return epoll_ctl(sp, EPOLL_CTL_DEL, fd, NULL);
 }
 
-static inline int
-sp_ctrl(sp_t sp, int fd, void *ud, int ctrl)
+static inline int sp_ctrl(sp_t sp, int fd, void *ud, int ctrl)
 {
 	struct epoll_event event;
 	event.data.ptr = ud;
@@ -58,8 +52,7 @@ sp_ctrl(sp_t sp, int fd, void *ud, int ctrl)
 	return epoll_ctl(sp, EPOLL_CTL_MOD, fd, &event);
 }
 
-static inline int
-sp_read_enable(sp_t sp, int fd, void *ud, int enable)
+static inline int sp_read_enable(sp_t sp, int fd, void *ud, int enable)
 {
 	struct epoll_event event;
 	event.data.ptr = ud;
@@ -71,6 +64,4 @@ sp_read_enable(sp_t sp, int fd, void *ud, int enable)
 	return epoll_ctl(sp, EPOLL_CTL_MOD, fd, &event);
 }
 
-
 #endif
-

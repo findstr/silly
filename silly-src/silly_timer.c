@@ -20,26 +20,25 @@
 #include "silly_malloc.h"
 #include "silly_timer.h"
 
-#define SR_BITS		(8)	//root slot
-#define SL_BITS		(6)	//level slot
-#define SR_SIZE		(1 << SR_BITS)
-#define SL_SIZE		(1 << SL_BITS)
-#define SR_MASK		(SR_SIZE - 1)
-#define SL_MASK		(SL_SIZE - 1)
+#define SR_BITS (8) //root slot
+#define SL_BITS (6) //level slot
+#define SR_SIZE (1 << SR_BITS)
+#define SL_SIZE (1 << SL_BITS)
+#define SR_MASK (SR_SIZE - 1)
+#define SL_MASK (SL_SIZE - 1)
 
 struct page;
 
 struct node {
 	uint32_t expire;
 	uint32_t version;
-	uint32_t cookie;	//page_id * PAGE_SIZE + page_offset
+	uint32_t cookie; //page_id * PAGE_SIZE + page_offset
 	uint32_t userdata;
 	struct node *next;
 	struct node **prev;
 };
 
-
-#define PAGE_SIZE	(4096/sizeof(struct node))
+#define PAGE_SIZE (4096 / sizeof(struct node))
 
 struct page {
 	struct node buf[PAGE_SIZE];
@@ -75,25 +74,22 @@ struct silly_timer {
 
 static struct silly_timer *T;
 
-static inline void
-lock(struct silly_timer *timer)
+static inline void lock(struct silly_timer *timer)
 {
 	spinlock_lock(&timer->lock);
 }
 
-static inline void
-unlock(struct silly_timer *timer)
+static inline void unlock(struct silly_timer *timer)
 {
 	spinlock_unlock(&timer->lock);
 }
 
-static struct page *
-pool_newpage(struct pool *pool)
+static struct page *pool_newpage(struct pool *pool)
 {
 	uint32_t i;
 	struct page *p;
 	struct node *n;
-	uint32_t page_id  = pool->count++;
+	uint32_t page_id = pool->count++;
 	assert(pool->free == NULL);
 	if (pool->count >= pool->cap) {
 		size_t newsz;
@@ -106,7 +102,7 @@ pool_newpage(struct pool *pool)
 	for (i = 0; i < PAGE_SIZE; i++) {
 		n = &p->buf[i];
 		n->prev = NULL;
-		n->next = n+1;
+		n->next = n + 1;
 		n->version = 0;
 		n->cookie = page_id * PAGE_SIZE + i;
 	}
@@ -114,8 +110,7 @@ pool_newpage(struct pool *pool)
 	return p;
 }
 
-static inline struct node *
-pool_locate(struct pool *pool, uint32_t cookie)
+static inline struct node *pool_locate(struct pool *pool, uint32_t cookie)
 {
 	uint32_t page_id = cookie / PAGE_SIZE;
 	uint32_t page_offset = cookie % PAGE_SIZE;
@@ -123,8 +118,7 @@ pool_locate(struct pool *pool, uint32_t cookie)
 	return &pool->buf[page_id]->buf[page_offset];
 }
 
-static inline void
-pool_init(struct pool *pool)
+static inline void pool_init(struct pool *pool)
 {
 	struct page *p;
 	pool->cap = 0;
@@ -134,8 +128,7 @@ pool_init(struct pool *pool)
 	pool->free = &p->buf[0];
 }
 
-static void
-pool_free(struct pool *p)
+static void pool_free(struct pool *p)
 {
 	uint32_t i;
 	for (i = 0; i < p->count; i++)
@@ -143,8 +136,8 @@ pool_free(struct pool *p)
 	silly_free(p->buf);
 }
 
-static inline struct node *
-pool_newnode(struct silly_timer *t, struct pool *pool)
+static inline struct node *pool_newnode(struct silly_timer *t,
+					struct pool *pool)
 {
 	struct node *n;
 	if (pool->free == NULL) {
@@ -152,7 +145,7 @@ pool_newnode(struct silly_timer *t, struct pool *pool)
 		unlock(t);
 		p = pool_newpage(pool);
 		lock(t);
-		p->buf[PAGE_SIZE-1].next = pool->free;
+		p->buf[PAGE_SIZE - 1].next = pool->free;
 		pool->free = &p->buf[0];
 	}
 	n = pool->free;
@@ -161,56 +154,49 @@ pool_newnode(struct silly_timer *t, struct pool *pool)
 	return n;
 }
 
-static inline void
-pool_freenode(struct pool *pool, struct node *n)
+static inline void pool_freenode(struct pool *pool, struct node *n)
 {
 	n->next = pool->free;
 	pool->free = n;
 }
 
-static inline void
-pool_freelist(struct pool *pool, struct node *head, struct node **tail)
+static inline void pool_freelist(struct pool *pool, struct node *head,
+				 struct node **tail)
 {
 	*tail = pool->free;
 	pool->free = head;
 }
 
-uint64_t
-silly_timer_now()
+uint64_t silly_timer_now()
 {
 	return T->clocktime * TIMER_RESOLUTION;
 }
 
-time_t
-silly_timer_nowsec()
+time_t silly_timer_nowsec()
 {
 	int scale = 1000 / TIMER_RESOLUTION;
 	return T->clocktime / scale;
 }
 
-uint64_t
-silly_timer_monotonic()
+uint64_t silly_timer_monotonic()
 {
 	return T->monotonic * TIMER_RESOLUTION;
 }
 
-time_t
-silly_timer_monotonicsec()
+time_t silly_timer_monotonicsec()
 {
 	int scale = 1000 / TIMER_RESOLUTION;
 	return T->monotonic / scale;
 }
 
-uint32_t
-silly_timer_info(uint32_t *expired)
+uint32_t silly_timer_info(uint32_t *expired)
 {
-	if (expired!= NULL)
+	if (expired != NULL)
 		*expired = T->expired_count;
 	return T->active_count;
 }
 
-static inline void
-linklist(struct node **list, struct node *n)
+static inline void linklist(struct node **list, struct node *n)
 {
 	if (*list != NULL) {
 		(*list)->prev = &n->next;
@@ -220,8 +206,7 @@ linklist(struct node **list, struct node *n)
 	n->prev = list;
 }
 
-static inline void
-unlink(struct node *n)
+static inline void unlink(struct node *n)
 {
 	*n->prev = n->next;
 	if (n->next != NULL)
@@ -230,12 +215,11 @@ unlink(struct node *n)
 	n->next = NULL;
 }
 
-static void
-add_node(struct silly_timer *timer, struct node *n)
+static void add_node(struct silly_timer *timer, struct node *n)
 {
-	int	i;
+	int i;
 	int32_t idx = n->expire - timer->expire;
-	if (idx < 0) {	//timeout
+	if (idx < 0) { //timeout
 		i = timer->expire & SR_MASK;
 		linklist(&timer->root.slot[i], n);
 	} else if (idx < SR_SIZE) {
@@ -250,36 +234,31 @@ add_node(struct silly_timer *timer, struct node *n)
 				break;
 			}
 		}
-		if (i == 3) {//the last level
+		if (i == 3) { //the last level
 			idx = n->expire >> (i * SL_BITS + SR_BITS);
 			idx &= SL_MASK;
 			linklist(&timer->level[i].slot[idx], n);
 		}
 	}
-	return ;
+	return;
 }
 
-static inline uint64_t
-session_of(struct node *n)
+static inline uint64_t session_of(struct node *n)
 {
 	return (uint64_t)n->version << 32 | n->cookie;
 }
 
-static inline uint32_t
-version_of(uint64_t session)
+static inline uint32_t version_of(uint64_t session)
 {
 	return session >> 32;
 }
 
-static inline uint32_t
-cookie_of(uint64_t session)
+static inline uint32_t cookie_of(uint64_t session)
 {
 	return (uint32_t)session;
 }
 
-
-uint64_t
-silly_timer_timeout(uint32_t expire, uint32_t userdata)
+uint64_t silly_timer_timeout(uint32_t expire, uint32_t userdata)
 {
 	uint64_t session;
 	struct node *n;
@@ -295,8 +274,7 @@ silly_timer_timeout(uint32_t expire, uint32_t userdata)
 	return session;
 }
 
-int
-silly_timer_cancel(uint64_t session, uint32_t *ud)
+int silly_timer_cancel(uint64_t session, uint32_t *ud)
 {
 	struct node *n;
 	uint32_t version = version_of(session);
@@ -307,7 +285,8 @@ silly_timer_cancel(uint64_t session, uint32_t *ud)
 	if (n->version != version) {
 		unlock(T);
 		*ud = 0;
-		silly_log_warn("[timer] cancel session late:%d %d", version, n->version);
+		silly_log_warn("[timer] cancel session late:%d %d", version,
+			       n->version);
 		return 0;
 	}
 	unlink(n);
@@ -317,8 +296,7 @@ silly_timer_cancel(uint64_t session, uint32_t *ud)
 	return 1;
 }
 
-static void
-timeout(struct silly_timer *t, struct node *n)
+static void timeout(struct silly_timer *t, struct node *n)
 {
 	(void)t;
 	struct silly_message_texpire *te;
@@ -329,11 +307,10 @@ timeout(struct silly_timer *t, struct node *n)
 	te->session = session;
 	te->userdata = n->userdata;
 	silly_worker_push(tocommon(te));
-	return ;
+	return;
 }
 
-static uint64_t
-ticktime()
+static uint64_t ticktime()
 {
 	uint64_t ms;
 #ifdef __macosx__
@@ -353,8 +330,7 @@ ticktime()
 	return ms;
 }
 
-static uint64_t
-clocktime()
+static uint64_t clocktime()
 {
 	uint64_t ms;
 	struct timeval t;
@@ -362,11 +338,9 @@ clocktime()
 	ms = t.tv_sec * 1000 / TIMER_RESOLUTION;
 	ms += t.tv_usec / 1000 / TIMER_RESOLUTION;
 	return ms;
-
 }
 
-static void
-expire_timer(struct silly_timer *timer, struct node **tail)
+static void expire_timer(struct silly_timer *timer, struct node **tail)
 {
 	int idx = timer->expire & SR_MASK;
 	while (timer->root.slot[idx]) {
@@ -383,11 +357,10 @@ expire_timer(struct silly_timer *timer, struct node **tail)
 		}
 		lock(timer);
 	}
-	return ;
+	return;
 }
 
-static int
-cascade_timer(struct silly_timer *timer, int level)
+static int cascade_timer(struct silly_timer *timer, int level)
 {
 	struct node *n;
 	int idx = timer->expire >> (level * SL_BITS + SR_BITS);
@@ -399,14 +372,13 @@ cascade_timer(struct silly_timer *timer, int level)
 		struct node *tmp = n;
 		n = n->next;
 		assert(tmp->expire >> (level * SL_BITS + SR_BITS) ==
-			timer->expire >> (level * SL_BITS + SR_BITS));
+		       timer->expire >> (level * SL_BITS + SR_BITS));
 		add_node(timer, tmp);
 	}
 	return idx;
 }
 
-static void
-update_timer(struct silly_timer *timer, struct node **tail)
+static void update_timer(struct silly_timer *timer, struct node **tail)
 {
 	uint32_t idx;
 	lock(T);
@@ -423,14 +395,13 @@ update_timer(struct silly_timer *timer, struct node **tail)
 	}
 	expire_timer(timer, tail);
 	unlock(T);
-	return ;
+	return;
 }
 
-void
-silly_timer_update()
+void silly_timer_update()
 {
-	int	i;
-	int	delta;
+	int i;
+	int delta;
 	struct node *head;
 	struct node **tail;
 	uint64_t time = ticktime();
@@ -438,15 +409,16 @@ silly_timer_update()
 		return;
 	if (unlikely(T->ticktime > time)) {
 		silly_log_error("[timer] time rewind change "
-			"from %lld to %lld\n", T->ticktime, time);
+				"from %lld to %lld\n",
+				T->ticktime, time);
 	}
 	delta = time - T->ticktime;
 	assert(delta > 0);
-	if (unlikely(delta > TIMER_DELAY_WARNING/TIMER_RESOLUTION)) {
+	if (unlikely(delta > TIMER_DELAY_WARNING / TIMER_RESOLUTION)) {
 		silly_log_warn("[timer] update delta is too big, "
-			"from:%lld ms to %lld ms\n",
-			T->ticktime * TIMER_RESOLUTION,
-			time * TIMER_RESOLUTION);
+			       "from:%lld ms to %lld ms\n",
+			       T->ticktime * TIMER_RESOLUTION,
+			       time * TIMER_RESOLUTION);
 	}
 	//uint64_t on x86 platform, can't assign as a atomic
 	atomic_lock(&T->ticktime, time);
@@ -462,11 +434,10 @@ silly_timer_update()
 		unlock(T);
 	}
 	assert((uint32_t)T->ticktime == T->expire);
-	return ;
+	return;
 }
 
-void
-silly_timer_init()
+void silly_timer_init()
 {
 	T = silly_malloc(sizeof(*T));
 	memset(T, 0, sizeof(*T));
@@ -476,15 +447,13 @@ silly_timer_init()
 	T->monotonic = 0;
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
-	return ;
+	return;
 }
 
-void
-silly_timer_exit()
+void silly_timer_exit()
 {
 	spinlock_destroy(&T->lock);
 	pool_free(&T->pool);
 	silly_free(T);
-	return ;
+	return;
 }
-

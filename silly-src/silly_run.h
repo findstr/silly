@@ -6,4 +6,3 @@ int silly_run(const struct silly_config *config);
 void silly_exit(int status);
 
 #endif
-

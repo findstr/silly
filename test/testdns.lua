@@ -1,4 +1,3 @@
-local core = require "core"
 local dns = require "core.dns"
 local testaux = require "test.testaux"
 

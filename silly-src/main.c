@@ -14,60 +14,64 @@
 #include "silly_timer.h"
 #include "silly_run.h"
 
-#define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
-static void
-print_help(const char *selfname)
+static void print_help(const char *selfname)
 {
+	const char *help[] = {
+		"-h, --help                help",
+		"-v, --version             version",
+		"-d, --daemon              run as a daemon",
+		"-p, --logpath PATH        path for the log file",
+		"-l, --loglevel LEVEL      logging level (e.g. debug, info, warn, error)",
+		"-f, --pidfile FILE        path for the PID file",
+		"-L, --lualib_path PATH    path for Lua libraries",
+		"-C, --lualib_cpath PATH   path for C Lua libraries",
+		"-S, --socket_cpu_affinity affinity for socket thread",
+		"-W, --worker_cpu_affinity affinity for worker threads",
+		"-T, --timer_cpu_affinity  affinity for timer thread",
+	};
 	printf("Usage: %s main.lua [options]\n", selfname);
 	printf("Options:\n");
-	printf(" -h, --help                    Show help\n");
-	printf(" -v, --version                 Show version\n");
-	printf(" -d, --daemon                  Run as a daemon\n");
-	printf(" -p, --logpath PATH            Specify the path for the log file\n");
-	printf(" -l, --loglevel LEVEL          Set the logging level (e.g. debug, info, warn, error)\n");
-	printf(" -f, --pidfile FILE            Specify the path for the PID file\n");
-	printf(" -L, --lualib_path PATH        Specify the path for Lua libraries\n");
-	printf(" -C, --lualib_cpath PATH       Specify the path for C Lua libraries\n");
-	printf(" -S, --socket_cpu_affinity CPU Set CPU affinity for socket thread\n");
-	printf(" -W, --worker_cpu_affinity CPU Set CPU affinity for worker threads\n");
-	printf(" -T, --timer_cpu_affinity CPU  Set CPU affinity for timer thread\n");
+	for (size_t i = 0; i < ARRAY_SIZE(help); i++) {
+		printf(" %s\n", help[i]);
+	}
 }
 
-static void
-parse_args(struct silly_config *config, int argc, char *argv[])
+static void parse_args(struct silly_config *config, int argc, char *argv[])
 {
 	int c;
 	unsigned int i;
 	optind = 2;
 	opterr = 0;
 	struct option long_options[] = {
-		{"help", no_argument, 0, 'h'},
-		{"version", no_argument, 0, 'v'},
-		{"daemon",  no_argument, 0, 'd'},
-		{"logpath", required_argument, 0, 'p'},
-		{"loglevel", required_argument, 0, 'l'},
-		{"pidfile", required_argument, 0, 'f'},
-		{"lualib_path", required_argument, 0, 'L'},
-		{"lualib_cpath", required_argument, 0, 'C'},
-		{"socket_cpu_affinity", required_argument, 0, 'S'},
-		{"worker_cpu_affinity", required_argument, 0, 'W'},
-		{"timer_cpu_affinity", required_argument, 0, 'T'},
-		{0, 0, 0, 0}
+		{ "help",                no_argument,       0, 'h' },
+		{ "version",             no_argument,       0, 'v' },
+		{ "daemon",              no_argument,       0, 'd' },
+		{ "logpath",             required_argument, 0, 'p' },
+		{ "loglevel",            required_argument, 0, 'l' },
+		{ "pidfile",             required_argument, 0, 'f' },
+		{ "lualib_path",         required_argument, 0, 'L' },
+		{ "lualib_cpath",        required_argument, 0, 'C' },
+		{ "socket_cpu_affinity", required_argument, 0, 'S' },
+		{ "worker_cpu_affinity", required_argument, 0, 'W' },
+		{ "timer_cpu_affinity",  required_argument, 0, 'T' },
+		{ NULL,                  0,                 0, 0   }
 	};
 	struct {
 		const char *name;
 		enum silly_log_level level;
 	} loglevels[] = {
-		{"debug",	SILLY_LOG_DEBUG},
-		{"info",	SILLY_LOG_INFO},
-		{"warn",	SILLY_LOG_WARN},
-		{"error",	SILLY_LOG_ERROR},
+		{ "debug", SILLY_LOG_DEBUG },
+		{ "info",  SILLY_LOG_INFO  },
+		{ "warn",  SILLY_LOG_WARN  },
+		{ "error", SILLY_LOG_ERROR },
 	};
 	for (;;) {
-		c = getopt_long(argc, argv, "hvdp:l:f:L:C:S:W:T:", long_options, NULL);
+		c = getopt_long(argc, argv, "hvdp:l:f:L:C:S:W:T:", long_options,
+				NULL);
 		if (c == -1)
-	            break;
+			break;
 		switch (c) {
 		case 'h':
 			print_help(config->selfname);
@@ -82,9 +86,11 @@ parse_args(struct silly_config *config, int argc, char *argv[])
 			break;
 		case 'p':
 			if (strlen(optarg) >= ARRAY_SIZE(config->logpath)) {
-				silly_log_error("[option] logpath is too long\n");
+				silly_log_error(
+					"[option] logpath is too long\n");
 			}
-			strncpy(config->logpath, optarg, ARRAY_SIZE(config->logpath) - 1);
+			strncpy(config->logpath, optarg,
+				ARRAY_SIZE(config->logpath) - 1);
 			break;
 		case 'l':
 			for (i = 0; i < ARRAY_SIZE(loglevels); i++) {
@@ -94,26 +100,35 @@ parse_args(struct silly_config *config, int argc, char *argv[])
 				}
 			}
 			if (i == ARRAY_SIZE(loglevels)) {
-				silly_log_error("[option] unknown loglevel:%s\n", optarg);
+				silly_log_error(
+					"[option] unknown loglevel:%s\n",
+					optarg);
 			}
 			break;
 		case 'f':
 			if (strlen(optarg) >= ARRAY_SIZE(config->pidfile)) {
-				silly_log_error("[option] pidfile is too long\n");
+				silly_log_error(
+					"[option] pidfile is too long\n");
 			}
-			strncpy(config->pidfile, optarg, ARRAY_SIZE(config->pidfile) - 1);
+			strncpy(config->pidfile, optarg,
+				ARRAY_SIZE(config->pidfile) - 1);
 			break;
 		case 'L':
 			if (strlen(optarg) >= ARRAY_SIZE(config->lualib_path)) {
-				silly_log_error("[option] lualib_path is too long\n");
+				silly_log_error(
+					"[option] lualib_path is too long\n");
 			}
-			strncpy(config->lualib_path, optarg, ARRAY_SIZE(config->lualib_path) - 1);
+			strncpy(config->lualib_path, optarg,
+				ARRAY_SIZE(config->lualib_path) - 1);
 			break;
 		case 'C':
-			if (strlen(optarg) >= ARRAY_SIZE(config->lualib_cpath)) {
-				silly_log_error("[option] lualib_cpath is too long\n");
+			if (strlen(optarg) >=
+			    ARRAY_SIZE(config->lualib_cpath)) {
+				silly_log_error(
+					"[option] lualib_cpath is too long\n");
 			}
-			strncpy(config->lualib_cpath, optarg, ARRAY_SIZE(config->lualib_cpath) - 1);
+			strncpy(config->lualib_cpath, optarg,
+				ARRAY_SIZE(config->lualib_cpath) - 1);
 			break;
 		case 'S':
 			config->socketaffinity = atoi(optarg);
@@ -130,8 +145,7 @@ parse_args(struct silly_config *config, int argc, char *argv[])
 	}
 }
 
-static const char *
-selfname(const char *path)
+static const char *selfname(const char *path)
 {
 	size_t len = strlen(path);
 	const char *end = &path[len];
@@ -163,9 +177,8 @@ int main(int argc, char *argv[])
 	silly_timer_init();
 	status = silly_run(&config);
 	silly_daemon_stop(&config);
-	silly_log_info("%s exit, leak memory size:%zu\n",
-		argv[0], silly_memused());
+	silly_log_info("%s exit, leak memory size:%zu\n", argv[0],
+		       silly_memused());
 	silly_log_flush();
 	return status;
 }
-

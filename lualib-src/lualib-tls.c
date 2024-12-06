@@ -13,8 +13,8 @@
 
 #include "silly.h"
 
-#define	ssl_malloc	silly_malloc
-#define	ssl_free	silly_free
+#define ssl_malloc silly_malloc
+#define ssl_free silly_free
 
 struct ctx_entry {
 	SSL_CTX *ptr;
@@ -36,8 +36,7 @@ struct tls {
 	BIO *out_bio;
 };
 
-static void
-ctx_destroy(struct ctx *ctx)
+static void ctx_destroy(struct ctx *ctx)
 {
 	int i;
 	for (i = 0; i < ctx->entry_count; i++) {
@@ -51,8 +50,7 @@ ctx_destroy(struct ctx *ctx)
 	ctx->entry_count = 0;
 }
 
-static int
-lctx_free(lua_State *L)
+static int lctx_free(lua_State *L)
 {
 	struct ctx *ctx;
 	ctx = (struct ctx *)luaL_checkudata(L, 1, "TLS_CTX");
@@ -60,8 +58,7 @@ lctx_free(lua_State *L)
 	return 0;
 }
 
-static int
-ltls_free(lua_State *L)
+static int ltls_free(lua_State *L)
 {
 	struct tls *tls;
 	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
@@ -71,14 +68,14 @@ ltls_free(lua_State *L)
 	return 0;
 }
 
-
-static struct ctx *
-new_tls_ctx(lua_State *L, int mode, int ctx_count, int nupval)
+static struct ctx *new_tls_ctx(lua_State *L, int mode, int ctx_count,
+			       int nupval)
 {
 	int size;
 	struct ctx *ctx;
-	size = offsetof(struct ctx, entries) + ctx_count * sizeof(struct ctx_entry);
-	ctx = (struct ctx*)lua_newuserdatauv(L, size, nupval);
+	size = offsetof(struct ctx, entries) +
+	       ctx_count * sizeof(struct ctx_entry);
+	ctx = (struct ctx *)lua_newuserdatauv(L, size, nupval);
 	if (luaL_newmetatable(L, "TLS_CTX")) {
 		lua_pushcfunction(L, lctx_free);
 		lua_setfield(L, -2, "__gc");
@@ -90,11 +87,10 @@ new_tls_ctx(lua_State *L, int mode, int ctx_count, int nupval)
 	return ctx;
 }
 
-static struct tls *
-new_tls(lua_State *L, int fd)
+static struct tls *new_tls(lua_State *L, int fd)
 {
 	struct tls *tls;
-	tls= (struct tls*)lua_newuserdatauv(L, sizeof(*tls), 0);
+	tls = (struct tls *)lua_newuserdatauv(L, sizeof(*tls), 0);
 	if (luaL_newmetatable(L, "TLS")) {
 		lua_pushcfunction(L, ltls_free);
 		lua_setfield(L, -2, "__gc");
@@ -109,8 +105,7 @@ new_tls(lua_State *L, int fd)
 #define TLS_method TLSv1_2_method
 #endif
 
-static int
-lctx_client(lua_State *L)
+static int lctx_client(lua_State *L)
 {
 	SSL_CTX *ptr;
 	struct ctx *ctx;
@@ -126,7 +121,7 @@ lctx_client(lua_State *L)
 }
 
 int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
-	const unsigned char *in, unsigned int inlen, void *arg)
+	    const unsigned char *in, unsigned int inlen, void *arg)
 {
 	int ret;
 	unsigned char *outx;
@@ -134,7 +129,8 @@ int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
 	struct ctx *ctx = (struct ctx *)arg;
 	if (ctx->entry_count == 0)
 		return SSL_TLSEXT_ERR_NOACK;
-	ret = SSL_select_next_proto(&outx, outlen, ctx->alpn_protos, ctx->alpn_size, in, inlen);
+	ret = SSL_select_next_proto(&outx, outlen, ctx->alpn_protos,
+				    ctx->alpn_size, in, inlen);
 	if (ret == OPENSSL_NPN_NEGOTIATED) {
 		*out = outx;
 		return SSL_TLSEXT_ERR_OK;
@@ -143,8 +139,7 @@ int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
 	}
 }
 
-static const char *
-fill_entry(lua_State *L, struct ctx_entry *entry, int stk)
+static const char *fill_entry(lua_State *L, struct ctx_entry *entry, int stk)
 {
 	int ret;
 	FILE *fp = NULL;
@@ -182,7 +177,8 @@ fill_entry(lua_State *L, struct ctx_entry *entry, int stk)
 	}
 	ret = SSL_CTX_use_PrivateKey_file(ptr, keypath, SSL_FILETYPE_PEM);
 	if (ret != 1) {
-		printf("SSL_CTX_use_PrivateKey_file fail:%s\n", ERR_error_string(ERR_get_error(), NULL));
+		printf("SSL_CTX_use_PrivateKey_file fail:%s\n",
+		       ERR_error_string(ERR_get_error(), NULL));
 		err = "SSL_CTX_use_PrivateKey_file";
 		goto fail;
 	}
@@ -211,7 +207,7 @@ static int ssl_servername_cb(SSL *s, int *ad, void *arg)
 	int i;
 	SSL_CTX *ptr = NULL;
 	const char *servername;
-	struct ctx *ctx = (struct ctx *) arg;
+	struct ctx *ctx = (struct ctx *)arg;
 	(void)ad;
 	servername = SSL_get_servername(s, TLSEXT_NAMETYPE_host_name);
 	if (servername != NULL) {
@@ -219,7 +215,8 @@ static int ssl_servername_cb(SSL *s, int *ad, void *arg)
 			X509 *cert = ctx->entries[i].cert;
 			if (cert == NULL)
 				continue;
-			if (X509_check_host(cert, servername, 0, 0, NULL) == 1) {
+			if (X509_check_host(cert, servername, 0, 0, NULL) ==
+			    1) {
 				ptr = ctx->entries[i].ptr;
 				break;
 			}
@@ -232,8 +229,7 @@ static int ssl_servername_cb(SSL *s, int *ad, void *arg)
 	return SSL_TLSEXT_ERR_OK;
 }
 
-static int
-lctx_server(lua_State *L)
+static int lctx_server(lua_State *L)
 {
 	SSL_CTX *ptr;
 	struct ctx *ctx;
@@ -242,7 +238,8 @@ lctx_server(lua_State *L)
 	const char *err = NULL;
 	const unsigned char *alpn_protos = NULL;
 	ncert = luaL_len(L, 1);
-	alpn_protos = (const unsigned char *)luaL_optlstring(L, 3, NULL, &alpn_size);
+	alpn_protos =
+		(const unsigned char *)luaL_optlstring(L, 3, NULL, &alpn_size);
 	ctx = new_tls_ctx(L, 'S', ncert, alpn_protos != NULL ? 1 : 0);
 	ctx->alpn_protos = alpn_protos;
 	ctx->alpn_size = alpn_size;
@@ -289,8 +286,7 @@ lctx_server(lua_State *L)
 	return 1;
 }
 
-static int
-ltls_open(lua_State *L)
+static int ltls_open(lua_State *L)
 {
 	int fd;
 	size_t alpn_size;
@@ -301,7 +297,8 @@ ltls_open(lua_State *L)
 	ctx = luaL_checkudata(L, 1, "TLS_CTX");
 	fd = luaL_checkinteger(L, 2);
 	hostname = lua_tostring(L, 3);
-	alpn_protos = (const unsigned char *)luaL_optlstring(L, 4, NULL, &alpn_size);
+	alpn_protos =
+		(const unsigned char *)luaL_optlstring(L, 4, NULL, &alpn_size);
 	tls = new_tls(L, fd);
 	tls->ssl = SSL_new(ctx->entries[0].ptr);
 	if (tls->ssl == NULL)
@@ -328,14 +325,13 @@ ltls_open(lua_State *L)
 	return 1;
 }
 
-static int
-ltls_read(lua_State *L)
+static int ltls_read(lua_State *L)
 {
 	char *ptr;
 	int size, last;
 	struct tls *tls;
 	luaL_Buffer buf;
-	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
+	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	last = size = luaL_checkinteger(L, 2);
 	ptr = luaL_buffinitsize(L, &buf, size);
 	while (last > 0) {
@@ -349,13 +345,12 @@ ltls_read(lua_State *L)
 	return 1;
 }
 
-static int
-ltls_readall(lua_State *L)
+static int ltls_readall(lua_State *L)
 {
 	char *ptr;
 	struct tls *tls;
 	luaL_Buffer buf;
-	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
+	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	luaL_buffinit(L, &buf);
 	for (;;) {
 		int ret;
@@ -369,14 +364,11 @@ ltls_readall(lua_State *L)
 	return 1;
 }
 
-
-
-static int
-ltls_readline(lua_State *L)
+static int ltls_readline(lua_State *L)
 {
 	struct tls *tls;
 	luaL_Buffer buf;
-	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
+	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	luaL_buffinit(L, &buf);
 	for (;;) {
 		char c;
@@ -395,8 +387,7 @@ ltls_readline(lua_State *L)
 	return 2;
 }
 
-static int
-flushwrite(struct tls *tls)
+static int flushwrite(struct tls *tls)
 {
 	int sz;
 	uint8_t *dat;
@@ -408,21 +399,19 @@ flushwrite(struct tls *tls)
 	return silly_socket_send(tls->fd, dat, sz, NULL);
 }
 
-static int
-ltls_write(lua_State *L)
+static int ltls_write(lua_State *L)
 {
 	size_t sz;
 	struct tls *tls;
 	const char *str;
-	tls = (struct tls*)luaL_checkudata(L, 1, "TLS");
+	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	str = luaL_checklstring(L, 2, &sz);
 	SSL_write(tls->ssl, str, sz);
 	lua_pushboolean(L, flushwrite(tls) >= 0);
 	return 1;
 }
 
-static int
-ltls_handshake(lua_State *L)
+static int ltls_handshake(lua_State *L)
 {
 	int ret;
 	struct tls *tls;
@@ -441,8 +430,7 @@ ltls_handshake(lua_State *L)
 	return 2;
 }
 
-static int
-ltls_message(lua_State *L)
+static int ltls_message(lua_State *L)
 {
 	struct tls *tls;
 	struct silly_message_socket *msg;
@@ -459,19 +447,17 @@ ltls_message(lua_State *L)
 	return 0;
 }
 
-
 #endif
 
-int
-luaopen_core_tls_ctx(lua_State *L)
+int luaopen_core_tls_ctx(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
-		{"client", lctx_client},
-		{"server", lctx_server},
-		{"free", lctx_free},
+		{ "client", lctx_client },
+		{ "server", lctx_server },
+		{ "free",   lctx_free   },
 #endif
-		{NULL, NULL},
+		{ NULL,     NULL        },
 	};
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
@@ -481,12 +467,12 @@ luaopen_core_tls_ctx(lua_State *L)
 	SSL_load_error_strings();
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
 	/*
-	* ERR_load_*(), ERR_func_error_string(), ERR_get_error_line(), ERR_get_error_line_data(), ERR_get_state()
-	* OpenSSL now loads error strings automatically so these functions are not needed.
-	* SEE FOR MORE:
-	*	https://www.openssl.org/docs/manmaster/man7/migration_guide.html
-	*
-	*/
+	 * ERR_load_*(), ERR_func_error_string(), ERR_get_error_line(), ERR_get_error_line_data(), ERR_get_state()
+	 * OpenSSL now loads error strings automatically so these functions are not needed.
+	 * SEE FOR MORE:
+	 *	https://www.openssl.org/docs/manmaster/man7/migration_guide.html
+	 *
+	 */
 #else
 	/* Load error strings into mem*/
 	ERR_load_BIO_strings();
@@ -498,22 +484,20 @@ luaopen_core_tls_ctx(lua_State *L)
 	return 1;
 }
 
-
-int
-luaopen_core_tls_tls(lua_State *L)
+int luaopen_core_tls_tls(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
-		{"open", ltls_open},
-		{"close", ltls_free},
-		{"read", ltls_read},
-		{"write", ltls_write},
-		{"readall", ltls_readall},
-		{"readline", ltls_readline},
-		{"handshake", ltls_handshake},
-		{"message", ltls_message},
+		{ "open",      ltls_open      },
+		{ "close",     ltls_free      },
+		{ "read",      ltls_read      },
+		{ "write",     ltls_write     },
+		{ "readall",   ltls_readall   },
+		{ "readline",  ltls_readline  },
+		{ "handshake", ltls_handshake },
+		{ "message",   ltls_message   },
 #endif
-		{NULL, NULL},
+		{ NULL,        NULL           },
 	};
 
 	luaL_checkversion(L);
@@ -521,4 +505,3 @@ luaopen_core_tls_tls(lua_State *L)
 	luaL_setfuncs(L, tbl, 0);
 	return 1;
 }
-

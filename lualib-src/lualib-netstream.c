@@ -36,10 +36,9 @@ struct node_buffer {
 	struct node **tail;
 };
 
-#define needpause(nb)	((nb->size) >= (nb->limit))
+#define needpause(nb) ((nb->size) >= (nb->limit))
 
-static int
-free_pool(lua_State *L)
+static int free_pool(lua_State *L)
 {
 	struct node *n, *end;
 	n = (struct node *)luaL_checkudata(L, 1, "nodepool");
@@ -57,8 +56,7 @@ free_pool(lua_State *L)
 	return 0;
 }
 
-static struct node *
-new_pool(lua_State *L, int n)
+static struct node *new_pool(lua_State *L, int n)
 {
 	int i;
 	struct node *free;
@@ -75,8 +73,7 @@ new_pool(lua_State *L, int n)
 	return free;
 }
 
-static struct node *
-new_node(lua_State *L)
+static struct node *new_node(lua_State *L)
 {
 	lua_rawgeti(L, POOL, 1);
 	struct node *free;
@@ -103,15 +100,13 @@ new_node(lua_State *L)
 	return free;
 }
 
-
-static inline void
-append_node(struct node_buffer *nb, struct node *n)
+static inline void append_node(struct node_buffer *nb, struct node *n)
 {
 	n->next = NULL;
 	*nb->tail = n;
 	nb->tail = &n->next;
 	nb->size += n->size;
-	return ;
+	return;
 }
 
 //'remove_node'may be called by 'lfree' which may be called in
@@ -121,8 +116,7 @@ append_node(struct node_buffer *nb, struct node *n)
 //and next circle really clear the memory of object,
 //so even 'nodebuffer'.__gc free the n->buff, the pointer 'n' is sitll valid
 
-static void
-remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
+static void remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 {
 	assert(n == nb->head);
 	assert(nb->tail);
@@ -143,11 +137,10 @@ remove_node(lua_State *L, struct node_buffer *nb, struct node *n)
 		free->next = n;
 	}
 	lua_pop(L, 1);
-	return ;
+	return;
 }
 
-static int
-lfree(lua_State *L)
+static int lfree(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB))
@@ -159,8 +152,7 @@ lfree(lua_State *L)
 	return 0;
 }
 
-static int
-lnew(lua_State *L)
+static int lnew(lua_State *L)
 {
 	struct node_buffer *nb;
 	nb = (struct node_buffer *)lua_newuserdatauv(L, sizeof(*nb), 0);
@@ -180,26 +172,23 @@ lnew(lua_State *L)
 	return 1;
 }
 
-static inline void
-read_enable(struct node_buffer *nb)
+static inline void read_enable(struct node_buffer *nb)
 {
 	if (nb->pause == 0)
-		return ;
+		return;
 	nb->pause = 0;
 	silly_socket_readctrl(nb->sid, SOCKET_READ_ENABLE);
 }
 
-static inline void
-read_pause(struct node_buffer *nb)
+static inline void read_pause(struct node_buffer *nb)
 {
 	if (nb->pause == 1)
-		return ;
+		return;
 	nb->pause = 1;
 	silly_socket_readctrl(nb->sid, SOCKET_READ_PAUSE);
 }
 
-static inline void
-read_adjust(struct node_buffer *nb)
+static inline void read_adjust(struct node_buffer *nb)
 {
 	if (needpause(nb))
 		read_pause(nb);
@@ -212,8 +201,7 @@ read_adjust(struct node_buffer *nb)
 //@return
 //	node buffer
 
-static int
-push(lua_State *L, int sid, char *data, int sz)
+static int push(lua_State *L, int sid, char *data, int sz)
 {
 	struct node_buffer *nb;
 	struct node *new = new_node(L);
@@ -227,8 +215,7 @@ push(lua_State *L, int sid, char *data, int sz)
 	return nb->size;
 }
 
-static int
-pushstring(lua_State *L, struct node_buffer *nb, int sz)
+static int pushstring(lua_State *L, struct node_buffer *nb, int sz)
 {
 	assert(sz >= 0);
 	struct node *n = nb->head;
@@ -264,8 +251,8 @@ pushstring(lua_State *L, struct node_buffer *nb, int sz)
 	return 1;
 }
 
-static int
-compare(struct node *n, int start, int sz, const char *delim, int delim_len)
+static int compare(struct node *n, int start, int sz, const char *delim,
+		   int delim_len)
 {
 	while (delim_len > 0) {
 		if (sz >= delim_len) {
@@ -287,8 +274,7 @@ compare(struct node *n, int start, int sz, const char *delim, int delim_len)
 	return -1;
 }
 
-static int
-checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
+static int checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 {
 	int ret = -1;
 	int nr = 0;
@@ -299,7 +285,7 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 		int sz = n->size;
 		for (i = 0; i < n->size; i++) {
 			int e = compare(n, start, sz, delim, delim_len);
-			if (e == 0)	//return value from memcmp
+			if (e == 0) //return value from memcmp
 				break;
 			nr += 1;
 			sz -= 1;
@@ -317,8 +303,7 @@ checkdelim(struct node_buffer *nb, const char *delim, int delim_len)
 	return ret;
 }
 
-static int
-lreadall(lua_State *L)
+static int lreadall(lua_State *L)
 {
 	int readsize, sz;
 	struct node_buffer *nb;
@@ -327,7 +312,7 @@ lreadall(lua_State *L)
 		return 1;
 	}
 	nb = (struct node_buffer *)luaL_checkudata(L, NB, "nodebuffer");
-	readsize = luaL_optinteger(L, NB+1, INT_MAX);
+	readsize = luaL_optinteger(L, NB + 1, INT_MAX);
 	sz = nb->size;
 	if (sz == 0) {
 		lua_pushliteral(L, "");
@@ -347,8 +332,7 @@ lreadall(lua_State *L)
 //	read byte count
 //@return
 //	string or nil
-static int
-lread(lua_State *L)
+static int lread(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB)) {
@@ -378,8 +362,7 @@ lread(lua_State *L)
 //	read delim
 //@return
 //	string or nil
-static int
-lreadline(lua_State *L)
+static int lreadline(lua_State *L)
 {
 	int readn;
 	const char *delim;
@@ -407,8 +390,7 @@ lreadline(lua_State *L)
 //	node buffer
 //@return
 //	buff size
-static int
-lsize(lua_State *L)
+static int lsize(lua_State *L)
 {
 	struct node_buffer *nb;
 	if (lua_isnil(L, NB)) {
@@ -424,8 +406,7 @@ lsize(lua_State *L)
 // node buffer
 //@return
 //	previously limit
-static int
-llimit(lua_State *L)
+static int llimit(lua_State *L)
 {
 	int prev, limit;
 	struct node_buffer *nb;
@@ -433,7 +414,7 @@ llimit(lua_State *L)
 		return -1;
 	}
 	nb = luaL_checkudata(L, NB, "nodebuffer");
-	limit = luaL_checkinteger(L, NB+1);
+	limit = luaL_checkinteger(L, NB + 1);
 	prev = nb->limit;
 	nb->limit = limit;
 	read_adjust(nb);
@@ -441,9 +422,7 @@ llimit(lua_State *L)
 	return 1;
 }
 
-
-static int
-lpush(lua_State *L)
+static int lpush(lua_State *L)
 {
 	int size;
 	char *str;
@@ -469,8 +448,7 @@ lpush(lua_State *L)
 	return 1;
 }
 
-static int
-ltodata(lua_State *L)
+static int ltodata(lua_State *L)
 {
 	uint8_t *data;
 	size_t datasz;
@@ -489,8 +467,7 @@ ltodata(lua_State *L)
 	return 1;
 }
 
-static int
-tpush(lua_State *L)
+static int tpush(lua_State *L)
 {
 	size_t sz;
 	int fd = luaL_checkinteger(L, 2);
@@ -504,17 +481,17 @@ tpush(lua_State *L)
 int luaopen_core_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{"new", lnew},
-		{"free", lfree},
-		{"push", lpush},
-		{"read", lread},
-		{"size", lsize},
-		{"limit", llimit},
-		{"readline", lreadline},
-		{"readall", lreadall},
-		{"todata", ltodata},
-		{"tpush", tpush},
-		{NULL, NULL},
+		{ "new",      lnew      },
+		{ "free",     lfree     },
+		{ "push",     lpush     },
+		{ "read",     lread     },
+		{ "size",     lsize     },
+		{ "limit",    llimit    },
+		{ "readline", lreadline },
+		{ "readall",  lreadall  },
+		{ "todata",   ltodata   },
+		{ "tpush",    tpush     },
+		{ NULL,       NULL      },
 	};
 
 	luaL_checkversion(L);
@@ -523,4 +500,3 @@ int luaopen_core_netstream(lua_State *L)
 	luaL_setfuncs(L, tbl, 1);
 	return 1;
 }
-

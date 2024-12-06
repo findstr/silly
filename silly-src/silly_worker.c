@@ -14,8 +14,8 @@
 #include "silly_monitor.h"
 #include "silly_worker.h"
 
-#define max(a, b)		((a) > (b) ? (a) : (b))
-#define WARNING_THRESHOLD 	(64)
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#define WARNING_THRESHOLD (64)
 
 struct silly_worker {
 	int argc;
@@ -34,20 +34,19 @@ struct silly_worker {
 
 struct silly_worker *W;
 
-void
-silly_worker_push(struct silly_message *msg)
+void silly_worker_push(struct silly_message *msg)
 {
 	size_t sz;
 	sz = silly_queue_push(W->queue, msg);
 	if (unlikely(sz > W->maxmsg)) {
 		W->maxmsg *= 2;
 		silly_log_warn("[worker] may overload, "
-			"message queue length:%zu\n", sz);
+			       "message queue length:%zu\n",
+			       sz);
 	}
 }
 
-void
-silly_worker_dispatch()
+void silly_worker_dispatch()
 {
 	struct silly_message *msg;
 	struct silly_message *tmp;
@@ -57,7 +56,7 @@ silly_worker_dispatch()
 #ifdef LUA_GC_STEP
 		lua_gc(W->L, LUA_GCSTEP, LUA_GC_STEP);
 #endif
-		return ;
+		return;
 	}
 	do {
 		do {
@@ -70,11 +69,10 @@ silly_worker_dispatch()
 		msg = silly_queue_pop(W->queue);
 	} while (msg);
 	W->maxmsg = WARNING_THRESHOLD;
-	return ;
+	return;
 }
 
-uint32_t
-silly_worker_genid()
+uint32_t silly_worker_genid()
 {
 	uint32_t id = ++W->id;
 	if (unlikely(id == 0))
@@ -82,29 +80,27 @@ silly_worker_genid()
 	return id;
 }
 
-size_t
-silly_worker_msgsize()
+size_t silly_worker_msgsize()
 {
 	return silly_queue_size(W->queue);
 }
 
-void
-silly_worker_callback(void (*callback)(struct lua_State *L, struct silly_message *msg))
+void silly_worker_callback(void (*callback)(struct lua_State *L,
+					    struct silly_message *msg))
 {
 	assert(callback);
 	W->callback = callback;
-	return ;
+	return;
 }
 
-static void
-setlibpath(lua_State *L, const char *pathname, const char *libpath)
+static void setlibpath(lua_State *L, const char *pathname, const char *libpath)
 {
 	size_t sz1;
 	size_t sz2 = strlen(libpath);
 	size_t need_sz;
 	const char *path;
 	if (sz2 == 0)
-		return ;
+		return;
 	lua_getglobal(L, "package");
 	lua_getfield(L, -1, pathname);
 	path = luaL_checklstring(L, -1, &sz1);
@@ -115,14 +111,13 @@ setlibpath(lua_State *L, const char *pathname, const char *libpath)
 	lua_setfield(L, -3, pathname);
 	//clear the stack
 	lua_settop(L, 0);
-	return ;
+	return;
 }
 
-static void *
-lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
+static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
-	(void) ud;
-	(void) osize;
+	(void)ud;
+	(void)osize;
 	if (nsize == 0) {
 		silly_free(ptr);
 		return NULL;
@@ -131,30 +126,27 @@ lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	}
 }
 
-static int
-ltraceback(lua_State *L)
+static int ltraceback(lua_State *L)
 {
 	const char *str = luaL_checkstring(L, 1);
 	luaL_traceback(L, L, str, 1);
 	return 1;
 }
 
-static void
-fetch_core_start(lua_State *L)
+static void fetch_core_start(lua_State *L)
 {
 	lua_getglobal(L, "require");
 	lua_pushstring(L, "core");
 	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
 		silly_log_error("[worker] require core fail,%s\n",
-			lua_tostring(L, -1));
+				lua_tostring(L, -1));
 		exit(-1);
 	}
 	lua_getfield(L, -1, "start");
 	lua_remove(L, -2);
 }
 
-void
-silly_worker_start(const struct silly_config *config)
+void silly_worker_start(const struct silly_config *config)
 {
 	int err;
 	int dir_len;
@@ -186,47 +178,42 @@ silly_worker_start(const struct silly_config *config)
 	fetch_core_start(L);
 	err = luaL_loadfile(L, config->bootstrap);
 	if (unlikely(err)) {
-		silly_log_error("[worker] load %s %s\n",
-			config->bootstrap, lua_tostring(L, -1));
+		silly_log_error("[worker] load %s %s\n", config->bootstrap,
+				lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}
 	if (unlikely(lua_pcall(L, 1, 0, 1))) {
-		silly_log_error("[worker] call %s %s\n",
-			config->bootstrap, lua_tostring(L, -1));
+		silly_log_error("[worker] call %s %s\n", config->bootstrap,
+				lua_tostring(L, -1));
 		lua_close(L);
 		exit(-1);
 	}
 	W->L = L;
-	return ;
+	return;
 }
 
-void
-silly_worker_init()
+void silly_worker_init()
 {
 	W = (struct silly_worker *)silly_malloc(sizeof(*W));
 	memset(W, 0, sizeof(*W));
 	W->maxmsg = WARNING_THRESHOLD;
 	W->queue = silly_queue_create();
-	return ;
+	return;
 }
 
-char **
-silly_worker_args(int *argc)
+char **silly_worker_args(int *argc)
 {
 	*argc = W->argc;
 	return W->argv;
 }
 
-void
-silly_worker_resume(lua_State *L)
+void silly_worker_resume(lua_State *L)
 {
 	W->running = L;
 }
 
-
-uint32_t
-silly_worker_processid()
+uint32_t silly_worker_processid()
 {
 	return W->process_id;
 }
@@ -234,29 +221,28 @@ silly_worker_processid()
 static void warn_hook(lua_State *L, lua_Debug *ar)
 {
 	(void)ar;
-	int top = lua_gettop(L);;
+	int top = lua_gettop(L);
+	;
 	luaL_traceback(L, L, "maybe in an endless loop.", 1);
 	silly_log_warn("[worker] %s\n", lua_tostring(L, -1));
 	lua_settop(L, top);
-	lua_sethook(L,W->oldhook,W->oldmask,W->oldcount);
+	lua_sethook(L, W->oldhook, W->oldmask, W->oldcount);
 }
 
-void
-silly_worker_warnendless()
+void silly_worker_warnendless()
 {
 	if (W->running == NULL)
 		return;
-	W->oldhook=lua_gethook(W->running);
-	W->oldmask=lua_gethookmask(W->running);
-	W->oldcount=lua_gethookcount(W->running);
-	lua_sethook(W->running,warn_hook,LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT,1);
+	W->oldhook = lua_gethook(W->running);
+	W->oldmask = lua_gethookmask(W->running);
+	W->oldcount = lua_gethookcount(W->running);
+	lua_sethook(W->running, warn_hook,
+		    LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT, 1);
 }
 
-void
-silly_worker_exit()
+void silly_worker_exit()
 {
 	lua_close(W->L);
 	silly_queue_free(W->queue);
 	silly_free(W);
 }
-
