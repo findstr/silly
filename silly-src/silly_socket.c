@@ -122,6 +122,8 @@ struct silly_socket {
 	int reserveid;
 	//netstat
 	struct silly_netstat netstat;
+	//error message
+	char errmsg[256];
 };
 
 //for read one complete packet once system call, fix the packet length
@@ -185,6 +187,16 @@ struct cmdpacket {
 };
 
 static struct silly_socket *SSOCKET;
+
+static inline void reset_errmsg(struct silly_socket *ss)
+{
+	ss->errmsg[0] = '\0';
+}
+
+static inline void set_errmsg(struct silly_socket *ss, const char *str)
+{
+	snprintf(ss->errmsg, sizeof(ss->errmsg), "%s", str);
+}
 
 static void socketpool_init(struct silly_socket *ss)
 {
@@ -278,20 +290,22 @@ static struct socket *allocsocket(struct silly_socket *ss, int fd,
 			atomic_and_return(&ss->reserveid, 0x7fffffff);
 		}
 		struct socket *s = &ss->socketpool[HASH(id)];
-		if (s->type == STYPE_RESERVE) {
-			if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
-				assert(s->wlhead == NULL);
-				assert(s->wltail == &s->wlhead);
-				s->protocol = protocol;
-				s->presize = MIN_READBUF_LEN;
-				s->sid = id;
-				s->fd = fd;
-				s->wloffset = 0;
-				s->reading = 1;
-				return s;
-			}
+		if (s->type != STYPE_RESERVE) {
+			continue;
+		}
+		if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
+			assert(s->wlhead == NULL);
+			assert(s->wltail == &s->wlhead);
+			s->protocol = protocol;
+			s->presize = MIN_READBUF_LEN;
+			s->sid = id;
+			s->fd = fd;
+			s->wloffset = 0;
+			s->reading = 1;
+			return s;
 		}
 	}
+	set_errmsg(ss, "socket pool is full");
 	silly_log_error("[socket] allocsocket fail, find no empty entry\n");
 	return NULL;
 }
@@ -391,13 +405,10 @@ static int ntop(union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
 		inet_ntop(family, &addr->v4.sin_addr, buf, INET_ADDRSTRLEN);
 		namelen = strlen(buf);
 	} else {
-		buf[0] = '[';
 		assert(family == AF_INET6);
 		port = addr->v6.sin6_port;
-		inet_ntop(family, &addr->v6.sin6_addr, buf + 1,
-			  INET6_ADDRSTRLEN);
+		inet_ntop(family, &addr->v6.sin6_addr, buf, INET6_ADDRSTRLEN);
 		namelen = strlen(buf);
-		buf[namelen++] = ']';
 	}
 	port = ntohs(port);
 	namelen +=
@@ -853,6 +864,7 @@ struct addrinfo *getsockaddr(int protocol, const char *ip, const char *port)
 		hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = protocol;
 	if ((err = getaddrinfo(ip, port, &hints, &res))) {
+		set_errmsg(SSOCKET, gai_strerror(err));
 		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
 				port, gai_strerror(err));
 		return NULL;
@@ -870,6 +882,11 @@ static int bindfd(int fd, int protocol, const char *ip, const char *port)
 	if (info == NULL)
 		return -1;
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
+	if (err < 0) {
+		set_errmsg(SSOCKET, strerror(errno));
+		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
+				port, strerror(errno));
+	}
 	freeaddrinfo(info);
 	return err;
 }
@@ -884,16 +901,23 @@ static int dolisten(const char *ip, const char *port, int backlog)
 	if (unlikely(info == NULL))
 		return -1;
 	fd = socket(info->ai_family, SOCK_STREAM, 0);
-	if (unlikely(fd < 0))
+	if (unlikely(fd < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
-	if (unlikely(err < 0))
+	if (unlikely(err < 0)) {
+		snprintf(SSOCKET->errmsg, sizeof(SSOCKET->errmsg), "%s",
+			 strerror(errno));
 		goto end;
+	}
 	nonblock(fd);
 	err = listen(fd, backlog);
-	if (unlikely(err < 0))
+	if (unlikely(err < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	freeaddrinfo(info);
 	return fd;
 end:
@@ -904,11 +928,17 @@ end:
 	return -1;
 }
 
+const char *silly_socket_lasterror()
+{
+	return SSOCKET->errmsg;
+}
+
 int silly_socket_listen(const char *ip, const char *port, int backlog)
 {
 	int fd;
 	struct socket *s;
 	struct cmdlisten cmd;
+	reset_errmsg(SSOCKET);
 	fd = dolisten(ip, port, backlog);
 	if (unlikely(fd < 0))
 		return -errno;
@@ -931,16 +961,21 @@ int silly_socket_udpbind(const char *ip, const char *port)
 	int fd = -1;
 	struct cmdlisten cmd;
 	struct addrinfo *info;
-	struct socket *s = NULL;
+	const struct socket *s = NULL;
+	reset_errmsg(SSOCKET);
 	info = getsockaddr(IPPROTO_TCP, ip, port);
 	if (info == NULL)
 		return -1;
 	fd = socket(info->ai_family, SOCK_DGRAM, 0);
-	if (unlikely(fd < 0))
+	if (unlikely(fd < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
-	if (unlikely(err < 0))
+	if (unlikely(err < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	nonblock(fd);
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (unlikely(s == NULL)) {
@@ -1014,12 +1049,15 @@ int silly_socket_connect(const char *ip, const char *port, const char *bindip,
 	struct socket *s = NULL;
 	assert(ip);
 	assert(bindip);
+	reset_errmsg(SSOCKET);
 	info = getsockaddr(IPPROTO_TCP, ip, port);
 	if (unlikely(info == NULL))
 		return -1;
 	fd = socket(info->ai_family, SOCK_STREAM, 0);
-	if (unlikely(fd < 0))
+	if (unlikely(fd < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	err = bindfd(fd, IPPROTO_TCP, bindip, bindport);
 	if (unlikely(err < 0))
 		goto end;
@@ -1098,12 +1136,15 @@ int silly_socket_udpconnect(const char *ip, const char *port,
 	const char *fmt = "[socket] udpconnect %s:%d, errno:%d\n";
 	assert(ip);
 	assert(bindip);
+	reset_errmsg(SSOCKET);
 	info = getsockaddr(IPPROTO_UDP, ip, port);
 	if (unlikely(info == NULL))
 		return -1;
 	fd = socket(info->ai_family, SOCK_DGRAM, 0);
-	if (unlikely(fd < 0))
+	if (unlikely(fd < 0)) {
+		set_errmsg(SSOCKET, strerror(errno));
 		goto end;
+	}
 	err = bindfd(fd, IPPROTO_UDP, bindip, bindport);
 	if (unlikely(err < 0))
 		goto end;

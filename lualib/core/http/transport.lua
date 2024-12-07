@@ -33,11 +33,13 @@ end
 local function gc(self)
 	self:close()
 end
+
 local tls_mt = {
 	close = wrap_close(tls.close),
 	read = wrap_one(tls.read),
 	write = wrap_one(tls.write),
 	readline = wrap_one(tls.readline),
+	---@type fun(self):string|nil
 	alpnproto = wrap_one(tls.alpnproto),
 	isalive = wrap_one(tls.isalive),
 	__gc = gc,
@@ -50,6 +52,7 @@ local tcp_mt = {
 	read = wrap_one(tcp.read),
 	write = wrap_one(tcp.write),
 	readline = wrap_one(tcp.readline),
+	---@type fun(self):string|nil
 	alpnproto = function() return nil end,
 	isalive = wrap_one(tls.isalive),
 	__gc = gc,

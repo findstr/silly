@@ -1,5 +1,4 @@
 local core = require "core"
-local assert = assert
 local setmetatable = setmetatable
 local remove = table.remove
 local running = core.running
@@ -8,6 +7,8 @@ local weakmt = {__mode="v"}
 local lockcache = setmetatable({}, weakmt)
 local proxycache = setmetatable({}, weakmt)
 
+---@class core.sync.mutex
+---@field lockobj table
 local M = {}
 local mt = {__index = M}
 
@@ -40,12 +41,14 @@ local proxymt = {
 	end
 }
 
-function M.new()
+---@return core.sync.mutex
+function M:new()
 	return setmetatable({
 		lockobj = {},
 	}, mt)
 end
 
+---@param co thread
 local function lockkey(lockobj, key, co)
 	local l = remove(lockcache)
 	if l then

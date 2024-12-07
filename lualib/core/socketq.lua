@@ -9,6 +9,20 @@ local CONNECTED    = 2
 local CLOSE        = 5
 local FINAL        = 6
 
+---@class core.socketq
+---@field sock integer|nil
+---@field status integer|nil
+---@field authco thread|nil
+---@field responseco thread|boolean
+---@field dispatchco thread|boolean
+---@field waithead integer
+---@field waittail integer
+---@field connectqueue table
+---@field waitqueue table
+---@field funcqueue table
+---@field result_data table
+---@field addr string
+---@field auth function
 local dispatch = {}
 
 local mt = {
@@ -21,12 +35,16 @@ local mt = {
 }
 
 --the function of process response insert into d.funcqueue
+---@param config {addr:string, auth:function}
+---@return core.socketq
 function dispatch:create(config)
 	local d = {
 		sock = nil,
 		status = CLOSE,
 		authco = nil,
+		---@type thread|boolean
 		responseco = false,
+		---@type thread|boolean
 		dispatchco = false,
 		waithead = 0,
 		waittail = 0,
@@ -42,6 +60,7 @@ function dispatch:create(config)
 	return d
 end
 
+---@param self core.socketq
 local function wakeup_all(self, ret, err)
 	local waitqueue = self.waitqueue
 	local funcqueue = self.funcqueue
@@ -62,6 +81,7 @@ local function wakeup_all(self, ret, err)
 	self.waittail = 0
 end
 
+---@param self core.socketq
 local function doclose(self)
 	if self.status == CLOSE then
 		return
@@ -79,6 +99,7 @@ end
 
 
 --this function will be run the indepedent coroutine
+---@param self core.socketq
 local function dispatch_response(self)
 	return function ()
 		local pcall = core.pcall
@@ -115,6 +136,9 @@ local function dispatch_response(self)
 	end
 end
 
+---@param self core.socketq
+---@param response function
+---@return boolean, string
 local function waitfor_response(self, response)
 	local co = core.running()
 	local waitqueue = self.waitqueue
@@ -135,6 +159,7 @@ local function waitfor_response(self, response)
 	return status, data
 end
 
+---@param self core.socketq
 local function waitfor_connect(self)
 	local co = core.running()
 	local connectqueue = self.connectqueue
@@ -146,6 +171,9 @@ local function waitfor_connect(self)
 	return status, data
 end
 
+---@param self core.socketq
+---@param success boolean
+---@param err string
 local function wakeup_conn(self, success, err)
 	local result_data = self.result_data
 	local connectqueue = self.connectqueue
@@ -156,6 +184,7 @@ local function wakeup_conn(self, success, err)
 	end
 end
 
+---@param self core.socketq
 local function tryconnect(self)
 	local status = self.status
 	if status == CONNECTED then

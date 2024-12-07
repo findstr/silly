@@ -3,6 +3,14 @@ local logger = require "core.logger"
 local grpc = require "core.grpc"
 local proto = require "core.etcd.v3.proto"
 local pb = require "pb"
+---@class core.etcd.client
+---@field retry integer
+---@field retry_sleep integer
+---@field kv core.grpc.client
+---@field lease core.grpc.client
+---@field watcher core.grpc.client
+---@field lease_list table<integer, boolean>
+---@field lease_timer fun(self:core.etcd.client)
 local M = {}
 
 local next = next
@@ -17,13 +25,13 @@ local setmetatable = setmetatable
 
 local no_prefix_end = "\0"
 
-local sort_order_num<const> = {
+local sort_order_num <const> = {
 	NONE = pb.enum(".etcdserverpb.RangeRequest.SortOrder", "NONE"),
 	ASCEND = pb.enum(".etcdserverpb.RangeRequest.SortOrder", "ASCEND"),
 	DESCEND = pb.enum(".etcdserverpb.RangeRequest.SortOrder", "DESCEND"),
 }
 
-local sort_target_num<const> = {
+local sort_target_num <const> = {
 	KEY = pb.enum(".etcdserverpb.RangeRequest.SortTarget", "KEY"),
 	VERSION = pb.enum(".etcdserverpb.RangeRequest.SortTarget", "VERSION"),
 	CREATE = pb.enum(".etcdserverpb.RangeRequest.SortTarget", "CREATE"),
@@ -31,11 +39,13 @@ local sort_target_num<const> = {
 	VALUE = pb.enum(".etcdserverpb.RangeRequest.SortTarget", "VALUE"),
 }
 
-local watch_filter_type<const> = {
+local watch_filter_type <const> = {
 	NOPUT = pb.enum(".etcdserverpb.WatchCreateRequest.FilterType", "NOPUT"),
 	NODELETE = pb.enum(".etcdserverpb.WatchCreateRequest.FilterType", "NODELETE"),
 }
 
+---@param key string
+---@param options table
 local function opt_prefix(key, _, options)
 	options.prefix = nil
 	if not key or #key == 0 then
@@ -55,6 +65,8 @@ local function opt_prefix(key, _, options)
 	options.range_end = no_prefix_end
 end
 
+---@param key string
+---@param options table
 local function opt_fromkey(key, opt, options)
 	if #key == 0 then
 		options.key = no_prefix_end
@@ -63,6 +75,8 @@ local function opt_fromkey(key, opt, options)
 	options.range_end = no_prefix_end
 end
 
+---@param sort_target string
+---@param options table
 local function opt_options(_, sort_target, options)
 	if not sort_target then
 		return
@@ -84,6 +98,7 @@ local option_fn = {
 	sort_target = opt_options,
 }
 
+---@param options table
 local function apply_options(options)
 	if not options then
 		return
@@ -97,7 +112,14 @@ local function apply_options(options)
 	end
 end
 
-local mt = {__index = M}
+local mt = { __index = M }
+---@param conf {
+---	endpoints:string[],	--etcd server address
+---	retry:integer,		--retry times
+---	retry_sleep:integer|nil,--retry sleep time(ms)
+---	timeout:number|nil,	--timeout
+---}
+---@return core.etcd.client
 function M.newclient(conf)
 	local c = setmetatable({
 		retry = conf.retry or 5,
@@ -155,6 +177,49 @@ function M.newclient(conf)
 	return c
 end
 
+---@class etcd.ResponseHeader
+---@field cluster_id integer	--cluster_id is the ID of the cluster which sent the response.
+---@field member_id integer	--member_id is the ID of the member which sent the response.
+---revision is the key-value store revision when the request was applied, and it's
+---unset (so 0) in case of calls not interacting with key-value store.
+---For watch progress responses, the header.revision indicates progress. All future events
+---received in this stream are guaranteed to have a higher revision number than the
+---header.revision number.
+---@field revision integer
+---raft_term is the raft term when the request was applied.
+---@field raft_term integer
+
+---@class mvccpb.KeyValue
+---key is the key in bytes. An empty key is not allowed.
+---@field key string\
+---create_revision is the revision of last creation on this key.
+---@field create_revision integer
+---mod_revision is the revision of last modification on this key.
+---@field mod_revision integer
+---version is the version of the key. A deletion resets
+---the version to zero and any modification of the key
+---increases its version
+---@field version integer
+---value is the value held by the key, in bytes.
+---@field value string
+---lease is the ID of the lease that attached to key.
+---When the attached lease expires, the key will be deleted.
+---If lease is 0, then no lease is attached to the key.
+---@field lease integer
+
+---@param req {
+---    key:string,                --The key to store (required)
+---    value:string,              --The value to store (required)
+---    lease:integer|nil,         --Optional lease ID for the key-value pair
+---    prev_kv:boolean|nil,       --If true, returns the previous key-value pair
+---    ignore_value:boolean|nil,  --If true, etcd updates the key using its current value.
+---    ignore_lease:boolean|nil,  --If true, etcd updates the key using its current lease.
+---}
+---@return {
+---    header:etcd.ResponseHeader, -- The response header
+---    prev_kv:mvccpb.KeyValue,    -- If `prev_kv` was set, returns the previous key-value pair
+---}|nil
+--- @return string|nil
 function M.put(self, req)
 	local res, err
 	apply_options(req)
@@ -168,6 +233,28 @@ function M.put(self, req)
 	return res, err
 end
 
+---@param req {
+---	key:string,	--The key to get (required)
+---	prefix:boolean|nil,	--If true, returns all keys with the prefix
+---	limit:number|nil,	--Limits the number of keys to return
+---	revision:number|nil,	--The point-in-time of the key-value store to use for the range.
+---	sort_order:'NONE'|'ASCEND'|'DESCEND'|nil, --The order for returned sorted results.
+---	sort_target:'KEY'|'VERSION'|'CREATE'|'MOD'|'VALUE'|nil, --The key-value field to use for sorting.
+---	serializable:boolean|nil, --Sets the range request to use serializable member-local reads.
+---	keys_only:boolean|nil, --If true, returns only the keys and not the values.
+---	count_only:boolean|nil, --If true, returns only the count of the keys.
+---	min_mod_revision:number|nil, --The lower bound for returned key mod revisions.
+---	max_mod_revision:number|nil, --The upper bound for returned key mod revisions.
+---	min_create_revision:number|nil, --The lower bound for returned key create revisions
+---	max_create_revision:number|nil, --The upper bound for returned key create revisions
+---}
+---@return {
+---	header:etcd.ResponseHeader, -- The response header
+---	kvs:mvccpb.KeyValue[],      -- The key-value pairs
+---	more:boolean,                -- Indicates whether there are more keys to return
+---	count:number,                -- The number of keys
+--- }|nil
+--- @return string|nil
 function M.get(self, req)
 	local res, err
 	apply_options(req)
@@ -181,6 +268,17 @@ function M.get(self, req)
 	return res, err
 end
 
+---@param req {
+---     key:string,           -- The key to delete (required)
+--- 	prefix:boolean|nil,   -- If true, deletes all keys with the prefix
+---	prev_kv:boolean|nil,  -- If true, returns the previous key-value pair
+---}
+---@return {
+---	header:etcd.ResponseHeader, -- The response header
+---     deleted:boolean,            -- Indicates whether the key was deleted
+---     prev_kvs:mvccpb.KeyValue[], -- If `prev_kv` was set, the previous key-value pairs will be returned.
+---}|nil
+---@return string|nil
 function M.delete(self, req)
 	local res, err
 	apply_options(req)
@@ -194,6 +292,14 @@ function M.delete(self, req)
 	return res, err
 end
 
+--- @param req {
+---     revision:integer,      -- The revision to compact (required)
+---     physical:boolean|nil,  -- If true, forces a physical compaction
+--- }
+--- @return {
+---	header:etcd.ResponseHeader, -- The response header
+--- }|nil
+--- @return string|nil
 function M.compact(self, req)
 	local res, err
 	apply_options(req)
@@ -207,7 +313,17 @@ function M.compact(self, req)
 	return res, err
 end
 
---Lease
+--- @param req {
+---     TTL:integer,    -- The TTL (time-to-live) for the lease (required)
+--- 	ID:integer,     -- The lease ID to grant (optional)
+--- }
+--- @return {
+--- 	header:etcd.ResponseHeader, -- The response header
+---     ID:integer,     -- The lease ID granted
+---     TTL:integer,    -- The TTL (time-to-live) for the lease
+---     error:string,
+--- }|nil
+--- @return string|nil
 function M.grant(self, req)
 	local res, err
 	for i = 1, self.retry do
@@ -225,6 +341,13 @@ function M.grant(self, req)
 	return res, err
 end
 
+--- @param req {
+---     ID:integer,  -- The lease ID to revoke (required)
+--- }
+--- @return {
+--- 	header:etcd.ResponseHeader, -- The response header
+--- }|nil
+--- @return string|nil
 function M.revoke(self, req)
 	local res, err
 	self.lease_list[req.ID] = nil
@@ -238,19 +361,55 @@ function M.revoke(self, req)
 	return res, err
 end
 
+---@param req {
+---	ID:integer,  -- The lease ID to query (required)
+---	keys:boolean, -- If true, queries all keys attached to the lease
+---}
+---@return {
+---	header:etcd.ResponseHeader, -- The response header
+---	ID:integer,  -- The lease ID from the keep alive request
+---	TTL:integer, -- The remaining TTL in seconds for the lease; the lease will expire in under TTL+1 seconds
+---	grantedTTL:integer, -- The initial granted time in seconds upon lease creation/renewal
+---	keys:string[], -- The list of keys attached to this lease
+---}
+---@return string|nil
 function M.ttl(self, req)
 	return self.lease.LeaseTimeToLive(req)
 end
 
+---@return {
+---	leases:{
+---		ID:integer,  -- The lease ID
+---	}[],                  -- The list of leases
+---}
 function M.leases(self)
 	return self.lease.LeaseLeases()
 end
 
+---@param req {
+---	ID:integer,  -- The lease ID to keep alive (required)
+---}
+---@return {
+---	header:etcd.ResponseHeader, -- The response header
+---	ID:integer,  -- The lease ID from the keep alive request
+---	TTL:integer, -- The new time-to-live for the lease
+---}
+---@return string|nil
 function M.keepalive(self, req)
 	return self.lease.LeaseKeepAlive(req)
 end
 
---watcher
+--- @param req {
+---     key:string,                        -- The key to watch (required)
+---     revision:number|nil,               -- The revision version to start watching from (optional)
+---     wait:boolean|nil,                  -- If true, blocks and waits for a key change (optional)
+---     prefix:boolean|nil,                -- If true, watches a prefix of keys (optional)
+---     range_end:string|nil,              -- The range end for prefix-based watch (optional)
+---     filters:table|nil,                 -- The list of filters to apply on the watch (optional)
+---     limit:number|nil,                  -- Limits the number of events returned (optional)
+---     progress_notify:boolean|nil,       -- If true, sends a progress notification for the watch (optional)
+--- }
+--- @return core.grpc.stream|nil, string|nil
 function M.watch(self, req)
 	apply_options(req)
 	local filters = {}
@@ -266,7 +425,7 @@ function M.watch(self, req)
 	if not stream then
 		return nil, err
 	end
-	local ok, err = stream:write({create_request = req})
+	local ok, err = stream:write({ create_request = req })
 	if not ok then
 		stream:close()
 		return nil, err
@@ -278,20 +437,23 @@ function M.watch(self, req)
 	return stream, nil
 end
 
+--- @param prefix string
+--- @param key string
+--- @return boolean, string|nil
 local function wait_for_lock(self, prefix, key)
 	local list, err = self:get {
 		key = prefix,
 		prefix = true
 	}
 	if not list then
-		return nil, err
+		return false, err
 	end
 	local kvs = list.kvs
 	sort(kvs, function(a, b)
 		return a.mod_revision < b.mod_revision
 	end)
 	if kvs[1].key == key then
-		return true
+		return true, nil
 	end
 	local last_key = nil
 	for _, kv in pairs(kvs) do
@@ -305,23 +467,27 @@ local function wait_for_lock(self, prefix, key)
 		NOPUT = true,
 	}
 	if not stream then
-		return nil, err
+		return false, err
 	end
 	while true do
 		local res, err = stream:read()
 		if not res then
 			logger.error("[core.etcd] watch key:", last_key, "err:", err)
 			stream:close()
-			return nil, err
+			return false, err
 		end
 		for _, event in ipairs(res.events) do
 			if event.kv.key == last_key and event.type == "DELETE" then
-				return true
+				return true, nil
 			end
 		end
 	end
 end
 
+---@param lease_id integer
+---@param prefix string
+---@param uuid string
+---@return boolean|nil, string|nil
 function M.lock(self, lease_id, prefix, uuid)
 	local key = prefix .. "/" .. uuid
 	local res, err = self:put {
@@ -330,12 +496,13 @@ function M.lock(self, lease_id, prefix, uuid)
 		lease = lease_id,
 	}
 	if not res then
-		return res, err
+		return false, err
 	end
-	res, err = wait_for_lock(self, prefix, key)
-	return res, err
+	return wait_for_lock(self, prefix, key)
 end
 
+---@param prefix string
+---@param uuid string
 function M.unlock(self, prefix, uuid)
 	return self:delete {
 		key = prefix .. "/" .. uuid

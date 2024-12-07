@@ -108,9 +108,12 @@ end
 
 local alpn_protos = {"h2"}
 
+---@param stream core.http.h2stream
 local function streaming_write_wrapper(stream, method, timeout)
 	local itype = method.input_type
 	local write = stream.write
+	---@param stream core.http.h2stream
+	---@param req table
 	return function(stream, req)
 		local reqdat = pb.encode(itype, req)
 		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
@@ -118,6 +121,7 @@ local function streaming_write_wrapper(stream, method, timeout)
 	end
 end
 
+---@param stream core.http.h2stream
 local function streaming_read_wrapper(stream, method, timeout)
 	local need_header = true
 	local read = stream.read
@@ -146,11 +150,13 @@ local function streaming_read_wrapper(stream, method, timeout)
 	end
 end
 
+---@return core.grpc.stream|nil, string|nil
 local function stream_call(timeout, connect, method, fullname)
 	return function()
+		---@class core.grpc.stream:core.http.h2stream
 		local stream, err = connect(fullname)
 		if not stream then
-			return nil, nil, err
+			return nil, err
 		end
 		stream.write = streaming_write_wrapper(stream, method, timeout)
 		stream.read = streaming_read_wrapper(stream, method, timeout)
@@ -158,6 +164,7 @@ local function stream_call(timeout, connect, method, fullname)
 	end
 end
 
+---@return any|nil, string|nil
 local function general_call(timeout, connect, method, fullname)
 	local itype = method.input_type
 	local otype = method.output_type
@@ -209,7 +216,14 @@ local function general_call(timeout, connect, method, fullname)
 		return resp, nil
 	end
 end
-
+---@param conf {
+---	service:string,		--service name
+---	endpoints:string[],	--grpc server address
+---	proto:table,		--protobuf loaded
+---	tls:boolean,		--use tls
+---	timeout:number,		--timeout
+---}
+---@return core.grpc.client|nil, string|nil
 function M.newclient(conf)
 	local service_name = conf.service
 	local endpoints = {}
@@ -255,6 +269,9 @@ function M.newclient(conf)
 		end
 		return stream, nil
 	end
+	---@class core.grpc.client
+	---@field Watch? fun():core.grpc.stream|nil, string|nil
+	---@field [string] async fun(...):any|nil, string|nil
 	local mt = {
 		__index = function(t, k)
 			local method = methods[k]
@@ -271,7 +288,7 @@ function M.newclient(conf)
 			return fn
 		end,
 	}
-	return setmetatable({}, mt)
+	return setmetatable({}, mt), nil
 end
 
 return M

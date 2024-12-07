@@ -21,13 +21,17 @@ local readctrl = assert(c.readctrl)
 local trace_new = assert(c.trace_new)
 local trace_set = assert(c.trace_set)
 local trace_span = assert(c.trace_span)
+---@type fun(errno:integer):string
+local strerror = c.strerror
 
+core.strerror = strerror
 core.pid = c.getpid()
 core.genid = c.genid
 core.gitsha1 = c.gitsha1()
 core.version = c.version()
 core.tostring = c.tostring
 core.multipack = assert(c.multipack)
+---@type fun(fd:integer):integer
 core.sendsize = assert(c.sendsize)
 core.socket_read_ctrl = function (sid, ctrl)
 	return readctrl(sid, ctrl == "enable")
@@ -42,13 +46,15 @@ local signal_dispatch = {}
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
 local task_status = setmetatable({}, weakmt)
 local task_traceid = setmetatable({}, weakmt)
-local task_running = "NIL"
+local task_running = coroutine.running()
 local cocreate = coroutine.create
 local corunning = coroutine.running
 local coyield = coroutine.yield
 local coresume = coroutine.resume
 local coclose = coroutine.close
 local task_yield = coyield
+
+---@param t thread
 local function task_resume(t, ...)
 	local save = task_running
 	task_status[t] = "RUN"
@@ -80,6 +86,8 @@ end
 
 core.tracespan = trace_span
 core.tracepropagate = trace_new
+
+---@return integer
 function core.tracenew()
 	local traceid = task_traceid[task_running]
 	if traceid then
@@ -88,6 +96,7 @@ function core.tracenew()
 	return trace_new()
 end
 
+---@return integer
 function core.trace(id)
 	task_traceid[task_running] = id
 	return (trace_set(task_running, id))
@@ -99,6 +108,8 @@ function core.error(errmsg)
 end
 
 core.pcall = core_pcall
+
+---@return thread
 function core.running()
 	return task_running
 end
@@ -107,7 +118,9 @@ end
 --so use the weaktable
 local copool = {}
 setmetatable(copool, weakmt)
-
+local NIL = function() end
+---@param f async fun(...)
+---@return thread
 local function task_create(f)
 	local co = tremove(copool)
 	if co then
@@ -118,10 +131,10 @@ local function task_create(f)
 		f(...)
 		while true do
 			local ret
-			f = nil
-			local co = corunning()
-			task_traceid[co] = nil
-			copool[#copool + 1] = co
+			f = NIL
+			local running = corunning()
+			task_traceid[running] = nil
+			copool[#copool + 1] = running
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
 				log_error("[sys.core] task create", ret)
@@ -137,6 +150,8 @@ end
 local task_create_origin = task_create
 local task_resume_origin = task_resume
 
+---@param create function|nil
+---@param term function|nil
 function core.task_hook(create, term)
 	if create then
 		task_create = function(f)
@@ -168,6 +183,7 @@ local timer_user_data = {}
 
 local dispatch_wakeup
 
+---@type fun(status:integer)
 core.exit = function(status)
 	c.dispatch(function() end)
 	wakeup_task_queue = {}
@@ -188,6 +204,7 @@ function dispatch_wakeup()
 	end
 end
 
+---@param func async fun()
 function core.fork(func)
 	local t = task_create(func)
 	task_status[t] = "READY"
@@ -210,6 +227,8 @@ function core.wait2()
 	return tunpack(res, 1, res.n)
 end
 
+---@param t thread
+---@param res any
 function core.wakeup(t, res)
 	local status = task_status[t]
 	assert(status == "WAIT", status)
@@ -218,12 +237,15 @@ function core.wakeup(t, res)
 	wakeup_task_queue[#wakeup_task_queue + 1] = t
 end
 
+---@param t thread
 function core.wakeup2(t, ...)
 	core.wakeup(t, tpack(...))
 end
 
 local timeout = c.timeout
 local timercancel = c.timercancel
+
+---@param ms integer
 function core.sleep(ms)
 	local t = task_running
 	local status = task_status[t]
@@ -233,6 +255,9 @@ function core.sleep(ms)
 	task_yield("SLEEP")
 end
 
+---@param ms integer
+---@param func function
+---@param ud any
 function core.timeout(ms, func, ud)
 	local userid
 	if ud then
@@ -244,7 +269,9 @@ function core.timeout(ms, func, ud)
 	return session
 end
 
-local function nop(s) end
+local function nop(_) end
+
+---@param session integer
 function core.timercancel(session)
 	local f = sleep_session_task[session]
 	if f then
@@ -261,6 +288,9 @@ function core.timercancel(session)
 	end
 end
 
+---@param sig string
+---@param f async fun(sig:string)
+---@return function
 function core.signal(sig, f)
 	local s = assert(signal_map[sig], sig)
 	local err = signal(s)
@@ -270,16 +300,19 @@ function core.signal(sig, f)
 	return old
 end
 
+---@param func async fun()
 function core.start(func)
 	local t = task_create(func)
 	task_resume(t)
 	dispatch_wakeup()
 end
 
+---@return integer, integer
 function core.taskstat()
 	return #copool, #wakeup_task_queue
 end
 
+---@return { [thread]: { traceback: string, status: string } }
 function core.tasks()
 	local tasks = {}
 	for t, status in pairs(task_status) do
@@ -297,14 +330,28 @@ local socket_connecting = {}
 
 local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)$"
 
+---@type fun(ip:string, port:string, backlog:integer):integer|nil,string|nil
 local tcp_listen = assert(c.tcp_listen)
+---@type fun(ip:string, port:string, bind_ip:string, bind_port:string):integer|nil, string|nil
 local tcp_connect = assert(c.tcp_connect)
+---@type fun(ip:string, port:string):integer|nil, string|nil
 local udp_bind = assert(c.udp_bind)
+---@type fun(ip:string, port:string, bind_ip:string, bind_port:string):integer|nil, string|nil
 local udp_connect = assert(c.udp_connect)
+---@type fun(fd:integer):boolean
 local socket_close = assert(c.close)
+---@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil):boolean
 core.tcp_send = assert(c.tcp_send)
+---@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil):boolean
 core.udp_send = assert(c.udp_send)
+---@type fun(fd:integer, data:lightuserdata, size:integer): boolean
 core.tcp_multicast = assert(c.tcp_multicast)
+
+---@param addr string
+---@param dispatch async fun(typ:string, fd:integer,
+---	message:lightuserdata, addr:string)
+---@param backlog integer|nil
+---@return integer|nil, string|nil
 function core.tcp_listen(addr, dispatch, backlog)
 	assert(addr)
 	assert(dispatch)
@@ -315,16 +362,19 @@ function core.tcp_listen(addr, dispatch, backlog)
 	if not backlog then
 		backlog = 256 --this constant come from linux kernel comment
 	end
-	local id = tcp_listen(ip, port, backlog);
-	if id < 0 then
-		local errno = -id
-		log_error("[sys.core] listen", port, "error", errno)
-		return nil, errno
+	local fd, err = tcp_listen(ip, port, backlog);
+	if fd  then
+		socket_dispatch[fd] = dispatch
+		return fd, nil
 	end
-	socket_dispatch[id] = dispatch
-	return id
+	log_error("[sys.core] listen", port, "error", err)
+	return nil, err
 end
 
+---@param addr string
+---@param dispatch async fun(typ:string, fd:integer,
+---	message:lightuserdata, addr:string)
+---@return integer|nil, string|nil
 function core.udp_bind(addr, dispatch)
 	assert(addr)
 	assert(dispatch)
@@ -332,16 +382,20 @@ function core.udp_bind(addr, dispatch)
 	if ip == "" then
 		ip = "0::0"
 	end
-	local id = udp_bind(ip, port);
-	if id < 0 then
-		log_error("[sys.core] udpbind", port, "error",  id)
-		return nil
+	local fd, err = udp_bind(ip, port);
+	if fd then
+		socket_dispatch[fd] = dispatch
+		return fd, nil
 	end
-	socket_dispatch[id] = dispatch
-	return id
-
+	log_error("[sys.core] udpbind", port, "error",  err)
+	return nil, err
 end
 
+---@param addr string
+---@param dispatch async fun(typ:string, fd:integer,
+---	message:lightuserdata, addr:string)
+---@param bind string|nil
+---@return integer|nil, string|nil
 function core.tcp_connect(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
@@ -350,21 +404,26 @@ function core.tcp_connect(addr, dispatch, bind)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = tcp_connect(ip, port, bip, bport)
-	if fd < 0 then
-		return nil
+	local fd, err = tcp_connect(ip, port, bip, bport)
+	if fd then
+		assert(socket_connecting[fd] == nil)
+		socket_connecting[fd] = task_running
+		err = core.wait()
+		socket_connecting[fd] = nil
+		if err then
+			return nil, err
+		end
+		socket_dispatch[fd] = assert(dispatch)
+		return fd, nil
 	end
-	assert(socket_connecting[fd] == nil)
-	socket_connecting[fd] = task_running
-	local ok = core.wait()
-	socket_connecting[fd] = nil
-	if ok ~= true then
-		return nil
-	end
-	socket_dispatch[fd] = assert(dispatch)
-	return fd
+	return nil, err
 end
 
+---@param addr string
+---@param dispatch async fun(typ:string, fd:integer,
+---	message:lightuserdata, addr:string)
+---@param bind string|nil
+---@return integer|nil, string|nil
 function core.udp_connect(addr, dispatch, bind)
 	assert(addr)
 	assert(dispatch)
@@ -373,15 +432,16 @@ function core.udp_connect(addr, dispatch, bind)
 	bind = bind or ":0"
 	local bip, bport = smatch(bind, ip_pattern)
 	assert(bip and bport)
-	local fd = udp_connect(ip, port, bip, bport)
-	if fd >= 0 then
+	local fd, err = udp_connect(ip, port, bip, bport)
+	if fd then
 		socket_dispatch[fd] = dispatch
-		return fd
-	else
-		return nil
+		return fd, nil
 	end
+	return nil, err
 end
 
+---@param fd integer
+---@return boolean
 function core.socket_close(fd)
 	local sc = socket_dispatch[fd]
 	if sc == nil then
@@ -389,7 +449,7 @@ function core.socket_close(fd)
 	end
 	socket_dispatch[fd] = nil
 	assert(socket_connecting[fd] == nil)
-	socket_close(fd)
+	return socket_close(fd)
 end
 
 --the message handler can't be yield
@@ -420,10 +480,12 @@ end,
 	local t = task_create(cb)
 	task_resume(t, "accept", fd, _, portid,addr)
 end,
+---@param fd integer
+---@param errno integer
 [3] = function(fd, _, errno)				--SILLY_SCLOSE = 3
 	local t = socket_connecting[fd]
 	if t then	--connect fail
-		core.wakeup(t, false)
+		task_resume(t, strerror(errno))
 		return
 	end
 	local f = socket_dispatch[fd]
@@ -439,7 +501,7 @@ end,
 		assert(socket_dispatch[fd] == nil)
 		return
 	end
-	task_resume(t, true)
+	task_resume(t, nil)
 end,
 [5] = function(fd, msg)					--SILLY_SDATA = 5
 	local f = socket_dispatch[fd]

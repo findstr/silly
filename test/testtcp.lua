@@ -458,6 +458,7 @@ core.sleep(100)
 local info3 = netstat()
 testaux.asserteq(info1, info3, "check tcp clear")
 
+---@class test.tcp.io
 IO = tls
 testaux.module("tls")
 IO.limit = function(fd, limit) end

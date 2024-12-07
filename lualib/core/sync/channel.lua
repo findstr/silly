@@ -1,23 +1,30 @@
 local core = require "core"
 local assert = assert
-local tremove = table.remove
 local tpack = table.pack
 local tunpack = table.unpack
 
+---@class core.sync.channel
+---@field queue table
+---@field co thread|nil
+---@field popi integer
+---@field pushi integer
 local channel = {}
 
 local mt = {__index = channel}
 
-function channel.channel()
-	local obj = {}
-	obj.queue = {}
-	obj.co = false
-	obj.popi = 1
-	obj.pushi = 1
+---@return core.sync.channel
+function channel:channel()
+	local obj = {
+		queue = {},
+		co = nil,
+		popi = 1,
+		pushi = 1,
+	}
 	setmetatable(obj, mt)
 	return obj
 end
 
+---@param self core.sync.channel
 function channel.push(self, dat)
 	local pushi = self.pushi
 	self.queue[pushi] = dat
@@ -26,7 +33,7 @@ function channel.push(self, dat)
 	assert(pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
 	local co = self.co
 	if co then
-		self.co = false
+		self.co = nil
 		core.wakeup(co)
 	end
 end

@@ -1,10 +1,11 @@
 local core = require "core"
 local channel = require "core.sync.channel"
 local testaux = require "test.testaux"
-local c1 = channel.channel()
+local c1 = channel:channel()
 
 local queue = {}
 
+---@async
 local function test()
 	local n1, n2, n3, n4 = c1:pop2()
 	local dat = table.remove(queue, 1)

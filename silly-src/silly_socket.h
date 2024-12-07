@@ -31,7 +31,7 @@ struct silly_socketstat {
 int silly_socket_init();
 void silly_socket_exit();
 void silly_socket_terminate();
-
+const char *silly_socket_lasterror();
 int silly_socket_listen(const char *ip, const char *port, int backlog);
 int silly_socket_connect(const char *ip, const char *port, const char *bindip,
 			 const char *bindport);

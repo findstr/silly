@@ -1,17 +1,18 @@
-local core = require "core"
 local logger = require "core.logger"
 local dispatch = require "core.socketq"
 local type = type
 local assert = assert
 local tostring = tostring
 local tonumber = tonumber
-local tinsert = table.insert
-local tunpack = table.unpack
-local tconcat = table.concat
 local sub = string.sub
 local upper = string.upper
 local format = string.format
 
+---@class core.db.redis
+---@field sock core.socketq
+---@field connect fun(self:core.db.redis, config:{addr:string, auth:string, db:integer}):core.db.redis
+---@field select fun(self:core.db.redis,)
+---@field [string] fun(self, ...):boolean, string|table|nil
 local redis = {}
 local redis_mt = { __index = redis }
 local header = "+-:*$"
@@ -174,7 +175,6 @@ function redis:pipeline(req, ret)
 	for i = 1, cmd_len do
 		composetable(req[i], out)
 	end
-	local read
 	if not ret then
 		return self.sock:request(out, function(sock)
 			local ok, res

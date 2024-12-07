@@ -25,7 +25,12 @@ local build_body = builder.body
 local build_rst = builder.rst
 local build_setting = builder.setting
 local build_winupdate = builder.winupdate
-
+---@class core.http.h2stream
+---@field id integer
+---@field channel table
+---@field localclose boolean
+---@field sendheader table|nil
+---@field status integer|nil
 local M = {}
 
 local FRAME_DATA<const>		= 0
@@ -518,13 +523,14 @@ function M.httpd(handler)
 	end
 end
 
+---@return core.http.h2stream|nil, string|nil
 local function open_stream(ch)
 	if ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
 		t[#t + 1] = core.running()
 		local reason = core.wait()
 		if reason ~= "ok" then
-			return false, reason
+			return nil, reason
 		end
 	end
 	local id = ch.stream_idx
@@ -555,6 +561,7 @@ local function open_stream(ch)
 	return stream, "ok"
 end
 
+---@return core.http.h2stream|nil, string|nil
 function M.new(scheme, socket)
 	local ch = client_channel[socket]
 	if not ch then
@@ -588,7 +595,7 @@ function M.new(scheme, socket)
 			for i = 1, #wait do
 				wakeup(wait[i], reason)
 			end
-			return ok, reason
+			return nil, reason
 		end
 	end
 	return open_stream(ch)
@@ -693,6 +700,9 @@ function M.respond(s, status, header, close)
 end
 
 local function write_func(close)
+	---@param s core.http.h2stream
+	---@param dat string|nil
+	---@return boolean, string|?
 	return function(s, dat)
 		local ch = s.channel
 		if not ch then
