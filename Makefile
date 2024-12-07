@@ -136,3 +136,8 @@ ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
 	cd $(JEMALLOC_DIR)&&make clean&&rm Makefile
 endif
 
+fmt:
+	clang-format -i silly-src/*.h
+	clang-format -i silly-src/*.c
+	clang-format -i lualib-src/lua*.c
+

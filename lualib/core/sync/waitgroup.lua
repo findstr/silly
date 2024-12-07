@@ -1,8 +1,11 @@
 local core = require "core"
 local logger = require "core.logger"
+---@class core.sync.waitgroup
+---@field count integer
 local M = {}
 local mt = {__index = M}
 
+---@return core.sync.waitgroup
 function M:create()
 	return setmetatable({count = 0}, mt)
 end

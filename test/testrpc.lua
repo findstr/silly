@@ -48,6 +48,7 @@ local server = rpc.listen {
 		return case(msg, cmd, fd)
 	end
 }
+assert(server)
 
 local client
 

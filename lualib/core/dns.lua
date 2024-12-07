@@ -10,7 +10,6 @@ local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
 local format = string.format
-local match = string.match
 local gmatch = string.gmatch
 local setmetatable = setmetatable
 local timenow = time.monotonicsec
@@ -78,6 +77,7 @@ local function QNAME(name, n)
 	n[i] = '\0'
 end
 
+---@param typ core.dns.type
 local function question(name, typ)
 	session = session % 65535 + 1
 	local ID = session
@@ -340,7 +340,10 @@ local function query(name, typ, timeout)
 	end
 end
 
-local function findcache(name, qtype, deep)
+---@param name string
+---@param qtype core.dns.type
+---@return table|nil, string|nil
+local function findcache(name, qtype)
 	local now = timenow()
 	for i = 1, 100 do
 		local rrs = name_cache[name]
@@ -361,7 +364,12 @@ local function findcache(name, qtype, deep)
 	return nil, nil
 end
 
-
+---@async
+---@param name string
+---@param qtype core.dns.type
+---@param timeout integer|nil
+---@param deep integer
+---@return table|nil
 local function resolve(name, qtype, timeout, deep)
 	if deep > 100 then
 		return nil
@@ -380,12 +388,23 @@ local function resolve(name, qtype, timeout, deep)
 	return rr
 end
 
+---@alias core.dns.type `dns.A` | `dns.AAAA` | `dns.SRV`
+---@class core.dns
 local dns = {
+	---@type core.dns.type
 	A = RR_A,
+	---@type core.dns.type
 	AAAA = RR_AAAA,
+	---@type core.dns.type
 	SRV = RR_SRV,
 }
 
+
+---@async
+---@param name string
+---@param qtype core.dns.type
+---@param timeout integer|nil
+---@return string|nil
 function dns.lookup(name, qtype, timeout)
 	if guesstype(name) ~= RR_CNAME then
 		return name
@@ -397,6 +416,11 @@ function dns.lookup(name, qtype, timeout)
 	return rr[1]
 end
 
+---@async
+---@param name string
+---@param qtype core.dns.type
+---@param timeout integer|nil
+---@return table
 function dns.resolve(name, qtype, timeout)
 	if guesstype(name) ~= RR_CNAME then
 		return {name}
@@ -404,10 +428,13 @@ function dns.resolve(name, qtype, timeout)
 	return resolve(name, qtype, timeout, 1)
 end
 
+---@param ip string
 function dns.server(ip)
 	dns_server = ip
 end
 
+---@param name string
+---@return boolean
 function dns.isname(name)
 	return guesstype(name) == RR_CNAME
 end

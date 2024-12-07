@@ -118,7 +118,7 @@ local function checkconnect(self)
 	end
 	if not self.fd then	--disconnected
 		self.fd = -1
-		local fd = core.tcp_connect(self.addr, self.callback)
+		local fd, _ = core.tcp_connect(self.addr, self.callback)
 		if not fd then
 			self.fd = false
 		else

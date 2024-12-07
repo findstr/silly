@@ -7,6 +7,7 @@ local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
 
+---@class core.websocket
 local M = {}
 local NIL = ""
 local guid = [[258EAFA5-E914-47DA-95CA-C5AB0DC85B11]]
@@ -207,6 +208,9 @@ function M.listen(conf)
 	return http.listen(conf)
 end
 
+---@param uri string
+---@param param table|nil
+---@return core.websocket.socket|nil, string|nil
 function M.connect(uri, param)
 	if param then
 		local buf = helper.urlencode(param)
@@ -225,17 +229,19 @@ function M.connect(uri, param)
 	})
 	if not stream then
 		logger.error("websocket.connect", uri, "fail", err)
-		return nil
+		return nil, err
 	end
 	local status, _ = stream:readheader()
 	if not status or status ~= 101 then
 		return nil, "websocket.connect fail"
 	end
+
+	---@class core.websocket.socket
 	local sock = stream:socket()
 	sock.read = wrap_read(sock.read)
 	sock.write = wrap_write(sock.write, 1)
 	sock.close = wrap_close(sock.close)
-	return sock
+	return sock, nil
 end
 
 return M

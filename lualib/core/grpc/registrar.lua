@@ -1,11 +1,17 @@
 local format = string.format
 
+---@class core.grpc.registrar
+---@field input_name table<string, string>
+---@field output_name table<string, string>
+---@field handlers table<string, function>
 local M = {}
 
 local setmetatable = setmetatable
 
 M.__index = M
-function M.new()
+
+---@return core.grpc.registrar
+function M:new()
 	return setmetatable({
 		input_name = {},
 		output_name = {},
@@ -13,6 +19,7 @@ function M.new()
 	}, M)
 end
 
+---@param service table<string, function>
 function M:register(proto, service)
 	local input_name = self.input_name
 	local output_name = self.output_name

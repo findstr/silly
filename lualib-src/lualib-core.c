@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <assert.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -126,6 +127,13 @@ static int lgetpid(lua_State *L)
 {
 	int pid = getpid();
 	lua_pushinteger(L, pid);
+	return 1;
+}
+
+static int lstrerror(lua_State *L)
+{
+	lua_Integer err = luaL_checkinteger(L, 1);
+	lua_pushstring(L, strerror((int)err));
 	return 1;
 }
 
@@ -321,7 +329,7 @@ typedef int(connect_t)(const char *ip, const char *port, const char *bip,
 
 static int socketconnect(lua_State *L, connect_t *connect)
 {
-	int err;
+	int fd;
 	const char *ip;
 	const char *port;
 	const char *bip;
@@ -330,9 +338,15 @@ static int socketconnect(lua_State *L, connect_t *connect)
 	port = luaL_checkstring(L, 2);
 	bip = luaL_checkstring(L, 3);
 	bport = luaL_checkstring(L, 4);
-	err = connect(ip, port, bip, bport);
-	lua_pushinteger(L, err);
-	return 1;
+	fd = connect(ip, port, bip, bport);
+	if (unlikely(fd < 0)) {
+		lua_pushnil(L);
+		lua_pushstring(L, silly_socket_lasterror());
+	} else {
+		lua_pushinteger(L, fd);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int ltcpconnect(lua_State *L)
@@ -344,10 +358,16 @@ static int ltcplisten(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
-	int backlog = luaL_checkinteger(L, 3);
-	int err = silly_socket_listen(ip, port, backlog);
-	lua_pushinteger(L, err);
-	return 1;
+	int backlog = (int)luaL_checkinteger(L, 3);
+	int fd = silly_socket_listen(ip, port, backlog);
+	if (unlikely(fd < 0)) {
+		lua_pushnil(L);
+		lua_pushstring(L, silly_socket_lasterror());
+	} else {
+		lua_pushinteger(L, fd);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int ltcpsend(lua_State *L)
@@ -400,9 +420,15 @@ static int ludpbind(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
-	int err = silly_socket_udpbind(ip, port);
-	lua_pushinteger(L, err);
-	return 1;
+	int fd = silly_socket_udpbind(ip, port);
+	if (unlikely(fd < 0)) {
+		lua_pushnil(L);
+		lua_pushstring(L, silly_socket_lasterror());
+	} else {
+		lua_pushinteger(L, fd);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int ludpsend(lua_State *L)
@@ -530,6 +556,7 @@ int luaopen_core_c(lua_State *L)
 		{ "genid",         lgenid        },
 		{ "tostring",      ltostring     },
 		{ "getpid",        lgetpid       },
+		{ "strerror",      lstrerror     },
 		{ "exit",          lexit         },
 		//trace
 		{ "trace_span",    ltracespan    },

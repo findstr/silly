@@ -1,6 +1,6 @@
 local core = require "core"
 local crypto = require "core.crypto"
-local rpc = require "cluster.rpc"
+local rpc = require "core.cluster.rpc"
 local zproto = require "zproto"
 
 local proto = zproto:parse [[
@@ -11,7 +11,7 @@ pong 0x2 {
 	.txt:string 1
 }
 ]]
-
+assert(proto)
 
 local server = rpc.listen {
 	addr = "127.0.0.1:9999",
