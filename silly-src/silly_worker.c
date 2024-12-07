@@ -26,6 +26,7 @@ struct silly_worker {
 	uint32_t process_id;
 	size_t maxmsg;
 	lua_Hook oldhook;
+	int openhook;
 	int oldmask;
 	int oldcount;
 	struct silly_queue *queue;
@@ -221,18 +222,21 @@ uint32_t silly_worker_processid()
 static void warn_hook(lua_State *L, lua_Debug *ar)
 {
 	(void)ar;
+	if (W->openhook == 0)
+		return;
 	int top = lua_gettop(L);
-	;
 	luaL_traceback(L, L, "maybe in an endless loop.", 1);
 	silly_log_warn("[worker] %s\n", lua_tostring(L, -1));
 	lua_settop(L, top);
 	lua_sethook(L, W->oldhook, W->oldmask, W->oldcount);
+	W->openhook = 0;
 }
 
 void silly_worker_warnendless()
 {
 	if (W->running == NULL)
 		return;
+	W->openhook = 1;
 	W->oldhook = lua_gethook(W->running);
 	W->oldmask = lua_gethookmask(W->running);
 	W->oldcount = lua_gethookcount(W->running);
