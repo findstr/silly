@@ -87,7 +87,7 @@ local server = cluster.new {
 	end,
 }
 
-server.listen(":8989")
+local listen_fd = server.listen(":8989")
 local client_fd
 local client = cluster.new {
 	timeout = 1000,
@@ -182,8 +182,8 @@ end
 
 client_part()
 server_part()
-client.close("127.0.0.1:8989")
-server.close(":8989")
-server.close(accept_addr)
+client.close(client_fd)
+server.close(listen_fd)
+server.close(accept_fd)
 testaux.asserteq(next(client.__fdaddr), nil, "client fdaddr empty")
 testaux.asserteq(next(server.__fdaddr), nil, "client fdaddr empty")

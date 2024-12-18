@@ -521,7 +521,7 @@ end,
 		log_info("[sys.core] SILLY_UDP fd:", fd, "closed")
 	end
 end,
-[7] = function(signum)				--SILLY_ERROR = 7
+	[7] = function(signum) 				--SILLY_SIGNAL = 7
 	local fn = signal_dispatch[signum]
 	if fn then
 		local t = task_create(fn)
