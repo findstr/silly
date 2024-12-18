@@ -570,6 +570,7 @@ static inline int checkconnected(struct silly_socket *ss, struct socket *s)
 	assert(s->fd >= 0);
 	ret = getsockopt(s->fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
 	if (unlikely(ret < 0)) {
+		err = errno;
 		silly_log_error("[socket] checkconnected:%s\n",
 				strerror(errno));
 		goto err;
@@ -583,7 +584,7 @@ static inline int checkconnected(struct silly_socket *ss, struct socket *s)
 	return 0;
 err:
 	//occurs error
-	report_close(ss, s, errno);
+	report_close(ss, s, err);
 	freesocket(ss, s);
 	return -1;
 }
