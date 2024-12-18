@@ -1,11 +1,41 @@
+## v0.6.0 (Dec 18, 2024)
+
+##### Bug fixes:
+
+- Fix `websocket` frame header byte order
+- Fix `http2` scheme header && reset_frame error code
+- Fix `http2` window handle
+- Fix some lint warnings
+
+##### New features:
+
+- Add `grpc` support
+- Add `signal` support
+- Add `cancel` for `timer` and redesign node cache
+- Add `metrics` of prometheus
+- Add distributed tracing via log(expriemental)
+- Add `cluster.lua` to provide a more flexible alternative to `cluster.rpc` and `cluster.msg`
+- Add annotations for LuaLS/lua-language-server to enable type checking and enhance navigation capabilities
+- Support `TLS` `sni` cert
+- Support `HTTP` automatic switching between http and http2
+- Support `ETCDv3` client(kv, lease, watch) partially
+- Handle `websocket` connection close gracefully
+- Remove `redis` response of '\r\n'
+- Refine endless loop warning introduce tracebacks for improved problem diagnosis
+- Use clang-format to unify code style
+- Reimplement startup mechanism and module layout
+- Reimplement logger to support log level(debug, info, warn, error) and more faster
+
+---
 ## v0.5.0 (Dec 1, 2021)
-Bug fixes:
+
+##### Bug fixes:
 
 - fix incorrect session type in netpacket.rpcpack
 - fix incorrect call of lua_gc
-- handle socket close event in send_msg_tcp/send_msg_udp 
+- handle socket close event in send_msg_tcp/send_msg_udp
 
-New features:
+##### New features:
 
 - add cluster module to provide some help for cluster networking
 - use parameters instead of environment variables to override startup variables ([#984308b](https://github.com/findstr/silly/tree/984308b82012e733bcf8c8481875a6a6f888a2ff))
@@ -17,8 +47,11 @@ New features:
 - refine patch(more flexible, more powerful)
 - more monitor data(timer event info, more memory info)
 
+---
+
 ## v0.4.0 (Nov 2, 2020)
-Bug fixes:
+
+##### Bug fixes:
 
 - fix timer session race condition
 - fix tls.read, may read broken data
@@ -30,7 +63,7 @@ Bug fixes:
 - fix saux.rpc when more than one message pops up in a loop
 - fix saux.rpc timer leak
 
-New features:
+##### New features:
 
 - dns support ipv6 server address
 - http support dom parser
@@ -43,8 +76,11 @@ New features:
 - add flow control
 - upgrade to lua5.4 and enable generational gc by default
 
+---
+
 ## v0.3.0 (Oct 1, 2017)
-Bug fixes:
+
+##### Bug fixes:
 
 - netpacket expand queue
 - netstream.check and netstream gc
@@ -52,7 +88,7 @@ Bug fixes:
 - aes cbc mode
 - redis reconnect the dbindex will be reseted
 
-New features:
+##### New features:
 
 - add ssl for http.client
 - add base64
@@ -75,26 +111,32 @@ New features:
 - remove lualib-log and refine daemon log to replace it
 
 
+-----
 ## v0.2.2 (Jan 3, 2017)
-Bug fixes:
+
+##### Bug fixes:
 
 - http protocol
 - [socket] trysend
 
-New features:
+##### New features:
 
 - new profiler
 - modify socket.lua default limit of  max packet size to 65535
 - modify default backlog to 256
 
+---
 ## v0.2.1 (Oct 9, 2016)
-Bug fixes:
+
+##### Bug fixes:
+
 - daemon log buffer mode
 - zproto map key bug sync
 - netpacket memory leak
 - udp message memory leak
 
-New features:
+##### New features:
+
 - update to lua 5.3.3
 - count the memory used of luaVM
 - daemon log path can be customed
@@ -102,6 +144,7 @@ New features:
 - add core.wait2/core.wakeup2 interface
 
 
+----
 ## v0.2.0 (Aug 8, 2016)
 
 Hello World!
