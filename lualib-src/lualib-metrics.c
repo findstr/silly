@@ -8,7 +8,9 @@
 #include <dirent.h>
 #include <string.h>
 #include <sys/time.h>
+#ifndef __WIN32
 #include <sys/resource.h>
+#endif
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -36,6 +38,7 @@ static int lmemallocator(lua_State *L)
 
 static int lcpustat(lua_State *L)
 {
+#ifndef __WIN32
 	struct rusage ru;
 	float stime, utime;
 	getrusage(RUSAGE_SELF, &ru);
@@ -45,11 +48,16 @@ static int lcpustat(lua_State *L)
 	utime += (float)ru.ru_utime.tv_usec / 1000000;
 	lua_pushnumber(L, stime);
 	lua_pushnumber(L, utime);
+#else
+	lua_pushnumber(L, 0);
+	lua_pushnumber(L, 0);
+#endif
 	return 2;
 }
 
 static int lmaxfds(lua_State *L)
 {
+#ifndef __WIN32
 	struct rlimit rlim;
 	int ret = getrlimit(RLIMIT_NOFILE, &rlim);
 	if (ret != 0) {
@@ -59,12 +67,17 @@ static int lmaxfds(lua_State *L)
 	}
 	lua_pushinteger(L, rlim.rlim_cur); //soft
 	lua_pushinteger(L, rlim.rlim_max); //hard
+#else
+	lua_pushinteger(L, 0);
+	lua_pushinteger(L, 0);
+#endif
 	return 2;
 }
 
 static int lopenfds(lua_State *L)
 {
 	int fd_count = 0;
+#ifdef __linux__
 	struct dirent *entry;
 	DIR *fd_dir = opendir("/proc/self/fd");
 	if (fd_dir == NULL) {
@@ -78,6 +91,7 @@ static int lopenfds(lua_State *L)
 		}
 	}
 	closedir(fd_dir);
+#endif
 	lua_pushinteger(L, fd_count);
 	return 1;
 }
@@ -91,9 +105,9 @@ static int lmemstat(lua_State *L)
 
 static int ljestat(lua_State *L)
 {
-	uint64_t epoch = 1;
 	size_t allocated, active, resident, retained;
 #ifndef DISABLE_JEMALLOC
+	uint64_t epoch = 1;
 	size_t sz = sizeof(epoch);
 	je_mallctl("epoch", &epoch, &sz, &epoch, sz);
 	sz = sizeof(size_t);
@@ -196,9 +210,7 @@ int luaopen_core_metrics_c(lua_State *L)
 		{ "openfds",         lopenfds         },
 		//memory
 		{ "memstat",         lmemstat         },
-#ifndef DISABLE_JEMALLOC
 		{ "jestat",          ljestat          },
-#endif
 		//core
 		{ "workerstat",      lworkerstat      },
 		{ "timerstat",       ltimerstat       },

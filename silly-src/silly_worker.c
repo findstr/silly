@@ -14,7 +14,9 @@
 #include "silly_monitor.h"
 #include "silly_worker.h"
 
+#ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
 #define WARNING_THRESHOLD (64)
 
 struct silly_worker {
@@ -162,17 +164,19 @@ void silly_worker_start(const struct silly_config *config)
 	lua_gc(L, LUA_GCGEN, 0, 0);
 #endif
 	//set load path
-	lib_len = max(sizeof("lualib/?.lua"), sizeof("luaclib/?.so"));
+	lib_len =
+		max(sizeof("lualib/?.lua"), sizeof("luaclib/?" LUA_LIB_SUFFIX));
 	dir_len = config->selfname - config->selfpath;
 	char buf[dir_len + lib_len];
 	setlibpath(L, "path", config->lualib_path);
 	setlibpath(L, "cpath", config->lualib_cpath);
 	setlibpath(L, "path", "./lualib/?.lua");
-	setlibpath(L, "cpath", "./luaclib/?.so");
+	setlibpath(L, "cpath", "./luaclib/?" LUA_LIB_SUFFIX);
 	memcpy(buf, config->selfpath, dir_len);
 	memcpy(buf + dir_len, "lualib/?.lua", sizeof("lualib/?.lua"));
 	setlibpath(L, "path", buf);
-	memcpy(buf + dir_len, "luaclib/?.so", sizeof("luaclib/?.so"));
+	memcpy(buf + dir_len, "luaclib/?" LUA_LIB_SUFFIX,
+	       sizeof("luaclib/?" LUA_LIB_SUFFIX));
 	setlibpath(L, "cpath", buf);
 	//exec core.start()
 	lua_pushcfunction(L, ltraceback);

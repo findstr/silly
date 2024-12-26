@@ -5,7 +5,7 @@
 #include <string.h>
 #include <sys/time.h>
 
-#ifdef __macosx__
+#ifdef __MACH__
 #include <mach/clock.h>
 #include <mach/mach.h>
 #endif
@@ -26,6 +26,10 @@
 #define SL_SIZE (1 << SL_BITS)
 #define SR_MASK (SR_SIZE - 1)
 #define SL_MASK (SL_SIZE - 1)
+
+#ifdef PAGE_SIZE
+#undef PAGE_SIZE
+#endif
 
 struct page;
 
@@ -206,7 +210,7 @@ static inline void linklist(struct node **list, struct node *n)
 	n->prev = list;
 }
 
-static inline void unlink(struct node *n)
+static inline void unlinklist(struct node *n)
 {
 	*n->prev = n->next;
 	if (n->next != NULL)
@@ -289,7 +293,7 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 			       n->version);
 		return 0;
 	}
-	unlink(n);
+	unlinklist(n);
 	*ud = n->userdata;
 	pool_freenode(&T->pool, n);
 	unlock(T);
@@ -313,7 +317,7 @@ static void timeout(struct silly_timer *t, struct node *n)
 static uint64_t ticktime()
 {
 	uint64_t ms;
-#ifdef __macosx__
+#ifdef __MACH__
 	clock_serv_t cclock;
 	mach_timespec_t mts;
 	host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &cclock);
@@ -335,8 +339,8 @@ static uint64_t clocktime()
 	uint64_t ms;
 	struct timeval t;
 	gettimeofday(&t, NULL);
-	ms = t.tv_sec * 1000 / TIMER_RESOLUTION;
-	ms += t.tv_usec / 1000 / TIMER_RESOLUTION;
+	ms = (uint64_t)t.tv_sec * 1000 / TIMER_RESOLUTION;
+	ms += (uint64_t)t.tv_usec / 1000 / TIMER_RESOLUTION;
 	return ms;
 }
 

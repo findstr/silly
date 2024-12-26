@@ -1,10 +1,14 @@
 local core = require "core"
+local env = require "core.env"
+local metrics = require "core.metrics.c"
 local time = require "core.time"
 local testaux = require "test.testaux"
 
 local context = {}
 local total = 30
 local WAIT
+local CHECK_DELTA = env.get("test.timer.checkdelta")
+CHECK_DELTA = CHECK_DELTA and tonumber(CHECK_DELTA) or 100
 
 local function gen_closure(n)
 	local now = time.now()
@@ -13,7 +17,7 @@ local function gen_closure(n)
 		local delta = time.now() - now
 		delta = math.abs(delta - 100 - n)
 		--precise is 50ms
-		testaux.assertle(delta, 100, "timer check delta")
+		testaux.assertle(delta, CHECK_DELTA, "timer check delta")
 		total = total - 1
 		if total == 0 then
 			core.wakeup(WAIT)

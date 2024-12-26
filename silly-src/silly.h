@@ -5,7 +5,6 @@
 #include <limits.h>
 #include "silly_conf.h"
 #include "silly_malloc.h"
-#include "silly_socket.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 256

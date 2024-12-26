@@ -44,7 +44,7 @@ if not crypto.digestsign then
 end
 http.listen {
 	tls = true,
-	port = ":8082",
+	port = "127.0.0.1:8082",
 	alpnprotos = {
 		"h2",
 	},
@@ -95,7 +95,7 @@ local wg = waitgroup:create()
 for i = 1, 2000 do
 	wg:fork(function()
 	local key = crypto.randomkey(1028)
-		local ack, err = POST("https://localhost:8082/test", {
+		local ack, err = POST("https://127.0.0.1:8082/test", {
 		['hello'] = 'world',
 		['foo'] = key,
 	}, data)

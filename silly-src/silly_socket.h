@@ -2,7 +2,7 @@
 #define _SILLY_SOCKET_H
 
 #include <stdint.h>
-#include <arpa/inet.h>
+#include "net.h"
 //sid == socket number, it will be remap in silly_socket, not a real socket fd
 
 #define SOCKET_NAMELEN (INET6_ADDRSTRLEN + 8 + 1) //[ipv6]:port

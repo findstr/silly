@@ -2,6 +2,7 @@ local dns = require "core.dns"
 local testaux = require "test.testaux"
 
 print("testA")
+dns.server("223.5.5.5:53")
 local ip = dns.resolve("test.silly.gotocoding.com", dns.A)
 table.sort(ip, function(a, b)
 	return a < b

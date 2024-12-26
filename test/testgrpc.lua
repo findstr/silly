@@ -57,7 +57,7 @@ registrar:register(proto, {
 case = case_one
 
 local server = grpc.listen {
-	addr = ":8990",
+	addr = "127.0.0.1:8990",
 	registrar = registrar,
 }
 

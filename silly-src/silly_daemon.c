@@ -4,11 +4,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/file.h>
 
 #include "silly.h"
 #include "silly_daemon.h"
 #include "silly_log.h"
+
+#ifndef __WIN32
 
 static int pidfile;
 extern int daemon(int, int);
@@ -91,3 +94,20 @@ void silly_daemon_stop(const struct silly_config *conf)
 	pidfile_delete(conf);
 	return;
 }
+
+#else
+
+void silly_daemon_start(const struct silly_config *conf)
+{
+	if (conf->daemon) {
+		silly_log_error("[daemon] platform unsupport daemon\n");
+		exit(0);
+	}
+}
+
+void silly_daemon_stop(const struct silly_config *conf)
+{
+	(void)conf;
+}
+
+#endif

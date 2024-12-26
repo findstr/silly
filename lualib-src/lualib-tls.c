@@ -12,6 +12,8 @@
 #include <openssl/x509v3.h>
 
 #include "silly.h"
+#include "silly_malloc.h"
+#include "silly_socket.h"
 
 #define ssl_malloc silly_malloc
 #define ssl_free silly_free

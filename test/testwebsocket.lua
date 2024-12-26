@@ -11,13 +11,13 @@ local handler = function(sock)
 end
 
 websocket.listen {
-	port = ":10003",
+	port = "127.0.0.1:10003",
 	handler = handler,
 }
 
 websocket.listen {
 	tls = true,
-	port = ":10004",
+	port = "127.0.0.1:10004",
 	certs = {
 		{
 			cert = "test/cert.pem",

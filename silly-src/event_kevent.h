@@ -1,5 +1,5 @@
-#ifndef _SOCKET_KEVENT_H
-#define _SOCKET_KEVENT_H
+#ifndef _EVENT_KEVENT_H
+#define _EVENT_KEVENT_H
 
 #include <sys/event.h>
 
@@ -12,8 +12,8 @@
 #define SP_UD(e) (e->udata)
 
 #define SP_INVALID (-1)
-typedef int sp_t;
-typedef struct kevent sp_event_t;
+typedef int fd_t;
+typedef struct kevent event_t;
 
 static inline int sp_create(int nr)
 {
@@ -21,19 +21,19 @@ static inline int sp_create(int nr)
 	return kqueue();
 }
 
-static inline void sp_free(sp_t fd)
+static inline void sp_free(fd_t fd)
 {
 	close(fd);
 }
 
-static inline int sp_wait(sp_t sp, sp_event_t *event_buff, int cnt)
+static inline int sp_wait(fd_t sp, event_t *event_buff, int cnt)
 {
 	int ret;
 	ret = kevent(sp, NULL, 0, event_buff, cnt, NULL);
 	return ret;
 }
 
-static inline int sp_del(sp_t sp, int fd)
+static inline int sp_del(fd_t sp, int fd)
 {
 	struct kevent event[1];
 	EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
@@ -44,7 +44,7 @@ static inline int sp_del(sp_t sp, int fd)
 	return 0;
 }
 
-static inline int sp_ctrl(sp_t sp, int fd, void *ud, int flag)
+static inline int sp_ctrl(fd_t sp, fd_t fd, void *ud, int flag)
 {
 #define bit(n, flag) (((n) & flag) ? EV_ENABLE : EV_DISABLE)
 	struct kevent events[2];
@@ -54,7 +54,7 @@ static inline int sp_ctrl(sp_t sp, int fd, void *ud, int flag)
 #undef bit
 }
 
-static inline int sp_add(sp_t sp, int fd, void *ud)
+static inline int sp_add(fd_t sp, fd_t fd, void *ud)
 {
 	int ret;
 	struct kevent event[1];

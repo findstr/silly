@@ -1,35 +1,37 @@
-.PNONY:all
+.PNONY: all clean cleanall testall fmt
+
 INCLUDE :=
 #---------
 
 TARGET ?= silly
 TLS ?= ON
+TEST ?= OFF
+MALLOC ?= jemalloc
+SRC_PATH = silly-src
+LIB_PATH = lualib-src
 
 #-----------platform
 
 include Platform.mk
 
-linux macosx: all
-
+all:
 #-----------library
 
-#lua
-
+#####lua
 LUA_DIR=deps/lua
 LUA_INC=$(LUA_DIR)
 LUA_STATICLIB=$(LUA_DIR)/liblua.a
 
 $(LUA_STATICLIB):
-	make -C $(LUA_DIR) $(PLAT) MYCFLAGS=-g
+	make -C $(LUA_DIR) $(LUA_PLAT) MYCFLAGS=-g
 
-#malloc lib select
-MALLOC_NAME=jemalloc
-ifeq ($(MALLOC_NAME), jemalloc)
+#####malloc lib select
+ifeq ($(MALLOC), jemalloc)
 JEMALLOC_DIR=deps/jemalloc
 JEMALLOC_INC=$(JEMALLOC_DIR)/include
-JEMALLOC_STATICLIB=$(JEMALLOC_DIR)/lib/libjemalloc.a
+MALLOC_LIB:=$(JEMALLOC_DIR)/lib/$(LIBPREFIX)jemalloc.$(A)
 
-$(JEMALLOC_STATICLIB):$(JEMALLOC_DIR)/Makefile
+$(MALLOC_LIB):$(JEMALLOC_DIR)/Makefile
 	make -C $(JEMALLOC_DIR)
 
 $(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
@@ -37,13 +39,11 @@ $(JEMALLOC_DIR)/Makefile:$(JEMALLOC_DIR)/autogen.sh
 		./autogen.sh --with-jemalloc-prefix=je_
 $(JEMALLOC_DIR)/autogen.sh:
 	git submodule update --init
-jemalloc:$(JEMALLOC_STATICLIB)
 INCLUDE += -I $(JEMALLOC_INC)
-MALLOC_STATICLIB := $(JEMALLOC_STATICLIB)
-all:jemalloc
+all:$(MALLOC_LIB)
 else
-CCFLAG += -DDISABLE_JEMALLOC
-MALLOC_STATICLIB :=
+CFLAGS += -DDISABLE_JEMALLOC
+MALLOC_LIB :=
 endif
 
 #tls disable
@@ -54,8 +54,6 @@ endif
 
 #-----------project
 LUACLIB_PATH ?= luaclib
-SRC_PATH = silly-src
-LIB_PATH = lualib-src
 INCLUDE += -I $(LUA_INC) -I $(SRC_PATH)
 SRC_FILE = \
       main.c \
@@ -70,6 +68,8 @@ SRC_FILE = \
       silly_log.c \
       silly_trace.c \
       silly_monitor.c \
+      pipe.c \
+      event.c \
 
 SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
@@ -89,28 +89,28 @@ LIB_SRC = lualib-core.c \
 all: \
 	fmt \
 	$(TARGET) \
-	$(LUACLIB_PATH)/core.so \
-	$(LUACLIB_PATH)/zproto.so \
-	$(LUACLIB_PATH)/http2.so \
-	$(LUACLIB_PATH)/pb.so \
-	$(LUACLIB_PATH)/test.so \
+	$(LUACLIB_PATH)/core.$(SO) \
+	$(LUACLIB_PATH)/zproto.$(SO) \
+	$(LUACLIB_PATH)/http2.$(SO) \
+	$(LUACLIB_PATH)/pb.$(SO) \
+	$(LUACLIB_PATH)/test.$(SO) \
 
-$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_STATICLIB)
-	$(LD) -o $@ $^ $(LDFLAG)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB)
+	$(LD) -o $@ $^ $(LDFLAGS)
 
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
-$(LUACLIB_PATH)/core.so: $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED) $(TLSFLAG)
-$(LUACLIB_PATH)/zproto.so: $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/http2.so: $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/pb.so: $(LIB_PATH)/pb.c | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
-	$(CC) $(CCFLAG) $(INCLUDE) -o $@ $^ $(SHARED)
+$(LUACLIB_PATH)/core.$(SO): $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED) $(TLSFLAG)
+$(LUACLIB_PATH)/zproto.$(SO): $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
+$(LUACLIB_PATH)/http2.$(SO): $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
+$(LUACLIB_PATH)/pb.$(SO): $(LIB_PATH)/pb.c | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)
+$(LUACLIB_PATH)/test.$(SO): $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 
 .depend:
 	@$(CC) $(INCLUDE) -MM $(SRC) 2>/dev/null |\
@@ -119,26 +119,26 @@ $(LUACLIB_PATH)/test.so: $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 -include .depend
 
 %.o:%.c
-	$(CC) $(CCFLAG) $(INCLUDE) -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCLUDE) -c -o $@ $<
 
-test: CCFLAG += -fsanitize=address -fno-omit-frame-pointer -DSILLY_TEST
-test: LDFLAG += -fsanitize=address -fno-omit-frame-pointer
-test: $(PLATS)
+testall:
+	make TEST=ON all
 	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
 	-rm .depend
+	-rm $(SRC_PATH)/*.lib
 
 cleanall: clean
 	make -C $(LUA_DIR) clean
 ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
-	cd $(JEMALLOC_DIR)&&make clean&&rm Makefile
+	make -C $(JEMALLOC_DIR) clean rm $(JEMALLOC_DIR)/Makefile
 endif
 
 fmt:
-	clang-format -i silly-src/*.h
-	clang-format -i silly-src/*.c
-	clang-format -i lualib-src/lua*.c
+	-clang-format -i silly-src/*.h
+	-clang-format -i silly-src/*.c
+	-clang-format -i lualib-src/lua*.c
 

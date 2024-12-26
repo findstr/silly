@@ -22,7 +22,9 @@ static void signal_handler(int sig)
 
 int silly_signal_init()
 {
+#ifndef __WIN32
 	signal(SIGPIPE, SIG_IGN);
+#endif
 	return 0;
 }
 

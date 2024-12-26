@@ -87,7 +87,7 @@ local server = cluster.new {
 	end,
 }
 
-local listen_fd = server.listen(":8989")
+local listen_fd = server.listen("127.0.0.1:8989")
 local client_fd
 local client = cluster.new {
 	timeout = 1000,

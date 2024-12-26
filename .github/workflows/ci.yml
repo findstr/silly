@@ -2,47 +2,60 @@ name: CI
 
 on: [push, pull_request]
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  build-windows:
+    runs-on: windows-latest
     steps:
-    - name: Setup Redis
-      # You may pin to the exact commit or the version.
-      # uses: zhulik/redis-action@765216a54a1114f109ce90a1de4775080be16ea5
-      uses: zhulik/redis-action@1.1.0
+    - uses: msys2/setup-msys2@v2
       with:
-        # Version of Redis to use
-        redis version: latest # optional, default is latest
-        # Number of Redis databases
-        number of databases: 16 # optional, default is 16
-    - name: Start MySQL
-      # You may pin to the exact commit or the version.
-      # uses: samin/mysql-action@4dd1210f1d6b9c2468adec44066ef4a97b8f07f3
-      uses: samin/mysql-action@v1.3
-      with:
-        # The port of host
-        host port: 3306 # optional, default is 3306
-        # The port of container
-        container port: 3306 # optional, default is 3306
-        # --character-set-server - The character set of MySQL server
-        character set server: utf8mb4 # optional, default is utf8mb4
-        # --collation-server - The character collation of MySQL server
-        collation server: utf8mb4_general_ci # optional, default is utf8mb4_general_ci
-        # Version of MySQL to use
-        mysql version: 5.7 # optional, default is latest
-        # MYSQL_ROOT_PASSWORD - root superuser password
-        mysql root password: root # optional, default is
-        # MYSQL_DATABASE - name for the default database that is created
-        mysql database: root # optional, default is
-        # MYSQL_USER - create the specified user with superuser power for created database
-        mysql user: root # optional, default is
-        # MYSQL_PASSWORD - specified superuser password which user is power for created database
-        mysql password: root # optional, default is
-    - uses: actions/checkout@v2
-    - name: enable TLS
+        update: true
+        install: >-
+          autotools
+          make
+          git
+          mingw-w64-x86_64-openssl
+          mingw-w64-x86_64-gcc
+    - uses: actions/checkout@v4
+    - shell: msys2 {0}
       run: |
-        sudo apt-get install openssl
-        sudo apt-get install libssl-dev
+        make TEST=ON
+        ./silly test/test.lua --test.timer.checkdelta=500
+  build-macosx:
+    runs-on: macos-latest
+    steps:
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install openssl autoconf
+        brew link openssl --force
+        pkg-config --cflags openssl
+        pkg-config --libs openssl
+    - uses: actions/checkout@v4
     - name: make
-      run: make test
+      run: |
+        make TEST=ON
+        ./silly test/test.lua --test.timer.checkdelta=500
+  build-linux:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev autoconf
+    - uses: actions/checkout@v4
+    - name: make
+      run: |
+        make TEST=ON
+        ./silly test/test.lua

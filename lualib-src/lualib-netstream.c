@@ -10,7 +10,9 @@
 #include "silly_socket.h"
 #include "silly_malloc.h"
 
+#ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
 
 #define POOL (lua_upvalueindex(1))
 #define NB (1)

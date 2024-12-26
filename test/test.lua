@@ -1,4 +1,6 @@
 local core = require "core"
+local logger = require "core.logger"
+local metrics = require "core.metrics.c"
 local env = require "core.env"
 local testaux = require "test.testaux"
 
@@ -23,10 +25,14 @@ local modules = {
 	"testhpack",
 	"testwebsocket",
 	"testpatch",
-	"testredis",
-	"testmysql",
-	"testexit",
 }
+if metrics.pollapi() == "epoll" then
+	modules[#modules + 1] = "testredis"
+	modules[#modules + 1] = "testmysql"
+end
+modules[#modules + 1] = "testexit"
+
+logger.info("test start, pollapi:", metrics.pollapi())
 
 local M = ""
 local gprint = print

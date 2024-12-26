@@ -164,7 +164,6 @@ int silly_run(const struct silly_config *config)
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
 	silly_worker_exit();
-	silly_timer_exit();
 	silly_socket_exit();
 	silly_log_info("%s has already exit...\n", config->selfname);
 	return R.exitstatus;

@@ -180,5 +180,6 @@ int main(int argc, char *argv[])
 	silly_log_info("%s exit, leak memory size:%zu\n", argv[0],
 		       silly_memused());
 	silly_log_flush();
+	silly_timer_exit();
 	return status;
 }

@@ -290,8 +290,13 @@ end
 
 ---@param sig string
 ---@param f async fun(sig:string)
----@return function
+---@return function?
 function core.signal(sig, f)
+	local s = signal_map[sig]
+	if not s then
+		log_error("[sys.core] signal", sig, "not support")
+		return nil
+	end
 	local s = assert(signal_map[sig], sig)
 	local err = signal(s)
 	assert(not err, err)

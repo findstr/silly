@@ -39,4 +39,10 @@
 #define TRACE_SOCKET_ID (2)
 #define TRACE_MONITOR_ID (3)
 
+#ifdef __WIN32
+#define LUA_LIB_SUFFIX ".dll"
+#else
+#define LUA_LIB_SUFFIX ".so"
+#endif
+
 #endif

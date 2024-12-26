@@ -10,7 +10,7 @@
 #include <jemalloc/jemalloc.h>
 #elif defined(__linux__)
 #include <malloc.h>
-#elif defined(__macosx__)
+#elif defined(__MACH__)
 #include <malloc/malloc.h>
 #endif
 
@@ -36,7 +36,7 @@ static inline size_t xalloc_usable_size(void *ptr)
 	return je_malloc_usable_size(ptr);
 #elif defined(__linux__)
 	return malloc_usable_size(ptr);
-#elif defined(__macosx__)
+#elif defined(__MACH__)
 	return malloc_size(ptr);
 #else
 	return 0;

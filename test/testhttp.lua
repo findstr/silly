@@ -1,3 +1,4 @@
+local dns = require "core.dns"
 local json = require "core.json"
 local http = require "core.http"
 local testaux = require "test.testaux"
@@ -59,13 +60,13 @@ local handler = function(stream)
 	end
 end
 local fd1 = http.listen {
-	port = ":8080",
+	port = "127.0.0.1:8080",
 	handler = handler,
 }
 assert(fd1, "listen 8080 fail")
 local fd2 = http.listen {
 	tls = true,
-	port = ":8081",
+	port = "127.0.0.1:8081",
 	certs = {
 		{
 			cert = "./test/cert.pem",
@@ -75,15 +76,16 @@ local fd2 = http.listen {
 	handler = handler,
 }
 assert(fd2, "listen 8081 fail")
-local ack, err = http.POST("http://localhost:8080/upload",
+local ack, err = http.POST("http://127.0.0.1:8080/upload",
 		{["Content-Type"] = "application/x-www-form-urlencoded"},
 		"Hello=findstr")
 if not ack then
 	print("ERROR", err)
 	return
 end
+dns.server("223.5.5.5:53")
 print(ack.status, json.encode(ack.header), ack.body)
-local res = http.GET("https://localhost:8081/download")
+local res = http.GET("https://127.0.0.1:8081/download")
 print(json.encode(res))
 testaux.asserteq(res.body, "findstr", "http GET data validate")
 testaux.asserteq(res.status, 200, "http GET status validate")

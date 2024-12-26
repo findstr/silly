@@ -5,10 +5,15 @@
 #include <strings.h>
 #include <lua.h>
 #include <lauxlib.h>
+
 #include "md5.h"
 #include "aes.h"
 #include "sha256.h"
 #include "lsha1.h"
+
+#ifdef __WIN32
+#define random() rand()
+#endif
 
 char num_to_char[] = "0123456789abcdef";
 

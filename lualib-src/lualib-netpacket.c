@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <arpa/inet.h>
 #include <lua.h>
 #include <lauxlib.h>
 
@@ -16,7 +15,9 @@
 #define HASH_SIZE 2048
 #define HASH(a) (a % HASH_SIZE)
 
+#ifndef min
 #define min(a, b) ((a) > (b) ? (b) : (a))
+#endif
 
 typedef uint32_t cmd_t;
 typedef uint32_t session_t;

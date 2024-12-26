@@ -1,3 +1,9 @@
+## Unreleased
+
+##### Bug fixes:
+##### New features:
+- Add `mingw` support
+
 ## v0.6.0 (Dec 18, 2024)
 
 ##### Bug fixes:
