@@ -67,6 +67,9 @@ static void parse_args(struct silly_config *config, int argc, char *argv[])
 		{ "warn",  SILLY_LOG_WARN  },
 		{ "error", SILLY_LOG_ERROR },
 	};
+	if (argc == 2 && argv[1] != NULL && argv[1][0] == '-') {
+		optind = 1;
+	}
 	for (;;) {
 		c = getopt_long(argc, argv, "hvdp:l:f:L:C:S:W:T:", long_options,
 				NULL);
@@ -165,21 +168,20 @@ int main(int argc, char *argv[])
 	config.argv = argv;
 	config.selfpath = argv[0];
 	config.selfname = selfname(argv[0]);
-	if (argc < 2) {
-		print_help(config.selfname);
-		return -1;
+	config.bootstrap[0] = '\0';
+	if (argc > 1) {
+		strncpy(config.bootstrap, argv[1], ARRAY_SIZE(config.bootstrap) - 1);
+		parse_args(&config, argc, argv);
 	}
-	strncpy(config.bootstrap, argv[1], ARRAY_SIZE(config.bootstrap) - 1);
-	parse_args(&config, argc, argv);
 	silly_trace_init();
 	silly_daemon_start(&config);
 	silly_log_init(&config);
 	silly_timer_init();
 	status = silly_run(&config);
 	silly_daemon_stop(&config);
+	silly_timer_exit();
 	silly_log_info("%s exit, leak memory size:%zu\n", argv[0],
 		       silly_memused());
 	silly_log_flush();
-	silly_timer_exit();
 	return status;
 }

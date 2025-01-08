@@ -25,6 +25,8 @@
 #define totexpire(msg) ((struct silly_message_texpire *)(msg))
 #define tosocket(msg) ((struct silly_message_socket *)(msg))
 #define tosignal(msg) ((struct silly_message_signal *)(msg))
+#define tostdin(msg) ((struct silly_message_stdin *)(msg))
+
 #define COMMONFIELD                 \
 	struct silly_message *next; \
 	enum silly_message_type type;
@@ -53,6 +55,7 @@ enum silly_message_type {
 	SILLY_SDATA = 5,      //data packet(raw) from client
 	SILLY_SUDP = 6,       //data packet(raw) from client(udp)
 	SILLY_SIGNAL = 7,     //signal
+	SILLY_STDIN = 8,      //stdin
 };
 
 struct silly_message {
@@ -78,6 +81,12 @@ struct silly_message_socket { //socket accept
 struct silly_message_signal { //signal
 	COMMONFIELD
 	int signum;
+};
+
+struct silly_message_stdin { //stdin
+	COMMONFIELD
+	int size;
+	uint8_t data[1];
 };
 
 static inline void silly_message_free(struct silly_message *msg)

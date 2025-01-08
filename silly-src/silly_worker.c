@@ -37,6 +37,9 @@ struct silly_worker {
 
 struct silly_worker *W;
 
+
+
+
 void silly_worker_push(struct silly_message *msg)
 {
 	size_t sz;
@@ -47,6 +50,16 @@ void silly_worker_push(struct silly_message *msg)
 			       "message queue length:%zu\n",
 			       sz);
 	}
+}
+
+void silly_worker_stdin(const char *line, int size)
+{
+	struct silly_message_stdin *msg;
+	msg = (struct silly_message_stdin *)silly_malloc(sizeof(*msg) + size - 1);
+	msg->type = SILLY_STDIN;
+	msg->size = size;
+	memcpy(msg->data, line, size);
+	silly_worker_push(tocommon(msg));
 }
 
 void silly_worker_dispatch()
@@ -136,6 +149,18 @@ static int ltraceback(lua_State *L)
 	return 1;
 }
 
+static void require_core_stdin(lua_State *L)
+{
+	lua_pushcfunction(L, ltraceback);
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "core.stdin");
+	if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
+		silly_log_error("[worker] require core.stdin fail,%s\n",
+				lua_tostring(L, -1));
+		exit(-1);
+	}
+}
+
 static void fetch_core_start(lua_State *L)
 {
 	lua_getglobal(L, "require");
@@ -148,6 +173,57 @@ static void fetch_core_start(lua_State *L)
 	lua_getfield(L, -1, "start");
 	lua_remove(L, -2);
 }
+
+static const char *REPL =
+"local core = require 'core'\n"
+"local assert = assert\n"
+"local function execute_line(code, buffer)\n"
+"	if buffer ~= '' then\n"
+"		code = buffer .. '\\n' .. code\n"
+"	end\n"
+"	local chunk, error = load(code)\n"
+"	if chunk then\n"
+"		local success, result = pcall(chunk)\n"
+"		if success then\n"
+"			if result ~= nil then\n"
+"				print(result)\n"
+"			end\n"
+"			return true, ''\n"
+"		else\n"
+"			print('Error: ' .. result)\n"
+"			return true, ''\n"
+"		end\n"
+"	else\n"
+"		assert(error)\n"
+"		if error:match('<eof>') then\n"
+"			return false, code\n"
+"		else\n"
+"			print('Syntax error: ' .. error)\n"
+"			return true, ''\n"
+"		end\n"
+"	end\n"
+"end\n"
+"print(string.format('Welcome to Silly %s, built on %s',\n"
+"	core.version, _VERSION))\n"
+"local buffer = ''\n"
+"local prompt = function()\n"
+"	if buffer == '' then\n"
+"		return '> '\n"
+"	else\n"
+"		return '>> '\n"
+"	end\n"
+"end\n"
+"io.write(prompt())\n"
+"for line in io.stdin:lines() do\n"
+"	line = line:match('^%s*(.-)%s*$')\n"
+"	if line ~= '' then\n"
+"		local complete, new_buffer = execute_line(line, buffer)\n"
+"		buffer = new_buffer\n"
+"	end\n"
+"	io.write(prompt())\n"
+"	io.flush()\n"
+"end\n"
+"core.exit(0)";
 
 void silly_worker_start(const struct silly_config *config)
 {
@@ -178,15 +254,20 @@ void silly_worker_start(const struct silly_config *config)
 	memcpy(buf + dir_len, "luaclib/?" LUA_LIB_SUFFIX,
 	       sizeof("luaclib/?" LUA_LIB_SUFFIX));
 	setlibpath(L, "cpath", buf);
+	require_core_stdin(L);
 	//exec core.start()
 	lua_pushcfunction(L, ltraceback);
 	fetch_core_start(L);
-	err = luaL_loadfile(L, config->bootstrap);
-	if (unlikely(err)) {
-		silly_log_error("[worker] load %s %s\n", config->bootstrap,
+	if (config->bootstrap[0] != '\0') {
+		err = luaL_loadfile(L, config->bootstrap);
+		if (unlikely(err)) {
+			silly_log_error("[worker] load %s %s\n", config->bootstrap,
 				lua_tostring(L, -1));
-		lua_close(L);
-		exit(-1);
+			lua_close(L);
+			exit(-1);
+		}
+	} else {
+		luaL_loadstring(L, REPL);
 	}
 	if (unlikely(lua_pcall(L, 1, 0, 1))) {
 		silly_log_error("[worker] call %s %s\n", config->bootstrap,

@@ -14,6 +14,7 @@ local tunpack = table.unpack
 local traceback = debug.traceback
 local weakmt = {__mode="kv"}
 
+local function nop(_) end
 --misc
 local log_info = assert(logger.info)
 local log_error = assert(logger.error)
@@ -41,6 +42,9 @@ end
 local signal = c.signal
 local signal_map = c.signalmap()
 local signal_dispatch = {}
+
+--stdin
+local stdin_dispatch = nop
 
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
@@ -269,8 +273,6 @@ function core.timeout(ms, func, ud)
 	return session
 end
 
-local function nop(_) end
-
 ---@param session integer
 function core.timercancel(session)
 	local f = sleep_session_task[session]
@@ -327,6 +329,11 @@ function core.tasks()
 		}
 	end
 	return tasks
+end
+
+---@param dispatch async fun(data:string)
+function core.stdin(dispatch)
+	stdin_dispatch = dispatch
 end
 
 --socket
@@ -526,7 +533,7 @@ end,
 		log_info("[sys.core] SILLY_UDP fd:", fd, "closed")
 	end
 end,
-	[7] = function(signum) 				--SILLY_SIGNAL = 7
+[7] = function(signum) 				--SILLY_SIGNAL = 7
 	local fn = signal_dispatch[signum]
 	if fn then
 		local t = task_create(fn)
@@ -535,6 +542,9 @@ end,
 	end
 	log_info("[sys.core] signal", signum, "received")
 	core.exit(0)
+end,
+[8] = function(data)				--SILLY_STDIN = 8
+	stdin_dispatch(data)
 end,
 }
 

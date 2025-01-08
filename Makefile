@@ -134,7 +134,7 @@ clean:
 cleanall: clean
 	make -C $(LUA_DIR) clean
 ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
-	make -C $(JEMALLOC_DIR) clean rm $(JEMALLOC_DIR)/Makefile
+	make -C $(JEMALLOC_DIR) clean && rm $(JEMALLOC_DIR)/Makefile
 endif
 
 fmt:

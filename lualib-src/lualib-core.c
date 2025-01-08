@@ -80,6 +80,14 @@ static void dispatch(lua_State *L, struct silly_message *sm)
 		lua_pushinteger(L, tosignal(sm)->signum);
 		args += 1;
 		break;
+	case SILLY_STDIN:
+		if (tostdin(sm)->size > 0) {
+			lua_pushlstring(L, (const char *)tostdin(sm)->data, tostdin(sm)->size);
+		} else {
+			lua_pushnil(L);
+		}
+		args += 1;
+		break;
 	default:
 		silly_log_error(
 			"[silly.core] callback unknow message type:%d\n",
