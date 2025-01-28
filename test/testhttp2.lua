@@ -55,6 +55,8 @@ http.listen {
 		}
 	},
 	handler = function(stream)
+		testaux.asserteq(stream.version, "HTTP/2", "http2.server version")
+		testaux.asserteq(stream.query.foo, "bar", "http2.server query")
 		core.sleep(math.random(1, 300))
 		local status, header = stream:readheader()
 		testaux.asserteq(stream.method, "POST", "http2.server method")
@@ -95,10 +97,11 @@ local wg = waitgroup:create()
 for i = 1, 2000 do
 	wg:fork(function()
 	local key = crypto.randomkey(1028)
-		local ack, err = POST("https://127.0.0.1:8082/test", {
+	local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
 		['hello'] = 'world',
 		['foo'] = key,
 	}, data)
+	assert(ack, err)
 	testaux.asserteq(ack.status, 200, "http2.client status")
 	testaux.asserteq(ack.header['foo'], key, "http2.client header")
 	testaux.asserteq(ack.body, 'http2', "http2.client body")

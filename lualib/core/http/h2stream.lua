@@ -9,11 +9,10 @@ local wakeup = core.wakeup
 local move = table.move
 local remove = table.remove
 local concat = table.concat
-local format = string.format
 local pack = string.pack
 local unpack = string.unpack
 local setmetatable = setmetatable
-local parseuri = helper.parseuri
+local parsetarget = helper.parsetarget
 
 local hpack_new = hpack.new
 local hpack_pack = hpack.pack
@@ -230,14 +229,14 @@ local function frame_header_server(ch, id, flag, dat)
 	local streams = ch.streams
 	local s = streams[id]
 	if not s then
-		local uri = header[':path']
-		local path, form = parseuri(uri)
+		local path = header[':path']
+		local path, query = parsetarget(path)
 		local s = setmetatable({
 			version = "HTTP/2",
 			headers = {header},
 			method = header[':method'],
 			path = path,
-			form = form,
+			query = query,
 			--private members
 			id = id,
 			co = false,

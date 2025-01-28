@@ -34,8 +34,8 @@ dispatch["/download"] = function(stream)
 end
 
 dispatch["/upload"] = function(stream)
-	if stream.form.Hello then
-		content = stream.form.Hello
+	if stream.query.Hello then
+		content = stream.query.Hello
 	end
 	local body = "Upload"
 	local head = {["Content-Type"] = "text/plain"}

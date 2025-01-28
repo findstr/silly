@@ -8,7 +8,7 @@ local format = string.format
 local gmatch = string.gmatch
 local concat = table.concat
 local setmetatable = setmetatable
-local parseuri = helper.parseuri
+local parsetarget = helper.parsetarget
 local M = {}
 
 local fmt_urlencoded<const> = "application/x-www-form-urlencoded"
@@ -200,17 +200,17 @@ function M.httpd(handler)
 				break
 			end
 			--request line
-			local method, uri, ver =
+			local method, target, ver =
 			    first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
-			assert(method and uri and ver)
-			local path, form = parseuri(uri)
+			assert(method and target and ver)
+			local path, query = parsetarget(target)
 			local stream = setmetatable({
 				sock = socket,
 				method = method,
 				version = ver,
 				path = path,
 				header = header,
-				form = form,
+				query = query,
 			}, stream_mt)
 			if tonumber(ver) > 1.1 then
 				stream:respond(505, {}, "")
@@ -223,7 +223,7 @@ function M.httpd(handler)
 					break
 				end
 				for k, v in gmatch(body, "(%w+)=([^%s&]+)") do
-					form[k] = v
+					query[k] = v
 				end
 			end
 			local ok, err = pcall(handler, stream)

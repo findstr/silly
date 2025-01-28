@@ -90,19 +90,19 @@ function helper.parseurl(url)
 	return scheme, host, port, path, default
 end
 
-function helper.parseuri(str)
-	local form = {}
-	local start = find(str, "?", 1, true)
+function helper.parsetarget(target)
+	local query = {}
+	local start = find(target, "?", 1, true)
 	if not start then
-		return str, form
+		return target, query
 	end
 	assert(start > 1)
-	local uri = sub(str, 1, start - 1)
-	local f = sub(str, start + 1)
+	local path = sub(target, 1, start - 1)
+	local f = sub(target, start + 1)
 	for k, v in gmatch(f, "([^=&]+)=([^&]+)") do
-		form[k] = v
+		query[k] = v
 	end
-	return uri, form
+	return path, query
 end
 
 return helper
