@@ -94,7 +94,8 @@ struct stdin_data {
 	size_t pos;
 };
 
-static void stdin_cleanup(void *arg) {
+static void stdin_cleanup(void *arg)
+{
 	if (!R.running) {
 		return;
 	}
@@ -116,7 +117,7 @@ static void *thread_stdin(void *arg)
 	HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
 	if (hStdin == INVALID_HANDLE_VALUE) {
 		return NULL;
- 	}
+	}
 	// check input type
 	DWORD fileType = GetFileType(hStdin);
 	BOOL isPipe = (fileType == FILE_TYPE_PIPE);
@@ -133,7 +134,7 @@ static void *thread_stdin(void *arg)
 				break;
 			}
 			if (error == ERROR_BROKEN_PIPE ||
-				(isPipe && error == ERROR_HANDLE_EOF)) {
+			    (isPipe && error == ERROR_HANDLE_EOF)) {
 				// pipe closed or EOF
 				break;
 			}

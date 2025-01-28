@@ -170,7 +170,8 @@ int main(int argc, char *argv[])
 	config.selfname = selfname(argv[0]);
 	config.bootstrap[0] = '\0';
 	if (argc > 1) {
-		strncpy(config.bootstrap, argv[1], ARRAY_SIZE(config.bootstrap) - 1);
+		strncpy(config.bootstrap, argv[1],
+			ARRAY_SIZE(config.bootstrap) - 1);
 		parse_args(&config, argc, argv);
 	}
 	silly_trace_init();
