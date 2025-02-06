@@ -1,11 +1,16 @@
 local http = require "core.http"
 local helper = require "core.http.helper"
-local crypto = require "core.crypto"
 local logger = require "core.logger"
+local base64 = require "core.base64"
+local sha1 = require "core.crypto.hash".new("sha1")
+local utils = require "core.crypto.utils"
+
 local pairs = pairs
 local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
+local xor = utils.xor
+local randomkey = utils.randomkey
 
 ---@class core.websocket
 local M = {}
@@ -58,7 +63,7 @@ local function read_frame(r, sock)
 		local buf = {}
 		masking_key = r(sock, 4)
 		dat = r(sock, payload)
-		dat = crypto.xor(masking_key, dat)
+		dat = xor(masking_key, dat)
 	else
 		dat = r(sock, payload)
 	end
@@ -78,8 +83,8 @@ local function write_frame(w, sock, fin, op, mask, dat)
 		hdr = pack(">I1I1", h, l)
 	end
 	if mask == 1 then
-		local masking_key = crypto.randomkey(4)
-		dat = crypto.xor(masking_key, dat)
+		local masking_key = randomkey(4)
+		dat = xor(masking_key, dat)
 		return w(sock, hdr .. masking_key .. dat)
 	else
 		return w(sock, hdr .. dat)
@@ -179,7 +184,7 @@ local function handshake(stream)
 		write(stream, 400)
 		return
 	end
-	key = crypto.base64encode(crypto.sha1(key .. guid))
+	key = base64.encode(sha1:digest(key .. guid))
 	local ack = {
 		["connection"] = "Upgrade",
 		["upgrade"] = "websocket",
@@ -220,7 +225,7 @@ function M.connect(uri, param)
 			uri = uri .. "?" .. buf
 		end
 	end
-	local key = crypto.base64encode(crypto.randomkey(16))
+	local key = base64.encode(randomkey(16))
 	local stream, err = http.request("GET", uri, {
 		["connection"] = "Upgrade",
 		["upgrade"] = "websocket",

@@ -82,12 +82,13 @@ function testaux.hextostr(arr)
 end
 
 function testaux.error(str)
-	print(format('%s\tFAIL\t"%s"', m, str))
+	print(format('\27[31m%sFAIL\t"%s"\27[0m', m, str))
 	print(debug.traceback(1))
 	core.exit(1)
 end
+
 function testaux.success(str)
-	print(format('%s\tSUCCESS\t"%s"', m, str))
+	print(format('\27[32m%sSUCCESS\t"%s"\27[0m', m, str))
 end
 
 function testaux.asserteq(a, b, str)
@@ -96,9 +97,9 @@ function testaux.asserteq(a, b, str)
 	a = tostringx(aa, 30)
 	b = tostringx(bb, 30)
 	if aa == bb then
-		print(format('%s\tSUCCESS\t"%s"\t"%s" == "%s"', m, str, a, b))
+		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
 	else
-		print(format('%s\tFAIL\t"%s"\t"%s" == "%s"', m, str, a, b))
+		print(format('\27[31m%sFAIL\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
@@ -110,9 +111,9 @@ function testaux.assertneq(a, b, str)
 	a = tostringx(aa, 30)
 	b = tostringx(bb, 30)
 	if aa ~= bb then
-		print(format('%s\tSUCCESS\t"%s"\t"%s" ~= "%s"', m, str, a, b))
+		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
 	else
-		print(format('%s\tFAIL\t"%s"\t"%s" ~= "%s"', m, str, a, b))
+		print(format('\27[31m%sFAIL\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
@@ -124,16 +125,38 @@ function testaux.assertle(a, b, str)
 	a = tostringx(aa, 30)
 	b = tostringx(bb, 30)
 	if aa <= bb then
-		print(format('%s\tSUCCESS\t"%s"\t "%s" <= "%s"', m, str, a, b))
+		print(format('\27[32m%sSUCCESS\t"%s"\t "%s" <= "%s"\27[0m', m, str, a, b))
 	else
-		print(format('%s\tFAIL\t"%s"\t"%s" <= "%s"', m, str, a, b))
+		print(format('\27[31m%sFAIL\t"%s"\t"%s" <= "%s"\27[0m', m, str, a, b))
+		print(debug.traceback(1))
+		core.exit(1)
+	end
+end
+
+function testaux.assertgt(a, b, str)
+	local aa = escape(a)
+	local bb = escape(b)
+	a = tostringx(aa, 30)
+	b = tostringx(bb, 30)
+	if aa > bb then
+		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" > "%s"\27[0m', m, str, a, b))
+	else
+		print(format('\27[31m%sFAIL\t"%s"\t"%s" > "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end
 end
 
 function testaux.module(name)
-	m = name
+	m = name .. ":"
+end
+
+function testaux.asserteq_hex(actual, expected, message)
+	local to_hex = function(s)
+		return (s:gsub('.', function(c) return string.format('%02x', string.byte(c)) end))
+	end
+	testaux.asserteq(to_hex(actual), to_hex(expected), message)
+
 end
 
 return testaux

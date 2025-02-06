@@ -1,7 +1,7 @@
 local core = require "core"
 local waitgroup = require "core.sync.waitgroup"
 local cluster = require "core.cluster"
-local crypto = require "core.crypto"
+local crypto = require "core.crypto.utils"
 local testaux = require "test.testaux"
 local zproto = require "zproto"
 

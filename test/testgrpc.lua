@@ -1,7 +1,7 @@
 local core = require "core"
 local protoc = require "protoc"
 local grpc = require "core.grpc"
-local crypto = require "core.crypto"
+local crypto = require "core.crypto.utils"
 local testaux = require "test.testaux"
 local waitgroup = require "core.sync.waitgroup"
 local registrar = require "core.grpc.registrar":new()

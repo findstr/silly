@@ -1,4 +1,3 @@
-local core = require "core"
 local P = {}
 
 function P.hex(str)

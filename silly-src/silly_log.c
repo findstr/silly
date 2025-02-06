@@ -19,7 +19,7 @@
 
 static int is_daemon = 0;
 static enum silly_log_level log_level;
-static __thread struct {
+static THREAD_LOCAL struct {
 	char buf[64];
 	char *sstr;
 	char *tstr;

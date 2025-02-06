@@ -19,13 +19,17 @@ local modules = {
 	"testnetstream",
 	"testnetpacket",
 	"testchannel",
-	"testcrypto",
+	"testxor",
+	"testbase64",
+	"testhash",
+	"testcipher",
 	"testhttp",
 	"testhttp2",
 	"testhpack",
 	"testwebsocket",
 	"testpatch",
 }
+
 if metrics.pollapi() == "epoll" then
 	modules[#modules + 1] = "testredis"
 	modules[#modules + 1] = "testmysql"
@@ -49,7 +53,6 @@ core.sleep(1000)
 for k, v in ipairs(modules) do
 	M = v .. ":"
 	print("=========start=========")
-	testaux.module(v)
 	dofile("test/" .. v .. ".lua")
 	print("======success==========")
 end
