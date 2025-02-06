@@ -22,7 +22,7 @@ endif
 endif
 
 ifeq ($(uname_S),Darwin)
-ifeq ($(TLS),ON)
+ifeq ($(OPENSSL),ON)
 	CFLAGS += $(shell pkg-config --cflags openssl)
 	LDFLAGS += $(shell pkg-config --libs openssl)
 	SHARED += $(shell pkg-config --libs openssl)

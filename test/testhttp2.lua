@@ -1,6 +1,6 @@
 local http = require "core.http"
 local core = require "core"
-local crypto = require "core.crypto"
+local crypto = require "core.crypto.utils"
 local waitgroup = require "core.sync.waitgroup"
 local testaux = require "test.testaux"
 

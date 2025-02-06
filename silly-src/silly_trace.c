@@ -10,7 +10,7 @@ static silly_tracespan_t spanid;
 static uint16_t seq_idx = 0;
 //63~48,         47~32,	     31~16,     15~0
 //spanid(16bit),time(16bit),seq(16bit),spanid(16bit)
-static __thread silly_traceid_t trace_ctx = 0;
+static THREAD_LOCAL silly_traceid_t trace_ctx = 0;
 
 void silly_trace_init()
 {

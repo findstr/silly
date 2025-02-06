@@ -6,7 +6,7 @@
 
 -- protocol detail: https://mariadb.com/kb/en/clientserver-protocol/
 
-local crypto = require "core.crypto"
+local hash = require "core.crypto.hash"
 local dispatch = require "core.socketq"
 
 local sub = string.sub
@@ -18,7 +18,7 @@ local strrep = string.rep
 local strunpack = string.unpack
 local strpack = string.pack
 local tinsert = table.insert
-local sha1 = crypto.sha1
+local sha1 = hash.new("sha1")
 local tpack = table.pack
 local setmetatable = setmetatable
 local error = error
@@ -210,10 +210,10 @@ local function _compute_token(password, scramble)
     end
     --_dumphex(scramble)
 
-    local stage1 = sha1(password)
+    local stage1 = sha1:digest(password)
     --print("stage1:", _dumphex(stage1) )
-    local stage2 = sha1(stage1)
-    local stage3 = sha1(scramble .. stage2)
+    local stage2 = sha1:digest(stage1)
+    local stage3 = sha1:digest(scramble .. stage2)
 
     local i = 0
     return strgsub(stage3, ".",

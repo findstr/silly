@@ -4,7 +4,7 @@ INCLUDE :=
 #---------
 
 TARGET ?= silly
-TLS ?= ON
+OPENSSL ?= ON
 TEST ?= OFF
 MALLOC ?= jemalloc
 SRC_PATH = silly-src
@@ -47,8 +47,8 @@ MALLOC_LIB :=
 endif
 
 #tls disable
-ifeq ($(TLS), ON)
-TLSFLAG := -DUSE_OPENSSL -lssl -lcrypto
+ifeq ($(OPENSSL), ON)
+OPENSSLFLAG := -DUSE_OPENSSL -lssl -lcrypto
 endif
 
 
@@ -75,16 +75,20 @@ SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 LIB_SRC = lualib-core.c \
-	  lualib-env.c \
-	  lualib-time.c \
-	  lualib-metrics.c \
-	  lualib-logger.c \
-	  lualib-profiler.c \
-	  lualib-netstream.c \
-	  lualib-netpacket.c \
-	  lualib-tls.c \
-	  lualib-crypto.c lsha1.c aes.c sha256.c md5.c\
-	  lualib-debugger.c\
+	lualib-env.c \
+	lualib-time.c \
+	lualib-metrics.c \
+	lualib-logger.c \
+	lualib-profiler.c \
+	lualib-netstream.c \
+	lualib-netpacket.c \
+	lualib-tls.c \
+	lualib-debugger.c \
+	lbase64.c
+
+ifeq ($(OPENSSL), ON)
+       LIB_SRC += $(patsubst lualib-src/%,%,$(wildcard lualib-src/crypto/*.c))
+endif
 
 all: \
 	fmt \
@@ -102,7 +106,7 @@ $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/core.$(SO): $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED) $(TLSFLAG)
+	$(CC) $(CFLAGS) $(INCLUDE) -Ilualib-src -o $@ $^ $(SHARED) $(OPENSSLFLAG)
 $(LUACLIB_PATH)/zproto.$(SO): $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/http2.$(SO): $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
@@ -140,5 +144,6 @@ endif
 fmt:
 	-clang-format -i silly-src/*.h
 	-clang-format -i silly-src/*.c
-	-clang-format -i lualib-src/lua*.c
+	-clang-format -i lualib-src/l*.c
+	-clang-format -i lualib-src/crypto/l*.c
 
