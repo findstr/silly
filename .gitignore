@@ -37,3 +37,8 @@ luac
 /silly
 # Debug files
 *.dSYM/
+
+node_modules/
+.vuepress/.cache/
+.vuepress/.temp/
+.vuepress/dist/
