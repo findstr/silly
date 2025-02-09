@@ -7,7 +7,7 @@ local crypto = require "core.crypto.utils"
 local testaux = require "test.testaux"
 local IO
 local listen_cb
-local listenfd = tcp.listen(":10001", function(fd, addr)
+local listenfd = tcp.listen("127.0.0.1:10001", function(fd, addr)
 	if listen_cb then
 		listen_cb(fd)
 		listen_cb = nil
@@ -17,7 +17,7 @@ local listenfd = tcp.listen(":10001", function(fd, addr)
 end)
 
 local tlsfd = tls.listen {
-	port = ":10002",
+	port = "127.0.0.1:10002",
 	certs = {
 		{
 			cert= "test/cert.pem",
@@ -402,7 +402,7 @@ local function test_close(port)
 	print("CASE8")
 	listen_cb = function(fd, addr)
 		local ok = IO.write(fd, "po")
-		core.sleep(200)
+		core.sleep(500)
 		local ok = IO.write(fd, "ng")
 		testaux.asserteq(ok, false, "server write `ng`")
 	end
@@ -411,12 +411,14 @@ local function test_close(port)
 	core.fork(function()
 		core.sleep(1)
 		IO.close(fd)
+		print("fork close")
 	end)
 	local dat = IO.read(fd, 5)
 	testaux.asserteq(dat, false, "client recv `false` ")
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , false, "client close dummy")
-	core.sleep(200)
+	core.sleep(1000)
+	print("CASE8 finish")
 	--CASE9:cilent connect, server write then close immediately,
 	--client should read all data
 	print("CASE9")
