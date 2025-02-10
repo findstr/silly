@@ -66,7 +66,7 @@ end
 -- Test 6: Test shortcut functions
 do
 	-- Test digest function
-	local result = hash.digest("sha256", test_vectors.sha256.input)
+	local result = hash.hash("sha256", test_vectors.sha256.input)
 	testaux.asserteq_hex(result, test_vectors.sha256.digest, "Case 6: SHA-256 digest shortcut function")
 
 	-- Test algorithm-specific functions (if implemented)
@@ -93,7 +93,7 @@ end
 
 -- Test 9: Empty input for shortcut function
 do
-	local result = hash.digest("sha256", "")
+	local result = hash.hash("sha256", "")
 	testaux.asserteq_hex(result, test_vectors.sha256.empty_digest, "Case 9: SHA-256 empty input shortcut")
 end
 
@@ -105,6 +105,6 @@ do
 	local result1 = h:final()
 
 	-- Test shortcut function
-	local result2 = hash.digest("sha256", binary_data)
+	local result2 = hash.hash("sha256", binary_data)
 	testaux.asserteq_hex(result1, result2, "Case 10: Binary data consistency test")
 end

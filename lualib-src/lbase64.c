@@ -32,12 +32,9 @@ static int encodex(lua_State *L, int urlsafe)
 	const uint8_t *dat;
 	luaL_Buffer lbuf;
 	dat = (const uint8_t *)luaL_checklstring(L, 1, &sz);
-	dict = lua_tostring(L, 2);
-	if (dict && strcasecmp(dict, "url") == 0) {
-		urlsafe = 1;
+	if (urlsafe) {
 		dict = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 	} else {
-		urlsafe = 0;
 		dict = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	}
 	need = (sz + 2) / 3 * 4;
