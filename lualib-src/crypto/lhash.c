@@ -36,10 +36,6 @@ static int lnew(lua_State *L)
 	const EVP_MD *md;
 	EVP_MD_CTX *ctx;
 	md = md_cache_get(L, 1);
-	if (md == NULL) {
-		return luaL_error(L, "unkonwn hash method '%s'",
-				  lua_tostring(L, 1));
-	}
 	ctx = EVP_MD_CTX_create();
 	if (ctx == NULL) {
 		return luaL_error(L, "create hash context error");
@@ -56,17 +52,13 @@ static int lnew(lua_State *L)
 }
 
 /// digest(alg, data)
-static int ldigest(lua_State *L)
+static int lhash(lua_State *L)
 {
 	unsigned int outlen;
 	unsigned char hash[EVP_MAX_MD_SIZE];
 	struct luastr data;
 	const EVP_MD *md;
 	md = md_cache_get(L, 1);
-	if (md == NULL) {
-		return luaL_error(L, "unkonwn hash method '%s'",
-				  lua_tostring(L, 1));
-	}
 	luastr_check(L, 2, &data);
 	outlen = sizeof(hash);
 	if (EVP_Digest(data.str, data.len, hash, &outlen, md, NULL) == 0) {
@@ -154,32 +146,29 @@ static int lxdigest(lua_State *L)
 int luaopen_core_crypto_hash(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "new",    lnew    },
-		{ "digest", ldigest },
-		{ NULL,     NULL    },
+		{ "new",    lnew     },
+		{ "hash",   lhash    },
+		// object methods
+		{ "reset",  lxreset  },
+		{ "update", lxupdate },
+		{ "final",  lxfinal  },
+		{ "digest", lxdigest },
+		{ NULL,     NULL     },
 	};
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
+	// new metatable
+	luaL_newmetatable(L, METATABLE);
+	lua_pushcfunction(L, lgc);
+	lua_setfield(L, -2, "__gc");
+	lua_pushvalue(L, -2);
+	lua_setfield(L, -2, "__index");
+	lua_pop(L, 1);
+	// set funcs
 	md_cache_new(L);
 	luaL_setfuncs(L, tbl, 1);
-	if (luaL_newmetatable(L, METATABLE)) {
-		luaL_Reg mtbl[] = {
-			{ "reset",  lxreset  },
-                        { "update", lxupdate },
-			{ "final",  lxfinal  },
-                        { "digest", lxdigest },
-			{ NULL,     NULL     },
-		};
-		lua_pushcfunction(L, lgc);
-		lua_setfield(L, -2, "__gc");
-		luaL_newlib(L, mtbl);
-		lua_setfield(L, -2, "__index");
-	}
-	lua_pop(L, 1);
-#ifdef USE_OPENSSL
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	OpenSSL_add_all_digests();
-#endif
 #endif
 	return 1;
 }

@@ -262,35 +262,32 @@ static int lxtag(lua_State *L)
 int luaopen_core_crypto_cipher(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "encryptor", lnewenc },
-		{ "decryptor", lnewdec },
-		{ NULL,        NULL    },
-	};
-	luaL_Reg mtbl[] = {
+		{ "encryptor",  lnewenc      },
+		{ "decryptor",  lnewdec      },
+		// object method
 		{ "reset",      lxreset      },
 		{ "update",     lxupdate     },
 		{ "final",      lxfinal      },
 		{ "setpadding", lxsetpadding },
-		//AEAD
+		// AEAD
 		{ "setaad",     lxsetaad     },
 		{ "settag",     lxsettag     },
 		{ "tag",        lxtag        },
 		{ NULL,         NULL         },
 	};
-
 	luaL_newlibtable(L, tbl);
-	lua_newtable(L);
-	luaL_setfuncs(L, tbl, 1);
+	// create metatable
 	luaL_newmetatable(L, METATABLE);
 	lua_pushcfunction(L, lgc);
 	lua_setfield(L, -2, "__gc");
-	luaL_newlib(L, mtbl);
+	lua_pushvalue(L, -2);
 	lua_setfield(L, -2, "__index");
 	lua_pop(L, 1);
-#ifdef USE_OPENSSL
+	// set methods
+	lua_newtable(L);
+	luaL_setfuncs(L, tbl, 1);
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	OpenSSL_add_all_ciphers();
-#endif
 #endif
 	return 1;
 }

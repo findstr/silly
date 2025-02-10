@@ -254,7 +254,7 @@ local function frame_header_server(ch, id, flag, dat)
 		end
 		server_stream_q[#server_stream_q + 1] = s
 		core.fork(ch.handler)
-    else
+	else
 		s.remotestate = STATE_TRAILER
 		s.header = header
 		if flag & END_STREAM == END_STREAM then
