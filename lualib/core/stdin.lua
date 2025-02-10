@@ -6,7 +6,6 @@ local tonumber = tonumber
 local unpack = table.unpack
 local concat = table.concat
 local remove = table.remove
-local move = table.move
 local key = "stdin"
 
 ---@type thread|nil
@@ -70,9 +69,9 @@ local function read_number()
 	local is_hex = false
 	local hex_prefix = line:match("^0[xX]", pos)
 	if hex_prefix then
-	    is_hex = true
-	    pos = pos + 2
-	    buf[#buf + 1] = hex_prefix
+		is_hex = true
+		pos = pos + 2
+		buf[#buf + 1] = hex_prefix
 	end
 	-- 读取整数部分
 	local digit_pattern = is_hex and "^[0-9a-fA-F]+" or "^%d+"
@@ -81,28 +80,28 @@ local function read_number()
 	buf[#buf + 1] = digits
 	-- 读取小数部分
 	if line:match("^[.]", pos) then
-	    local decimal = "."
-	    pos = pos + 1
-	    buf[#buf + 1] = decimal
+		local decimal = "."
+		pos = pos + 1
+		buf[#buf + 1] = decimal
 
-	    digits = line:match(digit_pattern, pos) or ""
-	    pos = pos + #digits
-	    buf[#buf + 1] = digits
+		digits = line:match(digit_pattern, pos) or ""
+		pos = pos + #digits
+		buf[#buf + 1] = digits
 	end
 	-- 读取指数部分
 	local exp_pattern = is_hex and "^[pP]" or "^[eE]"
 	local exp_mark = line:match(exp_pattern, pos)
 	if exp_mark and (#buf > 0) then
-	    pos = pos + 1
-	    buf[#buf + 1] = exp_mark
-	    -- 指数的符号
-	    sign = line:match("^[-+]", pos) or ""
-	    pos = pos + #sign
-	    buf[#buf + 1] = sign
-	    -- 指数的数字
-	    digits = line:match("^%d+", pos) or ""
-	    pos = pos + #digits
-	    buf[#buf + 1] = digits
+		pos = pos + 1
+		buf[#buf + 1] = exp_mark
+		-- 指数的符号
+		sign = line:match("^[-+]", pos) or ""
+		pos = pos + #sign
+		buf[#buf + 1] = sign
+		-- 指数的数字
+		digits = line:match("^%d+", pos) or ""
+		pos = pos + #digits
+		buf[#buf + 1] = digits
 	end
 	if pos <= #line then
 		lines[1] = line:sub(pos)
@@ -182,24 +181,24 @@ local read_fn = {
 function M:read(...)
 	mutex:lock(key)
 	local args = {...}
-        if #args == 0 then
-            args = {"l"} -- 默认格式
-        end
-        local results = {}
-        for _, format in ipairs(args) do
-            local result
-	    local fn = read_fn[format]
-	    if fn then
-		result = fn()
-	    elseif type(format) == "number" then
-		result = read_chars(format)
-	    else
-		logger.error("[stdin] invalid format: ", format)
-	    end
-	    if result == nil then
-		return nil
-	    end
-	    results[#results + 1] = result
+	if #args == 0 then
+		args = {"l"} -- 默认格式
+	end
+	local results = {}
+	for _, format in ipairs(args) do
+		local result
+		local fn = read_fn[format]
+		if fn then
+			result = fn()
+			elseif type(format) == "number" then
+			result = read_chars(format)
+		else
+			logger.error("[stdin] invalid format: ", format)
+		end
+		if result == nil then
+			return nil
+		end
+		results[#results + 1] = result
 	end
 	return unpack(results)
 end

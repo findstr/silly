@@ -25,7 +25,7 @@ static inline const EVP_MD *md_cache_get(lua_State *L, int stk_alg)
 	lua_gettable(L, lua_upvalueindex(1));
 	if (lua_isnil(L, -1)) {
 		struct luastr alg;
-		luastr_check(L, 1, &alg);
+		luastr_check(L, stk_alg, &alg);
 		md = EVP_get_digestbyname((const char *)alg.str);
 		if (md != NULL) {
 			lua_pushvalue(L, 1);
@@ -34,6 +34,11 @@ static inline const EVP_MD *md_cache_get(lua_State *L, int stk_alg)
 		}
 	} else {
 		md = lua_touserdata(L, -1);
+	}
+	if (md == NULL) {
+		luaL_error(L, "unkonwn digest method: '%s'",
+				  lua_tostring(L, stk_alg));
+		assert(!"for lint friendly");
 	}
 	lua_pop(L, 1);
 	return md;

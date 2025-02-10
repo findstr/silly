@@ -49,7 +49,7 @@ end
 
 local proto = p.loaded["greetpb.proto"]
 registrar:register(proto, {
-    	SayHello = function(input)
+	SayHello = function(input)
 		return case(input)
 	end
 })
