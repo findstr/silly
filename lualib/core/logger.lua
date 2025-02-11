@@ -18,13 +18,21 @@ local logger = {
 	info = nop,
 	warn = nop,
 	error = nop,
+	debugf = nop,
+	infof = nop,
+	warnf = nop,
+	errorf = nop,
 }
 
 local func_level = {
 	debug = logger.DEBUG,
+	debugf = logger.DEBUG,
 	info = logger.INFO,
+	infof = logger.INFO,
 	warn = logger.WARN,
+	warnf = logger.WARN,
 	error = logger.ERROR,
+	errorf = logger.ERROR,
 }
 
 local function refresh(visiable_level)
