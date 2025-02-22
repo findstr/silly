@@ -197,8 +197,8 @@ static int lxfinal(lua_State *L)
 	}
 	try_expand_buffer(c, 0);
 	if (EVP_CipherFinal_ex(c->ctx, &c->buf[c->size], &outlen) == 0) {
-		return luaL_error(L, "cipher final error: %s",
-				  ERR_lib_error_string(ERR_get_error()));
+		lua_pushnil(L);
+		return 1;
 	}
 	c->size += outlen;
 	lua_pushlstring(L, (const char *)c->buf, c->size);
@@ -220,10 +220,11 @@ static int lxsetpadding(lua_State *L)
 
 static int lxsetaad(lua_State *L)
 {
+	int outlen;
 	struct luastr aad;
 	struct cipher *c = luaL_checkudata(L, 1, METATABLE);
 	luastr_check(L, 2, &aad);
-	if (EVP_CipherUpdate(c->ctx, NULL, NULL, aad.str, aad.len) == 0) {
+	if (EVP_CipherUpdate(c->ctx, NULL, &outlen, aad.str, aad.len) == 0) {
 		return luaL_error(L, "cipher aad error: %s",
 				  ERR_lib_error_string(ERR_get_error()));
 	}
