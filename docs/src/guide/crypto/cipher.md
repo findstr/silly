@@ -5,13 +5,11 @@ icon: fa6-solid:lock
 ## API参考
 
 ### 导入模块
-
-```lua
-local cipher = require "crypto.cipher"
+```lua validate
+local cipher = require "core.crypto.cipher"
 ```
 
 ### 创建加密器
-
 ```lua
 local encryptor = cipher.encryptor(algorithm, key [, iv])
 ```
@@ -35,22 +33,15 @@ local decryptor = cipher.decryptor(algorithm, key [, iv])
 
 ### Cipher对象方法
 
-#### update 更新数据
-
-```lua
-cipher:update(data)
-```
+> cipher:update(data)
 
 向cipher对象添加需要处理的数据。
 
 参数:
 - data: 要加密/解密的数据
 
-#### final 完成加密/解密
 
-```lua
-result = cipher:final([data])
-```
+> cipher:final([data])
 
 完成加密/解密过程并返回结果。
 
@@ -60,11 +51,7 @@ result = cipher:final([data])
 返回:
 - result: 加密/解密后的数据
 
-#### reset 重置
-
-```lua
-cipher:reset(key, iv)
-```
+> cipher:reset(key, iv)
 
 使用新的密钥和IV重置cipher对象。
 
@@ -72,11 +59,7 @@ cipher:reset(key, iv)
 - key: 新的密钥
 - iv: 新的初始化向量
 
-#### setpadding 设置填充
-
-```lua
-cipher:setpadding(padding)
-```
+> cipher:setpadding(padding)
 
 设置是否使用PKCS7填充。
 
@@ -85,33 +68,21 @@ cipher:setpadding(padding)
 
 ### AEAD相关方法
 
-#### setaad 设置额外认证数据
-
-```lua
-cipher:setaad(aad)
-```
+> cipher:setaad(aad)
 
 设置AEAD模式的额外认证数据。
 
 参数:
 - aad: 认证数据
 
-#### settag 设置认证标签
-
-```lua
-cipher:settag(tag)
-```
+> cipher:settag(tag)
 
 设置AEAD模式解密时使用的认证标签。
 
 参数:
 - tag: 认证标签
 
-#### tag 获取认证标签
-
-```lua
-tag = cipher:tag()
-```
+> cipher:tag()
 
 获取AEAD模式加密后生成的认证标签。
 
@@ -122,8 +93,8 @@ tag = cipher:tag()
 
 ### 基本加解密
 
-```lua
-local cipher = require "crypto.cipher"
+```lua validate
+local cipher = require "core.crypto.cipher"
 
 -- 创建AES-128-CBC加密器
 local key = "1234567890123456" -- 16字节密钥
@@ -144,13 +115,13 @@ print(plaintext) -- 输出: Hello World
 
 ### AEAD模式(GCM)示例
 
-```lua
-local cipher = require "crypto.cipher"
+```lua validate
+local cipher = require "core.crypto.cipher"
 
 -- 创建AES-256-GCM加密器
 local key = string.rep("k", 32) -- 32字节密钥
 local iv = string.rep("i", 12)  -- 12字节随机数
-local aad = "header"            -- 额外认证数据
+local aad = "header" -- 额外认证数据
 
 local enc = cipher.encryptor("aes-256-gcm", key, iv)
 enc:setaad(aad)

@@ -6,15 +6,13 @@ icon: fa6-solid:lock
 
 ### 导入模块
 
-```lua
-local hmac = require "crypto.hmac"
+```lua validate
+local hmac = require "core.crypto.hmac"
 ```
 
 ### 计算HMAC值
 
-```lua
-local mac = hmac.digest(algorithm, key, message)
-```
+> hmac.digest(key, message, algorithm)
 
 使用指定的算法和密钥计算消息的HMAC值。
 
@@ -30,25 +28,27 @@ local mac = hmac.digest(algorithm, key, message)
 
 ### 基本使用
 
-```lua
-local hmac = require "crypto.hmac"
+```lua validate
+local hmac = require "core.crypto.hmac"
 
 local key = "secret key"
 local message = "Hello World"
-local mac = hmac.digest("sha256", key, message)
+local mac = hmac.digest(key, message, "sha256")
 
 -- 将结果转换为十六进制显示
-local hex = string.format("%x", mac)
-print(hex)
+local str = string.gsub(mac, ".", function(c)
+	return string.format("%x", c:byte(1))
+end)
+print(str)
 ```
 
 ### 验证HMAC
 
-```lua
-local hmac = require "crypto.hmac"
+```lua validate
+local hmac = require "core.crypto.hmac"
 
 local function verify_hmac(key, message, received_mac)
-    local computed_mac = hmac.digest("sha256", key, message)
+    local computed_mac = hmac.digest(key, message, "sha256")
     return computed_mac == received_mac
 end
 
@@ -56,7 +56,7 @@ local key = "secret key"
 local message = "Hello World"
 
 -- 计算HMAC
-local mac = hmac.digest("sha256", key, message)
+local mac = hmac.digest(key, message, "sha256")
 
 -- 验证HMAC
 local is_valid = verify_hmac(key, message, mac)
@@ -69,18 +69,18 @@ print(is_valid) -- 输出: false
 
 ### 使用不同的哈希算法
 
-```lua
-local hmac = require "crypto.hmac"
+```lua validate
+local hmac = require "core.crypto.hmac"
 
 local key = "secret key"
 local message = "Hello World"
 
 -- 使用SHA-256
-local mac1 = hmac.digest("sha256", key, message)
+local mac1 = hmac.digest(key, message, "sha256")
 
 -- 使用SHA-512
-local mac2 = hmac.digest("sha512", key, message)
+local mac2 = hmac.digest(key, message, "sha512")
 
 -- 使用SHA3-256
-local mac3 = hmac.digest("sha3-256", key, message)
+local mac3 = hmac.digest(key, message, "sha3-256")
 ```
