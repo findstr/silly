@@ -58,6 +58,7 @@ for k, v in ipairs(modules) do
 	M = v .. ":"
 	print("=========start=========")
 	dofile("test/" .. v .. ".lua")
+	testaux.module("")
 	print("======success==========")
 end
 

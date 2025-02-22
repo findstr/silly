@@ -2035,8 +2035,10 @@ static inline void tree__rotate_left(tree_t *tree, tree_node_t *node)
 	TREE__ROTATE(left, right)
 }
 
-static inline void
-tree__rotate_right(tree_t *tree, tree_node_t *node){ TREE__ROTATE(right, left) }
+static inline void tree__rotate_right(tree_t *tree, tree_node_t *node)
+{
+	TREE__ROTATE(right, left)
+}
 
 #define TREE__INSERT_OR_DESCEND(side)  \
 	if (parent->side) {            \

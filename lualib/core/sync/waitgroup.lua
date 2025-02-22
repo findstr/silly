@@ -6,9 +6,13 @@ local M = {}
 local mt = {__index = M}
 
 ---@return core.sync.waitgroup
-function M:create()
+---@deprecated Use `M.new` instead
+function M.create()
 	return setmetatable({count = 0}, mt)
 end
+
+---@return core.sync.waitgroup
+M.new = M.create
 
 function M:fork(func)
 	self.count = self.count +1

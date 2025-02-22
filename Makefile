@@ -84,7 +84,8 @@ LIB_SRC = lualib-core.c \
 	lualib-netpacket.c \
 	lualib-tls.c \
 	lualib-debugger.c \
-	lbase64.c
+	lbase64.c \
+	mysql/lmysql.c
 
 ifeq ($(OPENSSL), ON)
        LIB_SRC += $(patsubst lualib-src/%,%,$(wildcard lualib-src/crypto/*.c))

@@ -36,8 +36,11 @@ local function escape(a)
 	elseif type(a) == "table" then
 		local l = {}
 		for k, v in pairs(a) do
-			if type(v) == "function" then
+			local t = type(v)
+			if t == "function" then
 				v = tostring(v)
+			elseif t == "number" then
+				v = string.format("%g", v)
 			end
 			l[#l + 1] = {k, v}
 		end
@@ -148,7 +151,11 @@ function testaux.assertgt(a, b, str)
 end
 
 function testaux.module(name)
-	m = name .. ":"
+	if name == "" then
+		m = ""
+	else
+		m = name .. ":"
+	end
 end
 
 function testaux.asserteq_hex(actual, expected, message)
@@ -157,6 +164,21 @@ function testaux.asserteq_hex(actual, expected, message)
 	end
 	testaux.asserteq(to_hex(actual), to_hex(expected), message)
 
+end
+
+function testaux.assert_error(fn, str)
+	local ok, err = pcall(fn)
+	if not ok then
+		print(format('\27[32m%sSUCCESS\t"%s" check exception \t\27[0m', m, str))
+	else
+		print(format('\27[31m%sFAIL\t"%s" check exception \t\27[0m', m, str))
+		print(debug.traceback(1))
+		core.exit(1)
+	end
+end
+
+function testaux.hexdump(s)
+	return (s:gsub('.', function(c) return string.format('%02X', string.byte(c)) end))
 end
 
 return testaux
