@@ -44,7 +44,7 @@ if not crypto.digestsign then
 end
 http.listen {
 	tls = true,
-	port = "127.0.0.1:8082",
+	addr = "127.0.0.1:8082",
 	alpnprotos = {
 		"h2",
 	},

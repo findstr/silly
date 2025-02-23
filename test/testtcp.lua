@@ -17,7 +17,7 @@ local listenfd = tcp.listen("127.0.0.1:10001", function(fd, addr)
 end)
 
 local tlsfd = tls.listen {
-	port = "127.0.0.1:10002",
+	addr = "127.0.0.1:10002",
 	certs = {
 		{
 			cert= "test/cert.pem",

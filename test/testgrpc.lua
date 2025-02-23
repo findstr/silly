@@ -123,9 +123,26 @@ local function client_part()
 	wg:wait()
 	print("case three finish")
 end
-
+testaux.module("tcp")
 client_part()
 server:close()
+
+core.sleep(1000)
+testaux.module("tls")
+server = grpc.listen {
+	addr = "127.0.0.1:8990",
+	registrar = registrar,
+	tls = true,
+	alpnprotos = {
+		"h2",
+	},
+	certs = {
+		{
+			cert = "test/cert.pem",
+			cert_key = "test/key.pem",
+		}
+	},
+}
 
 for _, ch in pairs(h2stream.channels()) do
 	testaux.asserteq(next(ch.streams), nil, "all stream is closed")

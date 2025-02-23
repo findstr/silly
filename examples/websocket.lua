@@ -11,13 +11,13 @@ end
 
 
 websocket.listen {
-	port = "127.0.0.1:9999",
+	addr = "127.0.0.1:9999",
 	handler = handler
 }
 
 websocket.listen {
 	tls = true,
-	port = "127.0.0.1:8888",
+	addr = "127.0.0.1:8888",
 	certs = {
 		{
 			cert = "test/cert.pem",

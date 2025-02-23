@@ -178,18 +178,18 @@ function M.connect(ip, bind, hostname, alpn)
 end
 
 ---@param conf {
----	port:string,
+---	addr:string,
 ---	disp:fun(fd:integer, addr:string),
----	certs:{cert:string, cert_key:string}[],
 ---	ciphers:string,
+---	certs:{cert:string, cert_key:string}[],
 ---	alpnprotos:string[]|nil, backlog:integer|nil,
 ---}
 ---@return integer|nil, string|nil
 function M.listen(conf)
-	assert(conf.port)
+	assert(conf.addr)
 	assert(conf.disp)
 	assert(#conf.certs > 0)
-	local portid, err = core.tcp_listen(conf.port, socket_dispatch, conf.backlog)
+	local portid, err = core.tcp_listen(conf.addr, socket_dispatch, conf.backlog)
 	if not portid then
 		return nil, err
 	end

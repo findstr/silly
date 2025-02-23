@@ -11,13 +11,13 @@ local M = {}
 function M.listen(conf)
 	local fd
 	local handler = conf.handler
-	local port = conf.port or conf.addr
+	local addr = conf.addr
 	if not conf.tls then
-		fd = tcp.listen(port, transport.httpd("http", handler))
+		fd = tcp.listen(addr, transport.httpd("http", handler))
 	else
 		fd = tls.listen {
 			disp = transport.httpd("https", handler),
-			port = port,
+			addr = addr,
 			certs = conf.certs,
 			alpnprotos = conf.alpnprotos,
 		}

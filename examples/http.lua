@@ -3,7 +3,7 @@ local json = require "core.json"
 local http = require "core.http"
 
 http.listen {
-	port = "127.0.0.1:8080",
+	addr = "127.0.0.1:8080",
 	handler = function(stream)
 		local html = [[
 <html>

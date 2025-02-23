@@ -80,20 +80,37 @@ local function dispatch(registrar)
 	end
 end
 
+---@param conf {
+---	tls:boolean?,
+---	addr:string,
+---	ciphers:string?,
+---	registrar:core.grpc.registrar,
+---	certs:{cert:string, cert_key:string}[],
+---	alpnprotos:string[]|nil, backlog:integer|nil,
+---}
 function M.listen(conf)
-	local listen, scheme_mt
+	local scheme_mt, fd
 	local http2d = h2.httpd(dispatch(conf.registrar))
+	local scheme_io = transport.scheme_io
 	if conf.tls then
-		listen = tls.listen
-	 	scheme_mt = transport.scheme_io["https"]
+		scheme_mt = scheme_io["https"]
+		fd = tls.listen {
+			addr = conf.addr,
+			certs = conf.certs,
+			alpnprotos = conf.alpnprotos,
+			ciphers = conf.ciphers,
+			disp = function(fd, addr)
+				local socket = setmetatable({fd}, scheme_mt)
+				http2d(socket, addr)
+			end,
+		}
 	else
-		listen = tcp.listen
-	 	scheme_mt = transport.scheme_io["http"]
+		scheme_mt = scheme_io["http"]
+		fd = tcp.listen(conf.addr, function(fd, addr)
+			local socket = setmetatable({fd}, scheme_mt)
+			http2d(socket, addr)
+		end)
 	end
-	local fd = listen(conf.addr, function(fd, addr)
-		local socket = setmetatable({fd}, scheme_mt)
-		http2d(socket, addr)
-	end)
 	return setmetatable({fd}, scheme_mt)
 end
 
@@ -262,6 +279,7 @@ function M.newclient(conf)
 		end
 		local ok, err = stream:request("POST", fullname, {
 			[":authority"] = host,
+			["te"] = "trailers",
 			["content-type"] = "application/grpc",
 		}, false)
 		if not ok then

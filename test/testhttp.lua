@@ -60,13 +60,13 @@ local handler = function(stream)
 	end
 end
 local fd1 = http.listen {
-	port = "127.0.0.1:8080",
+	addr = "127.0.0.1:8080",
 	handler = handler,
 }
 assert(fd1, "listen 8080 fail")
 local fd2 = http.listen {
 	tls = true,
-	port = "127.0.0.1:8081",
+	addr = "127.0.0.1:8081",
 	certs = {
 		{
 			cert = "./test/cert.pem",
