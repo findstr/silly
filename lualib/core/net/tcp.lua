@@ -7,6 +7,10 @@ local assert = assert
 --so no need to clear socket connection
 local socket_pool = {}
 ---@class core.net.tcp
+---@field fd integer
+---@field delim boolean
+---@field co thread|nil
+---@field closing boolean
 local socket = {}
 
 local EVENT = {}
@@ -33,14 +37,20 @@ local function del_socket(s)
 	socket_pool[s.fd] = nil
 end
 
+---@param s core.net.tcp
+---@return string?, string? error
 local function suspend(s)
 	assert(not s.co)
 	local co = core.running()
 	s.co = co
-	return core.wait()
+	local dat = core.wait()
+	if not dat then
+		return nil, "closed"
+	end
+	return dat, nil
 end
 
----@param dat string|boolean
+---@param dat string?
 local function wakeup(s, dat)
 	local co = s.co
 	s.co = nil
@@ -64,7 +74,7 @@ function EVENT.close(fd, _, errno)
 	end
 	s.closing = true
 	if s.co then
-		wakeup(s, false)
+		wakeup(s, nil)
 		del_socket(s)
 	end
 end
@@ -121,7 +131,7 @@ end
 ---@async
 ---@param ip string
 ---@param bind string|nil
----@return integer|nil, string|nil
+---@return integer|nil, string? error
 function socket.connect(ip, bind)
 	local fd, err = core.tcp_connect(ip, socket_dispatch, bind)
 	if fd then
@@ -143,36 +153,36 @@ function socket.limit(fd, limit)
 end
 
 ---@param fd integer
----@return boolean
+---@return boolean, string? error
 function socket.close(fd)
 	local s = socket_pool[fd]
 	if s == nil then
-		return false
+		return false, "socket closed"
 	end
 	if s.co then
-		wakeup(s, false)
+		wakeup(s, nil)
 	end
 	del_socket(s)
 	core.socket_close(fd)
-	return true
+	return true, nil
 end
 
 ---@async
 ---@param fd integer
 ---@param n integer
----@return string|boolean
+---@return string?, string? error
 function socket.read(fd, n)
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local r = ns.read(s.sbuffer, n)
 	if r then
-		return r
+		return r, nil
 	end
 	if s.closing then
 		del_socket(s)
-		return false
+		return nil, "socket closing"
 	end
 	s.delim = n
 	return suspend(s)
@@ -180,37 +190,37 @@ end
 
 ---@param fd integer
 ---@param max integer|nil
----@return string|boolean
+---@return string?, string? error
 function socket.readall(fd, max)
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local r = ns.readall(s.sbuffer, max)
 	if r == "" and s.closing then
 		del_socket(s)
-		return false
+		return nil, "socket closing"
 	end
-	return r
+	return r, nil
 end
 
 ---@async
 ---@param fd integer
 ---@param delim string|nil
----@return string|boolean
+---@return string?, string? error
 function socket.readline(fd, delim)
 	delim = delim or "\n"
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local r = ns.readline(s.sbuffer, delim)
 	if r then
-		return r
+		return r, nil
 	end
 	if s.closing then
 		del_socket(s)
-		return false
+		return nil, "socket closing"
 	end
 	s.delim = delim
 	return suspend(s)
@@ -233,10 +243,7 @@ socket.sendsize = core.sendsize
 ---@return boolean
 function socket.isalive(fd)
 	local s = socket_pool[fd]
-	if s and not s.closing then
-		return true
-	end
-	return false
+	return s and not s.closing
 end
 
 return socket

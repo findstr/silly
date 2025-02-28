@@ -5,16 +5,26 @@ local concat = table.concat
 local assert = assert
 
 local socket_pool = {}
+
+
 ---@class core.net.tls
+---@field fd integer
+---@field delim string|number|nil
+---@field co thread|nil
+---@field closing boolean
+---@field alpnproto string?
+---@field ctx any?
+---@field ssl any?
+---@field disp fun(fd:integer, addr:string)?
 local M = {}
+
 local EVENT = {}
 
 local ctx
 local tls
 local client_ctx
 
---"http/1.1"
---"h2"
+---@alias core.net.tls.alpn_proto "http/1.1" | "h2"
 local char = string.char
 local alpnwired = setmetatable({}, {__index = function(t, k)
 	local v = char(#k) .. k
@@ -22,6 +32,7 @@ local alpnwired = setmetatable({}, {__index = function(t, k)
 	return v
 end})
 
+---@param alpnprotos core.net.tls.alpn_proto[]
 local function wire_alpn_protos(alpnprotos)
 	local buf = {}
 	for _, v in ipairs(alpnprotos) do
@@ -30,17 +41,20 @@ local function wire_alpn_protos(alpnprotos)
 	return concat(buf)
 end
 
+---@param fd integer
+---@param hostname string?
+---@param alpnprotos core.net.tls.alpn_proto[]?
 local function new_socket(fd, ctx, hostname, alpnprotos)
+	local alpnstr
 	if alpnprotos then
-		alpnprotos = wire_alpn_protos(alpnprotos)
+		alpnstr = wire_alpn_protos(alpnprotos)
 	end
 	local s = {
-		nil,
 		fd = fd,
 		delim = false,
 		---@type thread|nil
 		co = nil,
-		ssl = tls.open(ctx, fd, hostname, alpnprotos),
+		ssl = tls.open(ctx, fd, hostname, alpnstr),
 		closing = false,
 		alpnproto = nil,
 	}
@@ -53,23 +67,30 @@ local function del_socket(s)
 	socket_pool[s.fd] = nil
 end
 
+---@param dat string?
 local function wakeup(s, dat)
 	local co = s.co
 	s.co = nil
 	core.wakeup(co, dat)
 end
 
+---@return string?, string? error
 local function suspend(s)
 	assert(not s.co)
 	s.co = core.running()
-	return core.wait()
+	local dat = core.wait()
+	if not dat then
+		return nil, "closed"
+	end
+	return dat, nil
 end
 
+---@return string?, string? error
 local function handshake(s)
 	local ok, alpnproto = tls.handshake(s.ssl)
 	if ok then
 		s.alpnproto = alpnproto
-		return ok
+		return "", nil
 	end
 	s.delim = "~"
 	return suspend(s)
@@ -78,8 +99,8 @@ end
 function EVENT.accept(fd, _, portid, addr)
 	local lc = socket_pool[portid]
 	local s = new_socket(fd, lc.ctx, nil, nil)
-	local ok = handshake(s)
-	if not ok then
+	local dat, _ = handshake(s)
+	if not dat then
 		return
 	end
 	local ok, err = core.pcall(lc.disp, fd, addr)
@@ -89,6 +110,8 @@ function EVENT.accept(fd, _, portid, addr)
 	end
 end
 
+---@param fd integer
+---@param errno integer?
 function EVENT.close(fd, _, errno)
 	local s = socket_pool[fd]
 	if s == nil then
@@ -96,7 +119,7 @@ function EVENT.close(fd, _, errno)
 	end
 	s.closing = true
 	if s.co then
-		wakeup(s, false)
+		wakeup(s, nil)
 		del_socket(s)
 	end
 end
@@ -135,7 +158,7 @@ function EVENT.data(fd, message)
 		if ok then
 			s.alpnproto = alpnproto
 			s.delim = false
-			wakeup(s, true)
+			wakeup(s, "")
 		end
 	end
 end
@@ -147,28 +170,27 @@ end
 ---@param ip string
 ---@param bind string|nil
 ---@param hostname string|nil
----@param alpnprotos string[]|nil
----@return integer|nil, string|nil
+---@param alpnprotos core.net.tls.alpn_proto[]|nil
+---@return integer?, string? error
 local function connect_normal(ip, bind, hostname, alpnprotos)
 	local fd, err = core.tcp_connect(ip, socket_dispatch, bind)
 	if not fd then
 		return nil, err
 	end
 	local s = new_socket(fd, client_ctx, hostname, alpnprotos)
-	local ok = handshake(s)
+	local ok, err = handshake(s)
 	if ok then
-		return fd
+		return fd, nil
 	end
 	M.close(fd)
-	return nil, "handshake failed"
+	return nil, err
 end
 
----@async
 ---@param ip string
 ---@param bind string|nil
 ---@param hostname string|nil
----@param alpn string[]|nil
----@return integer|nil, string|nil
+---@param alpn core.net.tls.alpn_proto[]|nil
+---@return integer?, string? error
 function M.connect(ip, bind, hostname, alpn)
 	tls = require "core.tls.tls"
 	ctx = require "core.tls.ctx"
@@ -182,9 +204,9 @@ end
 ---	disp:fun(fd:integer, addr:string),
 ---	ciphers:string,
 ---	certs:{cert:string, cert_key:string}[],
----	alpnprotos:string[]|nil, backlog:integer|nil,
+---	alpnprotos:core.net.tls.alpn_proto[]|nil, backlog:integer|nil,
 ---}
----@return integer|nil, string|nil
+---@return integer?, string? error
 function M.listen(conf)
 	assert(conf.addr)
 	assert(conf.disp)
@@ -209,28 +231,28 @@ function M.listen(conf)
 end
 
 ---@param fd integer
----@return boolean
+---@return boolean, string? error
 function M.close(fd)
 	local s = socket_pool[fd]
 	if s == nil then
-		return false
+		return false, "socket closed"
 	end
 	if s.co then
-		wakeup(s, false)
+		wakeup(s, nil)
 	end
 	del_socket(s)
 	core.socket_close(fd)
-	return true
+	return true, nil
 end
 
----@async
 ---@param d string
+---@return string?, string? error
 local function readuntil(s, d)
 	local buf = {d}
 	while s.delim do
 		local r = suspend(s)
 		if not r then
-			return false
+			return nil, "socket closed"
 		end
 		if r ~= "" then
 			buf[#buf+1] = r
@@ -242,51 +264,50 @@ end
 ---@async
 ---@param fd integer
 ---@param n integer
----@return string|false
+---@return string?, string? error
 function M.read(fd, n)
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local d = tls.read(s.ssl, n)
 	if #d == n then
-		return d
+		return d, nil
 	end
 	if s.closing then
 		del_socket(s)
-		return false
+		return nil, "socket closing"
 	end
 	s.delim = n - #d
 	return readuntil(s, d)
 end
 
 ---@param fd integer
----@return string|false
+---@return string?, string? error
 function M.readall(fd)
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local r = tls.readall(s.ssl)
 	if r == "" and s.closing then
 		del_socket(s)
-		return false
+		return nil, "socket closing"
 	end
-	return r
+	return r, nil
 end
 
----@async
 ---@param fd integer
----@return string|false
+---@return string?, string? error
 function M.readline(fd)
 	local s = socket_pool[fd]
 	if not s then
-		return false
+		return nil, "socket closed"
 	end
 	local d, ok
 	d, ok = tls.readline(s.ssl)
 	if ok then
-		return d
+		return d, nil
 	end
 	s.delim = "\n"
 	return readuntil(s, d)
@@ -294,17 +315,20 @@ end
 
 ---@param fd integer
 ---@param str string
----@return boolean, string|nil
+---@return boolean, string? error
 function M.write(fd, str)
 	local s = socket_pool[fd]
-	if not s or s.closing then
-		return false, "already closed"
+	if not s then
+		return false, "socket closed"
+	end
+	if s.closing then
+		return false, "socket closing"
 	end
 	return tls.write(s.ssl, str), nil
 end
 
 ---@param fd integer
----@return string|nil
+---@return string?
 function M.alpnproto(fd)
 	local s = socket_pool[fd]
 	if not s then
@@ -317,10 +341,7 @@ end
 ---@return boolean
 function M.isalive(fd)
 	local s = socket_pool[fd]
-	if s and not s.closing then
-		return true
-	end
-	return false
+	return s and not s.closing
 end
 
 return M
