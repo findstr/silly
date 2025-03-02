@@ -34,6 +34,14 @@ local tlsfd = tls.listen {
 	end
 }
 
+local function netstat()
+	local connecting, tcpclient, ctrlcount = metrics.netstat()
+	return {
+		connecting = connecting,
+		tcpclient = tcpclient,
+		ctrlcount = ctrlcount,
+	}
+end
 local function test_limit(port)
 	local dat1 = crypto.randomkey(511) .. "\n" .. crypto.randomkey(512)
 	local dat2 = crypto.randomkey(1024)
@@ -423,24 +431,17 @@ local function test_close(port)
 	--client should read all data
 	print("CASE9")
 	local dat = crypto.randomkey(64*1024*1024)
+
 	listen_cb = function(fd, addr)
 		local ok = IO.write(fd, dat)
 		testaux.asserteq(ok, true, "server write `64MByte`")
-		IO.close(fd)
+		local ok = IO.close(fd)
+		testaux.asserteq(ok, true, "server close")
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
 	local dat1 = IO.read(fd, 64*1024*1024)
 	testaux.asserteq(dat, dat1, "client read connect")
-end
-
-local function netstat()
-	local connecting, tcpclient, ctrlcount = metrics.netstat()
-	return {
-		connecting = connecting,
-		tcpclient = tcpclient,
-		ctrlcount = ctrlcount,
-	}
 end
 
 core.sleep(1000)
@@ -456,7 +457,7 @@ IO = tcp
 testaux.module("socet")
 test_read(":10001")
 test_close(":10001")
-core.sleep(100)
+core.sleep(500)
 local info3 = netstat()
 testaux.asserteq(info1, info3, "check tcp clear")
 

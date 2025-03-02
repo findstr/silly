@@ -1,6 +1,4 @@
 local http = require "core.http"
-local helper = require "core.http.helper"
-local logger = require "core.logger"
 local base64 = require "core.base64"
 local sha1 = require "core.crypto.hash".new("sha1")
 local utils = require "core.crypto.utils"
@@ -29,12 +27,13 @@ local checklist = {
 }
 
 local data_type = {
-	[0] = "undefined",
+	[0] = "continuation",
 	[1] = "text",
 	[2] = "binary",
 	[8] = "close",
 	[9] = "ping",
 	[10] = "pong",
+	["continuation"] = 0,
 	["text"] = 1,
 	["binary"] = 2,
 	["close"] = 8,
@@ -42,55 +41,78 @@ local data_type = {
 	["pong"] = 10,
 }
 
-local function read_frame(r, sock)
+local function read_frame(fd, r)
 	local dat
-	local tmp = r(sock, 2)
-	if not tmp then
-		return 1, nil, ""
+	local tmp, err = r(fd, 2)
+	if not tmp then -- the frame header is not read, treat as EOF
+		return nil, err, ""
 	end
 	local masking_key
-	local h,l = tmp:byte(1), tmp:byte(2)
+	local h,l = unpack("<I1I1", tmp)
 	local fin, op, mask, payload =
 		(h & 0x80) >> 7, h & 0x0f,
 		(l & 0x80) >> 7, l & 0x7f
 	if payload == 126 then
-		tmp = r(sock, 2)
+		tmp, err = r(fd, 2)
+		if not tmp then
+			return nil, err, ""
+		end
 		payload = unpack(">I2", tmp)
 	elseif payload == 127 then
+		tmp, err = r(fd, 8)
+		if not tmp then
+			return nil, err, ""
+		end
 		payload = unpack(">I8", tmp)
 	end
 	if mask == 1 then
-		local buf = {}
-		masking_key = r(sock, 4)
-		dat = r(sock, payload)
+		masking_key, err = r(fd, 4)
+		if not masking_key then
+			return nil, err, ""
+		end
+		dat, err = r(fd, payload)
+		if not dat then
+			return nil, err, ""
+		end
 		dat = xor(masking_key, dat)
 	else
-		dat = r(sock, payload)
+		dat, err = r(fd, payload)
+		if not dat then
+			return nil, err, ""
+		end
 	end
 	return fin, op, dat
 end
 
-local function write_frame(w, sock, fin, op, mask, dat)
+---@param w fun(fd:integer, data:string):boolean, string?
+---@return boolean, string?
+local function write_frame(w, fd, fin, op, mask, dat)
 	local hdr
 	local len = #dat
-	if len > 125 then
+	if len < 125 then
+	elseif len < 0xffff then
 		len = 126
+	else
+		len = 127
 	end
 	local h, l = fin << 7 | op, mask << 7 | len
 	if len == 126 then
 		hdr = pack(">I1I1I2", h, l, #dat)
+	elseif len == 127 then
+		hdr = pack(">I1I1I8", h, l, #dat)
 	else
 		hdr = pack(">I1I1", h, l)
 	end
 	if mask == 1 then
 		local masking_key = randomkey(4)
 		dat = xor(masking_key, dat)
-		return w(sock, hdr .. masking_key .. dat)
+		return w(fd, hdr .. masking_key .. dat)
 	else
-		return w(sock, hdr .. dat)
+		return w(fd, hdr .. dat)
 	end
 end
 
+---@param r async fun(fd:integer, n:integer):string?, string?
 local function wrap_read(r)
 	local f = func_cache[r]
 	if f then
@@ -100,9 +122,13 @@ local function wrap_read(r)
 		local fin = 0
 		local format
 		local buf = {}
+		local fd = sock.fd
 		while fin == 0 do
-			local op, dat
-			fin, op, dat = read_frame(r, sock)
+			local op, dat, err
+			fin, op, dat = read_frame(fd, r)
+			if not fin then
+				return nil, op, ""
+			end
 			if op ~= 0 then
 				format = data_type[op]
 			end
@@ -121,7 +147,8 @@ local function wrap_write(w, mask)
 	end
 	--local MAX_FRAGMENT = 64*1024-1
 	f = function(sock, dat, typ)
-		local ok
+		local ok, err
+		local fd = sock.fd
 		typ = typ or "binary"
 		dat = dat or NIL
 		local len = #dat
@@ -137,16 +164,16 @@ local function wrap_write(w, mask)
 					fin = 1
 				end
 				off = nxt + 1
-				ok = write_frame(w, sock, fin, op, mask, tmp)
+				ok, err = write_frame(w, fd, fin, op, mask, tmp)
 				if not ok then
 					break
 				end
 				op = 0
 			end
 		else
-			ok = write_frame(w, sock, 1, op, mask, dat)
+			ok, err = write_frame(w, fd, 1, op, mask, dat)
 		end
-		return ok
+		return ok, err
 	end
 	func_mask_cache[mask][w] = f
 	return f
@@ -157,18 +184,23 @@ local function wrap_close(c)
 	if f then
 		return f
 	end
+	---@param sock core.websocket.socket
 	f = function(sock)
 		sock:write(nil, "close")
-		return c(sock)
+		return c(sock.fd)
 	end
 	func_cache[c] = f
 	return f
 end
 
 local function handshake(stream)
-	local header = stream.header
 	local write = stream.respond
 	if stream.method ~= "GET" then
+		write(stream, 400)
+		return
+	end
+	local header = stream.header
+	if not header then
 		write(stream, 400)
 		return
 	end
@@ -193,60 +225,64 @@ local function handshake(stream)
 	return write(stream, 101, ack)
 end
 
+---@param stream core.http.h1stream
+---@return core.websocket.socket
+local function upgrade(stream)
+	local transport = stream.transport
+	local read = transport.read
+	local write = transport.write
+	local close = transport.close
+	---@class core.websocket.socket
+	local sock = {
+		fd = stream.fd,
+		stream = stream,
+		read = wrap_read(read),
+		write = wrap_write(write, 1),
+		close = wrap_close(close),
+	}
+	return sock
+end
+
 local function wrap_handshake(handler)
+	---@param stream core.http.h1stream
 	return function(stream)
-		local sock = stream:socket()
 		if handshake(stream) then
-			--hook origin read function
-			sock.read = wrap_read(sock.read)
-			sock.write = wrap_write(sock.write, 0)
-			sock.close = wrap_close(sock.close)
+			local sock = upgrade(stream)
 			handler(sock)
 		else
-			sock:close()
+			stream:close()
 		end
 	end
 end
 
+---@class core.websocket.listen.conf:core.http.transport.listen.conf
+---@field handler fun(sock: core.websocket.socket)
+
+---@param conf core.websocket.listen.conf
 function M.listen(conf)
 	conf.handler = wrap_handshake(conf.handler)
 	return http.listen(conf)
 end
 
----@param uri string
----@param param table|nil
+---@param url string
+---@param header table|nil
 ---@return core.websocket.socket|nil, string|nil
-function M.connect(uri, param)
-	if param then
-		local buf = helper.urlencode(param)
-		if uri:find("?", 1, true) then
-			uri = uri .. "&" .. buf
-		else
-			uri = uri .. "?" .. buf
-		end
-	end
-	local key = base64.encode(randomkey(16))
-	local stream, err = http.request("GET", uri, {
-		["connection"] = "Upgrade",
-		["upgrade"] = "websocket",
-		["sec-websocket-version"] = 13,
-		["sec-websocket-key"] = key,
-	})
+function M.connect(url, header)
+	url = url:gsub("^ws", "http")
+	header = header or {}
+	header["connection"] = "Upgrade"
+	header["upgrade"] = "websocket"
+	header["sec-websocket-version"] = 13
+	header["sec-websocket-key"] = base64.encode(randomkey(16))
+	local stream, err = http.request("GET", url, header)
 	if not stream then
-		logger.error("websocket.connect", uri, "fail", err)
 		return nil, err
 	end
 	local status, _ = stream:readheader()
 	if not status or status ~= 101 then
 		return nil, "websocket.connect fail"
 	end
-
-	---@class core.websocket.socket
-	local sock = stream:socket()
-	sock.read = wrap_read(sock.read)
-	sock.write = wrap_write(sock.write, 1)
-	sock.close = wrap_close(sock.close)
-	return sock, nil
+	return upgrade(stream), nil
 end
 
 return M

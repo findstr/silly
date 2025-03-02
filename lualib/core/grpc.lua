@@ -1,6 +1,3 @@
-local tcp = require "core.net.tcp"
-local tls = require "core.net.tls"
-local h2 = require "core.http.h2stream"
 local code = require "core.grpc.code"
 local codename = require "core.grpc.codename"
 local transport = require "core.http.transport"
@@ -80,6 +77,22 @@ local function dispatch(registrar)
 	end
 end
 
+---@class core.grpc.server
+---@field fd integer
+---@field transport core.net.tcp|core.net.tls
+local server = {
+	close = function(self)
+		local fd = self.fd
+		if fd then
+			self.transport.close(fd)
+			self.fd = nil
+		end
+	end
+}
+local server_mt = {
+	__index = server,
+}
+
 ---@param conf {
 ---	tls:boolean?,
 ---	addr:string,
@@ -88,30 +101,25 @@ end
 ---	certs:{cert:string, cert_key:string}[],
 ---	alpnprotos:string[]|nil, backlog:integer|nil,
 ---}
+---@return core.grpc.server?, string? error
 function M.listen(conf)
-	local scheme_mt, fd
-	local http2d = h2.httpd(dispatch(conf.registrar))
-	local scheme_io = transport.scheme_io
-	if conf.tls then
-		scheme_mt = scheme_io["https"]
-		fd = tls.listen {
-			addr = conf.addr,
-			certs = conf.certs,
-			alpnprotos = conf.alpnprotos,
-			ciphers = conf.ciphers,
-			disp = function(fd, addr)
-				local socket = setmetatable({fd}, scheme_mt)
-				http2d(socket, addr)
-			end,
-		}
-	else
-		scheme_mt = scheme_io["http"]
-		fd = tcp.listen(conf.addr, function(fd, addr)
-			local socket = setmetatable({fd}, scheme_mt)
-			http2d(socket, addr)
-		end)
+	local handler = dispatch(conf.registrar)
+	local fd, transport = transport.listen {
+		addr = conf.addr,
+		tls = conf.tls,
+		certs = conf.certs,
+		alpnprotos = conf.alpnprotos,
+		ciphers = conf.ciphers,
+		handler = handler,
+		forceh2 = true,
+	}
+	if not fd then
+		return nil, transport
 	end
-	return setmetatable({fd}, scheme_mt)
+	return setmetatable({
+		fd = fd,
+		transport = transport,
+	}, server_mt), nil
 end
 
 local function find_service(proto, name)
@@ -269,16 +277,12 @@ function M.newclient(conf)
 		local endpoint = endpoints[round_robin]
 		round_robin = (round_robin % endpoint_count) + 1
 		local host, port = endpoint[1], endpoint[2]
-		local socket, err = transport.connect(scheme, host, port, alpn_protos, true)
-		if not socket then
-			return nil, err
-		end
-		local stream, err = h2.new(scheme, socket)
+		local stream, err = transport.connect(scheme, host, port, alpn_protos)
 		if not stream then
 			return nil, err
 		end
 		local ok, err = stream:request("POST", fullname, {
-			[":authority"] = host,
+			["host"] = host,
 			["te"] = "trailers",
 			["content-type"] = "application/grpc",
 		}, false)

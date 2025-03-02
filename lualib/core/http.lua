@@ -1,73 +1,86 @@
 local helper = require "core.http.helper"
 local transport = require "core.http.transport"
-local tcp = require "core.net.tcp"
-local tls = require "core.net.tls"
-local h1 = require "core.http.h1stream"
-local h2 = require "core.http.h2stream"
 local parseurl = helper.parseurl
+local setmetatable = setmetatable
+
+local alpn_protos = {"http/1.1", "h2"}
 
 local M = {}
 
-function M.listen(conf)
-	local fd
-	local handler = conf.handler
-	local addr = conf.addr
-	if not conf.tls then
-		fd = tcp.listen(addr, transport.httpd("http", handler))
-	else
-		fd = tls.listen {
-			disp = transport.httpd("https", handler),
-			addr = addr,
-			certs = conf.certs,
-			alpnprotos = conf.alpnprotos,
-		}
+---@class core.http.server_mt
+local server = {
+	close = function(self)
+		local fd = self.fd
+		if fd then
+			self.transport.close(fd)
+			self.fd = nil
+		end
 	end
-	return fd
-end
-local alpn_protos = {"http/1.1", "h2"}
+}
 
+local server_mt = {
+	__index = server,
+}
+
+local listen = transport.listen
+---@param conf core.http.transport.listen.conf
+---@return core.http.server?, string? error
+function M.listen(conf)
+	local fd, transport = listen(conf)
+	if not fd then
+		return nil, transport
+	end
+	---@class core.http.server:core.http.server_mt
+	local server = {
+		fd = fd,
+		transport = transport,
+	}
+	return setmetatable(server, server_mt), nil
+end
+
+
+---@param method string
+---@param url string
+---@param header table<string, string>?
+---@param close boolean?
+---@param alpn_protos core.net.tls.alpn_proto[]?
+---@return core.http.h2stream|core.http.h1stream|nil, string?
 function M.request(method, url, header, close, alpn_protos)
 	local scheme, host, port, path = parseurl(url)
-	local socket, err = transport.connect(scheme, host, port, alpn_protos)
-	if not socket then
-		return nil, err
-	end
-	local new = (socket:alpnproto() == "h2") and h2.new or h1.new
-	local stream, err = new(scheme, socket)
+	local stream, err = transport.connect(scheme, host, port, alpn_protos)
 	if not stream then
 		return nil, err
 	end
-	local ok, err
 	header = header or {}
-	if stream.version == "HTTP/2" then
-		header[":authority"] = host
-		ok, err = stream:request(method, path, header, close)
-	else
-		header["host"] = host
-		ok, err = stream:request(method, path, header)
-	end
+	header["host"] = host
+	local ok, err = stream:request(method, path, header, close)
 	if not ok then
 		stream:close()
 		return nil, err
 	end
 	return stream, nil
 end
+
+local request = M.request
+
 function M.GET(url, header)
-	local stream<close>, err = M.request("GET", url, header, true, alpn_protos)
+	local stream<close>, err = request("GET", url, header, true, alpn_protos)
 	if not stream then
 		return nil, err
 	end
 	local status, header = stream:readheader()
 	if not status then
-		print(status, header)
 		return nil, header
 	end
-	local body = stream:readall()
+	local body, err = stream:readall()
+	if not body then
+		return nil, err
+	end
 	return {
 		status = status,
 		header = header,
 		body = body,
-	}
+	}, nil
 end
 
 function M.POST(url, header, body)
@@ -75,12 +88,11 @@ function M.POST(url, header, body)
 		header = header or {}
 		header["content-length"] = #body
 	end
-	local stream<close>, err = M.request("POST", url, header, false, alpn_protos)
+	local stream<close>, err = request("POST", url, header, false, alpn_protos)
 	if not stream then
 		return nil, err
 	end
-	local version = stream.version
-	if version == "HTTP/2" then
+	if stream.version == "HTTP/2" then
 		stream:close(body)
 	else
 		stream:write(body)
@@ -89,12 +101,15 @@ function M.POST(url, header, body)
 	if not status then
 		return nil, header
 	end
-	local body = stream:readall()
+	local body, err = stream:readall()
+	if not body then
+		return nil, err
+	end
 	return {
 		status = status,
 		header = header,
 		body = body,
-	}
+	}, nil
 end
 
 return M

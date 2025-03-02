@@ -318,7 +318,8 @@ static struct socket *allocsocket(struct silly_socket *ss, fd_t fd,
 
 static inline void netstat_close(struct silly_socket *ss, struct socket *s)
 {
-	if (s->protocol != PROTOCOL_TCP) {
+	if (s->protocol != PROTOCOL_TCP ||
+	    (s->type != STYPE_SOCKET && s->type != STYPE_SHUTDOWN)) {
 		return;
 	}
 	ss->netstat.tcpclient--;
@@ -578,6 +579,7 @@ err:
 
 static void report_connected(struct silly_socket *ss, struct socket *s)
 {
+	ss->netstat.tcpclient++;
 	if (checkconnected(ss, s) < 0)
 		return;
 	struct silly_message_socket *sc;
@@ -585,7 +587,6 @@ static void report_connected(struct silly_socket *ss, struct socket *s)
 	sc->type = SILLY_SCONNECTED;
 	sc->sid = s->sid;
 	silly_worker_push(tocommon(sc));
-	ss->netstat.tcpclient++;
 	return;
 }
 

@@ -1,7 +1,7 @@
 local core = require "core"
 local helper = require "core.http.helper"
-local hpack = require "http2.hpack"
-local builder = require "http2.framebuilder"
+local hpack = require "core.http2.hpack"
+local builder = require "core.http2.framebuilder"
 
 local pairs = pairs
 local tonumber = tonumber
@@ -14,9 +14,30 @@ local unpack = string.unpack
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
+---@class core.http.h2stream.channel
+---@field fd integer?
+---@field transport core.net.tcp|core.net.tls
+---@field handler fun(s:core.http.h2stream)?
+---@field stream_max integer
+---@field stream_idx integer
+---@field stream_count integer
+---@field streams table<integer, core.http.h2stream>
+---@field recv_hpack core.http.h2stream.hpack
+---@field send_hpack core.http.h2stream.hpack
+---@field frame_max_size integer
+---@field window_size integer
+---@field wait_for_conn thread[]
+---@field close fun(ch:core.http.h2stream.channel): nil
+local C = {}
+
+---@class core.http.h2stream.hpack
+---@type fun(table_size:integer): core.http.h2stream.hpack
 local hpack_new = hpack.new
+---@type fun(hpack:core.http.h2stream.hpack, ...:any): string
 local hpack_pack = hpack.pack
+---@type fun(hpack:core.http.h2stream.hpack, string): table<string, string>
 local hpack_unpack = hpack.unpack
+---@type fun(hpack:core.http.h2stream.hpack, integer): nil
 local hpack_hardlimit = hpack.hardlimit
 
 local build_header = builder.header
@@ -24,12 +45,19 @@ local build_body = builder.body
 local build_rst = builder.rst
 local build_setting = builder.setting
 local build_winupdate = builder.winupdate
+
+
 ---@class core.http.h2stream
 ---@field id integer
----@field channel table
+---@field channel core.http.h2stream.channel
 ---@field localclose boolean
 ---@field sendheader table|nil
 ---@field status integer|nil
+---@field co thread|false
+---@field remotestate integer
+---@field headers table<string, string|string[]>
+local S = {}
+
 local M = {}
 
 local FRAME_DATA<const>		= 0
@@ -109,21 +137,40 @@ local err_str = {
 	[0x0d] = "Use HTTP/1.1 for the request",
 }
 
-local mt = {__index = M, __close = function(t) t:close() end}
-local client_channel = {}
+function C.close(ch)
+	local fd = ch.fd
+	if fd then
+		ch.fd = nil
+		ch.transport.close(fd)
+	end
+end
+
+local channel_mt = {
+	__index = C,
+	__gc = C.close,
+}
+
+local stream_mt = {
+	__index = S,
+	__close = function(t) t:close() end,
+}
+
 local server_stream_q = {}
 
-local function read_frame(socket)
-	local read = socket.read
-	local x9 = read(socket, 9)
+---@param fd integer
+---@param read fun(fd:integer, size:integer):string|nil
+---@return integer?, integer?, string?, integer?
+local function read_frame(fd, read)
+	local x9 = read(fd, 9)
 	if not x9 then
-		return nil
+		return nil, nil, nil, nil
 	end
 	local n, t, f, id = unpack(">I3I1I1I4", x9)
-	local dat = n > 0 and read(socket, n) or ""
+	local dat = n > 0 and read(fd, n) or ""
 	return t, f, dat, id
 end
 
+---@param ch core.http.h2stream.channel
 local function try_wakeup_connect(ch)
 	local wait = ch.wait_for_conn
 	local n, m = #wait, ch.stream_max - ch.stream_count
@@ -165,10 +212,11 @@ local function try_read_header(ch, flag, dat)
 	if flag & END_HEADERS == END_HEADERS then --all headers
 		header = hpack_unpack(ch.recv_hpack, dat)
 	else
-		local socket = ch.socket
+		local fd = ch.fd
+		local read = ch.transport.read
 		local tbl = {dat}
 		repeat
-			local t, f, d = read_frame(socket)
+			local t, f, d = read_frame(fd, read)
 			if not t and t ~= FRAME_CONTINUATION then
 				--todo:check t, maybe should ack error
 				return nil
@@ -245,7 +293,7 @@ local function frame_header_server(ch, id, flag, dat)
 			localclose = false,
 			remotestate = nil,
 			[1] = nil,	--for stash data
-		}, mt)
+		}, stream_mt)
 		if flag & END_STREAM == END_STREAM then
 			s.remotestate = STATE_CLOSE
 		else
@@ -277,16 +325,18 @@ local function frame_data(ch, id, flag, dat)
 		--todo: ack error
 		return
 	end
+	local fd = ch.fd
+	local write = ch.transport.write
 	s.remotestate = STATE_DATA
 	if flag & PADDED == PADDED then
 		dat = dat:sub(2,-1)
 	end
 	if flag & END_STREAM == END_STREAM then
 		s.remotestate = STATE_CLOSE
-		ch.socket:write(build_winupdate(0, 0, #dat))
+		write(fd, build_winupdate(0, 0, #dat))
 		check_close(s)
 	else
-		ch.socket:write(build_winupdate(id, 0, #dat))
+		write(fd, build_winupdate(id, 0, #dat))
 	end
 	s[#s + 1] = dat
 	local co = s.co
@@ -311,7 +361,9 @@ local function frame_settings(ch, _, flag, dat)
 end
 
 local function frame_ping(ch, _, _, dat)
-	ch.socket:write(pack(">I3I1I1I4", #dat, FRAME_PING, 1, 0) .. dat)
+	local fd = ch.fd
+	local write = ch.transport.write
+	write(fd, pack(">I3I1I1I4", #dat, FRAME_PING, 1, 0) .. dat)
 end
 
 local function frame_rst(ch, id, _, dat)
@@ -328,7 +380,7 @@ local function frame_rst(ch, id, _, dat)
 		local co = s.co
 		if co then
 			local err = unpack(">I4", dat)
-			core.wakeup(co, err_str[err])
+			wakeup(co, err_str[err])
 		end
 	end
 end
@@ -339,8 +391,9 @@ local function frame_goaway(ch, _, flag, dat)
 	for i = 1, #wait do
 		wakeup(wait[i], err)
 	end
-	ch.socket:close()
-	ch.socket = nil
+	local fd = ch.fd
+	ch.fd = nil
+	ch.transport:close(fd)
 	local wakeup = core.wakeup
 	local streams = ch.streams
 	for k, s in pairs(streams) do
@@ -363,7 +416,7 @@ local function frame_winupdate(ch, id, flag, dat)
 			if dat then
 				local len = remove(ch, 1)
 				n = n - len
-				ch.socket:write(dat)
+				ch.transport.write(ch.fd, dat)
 			end
 		end
 		ch.window_size = n
@@ -391,11 +444,11 @@ local frame_server = {
 }
 
 local function common_dispatch(ch, frame_process)
-	local socket = ch.socket
-	while ch.socket do
-		local t,f,d,id = read_frame(socket)
+	local read = ch.transport.read
+	while ch.fd do
+		local t,f,d,id = read_frame(ch.fd, read)
 		if not t then
-			ch.socket = nil
+			ch.fd = nil
 			break
 		end
 		local func = frame_process[t]
@@ -418,10 +471,6 @@ end
 local function client_dispatch(ch)
 	return function()
 		common_dispatch(ch, frame_client)
-		local socket = ch.socket
-		if client_channel[socket] == ch then
-			client_channel[socket] = nil
-		end
 		local wait = ch.wait_for_conn
 		for i = 1, #wait do
 			wakeup(wait[i], "channel closed")
@@ -429,24 +478,24 @@ local function client_dispatch(ch)
 	end
 end
 
-local function handshake_as_client(ch, socket)
-	ch.send_hpack = hpack_new(default_header_table_size)
-	ch.recv_hpack = hpack_new(default_header_table_size)
-	local write = socket.write
-	write(socket, client_preface)
+local function handshake_as_client(ch, transport)
+	local fd = ch.fd
+	local write = transport.write
+	local ok = write(fd, client_preface)
 	local dat = build_setting(0x0,
 		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, 100,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
 	)
-	write(socket, dat)
-	local t, f, dat, id = read_frame(socket)
+	write(fd, dat)
+	local read = transport.read
+	local t, f, dat, id = read_frame(fd, read)
 	if not t or t ~= FRAME_SETTINGS then
 		return false, "expect settings"
 	end
 	frame_settings(ch, id, f, dat)
-	write(socket, build_setting(0x01))
+	write(fd, build_setting(0x01))
 	while true do
-		local t,f,dat,id = read_frame(socket)
+		local t,f,dat,id = read_frame(fd, read)
 		if not t then
 			return false, "handshake closed"
 		end
@@ -462,29 +511,33 @@ local function handshake_as_client(ch, socket)
 	return true, "ok"
 end
 
-local function handshake_as_server(socket, ch)
+local function handshake_as_server(ch, transport)
 	local dat = build_setting(0x0,
 		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, 100,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
 	)
-	local write = socket.write
-	local read = socket.read
-	local ok = write(socket, dat)
+	local fd = ch.fd
+	local write = transport.write
+	local ok = write(fd, dat)
 	if not ok then
 		return false
 	end
-	dat = read(socket, client_preface_size)
+	local read = transport.read
+	dat = read(fd, client_preface_size)
 	if dat ~= client_preface then
 		return false
 	end
-	local t,f,dat,id = read_frame(socket)
+	local t,f,dat,id = read_frame(fd, read)
 	if not t or t ~= FRAME_SETTINGS then
 		return false
 	end
 	frame_settings(ch, id, f, dat)
-	write(socket, build_setting(0x01))
+	local ok = write(fd, build_setting(0x01))
+	if not ok then
+		return false
+	end
 	while true do
-		local t,f,dat,id = read_frame(socket)
+		local t,f,dat,id = read_frame(fd, read)
 		if not t then
 			return false
 		end
@@ -499,31 +552,31 @@ local function handshake_as_server(socket, ch)
 	return true
 end
 
-function M.httpd(handler)
-	return function(socket, addr)
-		local ch = {
-			--client and server common
-			socket = socket,
-			streams = {},
-			send_hpack = hpack_new(default_header_table_size),
-			recv_hpack = hpack_new(default_header_table_size),
-			stream_max = max_stream_per_channel,
-			window_size = default_window_size,
-			frame_max_size = default_frame_size,
-			--server more
-			handler = function()
-				handler(remove(server_stream_q, 1))
-			end
-		}
-		local ok = handshake_as_server(socket, ch)
-		if ok then
-			common_dispatch(ch, frame_server)
+function M.httpd(handler, fd, transport, addr)
+	local ch = {
+		--client and server common
+		fd = fd,
+		transport = transport,
+		streams = {},
+		send_hpack = hpack_new(default_header_table_size),
+		recv_hpack = hpack_new(default_header_table_size),
+		stream_max = max_stream_per_channel,
+		window_size = default_window_size,
+		frame_max_size = default_frame_size,
+		--server more
+		handler = function()
+			handler(remove(server_stream_q, 1))
 		end
+	}
+	local ok = handshake_as_server(ch, transport)
+	if ok then
+		common_dispatch(ch, frame_server)
 	end
 end
 
+---@param ch core.http.h2stream.channel
 ---@return core.http.h2stream|nil, string|nil
-local function open_stream(ch)
+function C.open_stream(ch)
 	if ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
 		t[#t + 1] = core.running()
@@ -555,52 +608,43 @@ local function open_stream(ch)
 		sendheader = nil,
 		version = "HTTP/2",
 		[1] = nil,	--for stash data
-	}, mt)
+	}, stream_mt)
 	ch.streams[id] = stream
 	return stream, "ok"
 end
 
----@return core.http.h2stream|nil, string|nil
-function M.new(scheme, socket)
-	local ch = client_channel[socket]
-	if not ch then
-		if not socket then
-			return nil, "socket required"
-		end
-		local wait = {}
-		ch = {
-			--client and server common
-			socket = socket,
-			headers = {},
-			streams = {},
-			send_hpack = false,
-			recv_hpack = false,
-			stream_max = max_stream_per_channel,
-			window_size = default_window_size,
-			frame_max_size = default_frame_size,
-			--client more
-			dispatchco = false,
-			wait_for_conn = wait,
-			stream_idx = 1,
-			stream_count = 1,
-			scheme = scheme,
-		}
-		client_channel[socket] = ch
-		local ok, reason = handshake_as_client(ch, socket)
-		if ok then
-			try_wakeup_connect(ch)
-		else
-			client_channel[socket] = nil
-			for i = 1, #wait do
-				wakeup(wait[i], reason)
-			end
-			return nil, reason
-		end
+---@param scheme string
+---@param fd integer
+---@param transport core.net.tcp | core.net.tls
+---@return core.http.h2stream.channel?, string? error
+function M.newchannel(scheme, fd, transport)
+	local ch = setmetatable({
+		--client and server common
+		fd = fd,
+		transport = transport,
+		headers = {},
+		streams = {},
+		send_hpack = hpack_new(default_header_table_size),
+		recv_hpack = hpack_new(default_header_table_size),
+		stream_max = max_stream_per_channel,
+		window_size = default_window_size,
+		frame_max_size = default_frame_size,
+		--client more
+		dispatchco = nil,
+		wait_for_conn = {},
+		stream_idx = 1,
+		stream_count = 1,
+		scheme = scheme,
+	}, channel_mt)
+	local ok, reason = handshake_as_client(ch, transport)
+	if ok then
+		return ch, nil
 	end
-	return open_stream(ch)
+	transport.close(fd)
+	return nil, reason
 end
 
-function M.request(s, method, path, header, close)
+function S.request(s, method, path, header, close)
 	local ch = s.channel
 	if not ch then
 		return false, "channel closed"
@@ -608,8 +652,8 @@ function M.request(s, method, path, header, close)
 	if s.localclose then
 		return false, "local closed"
 	end
-	local host = header[":authority"]
-	header[":authority"] = nil
+	local host = header["host"]
+	header["host"] = nil
 	local hdr = hpack_pack(ch.send_hpack, header,
 		":authority", host,
 		":method", method,
@@ -620,7 +664,7 @@ function M.request(s, method, path, header, close)
 		check_close(s)
 	end
 	local dat = build_header(s.id, ch.frame_max_size, hdr, close)
-	return ch.socket:write(dat)
+	return ch.transport.write(ch.fd, dat)
 end
 
 local function read_timer(s)
@@ -628,7 +672,8 @@ local function read_timer(s)
 	s.remotestate = STATE_CLOSE
 	check_close(s)
 	local rst = build_rst(s.id, CANCEL)
-	s.channel.socket:write(rst)
+	local ch = s.channel
+	ch.transport.write(ch.fd, rst)
 	local co = s.co
 	if co then
 		s.co = nil
@@ -650,6 +695,9 @@ local function wait(s, expire)
 	return reason
 end
 
+---@param s core.http.h2stream
+---@param expire number?
+---@return table<string, string>|nil, string?
 local function read_header(s, expire)
 	local headers = s.headers
 	local header = remove(headers, 1)
@@ -664,10 +712,15 @@ local function read_header(s, expire)
 		end
 		header = remove(headers ,1)
 	end
+	if header[':authority'] then
+		header['host'] = header[':authority']
+	end
 	return header, "ok"
 end
 
-function M.readheader(s, expire)
+---@param s core.http.h2stream
+---@param expire number?
+function S.readheader(s, expire)
 	local header, reason = read_header(s, expire)
 	if not header then
 		return nil, reason
@@ -675,9 +728,14 @@ function M.readheader(s, expire)
 	return tonumber(header[':status']) or 200, header
 end
 
-M.readtrailer = read_header
+S.readtrailer = read_header
 
-function M.respond(s, status, header, close)
+---@param s core.http.h2stream
+---@param status integer
+---@param header table<string, string|string[]>
+---@param close boolean
+---@return boolean, string|?
+function S.respond(s, status, header, close)
 	local ch = s.channel
 	if not ch then
 		return false, "channel closed"
@@ -690,7 +748,7 @@ function M.respond(s, status, header, close)
 		check_close(s)
 		local hdr = hpack_pack(ch.send_hpack, header, ":status", status)
 		local dat = build_header(s.id, ch.frame_max_size, hdr, close)
-		return ch.socket:write(dat), "ok"
+		return ch.transport.write(ch.fd, dat), "ok"
 	else
 		s.status = status
 		s.sendheader = header
@@ -714,6 +772,11 @@ local function write_func(close)
 			s.localclose = true
 			check_close(s)
 		end
+		local fd = ch.fd
+		if not fd then
+			return false, "socket not connected"
+		end
+		local write = ch.transport.write
 		local header = s.sendheader
 		if header then
 			s.sendheader = nil
@@ -727,10 +790,10 @@ local function write_func(close)
 			end
 			if close and not dat then
 				local data = build_header(s.id, ch.frame_max_size, hdr, close)
-				return ch.socket:write(data)
+				return write(fd, data)
 			else
 				local data = build_header(s.id, ch.frame_max_size, hdr, false)
-				ch.socket:write(data)
+				write(fd, data)
 			end
 		end
 		dat = dat or ""
@@ -743,16 +806,19 @@ local function write_func(close)
 			return true, "ok"
 		else
 			ch.window_size = win - body_len
-			return ch.socket:write(dat)
+			return write(fd, dat)
 		end
 	end
 end
 
 local write = write_func(false)
 local write_end = write_func(true)
-M.write = write
+S.write = write
 
-function M.close(s, data, trailer)
+---@param s core.http.h2stream
+---@param data string|nil
+---@param trailer table<string, string>|nil
+function S.close(s, data, trailer)
 	if s.localclose then
 		return
 	end
@@ -793,11 +859,10 @@ local function read(s, expire)
 	return "", "end of stream"
 end
 
-M.read = read
-function M.readall(s, expire)
-	local read = read
+S.read = read
+function S.readall(s, expire)
 	local buf = {}
-	while true do
+	while s.remotestate ~= STATE_CLOSE or #s > 0 do
 		local dat, reason = read(s, expire)
 		if not dat then
 			return nil, reason
@@ -808,14 +873,6 @@ function M.readall(s, expire)
 		buf[#buf + 1] = dat
 	end
 	return concat(buf), nil
-end
-
-function M.socket(s)
-	return s.channel.socket
-end
-
-function M.channels()
-	return client_channel
 end
 
 return M

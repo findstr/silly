@@ -97,8 +97,8 @@ end
 function testaux.asserteq(a, b, str)
 	local aa = escape(a)
 	local bb = escape(b)
-	a = tostringx(aa, 30)
-	b = tostringx(bb, 30)
+	a = tostringx(aa, 60)
+	b = tostringx(bb, 60)
 	if aa == bb then
 		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
 	else
@@ -117,6 +117,20 @@ function testaux.assertneq(a, b, str)
 		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
+		print(debug.traceback(1))
+		core.exit(1)
+	end
+end
+
+function testaux.assertlt(a, b, str)
+	local aa = escape(a)
+	local bb = escape(b)
+	a = tostringx(aa, 30)
+	b = tostringx(bb, 30)
+	if aa < bb then
+		print(format('\27[32m%sSUCCESS\t"%s"\t "%s" < "%s"\27[0m', m, str, a, b))
+	else
+		print(format('\27[31m%sFAIL\t"%s"\t "%s" < "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
 		core.exit(1)
 	end

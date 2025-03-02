@@ -85,6 +85,7 @@ LIB_SRC = lualib-core.c \
 	lualib-tls.c \
 	lualib-debugger.c \
 	lbase64.c \
+	lhttp.c \
 	mysql/lmysql.c
 
 ifeq ($(OPENSSL), ON)
@@ -96,7 +97,6 @@ all: \
 	$(TARGET) \
 	$(LUACLIB_PATH)/core.$(SO) \
 	$(LUACLIB_PATH)/zproto.$(SO) \
-	$(LUACLIB_PATH)/http2.$(SO) \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
 
@@ -109,8 +109,6 @@ $(LUACLIB_PATH):
 $(LUACLIB_PATH)/core.$(SO): $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -Ilualib-src -o $@ $^ $(SHARED) $(OPENSSLFLAG)
 $(LUACLIB_PATH)/zproto.$(SO): $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/http2.$(SO): $(LIB_PATH)/lualib-http2.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/pb.$(SO): $(LIB_PATH)/pb.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)

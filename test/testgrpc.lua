@@ -2,10 +2,10 @@ local core = require "core"
 local protoc = require "protoc"
 local grpc = require "core.grpc"
 local crypto = require "core.crypto.utils"
-local testaux = require "test.testaux"
 local waitgroup = require "core.sync.waitgroup"
 local registrar = require "core.grpc.registrar":new()
-local h2stream = require "core.http.h2stream"
+local transport = require "core.http.transport"
+local testaux = require "test.testaux"
 
 local p = protoc:new()
 
@@ -143,7 +143,9 @@ server = grpc.listen {
 		}
 	},
 }
-
-for _, ch in pairs(h2stream.channels()) do
+client_part()
+server:close()
+for _, ch in pairs(transport.channels()) do
 	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
+	ch:close()
 end

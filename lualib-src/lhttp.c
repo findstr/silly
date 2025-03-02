@@ -18,6 +18,8 @@
 #define FIELD_FMT "%s: %s"
 #define FRAME_HDR_SIZE (9)
 
+///////////////////////////hpack///////////////////////////
+
 struct hpack {
 	int hard_limit;
 	int soft_limit;
@@ -485,8 +487,18 @@ static int lhpack_pack(lua_State *L)
 		lua_pushnil(L);
 		while (lua_next(L, 2) != 0) {
 			top = lua_gettop(L);
-			pack_field(L, &pctx, lua_absindex(L, -2),
-				   lua_absindex(L, -1));
+			int k = lua_absindex(L, -2);
+			int v = lua_absindex(L, -1);
+			if (lua_type(L, v) == LUA_TTABLE) {
+				int n = lua_rawlen(L, v);
+				for (int i = 1; i <= n; i++) {
+					lua_rawgeti(L, v, i);
+					pack_field(L, &pctx, k,
+						   lua_absindex(L, -1));
+				}
+			} else {
+				pack_field(L, &pctx, k, v);
+			}
 			lua_settop(L, top - 1);
 		}
 	}
@@ -651,6 +663,7 @@ static int lhpack_unpack(lua_State *L)
 	while (uctx.p < uctx.e) {
 		int ret;
 		unsigned char n = *uctx.p;
+		lua_settop(L, top);
 		if ((n & 0x80) == 0x80) {
 			if ((ret = read_index_kv(L, &uctx)) < 0) //bit7
 				return 0;
@@ -681,8 +694,26 @@ static int lhpack_unpack(lua_State *L)
 			try_evict(L, uctx.hpack, uctx.dyna, 0);
 			continue;
 		}
+		lua_pushvalue(L, -2); // push key
+		int type = lua_gettable(L, htbl);
+		switch (type) {
+		case LUA_TSTRING:
+			lua_createtable(L, 0, 2);
+			lua_pushvalue(L, -2);
+			lua_rawseti(L, -2, 1);
+			lua_pushvalue(L, -3);
+			lua_rawseti(L, -2, 2);
+			lua_replace(L, -3);
+			break;
+		case LUA_TTABLE: // hk = header[k]; hk[#hk+1] = v
+			lua_pushvalue(L, -2);
+			lua_rawseti(L, -2, lua_rawlen(L, -2) + 1);
+			break;
+		default:
+			break;
+		}
+		lua_pop(L, 1);
 		lua_settable(L, htbl);
-		lua_settop(L, top);
 	}
 	lua_settop(L, htbl);
 	return 1;
@@ -769,7 +800,7 @@ static int dbg_stringid(lua_State *L)
 
 #endif
 
-int luaopen_http2_hpack(lua_State *L)
+int luaopen_core_http2_hpack(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",            lhpack_new       },
@@ -788,6 +819,8 @@ int luaopen_http2_hpack(lua_State *L)
 	luaL_setfuncs(L, tbl, 2);
 	return 1;
 }
+
+///////////////////////////framebuilder///////////////////////////
 
 #define FRAME_DATA 0
 #define FRAME_HEADERS 1
@@ -957,7 +990,7 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
-int luaopen_http2_framebuilder(lua_State *L)
+int luaopen_core_http2_framebuilder(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "header",    lframe_build_header    },

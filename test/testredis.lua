@@ -69,3 +69,4 @@ while true do
 	core.sleep(500)
 end
 
+db:close()

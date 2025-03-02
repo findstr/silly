@@ -96,12 +96,15 @@ function helper.parsetarget(target)
 	if not start then
 		return target, query
 	end
-	assert(start > 1)
 	local path = sub(target, 1, start - 1)
-	local f = sub(target, start + 1)
-	for k, v in gmatch(f, "([^=&]+)=([^&]+)") do
-		query[k] = v
+	path = path == "" and "/" or path
+	local querystring = sub(target, start + 1)
+	if querystring ~= "" then
+		for k, v in gmatch(querystring, "([^=&]+)=([^&]+)") do
+			query[k] = v
+		end
 	end
+
 	return path, query
 end
 

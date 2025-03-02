@@ -1,5 +1,6 @@
-local http = require "core.http"
 local core = require "core"
+local http = require "core.http"
+local transport = require "core.http.transport"
 local crypto = require "core.crypto.utils"
 local waitgroup = require "core.sync.waitgroup"
 local testaux = require "test.testaux"
@@ -9,7 +10,7 @@ local f<const> = io.open("./a.txt", "w")
 local data = crypto.randomkey(65*1024)
 
 local alpn_protos = {"http/1.1", "h2"}
-local function POST(url, header, body)
+local function POST(url, header, body, check_window_size)
 	if body then
 		header = header or {}
 		header["content-length"] = #body * 2
@@ -29,7 +30,9 @@ local function POST(url, header, body)
 	if not status then
 		return nil, header
 	end
-	testaux.asserteq(stream.channel.window_size, 65535, "http2.client window_size")
+	if check_window_size then
+		testaux.asserteq(stream.channel.window_size, 65535, "http2.client window_size")
+	end
 	local body = stream:readall()
 	return {
 		status = status,
@@ -38,11 +41,7 @@ local function POST(url, header, body)
 	}
 end
 
-if not crypto.digestsign then
-	print("not enable openssl")
-	return
-end
-http.listen {
+local server = http.listen {
 	tls = true,
 	addr = "127.0.0.1:8082",
 	alpnprotos = {
@@ -88,25 +87,40 @@ for i = 1, 2000 do
 end
 wg:wait()
 ]]
+--[[
 local ack, err = http.GET("https://http2cdn.cdnsun.com/")
 testaux.asserteq(ack.status, 200, "http2.client status")
 testaux.asserteq(ack.body, "Hello\n", "http2.body")
+]]
 
 print("test http2 server")
 local wg = waitgroup:create()
 for i = 1, 2000 do
 	wg:fork(function()
-	local key = crypto.randomkey(1028)
-	local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
-		['hello'] = 'world',
-		['foo'] = key,
-	}, data)
-	assert(ack, err)
-	testaux.asserteq(ack.status, 200, "http2.client status")
-	testaux.asserteq(ack.header['foo'], key, "http2.client header")
-	testaux.asserteq(ack.body, 'http2', "http2.client body")
+		local key = crypto.randomkey(1028)
+		local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
+			['hello'] = 'world',
+			['foo'] = key,
+		}, data)
+		assert(ack, err)
+		testaux.asserteq(ack.status, 200, "http2.client status")
+		testaux.asserteq(ack.header['foo'], key, "http2.client header")
+		testaux.asserteq(ack.body, 'http2', "http2.client body")
 	end)
 end
 wg:wait()
+local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
+	['hello'] = 'world',
+	['foo'] = "bar",
+}, data, true)
+assert(ack, err)
+testaux.asserteq(ack.status, 200, "http2.client status")
+testaux.asserteq(ack.header['foo'], "bar", "http2.client header")
+testaux.asserteq(ack.body, 'http2', "http2.client body")
 print("test http2 done")
+server:close()
+for _, ch in pairs(transport.channels()) do
+	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
+	ch:close()
+end
 

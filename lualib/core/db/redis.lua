@@ -13,6 +13,7 @@ local format = string.format
 ---@field connect fun(self:core.db.redis, config:{addr:string, auth:string, db:integer}):core.db.redis
 ---@field select fun(self:core.db.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
+---@field close fun(self:core.db.redis)
 local redis = {}
 local redis_mt = { __index = redis }
 local header = "+-:*$"
@@ -146,6 +147,10 @@ function redis:connect(config)
 	}
 	obj.sock:connect()
 	return setmetatable(obj, redis_mt)
+end
+
+function redis:close()
+	self.sock:close()
 end
 
 function redis:select()
