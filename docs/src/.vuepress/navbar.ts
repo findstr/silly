@@ -41,5 +41,6 @@ export default navbar([
     icon: "lightbulb",
     prefix: "/guide/",
     children: getNavItems(DOCS_PATH)
-  }
+  },
+  "/cases/",
 ]);

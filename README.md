@@ -25,7 +25,6 @@ local listenfd = tcp.listen("127.0.0.1:8888", function(fd, addr)
                         print("disconnected", fd)
                         break
                 end
-                print("read:", l)
                 tcp.write(fd, l)
         end
 end)
@@ -46,6 +45,10 @@ Test with telnet or netcat:
 ```bash
 nc localhost 8888
 ```
+
+## Case | 案例
+
+[![](./docs/src/cases/case1.png)](https://www.taptap.cn/app/230552)
 
 ## Core Features | 核心特性
 
