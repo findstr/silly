@@ -710,10 +710,11 @@ do
 
 
 	local statements = {
-		'drop table if exists test_usr',
-		'create table test_usr (name varchar(10))',
-		'insert into test_usr values ("name1")',
-		'update test_usr set name="foo"',
+		'drop table if exists test_users',
+		'create table test_users (name varchar(10))',
+		'insert into test_users values ("name1")',
+		'update test_users set name="foo"',
+		'drop table if exists test_users',
 	}
 
 	local res, err
@@ -795,66 +796,101 @@ do
 	}
 
 	local res, err = pool:query("DROP TABLE IF EXISTS test_users")
-	testaux.assertneq(res, nil, "Test 23.1: Should drop table")
-	testaux.asserteq(err, nil, "Test 23.1: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.1: Should drop table")
+	testaux.asserteq(err, nil, "Test 22.1: Should not return error")
 
 	local res, err = pool:query("CREATE TABLE test_users (id INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(50))")
-	testaux.assertneq(res, nil, "Test 23.2: Should create table")
-	testaux.asserteq(err, nil, "Test 23.2: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.2: Should create table")
+	testaux.asserteq(err, nil, "Test 22.2: Should not return error")
 
 	local tx<close>, err = pool:begin()
-	testaux.asserteq(err, nil, "Test 23.3: Should not return error")
+	testaux.asserteq(err, nil, "Test 22.3: Should not return error")
 
 	assert(tx)
 	local res, err = tx:query("INSERT INTO test_users (name) VALUES (?)", "Alice")
-	testaux.assertneq(res, nil, "Test 23.4: Should insert data")
-	testaux.asserteq(err, nil, "Test 23.4: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.4: Should insert data")
+	testaux.asserteq(err, nil, "Test 22.4: Should not return error")
 
 	local res, err = tx:query("SELECT * FROM test_users")
-	testaux.asserteq(#res, 1, "Test 23.5: Should select data")
-	testaux.asserteq(err, nil, "Test 23.5: Should not return error")
+	testaux.asserteq(#res, 1, "Test 22.5: Should select data")
+	testaux.asserteq(err, nil, "Test 22.5: Should not return error")
 
 	local res, err = pool:query("SELECT * FROM test_users")
-	testaux.asserteq(#res, 0, "Test 23.6: Transaction not commit, should not see data")
-	testaux.asserteq(err, nil, "Test 23.6: Should not return error")
+	testaux.asserteq(#res, 0, "Test 22.6: Transaction not commit, should not see data")
+	testaux.asserteq(err, nil, "Test 22.6: Should not return error")
 
 	local res, err = tx:commit()
-	testaux.asserteq(err, nil, "Test 23.7: Should not return error")
+	testaux.asserteq(err, nil, "Test 22.7: Should not return error")
 
 	local res, err = tx:commit()
-	testaux.asserteq(res, nil, "Test 23.8: Transaction already committed")
-	testaux.assertneq(err, nil, "Test 23.8: Should return error")
+	testaux.asserteq(res, nil, "Test 22.8: Transaction already committed")
+	testaux.assertneq(err, nil, "Test 22.8: Should return error")
 
 	local res, err = pool:query("SELECT * FROM test_users")
-	testaux.asserteq(#res, 1, "Test 23.8: Transaction commit, should see data")
-	testaux.asserteq(err, nil, "Test 23.8: Should not return error")
+	testaux.asserteq(#res, 1, "Test 22.9: Transaction commit, should see data")
+	testaux.asserteq(err, nil, "Test 22.9: Should not return error")
 
 	local res, err = pool:query("DROP TABLE IF EXISTS test_users")
-	testaux.assertneq(res, nil, "Test 23.9: Should drop table")
-	testaux.asserteq(err, nil, "Test 23.9: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.10: Should drop table")
+	testaux.asserteq(err, nil, "Test 22.10: Should not return error")
 
 	local res, err = pool:query("CREATE TABLE test_users (id INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(50))")
-	testaux.assertneq(res, nil, "Test 23.10: Should create table")
-	testaux.asserteq(err, nil, "Test 23.10: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.11: Should create table")
+	testaux.asserteq(err, nil, "Test 22.11: Should not return error")
 
 	local tx<close>, err = pool:begin()
-	testaux.asserteq(err, nil, "Test 23.11: Should not return error")
+	testaux.asserteq(err, nil, "Test 22.12: Should not return error")
 	assert(tx)
 
 	local res, err = tx:query("INSERT INTO test_users (name) VALUES (?)", "Alice")
-	testaux.assertneq(res, nil, "Test 23.12: Should insert data")
-	testaux.asserteq(err, nil, "Test 23.12: Should not return error")
+	testaux.assertneq(res, nil, "Test 22.13: Should insert data")
+	testaux.asserteq(err, nil, "Test 22.13: Should not return error")
 
 	local res, err = tx:rollback()
-	testaux.asserteq(err, nil, "Test 23.13: Should not return error")
+	testaux.asserteq(err, nil, "Test 22.14: Should not return error")
 
 	local res, err = tx:rollback()
-	testaux.asserteq(res, nil, "Test 23.14: Transaction already rolled back")
-	testaux.assertneq(err, nil, "Test 23.14: Should return error")
+	testaux.asserteq(res, nil, "Test 22.15: Transaction already rolled back")
+	testaux.assertneq(err, nil, "Test 22.15: Should return error")
 
 	local res, err = pool:query("SELECT * FROM test_users")
-	testaux.asserteq(#res, 0, "Test 23.15: Transaction rollback, should not see data")
-	testaux.asserteq(err, nil, "Test 23.15: Should not return error")
+	testaux.asserteq(#res, 0, "Test 22.16: Transaction rollback, should not see data")
+	testaux.asserteq(err, nil, "Test 22.16: Should not return error")
+
+	local res, err = pool:query("DROP TABLE IF EXISTS test_users")
+	testaux.assertneq(res, nil, "Test 22.17: Should drop table")
+	testaux.asserteq(err, nil, "Test 22.17: Should not return error")
+
+	pool:close()
+end
+
+-- Test 23: test mysql query with date
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	local res, err = pool:query("CREATE TABLE test_users (id INT PRIMARY KEY AUTO_INCREMENT, date DATE)")
+	testaux.assertneq(res, nil, "Test 23: Should create table")
+
+	local res, err = pool:query("INSERT INTO test_users (date) VALUES (?)", "2022-01-01")
+	testaux.assertneq(res, nil, "Test 23: Should insert data")
+	testaux.asserteq(err, nil, "Test 23: Should not return error")
+
+	local res, err = pool:query("SELECT date FROM test_users where date = ?", "2022-01-01")
+	testaux.assertneq(res, nil, "Test 23: Should select data")
+	testaux.asserteq(err, nil, "Test 23: Should not return error")
+	assert(res)
+	testaux.asserteq(res[1].date, "2022-01-01", "Test 23: Should select data")
+
+	local res, err = pool:query("DROP TABLE IF EXISTS test_users")
+	testaux.assertneq(res, nil, "Test 23: Should drop table")
+	testaux.asserteq(err, nil, "Test 23: Should not return error")
 
 	pool:close()
 end
