@@ -11,6 +11,7 @@ local format = string.format
 local find = string.find
 local sub = string.sub
 local gsub = string.gsub
+local char = string.char
 local byte = string.byte
 local json = {}
 
@@ -25,9 +26,13 @@ local function encodenumber(n)
 end
 
 local escape = {
-	['"'] = '\\"',
+	['"']  = '\\"',
 	['\\'] = '\\\\',
-	['/'] = '\\/',
+	['\b'] = '\\b',
+	['\f'] = '\\f',
+	['\n'] = '\\n',
+	['\r'] = '\\r',
+	['\t'] = '\\t',
 }
 
 local unescape = {}
@@ -37,8 +42,9 @@ do
 	end
 end
 
-local function encodestring(s)
-	s = gsub(s, '["\\/]', escape)
+
+local function encodestr(s)
+	s = s:gsub('[\\"\b\f\n\r\t]', escape)
 	return format('"%s"', s)
 end
 local function encodeobj(obj)
@@ -53,7 +59,7 @@ local function encodeobj(obj)
 		local str = {}
 		for k, v in pairs(obj) do
 			v = encode_func[type(v)](v)
-			str[#str + 1] = format("%s:%s", encodestring(k), v)
+			str[#str + 1] = format("%s:%s", encodestr(k), v)
 		end
 		return format("{%s}", tconcat(str, ","))
 	end
@@ -63,7 +69,7 @@ encode_func = {
 	['table'] = encodeobj,
 	['boolean'] = encodebool,
 	['number'] = encodenumber,
-	['string'] = encodestring,
+	['string'] = encodestr,
 }
 ----------decode
 
@@ -73,10 +79,30 @@ local decode_func
 local function skipspace(str, i)
 	return find(str, "[^%s]", i)
 end
+local backslash = byte('\\')
 local function decodestr(str, i)
-	local _, n = find(str, '[^\\]"', i)
-	local s = sub(str, i + 1, n - 1)
-	return gsub(s, '(\\["\\/])', unescape), n + 1
+	local j = i+1
+	while true do
+		local _, n = find(str, '"', j)
+		if n == nil then
+			return nil, j
+		end
+		local count = 0
+		for k = n - 1, j, -1 do
+			if byte(str, k) ~= backslash then
+				break
+			end
+			count = count + 1
+		end
+		if count % 2 == 0 then
+			j = n
+			break
+		end
+		j = n + 1
+	end
+	local s = sub(str, i + 1, j - 1)
+	s = gsub(s, '(\\["\\/bfnrt])', unescape)
+	return s, j + 1
 end
 local function decodebool(str, i)
 	local n = find(str, "[%s,}]", i)

@@ -114,10 +114,47 @@ do
 		{foo="~!@#$%^&*()_+"}
 	}
 
-	for _, str in ipairs(special) do
+	for i, str in ipairs(special) do
 		local encoded = json.encode(str)
 		local decoded = json.decode(encoded)
 		assert(decoded)
-		testaux.asserteq(decoded.foo, str.foo, "Case6: Special characters - "..str.foo)
+		testaux.asserteq(decoded.foo, str.foo, "Case6.."..i..": Special characters - "..str.foo)
+	end
+
+	local escaped = {
+		{obj = {foo = "\\"}, str = '{"foo":"\\\\"}'},
+	}
+	local escaped = {
+		-- Basic escaping of backslash
+		{obj = {foo = "\\"}, str = '{"foo":"\\\\"}'},
+		-- Double quotes escaping
+		{obj = {foo = "\""}, str = '{"foo":"\\""}'},
+		-- Forward slash (optional escaping in JSON)
+		{obj = {foo = "/"}, str = '{"foo":"/"}'},
+		-- Control characters
+		{obj = {foo = "\b"}, str = '{"foo":"\\b"}'},
+		{obj = {foo = "\f"}, str = '{"foo":"\\f"}'},
+		{obj = {foo = "\n"}, str = '{"foo":"\\n"}'},
+		{obj = {foo = "\r"}, str = '{"foo":"\\r"}'},
+		{obj = {foo = "\t"}, str = '{"foo":"\\t"}'},
+		-- Multiple escape sequences in one string
+		{obj = {foo = "line1\nline2\t\"quoted\""}, str = '{"foo":"line1\\nline2\\t\\"quoted\\""}'},
+		-- Nested objects with escapes
+		{obj = {foo = {bar = "a\\b"}}, str = '{"foo":{"bar":"a\\\\b"}}'},
+		-- Arrays with escaped elements
+		{obj = {foo = {"a\"", "b\\"}}, str = '{"foo":["a\\"","b\\\\"]}'},
+		-- Empty string with surrounding escapes
+		{obj = {foo = "\\test\\"}, str = '{"foo":"\\\\test\\\\"}'},
+		-- Consecutive escapes
+		{obj = {foo = "\\\\\\"}, str = '{"foo":"\\\\\\\\\\\\"}'},
+		-- Mix of different escape types
+		{obj = {foo = "\\\"\\n\\t"}, str = '{"foo":"\\\\\\"\\\\n\\\\t"}'},
+		-- Testing keys with escapes
+		{obj = {["key\\with\"escapes"] = "value"}, str = '{"key\\\\with\\"escapes":"value"}'}
+	}
+	for i, v in ipairs(escaped) do
+		local str = json.encode(v.obj)
+		assert(str)
+		testaux.asserteq(str, v.str, "Case6: Special characters - "..i)
 	end
 end
