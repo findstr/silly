@@ -481,7 +481,10 @@ end
 local function handshake_as_client(ch, transport)
 	local fd = ch.fd
 	local write = transport.write
-	local ok = write(fd, client_preface)
+	local ok, err = write(fd, client_preface)
+	if not ok then
+		return false, err
+	end
 	local dat = build_setting(0x0,
 		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, 100,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
