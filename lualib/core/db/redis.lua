@@ -160,20 +160,22 @@ end
 setmetatable(redis, {__index = function (self, k)
 	local cmd = upper(k)
 	local f = function (self, p1, ...)
-		local sock = self.sock
 		local str
 		if type(p1) == "table" then
 			str = compose(cmd, p1)
 		else
 			str = compose(cmd, {p1, ...})
 		end
-		return sock:request(str, read_response)
+		return self.sock:request(str, read_response)
 	end
 	self[k] = f
 	return f
 end
 })
 
+function redis:call(cmd, p1, ...)
+	return self[cmd](self, p1, ...)
+end
 function redis:pipeline(req, ret)
 	local out = {}
 	local cmd_len = #req
