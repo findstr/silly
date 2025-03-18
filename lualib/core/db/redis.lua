@@ -10,7 +10,7 @@ local format = string.format
 
 ---@class core.db.redis
 ---@field sock core.socketq
----@field connect fun(self:core.db.redis, config:{addr:string, auth:string, db:integer}):core.db.redis
+---@field new fun(self:core.db.redis, config:{addr:string, auth:string, db:integer}):core.db.redis
 ---@field select fun(self:core.db.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
 ---@field close fun(self:core.db.redis)
@@ -138,14 +138,15 @@ local function redis_login(auth, db)
 	end
 end
 
-function redis:connect(config)
+---@param config table
+---@return core.db.redis
+function redis.new(config)
 	local obj = {
 		sock = dispatch:create {
 			addr = config.addr,
 			auth = redis_login(config.auth, config.db)
 		},
 	}
-	obj.sock:connect()
 	return setmetatable(obj, redis_mt)
 end
 

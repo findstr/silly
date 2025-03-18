@@ -17,7 +17,7 @@ end
 local db = nil
 local function testbasic()
 	local err
-	db, err= redis:connect{
+	db, err= redis.new {
 		addr = "127.0.0.1:6379",
 		db = 11,
 	}
