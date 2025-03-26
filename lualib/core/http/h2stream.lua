@@ -55,6 +55,7 @@ local build_winupdate = builder.winupdate
 ---@field status integer|nil
 ---@field co thread|false
 ---@field remotestate integer
+---@field remoteerror string|nil
 ---@field headers table<string, string|string[]>
 local S = {}
 
@@ -260,6 +261,7 @@ local function frame_header_client(ch, id, flag, dat)
 	headers[#headers + 1] = header
 	if flag & END_STREAM == END_STREAM then
 		s.remotestate = STATE_CLOSE
+		s.remoteerror = "end of stream"
 		check_close(s)
 	end
 	local co = s.co
@@ -296,6 +298,7 @@ local function frame_header_server(ch, id, flag, dat)
 		}, stream_mt)
 		if flag & END_STREAM == END_STREAM then
 			s.remotestate = STATE_CLOSE
+			s.remoteerror = "end of stream"
 		else
 			s.remotestate = STATE_HEADER
 			ch.streams[id] = s
@@ -307,6 +310,7 @@ local function frame_header_server(ch, id, flag, dat)
 		s.header = header
 		if flag & END_STREAM == END_STREAM then
 			s.remotestate = STATE_CLOSE
+			s.remoteerror = "end of stream"
 			check_close(s)
 			streams[id] = nil
 		end
@@ -333,6 +337,7 @@ local function frame_data(ch, id, flag, dat)
 	end
 	if flag & END_STREAM == END_STREAM then
 		s.remotestate = STATE_CLOSE
+		s.remoteerror = "end of stream"
 		write(fd, build_winupdate(0, 0, #dat))
 		check_close(s)
 	else
@@ -377,9 +382,10 @@ local function frame_rst(ch, id, _, dat)
 			ch.stream_count = ch.stream_count - 1
 			try_wakeup_connect(ch)
 		end
+		local err = unpack(">I4", dat)
+		s.remoteerror = err_str[err]
 		local co = s.co
 		if co then
-			local err = unpack(">I4", dat)
 			wakeup(co, err_str[err])
 		end
 	end
@@ -390,21 +396,6 @@ local function frame_goaway(ch, _, flag, dat)
 	local err = "goaway:" .. dat
 	for i = 1, #wait do
 		wakeup(wait[i], err)
-	end
-	local fd = ch.fd
-	ch.fd = nil
-	ch.transport:close(fd)
-	local wakeup = core.wakeup
-	local streams = ch.streams
-	for k, s in pairs(streams) do
-		s.channel = nil
-		s.localclose = true
-		s.remotestate = STATE_CLOSE
-		streams[k] = nil
-		local co = s.co
-		if co then
-			wakeup(co, err)
-		end
 	end
 end
 
@@ -465,6 +456,7 @@ local function common_dispatch(ch, frame_process)
 		v.channel = nil
 		v.localclose = true
 		v.remotestate = STATE_CLOSE
+		v.remoteerror = "channel closed"
 	end
 end
 
@@ -673,6 +665,7 @@ end
 local function read_timer(s)
 	s.localclose = true
 	s.remotestate = STATE_CLOSE
+	s.remoteerror = "timeout"
 	check_close(s)
 	local rst = build_rst(s.id, CANCEL)
 	local ch = s.channel
@@ -706,7 +699,7 @@ local function read_header(s, expire)
 	local header = remove(headers, 1)
 	if not header then
 		if s.remotestate == STATE_CLOSE then
-			return nil, "stream closed"
+			return nil, s.remoteerror
 		end
 		s.co = core.running()
 		local reason = wait(s, expire)
@@ -848,7 +841,7 @@ local function read(s, expire)
 		return dat, nil
 	end
 	if s.remotestate >= STATE_TRAILER then
-		return "", "end of stream"
+		return "", s.remoteerror or "end of stream"
 	end
 	s.co = core.running()
 	local reason = wait(s, expire)
@@ -859,7 +852,7 @@ local function read(s, expire)
 	if dat then
 		return dat, nil
 	end
-	return "", "end of stream"
+	return "", s.remoteerror or "end of stream"
 end
 
 S.read = read
