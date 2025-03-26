@@ -9,7 +9,7 @@ local assert = assert
 local pairs = pairs
 local format = string.format
 local setmetatable = setmetatable
-local socket_mutex = mutex:new()
+local socket_mutex = mutex.new()
 
 local M = {}
 

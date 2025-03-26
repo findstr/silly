@@ -42,7 +42,7 @@ local proxymt = {
 }
 
 ---@return core.sync.mutex
-function M:new()
+function M.new()
 	return setmetatable({
 		lockobj = {},
 	}, mt)

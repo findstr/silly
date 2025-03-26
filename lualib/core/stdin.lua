@@ -1,5 +1,5 @@
 local core = require "core"
-local mutex = require "core.sync.mutex":new()
+local mutex = require "core.sync.mutex".new()
 local logger = require "core.logger"
 local ipairs = ipairs
 local tonumber = tonumber
