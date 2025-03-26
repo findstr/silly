@@ -10,7 +10,7 @@ local format = string.format
 
 ---@class core.db.redis
 ---@field sock core.socketq
----@field new fun(self:core.db.redis, config:{addr:string, auth:string, db:integer}):core.db.redis
+---@field new fun(config:{addr:string, auth:string, db:integer}):core.db.redis
 ---@field select fun(self:core.db.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
 ---@field close fun(self:core.db.redis)

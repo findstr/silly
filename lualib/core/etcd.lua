@@ -115,7 +115,7 @@ end
 local mt = { __index = M }
 ---@param conf {
 ---	endpoints:string[],	--etcd server address
----	retry:integer,		--retry times
+---	retry:integer|nil,	--retry times
 ---	retry_sleep:integer|nil,--retry sleep time(ms)
 ---	timeout:number|nil,	--timeout
 ---}

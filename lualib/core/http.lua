@@ -41,7 +41,7 @@ end
 
 ---@param method string
 ---@param url string
----@param header table<string, string>?
+---@param header table<string, string|number>?
 ---@param close boolean?
 ---@param alpn_protos core.net.tls.alpn_proto[]?
 ---@return core.http.h2stream|core.http.h1stream|nil, string?
