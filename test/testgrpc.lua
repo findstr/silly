@@ -63,16 +63,17 @@ local server = grpc.listen {
 
 local client
 
+local x = crypto.randomkey(1024*1024)
 local function request(index, count)
 	return function()
 		for i = 1, count do
 			local test = {
 				name = "hello",
 				age = index,
-				rand = crypto.randomkey(8),
+				rand = crypto.randomkey(8) .. x
 			}
 			local body, err = client.SayHello(test)
-			testaux.assertneq(body, nil, "rpc timeout:" .. (err or ""))
+			testaux.assertneq(body, nil, "rpc call error:" .. (err or ""))
 			testaux.asserteq(test.rand, body.rand, "rpc match request/response")
 		end
 	end

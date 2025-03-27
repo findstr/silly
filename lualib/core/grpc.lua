@@ -1,21 +1,72 @@
+local logger = require "core.logger"
 local code = require "core.grpc.code"
 local codename = require "core.grpc.codename"
 local transport = require "core.http.transport"
 local pb = require "pb"
+local assert = assert
 local pack = string.pack
+local unpack = string.unpack
 local format = string.format
+local sub = string.sub
+local concat = table.concat
 local tonumber = tonumber
 local setmetatable = setmetatable
 local M = {}
 
 local HDR_SIZE<const> = 5
+local BODY_START<const> = HDR_SIZE+1
 local MAX_LEN<const> = 4*1024*1024
+
+---@param stream core.http.h2stream
+---@param read fun(stream:core.http.h2stream, timeout:number):string?, string?
+---@param is_server boolean
+---@param timeout number
+---@return string?, string? error
+local function read_body(stream, read, is_server, timeout)
+	local data = ""
+	--read header
+	for i = 1, HDR_SIZE do
+		local d, err = read(stream, timeout)
+		if not d or d == "" then
+			return nil, err
+		end
+		data = data .. d
+		if #data >= HDR_SIZE then
+			break
+		end
+	end
+	local compress, frame_size = unpack(">I1I4", data)
+	assert(compress == 0, "grpc: compression not supported")
+	if is_server and frame_size > MAX_LEN then
+		stream:respond(200, {
+			['content-type'] = 'application/grpc',
+			['grpc-status'] = code.ResourceExhausted,
+		}, true)
+		return nil, "grpc: received message larger than max"
+	end
+	data = sub(data, BODY_START)
+	if frame_size > #data then
+		local buf = {data}
+		frame_size = frame_size - #data
+		while frame_size > 0 do
+			local d, err = read(stream, timeout)
+			if not d or d == "" then
+				return nil, err
+			end
+			buf[#buf + 1] = d
+			frame_size = frame_size - #d
+		end
+		data = concat(buf)
+	end
+	return data, nil
+end
 
 local function dispatch(registrar)
 	local input_name = registrar.input_name
 	local output_name = registrar.output_name
 	local handlers = registrar.handlers
 	--use closure for less hash
+	---@param stream core.http.h2stream
 	return function(stream)
 		local status, header = stream:readheader()
 		if status ~= 200 then
@@ -29,41 +80,13 @@ local function dispatch(registrar)
 		local method = header[':path']
 		local itype = input_name[method]
 		local otype = output_name[method]
-		local data = ""
-		--read header
-		for i = 1, 4 do
-			local d, _ = stream:read()
-			if not d or d == "" then
-				stream:close()
-				return
-			end
-			data = data .. d
-			if #data >= HDR_SIZE then
-				break
-			end
-		end
-		local _, len = string.unpack(">I1I4", data)
-		if len > MAX_LEN then
-			stream:respond(200, {
-				['content-type'] = 'application/grpc',
-				['grpc-status'] = code.ResourceExhausted,
-				['grpc-message'] = format("grpc: received message larger than max (%s vs. %s)", len, MAX_LEN),
-			}, true)
+		local data, err = read_body(stream, stream.read, true, nil)
+		if not data then
+			stream:close()
+			logger.warn("[core.grpc] read body failed", err)
 			return
 		end
-		if #data < (len + HDR_SIZE) then
-			local d, reason = stream:readall()
-			if not d then
-				stream:respond(200, {
-					['content-type'] = 'application/grpc',
-					['grpc-status'] = code.Unknown,
-					['grpc-message'] = reason,
-				}, true)
-				return
-			end
-			data = data .. d
-		end
-		local input = pb.decode(itype, data:sub(HDR_SIZE+1))
+		local input = pb.decode(itype, data)
 		local output = assert(handlers[method], method)(input)
 		local outdata = pb.encode(otype, output)
 		--payloadFormat, length, data
@@ -159,15 +182,11 @@ local function streaming_read_wrapper(stream, method, timeout)
 			end
 			need_header = false
 		end
-		--TODO: support multi frame
-		local body, reason = read(stream)
-		if not body then
-			return nil, reason
+		local data, err = read_body(stream, read, false, timeout)
+		if not data then
+			return nil, err
 		end
-		if #body < HDR_SIZE then
-			return nil, "grpc: invalid body"
-		end
-		local resp = pb.decode(otype, body:sub(HDR_SIZE+1))
+		local resp = pb.decode(otype, data)
 		if not resp then
 			return nil, "decode error"
 		end
@@ -213,12 +232,9 @@ local function general_call(timeout, connect, method, fullname)
 		local grpc_status = header['grpc-status']
 		if not grpc_status then	--normal header
 			local reason
-			body, reason = stream:readall(timeout)
+			body, reason = read_body(stream, stream.read, false, timeout)
 			if not body then
 				return nil, reason
-			end
-			if #body < HDR_SIZE then
-				return nil, "grpc: invalid body"
 			end
 			local trailer, reason = stream:readtrailer(timeout)
 			if not trailer then
@@ -234,7 +250,7 @@ local function general_call(timeout, connect, method, fullname)
 			return nil, format("code = %s desc = %s",
 				codename[grpc_status], grpc_message)
 		end
-		local resp = pb.decode(otype, body:sub(HDR_SIZE+1))
+		local resp = pb.decode(otype, body)
 		if not resp then
 			return nil, "decode error"
 		end
