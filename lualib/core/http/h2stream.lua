@@ -3,6 +3,7 @@ local helper = require "core.http.helper"
 local hpack = require "core.http2.hpack"
 local builder = require "core.http2.framebuilder"
 
+local assert = assert
 local pairs = pairs
 local tonumber = tonumber
 local wakeup = core.wakeup
@@ -14,20 +15,7 @@ local unpack = string.unpack
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
----@class core.http.h2stream.channel
----@field fd integer?
----@field transport core.net.tcp|core.net.tls
----@field handler fun(s:core.http.h2stream)?
----@field stream_max integer
----@field stream_idx integer
----@field stream_count integer
----@field streams table<integer, core.http.h2stream>
----@field recv_hpack core.http.h2stream.hpack
----@field send_hpack core.http.h2stream.hpack
----@field frame_max_size integer
----@field window_size integer
----@field wait_for_conn thread[]
----@field close fun(ch:core.http.h2stream.channel): nil
+---@class core.http.h2stream.channel_mt
 local C = {}
 
 ---@class core.http.h2stream.hpack
@@ -47,16 +35,7 @@ local build_setting = builder.setting
 local build_winupdate = builder.winupdate
 
 
----@class core.http.h2stream
----@field id integer
----@field channel core.http.h2stream.channel
----@field localclose boolean
----@field sendheader table|nil
----@field status integer|nil
----@field co thread|false
----@field remotestate integer
----@field remoteerror string|nil
----@field headers table<string, string|string[]>
+---@class core.http.h2stream_mt
 local S = {}
 
 local M = {}
@@ -264,10 +243,10 @@ local function frame_header_client(ch, id, flag, dat)
 		s.remoteerror = "end of stream"
 		check_close(s)
 	end
-	local co = s.co
+	local co = s.readco
 	if co then
-		s.co = nil
-		core.wakeup(co, "ok")
+		s.readco = nil
+		wakeup(co, "ok")
 	end
 end
 
@@ -294,6 +273,7 @@ local function frame_header_server(ch, id, flag, dat)
 			channel = ch,
 			localclose = false,
 			remotestate = nil,
+			remoteerror = nil,
 			[1] = nil,	--for stash data
 		}, stream_mt)
 		if flag & END_STREAM == END_STREAM then
@@ -314,10 +294,10 @@ local function frame_header_server(ch, id, flag, dat)
 			check_close(s)
 			streams[id] = nil
 		end
-		local co = s.co
+		local co = s.readco
 		if co then
-			s.co = nil
-			core.wakeup(co, "ok")
+			s.readco = nil
+			wakeup(co, "ok")
 		end
 	end
 end
@@ -344,9 +324,9 @@ local function frame_data(ch, id, flag, dat)
 		write(fd, build_winupdate(id, 0, #dat))
 	end
 	s[#s + 1] = dat
-	local co = s.co
+	local co = s.readco
 	if co then
-		s.co = nil
+		s.readco = nil
 		wakeup(co, "ok")
 	end
 end
@@ -382,11 +362,17 @@ local function frame_rst(ch, id, _, dat)
 			ch.stream_count = ch.stream_count - 1
 			try_wakeup_connect(ch)
 		end
-		local err = unpack(">I4", dat)
-		s.remoteerror = err_str[err]
-		local co = s.co
+		local err = err_str[unpack(">I4", dat)] or "unknown error"
+		s.remoteerror = err
+		local co = s.readco
 		if co then
-			wakeup(co, err_str[err])
+			s.readco = nil
+			wakeup(co, err)
+		end
+		co = s.writeco
+		if co then
+			s.writeco = nil
+			wakeup(co, err)
 		end
 	end
 end
@@ -399,15 +385,21 @@ local function frame_goaway(ch, _, flag, dat)
 	end
 end
 
+---@param ch core.http.h2stream.channel
+---@param id integer
+---@param flag integer
+---@param dat string
 local function frame_winupdate(ch, id, flag, dat)
 	if id == 0 then
 		local n = ch.window_size + unpack(">I4", dat)
 		if n > 0 then
-			local dat = remove(ch, 1)
-			if dat then
-				local len = remove(ch, 1)
-				n = n - len
-				ch.transport.write(ch.fd, dat)
+			local s = remove(ch.wait_for_write, 1)
+			if s then
+				local co = s.writeco
+				if co then
+					s.writeco = nil
+					wakeup(co, "ok")
+				end
 			end
 		end
 		ch.window_size = n
@@ -449,7 +441,11 @@ local function common_dispatch(ch, frame_process)
 	end
 	local t = ch.streams
 	for _, v in pairs(t) do
-		local co = v.co
+		local co = v.readco
+		if co then
+			wakeup(co, "channel closed")
+		end
+		co = v.writeco
 		if co then
 			wakeup(co, "channel closed")
 		end
@@ -470,6 +466,7 @@ local function client_dispatch(ch)
 	end
 end
 
+---@param ch core.http.h2stream.channel
 local function handshake_as_client(ch, transport)
 	local fd = ch.fd
 	local write = transport.write
@@ -553,6 +550,7 @@ function M.httpd(handler, fd, transport, addr)
 		fd = fd,
 		transport = transport,
 		streams = {},
+		wait_for_write = {},
 		send_hpack = hpack_new(default_header_table_size),
 		recv_hpack = hpack_new(default_header_table_size),
 		stream_max = max_stream_per_channel,
@@ -592,15 +590,20 @@ function C.open_stream(ch)
 		end
 	end
 	ch.stream_idx = id + 2
+
+	---@class core.http.h2stream : core.http.h2stream_mt
 	local stream = setmetatable({
 		id = id,
-		co = false,
+		readco = nil,
+		writeco = nil,
 		active = true,
 		channel = ch,
 		localclose = false,
 		remotestate = STATE_NONE,
+		remoteerror = nil,
 		headers = {},
 		sendheader = nil,
+		status = nil,
 		version = "HTTP/2",
 		[1] = nil,	--for stash data
 	}, stream_mt)
@@ -613,6 +616,7 @@ end
 ---@param transport core.net.tcp | core.net.tls
 ---@return core.http.h2stream.channel?, string? error
 function M.newchannel(scheme, fd, transport)
+	---@class core.http.h2stream.channel:core.http.h2stream.channel_mt
 	local ch = setmetatable({
 		--client and server common
 		fd = fd,
@@ -624,6 +628,7 @@ function M.newchannel(scheme, fd, transport)
 		stream_max = max_stream_per_channel,
 		window_size = default_window_size,
 		frame_max_size = default_frame_size,
+		wait_for_write = {},
 		--client more
 		dispatchco = nil,
 		wait_for_conn = {},
@@ -670,10 +675,10 @@ local function read_timer(s)
 	local rst = build_rst(s.id, CANCEL)
 	local ch = s.channel
 	ch.transport.write(ch.fd, rst)
-	local co = s.co
+	local co = s.readco
 	if co then
-		s.co = nil
-		core.wakeup(co, "timeout")
+		s.readco = nil
+		wakeup(co, "timeout")
 	end
 end
 
@@ -701,7 +706,7 @@ local function read_header(s, expire)
 		if s.remotestate == STATE_CLOSE then
 			return nil, s.remoteerror
 		end
-		s.co = core.running()
+		s.readco = core.running()
 		local reason = wait(s, expire)
 		if reason ~= "ok" then
 			return nil, reason
@@ -728,8 +733,8 @@ S.readtrailer = read_header
 
 ---@param s core.http.h2stream
 ---@param status integer
----@param header table<string, string|string[]>
----@param close boolean
+---@param header table<string, string|string[]|number>
+---@param close boolean?
 ---@return boolean, string|?
 function S.respond(s, status, header, close)
 	local ch = s.channel
@@ -755,7 +760,7 @@ end
 local function write_func(close)
 	---@param s core.http.h2stream
 	---@param dat string|nil
-	---@return boolean, string|?
+	---@return boolean, string?
 	return function(s, dat)
 		local ch = s.channel
 		if not ch then
@@ -797,13 +802,18 @@ local function write_func(close)
 		dat = build_body(s.id, ch.frame_max_size, dat, close)
 		local win = ch.window_size
 		if win <= 0 then
-			ch[#ch + 1] = dat
-			ch[#ch + 1] = body_len
-			return true, "ok"
-		else
-			ch.window_size = win - body_len
-			return write(fd, dat)
+			assert(not s.writeco, "[core.http.h2stream] write can't be called in race")
+			local co = core.running()
+			s.writeco = co
+			local wait = ch.wait_for_write
+			wait[#wait + 1] = s
+			local reason = core.wait()
+			if reason ~= "ok" then
+				return false, reason
+			end
 		end
+		ch.window_size = ch.window_size - body_len
+		return write(fd, dat)
 	end
 end
 
@@ -813,7 +823,7 @@ S.write = write
 
 ---@param s core.http.h2stream
 ---@param data string|nil
----@param trailer table<string, string>|nil
+---@param trailer table<string, string|string[]|number>|nil
 function S.close(s, data, trailer)
 	if s.localclose then
 		return
@@ -827,10 +837,15 @@ function S.close(s, data, trailer)
 	end
 	s.localclose = true
 	check_close(s)
-	local co = s.co
+	local co = s.readco
 	if co then
-		s.co = nil
-		core.wakeup(co, "closed")
+		s.readco = nil
+		wakeup(co, "closed")
+	end
+	co = s.writeco
+	if co then
+		s.writeco = nil
+		wakeup(co, "closed")
 	end
 end
 
@@ -843,7 +858,7 @@ local function read(s, expire)
 	if s.remotestate >= STATE_TRAILER then
 		return "", s.remoteerror or "end of stream"
 	end
-	s.co = core.running()
+	s.readco = core.running()
 	local reason = wait(s, expire)
 	if reason ~= "ok" then
 		return nil, reason
