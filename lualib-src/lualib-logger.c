@@ -262,10 +262,10 @@ static int llogf(lua_State *L, enum silly_log_level log_level)
 		else if (*++strfmt == LOG_ESC)
 			log_buffer_addchar(&buffer, *strfmt++); /* %% */
 		else { /* format item */
-			if (*strfmt != 'v') {
+			if (*strfmt != 's') {
 				const char *err = "invalid option "
 						  "'%%%c' to 'format',"
-						  " only support '%%v'";
+						  " only support '%%s'";
 				luaL_error(L, err, *strfmt);
 			}
 			++strfmt;
