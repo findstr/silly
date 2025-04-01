@@ -6,7 +6,8 @@ local match = string.match
 local gmatch = string.gmatch
 local insert = table.insert
 local concat = table.concat
-local char = utf8.char
+local utf8char = utf8.char
+local strchar = string.char
 local pairs = pairs
 local tonumber = tonumber
 local type = type
@@ -23,7 +24,7 @@ local html_unescape = {
 
 function helper.htmlunescape(html)
 	html = gsub(html, "&#(%d+);", function(s)
-		return char(tonumber(s, 10))
+		return utf8char(tonumber(s, 10))
 	end)
 	html = gsub(html, "&(%a+);", html_unescape)
 	return html
@@ -50,7 +51,7 @@ end
 
 function helper.urldecode(url)
 	url = gsub(url, "%%([0-9A-Fa-F][0-9A-Fa-F])", function (s)
-		return char(tonumber(s, 16))
+		return strchar(tonumber(s, 16))
 	end)
 	return url
 end
