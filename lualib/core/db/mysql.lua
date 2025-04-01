@@ -41,37 +41,37 @@ local pmt
 --- @field fields row[]
 
 --- @class conn
---- @field private pool pool
---- @field private fd number				#socket fd
---- @field private auth_plugin_name string		#auth plugin name
---- @field private connection_id number			#connection id
---- @field private packet_no number			#packet number
---- @field private created_at number			#connection created time
---- @field private returned_at number			#connection returned time
---- @field private protocol_version number		#protocol version
---- @field private server_version string		#server version
---- @field private server_capabilities number		#server capabilities
---- @field private server_collation number		#server collation
---- @field private server_status number			#server status
---- @field private stmt_cache stmt[]			#statement cache
---- @field private is_broken boolean			#connection is broken
---- @field private is_autocommit boolean		#connection is autocommit
+--- @field pool pool
+--- @field fd number				#socket fd
+--- @field auth_plugin_name string		#auth plugin name
+--- @field connection_id number			#connection id
+--- @field packet_no number			#packet number
+--- @field created_at number			#connection created time
+--- @field returned_at number			#connection returned time
+--- @field protocol_version number		#protocol version
+--- @field server_version string		#server version
+--- @field server_capabilities number		#server capabilities
+--- @field server_collation number		#server collation
+--- @field server_status number			#server status
+--- @field stmt_cache stmt[]			#statement cache
+--- @field is_broken boolean			#connection is broken
+--- @field is_autocommit boolean		#connection is autocommit
 
 --- @class pool
 --- @field addr string
 --- @field database string
 --- @field user string
---- @field private password string
+--- @field password string
 --- @field charset string
 --- @field max_packet_size number
 --- @field max_open_conns number
 --- @field max_idle_conns number
 --- @field max_idle_time number
 --- @field max_lifetime number
---- @field private conns_idle conn[]
---- @field private open_count number
---- @field private waiting_for_conn thread[]
---- @field private is_closed boolean
+--- @field conns_idle conn[]
+--- @field open_count number
+--- @field waiting_for_conn thread[]
+--- @field is_closed boolean
 
 --- @class open_opts
 --- @field addr string  #host:port
