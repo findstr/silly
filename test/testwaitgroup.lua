@@ -2,7 +2,7 @@ local core = require "core"
 local testaux = require "test.testaux"
 local waitgroup = require "core.sync.waitgroup"
 
-local wg = waitgroup:create()
+local wg = waitgroup.new()
 local count = 0
 for i = 1, 5 do
 	wg:fork(function()

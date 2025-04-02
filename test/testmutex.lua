@@ -7,7 +7,7 @@ local mutex = mutex:new()
 
 local function testcase1()
 	print("===:case1")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
@@ -32,7 +32,7 @@ end
 
 local function testcase2()
 	print("===:case2")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
@@ -58,7 +58,7 @@ end
 
 local function testcase3()
 	print("===:case3")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	local x = 0
 	for i = 1, 5 do
@@ -85,7 +85,7 @@ end
 
 local function testcase4()
 	print("===:case4")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	local x = 0
 	wg:fork(function()
@@ -111,7 +111,7 @@ end
 
 local function testcase5()
 	print("===:case5")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	wg:fork(function()
 		local lock1 = mutex:lock(key)
@@ -133,7 +133,7 @@ end
 
 local function testcase6()
 	print("===:case6")
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	local key = {}
 	wg:fork(function()
 		local lock1 = mutex:lock(key)

@@ -102,7 +102,7 @@ local function client_part()
 		proto = proto,
 		timeout = 5000,
 	}
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	case = case_one
 	for i = 1, 2 do
 		wg:fork(request(i, 5))

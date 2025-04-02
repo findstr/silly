@@ -138,7 +138,7 @@ local function client_part()
 	local err
 	client_fd, err = client.connect("127.0.0.1:8989")
 	print("connect", client_fd, err)
-	local wg = waitgroup:create()
+	local wg = waitgroup.new()
 	case = case_one
 	for i = 1, 2 do
 		local cmd

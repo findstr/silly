@@ -70,7 +70,7 @@ local server = http.listen {
 local n = 0
 print("test http2 client")
 --[[ disable test http2 client for temporary
-local wg = waitgroup:create()
+local wg = waitgroup.new()
 for i = 1, 2000 do
 	wg:fork(function()
 		local key = crypto.randomkey(1028)
@@ -94,7 +94,7 @@ testaux.asserteq(ack.body, "Hello\n", "http2.body")
 ]]
 
 print("test http2 server")
-local wg = waitgroup:create()
+local wg = waitgroup.new()
 for i = 1, 2000 do
 	wg:fork(function()
 		local key = crypto.randomkey(1028)
