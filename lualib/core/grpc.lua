@@ -3,6 +3,7 @@ local code = require "core.grpc.code"
 local codename = require "core.grpc.codename"
 local transport = require "core.http.transport"
 local pb = require "pb"
+
 local assert = assert
 local pack = string.pack
 local unpack = string.unpack
@@ -11,22 +12,23 @@ local sub = string.sub
 local concat = table.concat
 local tonumber = tonumber
 local setmetatable = setmetatable
+
 local M = {}
 
 local HDR_SIZE<const> = 5
 local BODY_START<const> = HDR_SIZE+1
 local MAX_LEN<const> = 4*1024*1024
 
----@param stream core.http.h2stream
----@param read fun(stream:core.http.h2stream, timeout:number):string?, string?
+---@param h2stream core.http.h2stream
 ---@param is_server boolean
----@param timeout number
+---@param timeout number?
 ---@return string?, string? error
-local function read_body(stream, read, is_server, timeout)
+local function read_body(h2stream, is_server, timeout)
 	local data = ""
 	--read header
+	local read = h2stream.read
 	for i = 1, HDR_SIZE do
-		local d, err = read(stream, timeout)
+		local d, err = read(h2stream, timeout)
 		if not d or d == "" then
 			return nil, err
 		end
@@ -38,7 +40,7 @@ local function read_body(stream, read, is_server, timeout)
 	local compress, frame_size = unpack(">I1I4", data)
 	assert(compress == 0, "grpc: compression not supported")
 	if is_server and frame_size > MAX_LEN then
-		stream:respond(200, {
+		h2stream:respond(200, {
 			['content-type'] = 'application/grpc',
 			['grpc-status'] = code.ResourceExhausted,
 		}, true)
@@ -49,7 +51,7 @@ local function read_body(stream, read, is_server, timeout)
 		local buf = {data}
 		frame_size = frame_size - #data
 		while frame_size > 0 do
-			local d, err = read(stream, timeout)
+			local d, err = read(h2stream, timeout)
 			if not d or d == "" then
 				return nil, err
 			end
@@ -66,11 +68,11 @@ local function dispatch(registrar)
 	local output_name = registrar.output_name
 	local handlers = registrar.handlers
 	--use closure for less hash
-	---@param stream core.http.h2stream
-	return function(stream)
-		local status, header = stream:readheader()
+	---@param h2stream core.http.h2stream
+	return function(h2stream)
+		local status, header = h2stream:readheader()
 		if status ~= 200 then
-			stream:respond(200, {
+			h2stream:respond(200, {
 				['content-type'] = 'application/grpc',
 				['grpc-status'] = code.Unknown,
 				['grpc-message'] = "grpc: invalid header"
@@ -80,9 +82,9 @@ local function dispatch(registrar)
 		local method = header[':path']
 		local itype = input_name[method]
 		local otype = output_name[method]
-		local data, err = read_body(stream, stream.read, true, nil)
+		local data, err = read_body(h2stream, true, nil)
 		if not data then
-			stream:close()
+			h2stream:close()
 			logger.warn("[core.grpc] read body failed", err)
 			return
 		end
@@ -91,10 +93,10 @@ local function dispatch(registrar)
 		local outdata = pb.encode(otype, output)
 		--payloadFormat, length, data
 		outdata = pack(">I1I4", 0, #outdata) .. outdata
-		stream:respond(200, {
+		h2stream:respond(200, {
 			['content-type'] = 'application/grpc',
 		})
-		stream:close(outdata, {
+		h2stream:close(outdata, {
 			['grpc-status'] = code.OK,
 		})
 	end
@@ -156,55 +158,59 @@ end
 
 local alpn_protos = {"h2"}
 
----@param stream core.http.h2stream
-local function streaming_write_wrapper(stream, method, timeout)
-	local itype = method.input_type
-	local write = stream.write
-	---@param stream core.http.h2stream
-	---@param req table
-	return function(stream, req)
-		local reqdat = pb.encode(itype, req)
-		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
-		return write(stream, reqdat)
-	end
+---@class core.grpc.streaming
+---@field h2stream core.http.h2stream
+---@field need_header boolean
+---@field input_type string
+---@field output_type string
+local grpc_streaming = {}
+local grpc_streaming_mt = { __index = grpc_streaming }
+
+---@param self core.grpc.streaming
+function grpc_streaming:write(req)
+	local h2stream = self.h2stream
+	local reqdat = pb.encode(self.input_type, req)
+	reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
+	return h2stream:write(reqdat)
 end
 
----@param stream core.http.h2stream
-local function streaming_read_wrapper(stream, method, timeout)
-	local need_header = true
-	local read = stream.read
-	local otype = method.output_type
-	return function(steam)
-		if need_header then
-			local status, header = stream:readheader(timeout)
-			if not status then
-				return nil, header
-			end
-			need_header = false
+---@param self core.grpc.streaming
+---@param timeout number?
+function grpc_streaming:read(timeout)
+	local h2stream = self.h2stream
+	if self.need_header then
+		local status, header = h2stream:readheader(timeout)
+		if not status then
+			return nil, header
 		end
-		local data, err = read_body(stream, read, false, timeout)
-		if not data then
-			return nil, err
-		end
-		local resp = pb.decode(otype, data)
-		if not resp then
-			return nil, "decode error"
-		end
-		return resp, nil
+		self.need_header = false
 	end
+	local data, err = read_body(h2stream, false, timeout)
+	if not data then
+		return nil, err
+	end
+	local resp = pb.decode(self.output_type, data)
+	if not resp then
+		return nil, "decode error"
+	end
+	return resp, nil
 end
 
 ---@return core.grpc.stream|nil, string|nil
 local function stream_call(timeout, connect, method, fullname)
 	return function()
 		---@class core.grpc.stream:core.http.h2stream
-		local stream, err = connect(fullname)
-		if not stream then
+		local h2stream, err = connect(fullname)
+		if not h2stream then
 			return nil, err
 		end
-		stream.write = streaming_write_wrapper(stream, method, timeout)
-		stream.read = streaming_read_wrapper(stream, method, timeout)
-		return stream, nil
+		local streaming = setmetatable({
+			h2stream = h2stream,
+			input_type = method.input_type,
+			output_type = method.output_type,
+			need_header = true,
+		}, grpc_streaming_mt)
+		return streaming, nil
 	end
 end
 
@@ -213,17 +219,17 @@ local function general_call(timeout, connect, method, fullname)
 	local itype = method.input_type
 	local otype = method.output_type
 	return function(req)
-		local stream<close>, err = connect(fullname)
-		if not stream then
+		local h2stream<close>, err = connect(fullname)
+		if not h2stream then
 			return nil, err
 		end
 		local reqdat = pb.encode(itype, req)
 		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
-		local ok, err = stream:write(reqdat)
+		local ok, err = h2stream:write(reqdat)
 		if not ok then
 			return nil, err
 		end
-		local status, header = stream:readheader(timeout)
+		local status, header = h2stream:readheader(timeout)
 		if not status then
 			return nil, header
 		end
@@ -232,11 +238,11 @@ local function general_call(timeout, connect, method, fullname)
 		local grpc_status = header['grpc-status']
 		if not grpc_status then	--normal header
 			local reason
-			body, reason = read_body(stream, stream.read, false, timeout)
+			body, reason = read_body(h2stream, false, timeout)
 			if not body then
 				return nil, reason
 			end
-			local trailer, reason = stream:readtrailer(timeout)
+			local trailer, reason = h2stream:readtrailer(timeout)
 			if not trailer then
 				return nil, reason
 			end
