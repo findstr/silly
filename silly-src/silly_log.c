@@ -18,7 +18,7 @@
 #endif
 
 static int is_daemon = 0;
-static enum silly_log_level log_level;
+static enum silly_log_level log_level = SILLY_LOG_INFO;
 static THREAD_LOCAL struct {
 	char buf[64];
 	char *sstr;
@@ -61,7 +61,6 @@ void silly_log_openfile(const char *path)
 
 void silly_log_init(const struct silly_config *config)
 {
-	log_level = SILLY_LOG_INFO;
 	is_daemon = config->daemon;
 	silly_log_openfile(config->logpath);
 	return;
