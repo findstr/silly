@@ -196,6 +196,10 @@ function grpc_streaming:read(timeout)
 	return resp, nil
 end
 
+function grpc_streaming:close()
+	self.h2stream:close()
+end
+
 ---@return core.grpc.stream|nil, string|nil
 local function stream_call(timeout, connect, method, fullname)
 	return function()
