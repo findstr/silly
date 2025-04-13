@@ -246,6 +246,7 @@ stream_mt.__index = stream_mt
 
 --- @class core.http.h1stream:core.http.h1stream_mt
 --- @field fd integer
+--- @field remote_addr string
 --- @field transport core.net.tcp|core.net.tls
 --- @field version string
 --- @field header table<string, string>?
@@ -260,9 +261,10 @@ stream_mt.__index = stream_mt
 ---@param fd integer
 ---@param transport core.net.tcp|core.net.tls
 ---@return core.http.h1stream
-function M.new(scheme, fd, transport)
+function M.new(scheme, fd, transport, addr)
 	return setmetatable({
 		fd = fd,
+		remote_addr = addr,
 		transport = transport,
 		version = "HTTP/1.1",
 		header = nil,
@@ -277,7 +279,6 @@ end
 
 function M.httpd(handler, fd, transport, addr)
 	local pcall = core.pcall
-	local read = transport.read
 	local write = transport.write
 	local readline = transport.readline
 	while true do
@@ -325,6 +326,7 @@ function M.httpd(handler, fd, transport, addr)
 			path = path,
 			header = header,
 			query = query,
+			remote_addr = addr,
 			content_length = content_length,
 			eof = eof,
 		}, stream_mt)

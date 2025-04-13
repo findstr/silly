@@ -266,6 +266,7 @@ local function frame_header_server(ch, id, flag, dat)
 			method = header[':method'],
 			path = path,
 			query = query,
+			remote_addr = ch.remote_addr,
 			--private members
 			id = id,
 			co = false,
@@ -548,6 +549,7 @@ function M.httpd(handler, fd, transport, addr)
 	local ch = {
 		--client and server common
 		fd = fd,
+		remote_addr = addr,
 		transport = transport,
 		streams = {},
 		wait_for_write = {},
@@ -605,6 +607,7 @@ function C.open_stream(ch)
 		sendheader = nil,
 		status = nil,
 		version = "HTTP/2",
+		remote_addr = ch.remote_addr,
 		[1] = nil,	--for stash data
 	}, stream_mt)
 	ch.streams[id] = stream
@@ -614,12 +617,14 @@ end
 ---@param scheme string
 ---@param fd integer
 ---@param transport core.net.tcp | core.net.tls
+---@param addr string?
 ---@return core.http.h2stream.channel?, string? error
-function M.newchannel(scheme, fd, transport)
+function M.newchannel(scheme, fd, transport, addr)
 	---@class core.http.h2stream.channel:core.http.h2stream.channel_mt
 	local ch = setmetatable({
 		--client and server common
 		fd = fd,
+		remote_addr = addr,
 		transport = transport,
 		headers = {},
 		streams = {},

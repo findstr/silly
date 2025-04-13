@@ -41,20 +41,20 @@ core.timeout(1000, check_alive_timer)
 ---@param host string
 ---@param port string
 ---@param alpnprotos core.net.tls.alpn_proto[]
----@return integer?, core.net.tcp|core.net.tls|string|nil
+---@return integer?, core.net.tcp|core.net.tls|string|nil, string?
 local function connect_exec(scheme, host, port, alpnprotos)
 	local ip = dns.lookup(host, dns.A)
 	if not ip then
-		return nil, "dns lookup failed"
+		return nil, nil, "dns lookup failed"
 	end
 	assert(ip, host)
 	local transport = transport_layers[scheme]
 	local addr = format("%s:%s", ip, port)
 	local fd, err = transport.connect(addr, nil, host, alpnprotos)
 	if not fd then
-		return nil, err
+		return nil, nil, err
 	end
-	return fd, transport
+	return fd, transport, addr
 end
 
 ---@param scheme string
@@ -65,11 +65,11 @@ end
 function M.connect(scheme, host, port, alpnprotos)
 	local aln_count = alpnprotos and #alpnprotos or 0
 	if aln_count == 1 and alpnprotos[1] == "http/1.1" then -- force http1.x protocol, don't reuse connection
-		local fd, transport = connect_exec(scheme, host, port, alpnprotos)
+		local fd, transport, addr = connect_exec(scheme, host, port, alpnprotos)
 		if not fd then
-			return nil, transport
+			return nil, addr
 		end
-		return h1.new(scheme, fd, transport), nil
+		return h1.new(scheme, fd, transport, addr), nil
 	end
 	-- try use h2 connection
 	local tag = format("%s:%s:%s", scheme, host, port)
@@ -83,9 +83,9 @@ function M.connect(scheme, host, port, alpnprotos)
 	if channel and channel.transport.isalive(channel.fd) then
 		return channel:open_stream(), nil
 	end
-	local fd, transport = connect_exec(scheme, host, port, alpnprotos)
+	local fd, transport, addr = connect_exec(scheme, host, port, alpnprotos)
 	if not fd then
-		return nil, transport
+		return nil, addr
 	end
 	local is_h2 = aln_count == 1 and alpnprotos[1] == "h2"
 	if not is_h2 then
@@ -94,14 +94,14 @@ function M.connect(scheme, host, port, alpnprotos)
 		is_h2 = alpnproto and alpnproto(fd) == "h2"
 	end
 	if is_h2 then
-		local channel, err = h2.newchannel(scheme, fd, transport)
+		local channel, err = h2.newchannel(scheme, fd, transport, addr)
 		if not channel then
 			return nil, err
 		end
 		h2_pool[tag] = channel
 		return channel:open_stream(), nil
 	end
-	return h1.new(scheme, fd, transport), nil
+	return h1.new(scheme, fd, transport, addr), nil
 end
 
 ---@class core.http.transport.listen.conf
