@@ -51,10 +51,19 @@ ifeq ($(OPENSSL), ON)
 OPENSSLFLAG := -DUSE_OPENSSL -lssl -lcrypto
 endif
 
+#####zlib
+ZLIB_DIR=deps/zlib
+ZLIB_LIB=$(ZLIB_DIR)/libz.a
+
+$(ZLIB_LIB): $(ZLIB_DIR)/Makefile
+	make -C $(ZLIB_DIR)
+
+$(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
+	cd $(ZLIB_DIR) && ./configure
 
 #-----------project
 LUACLIB_PATH ?= luaclib
-INCLUDE += -I $(LUA_INC) -I $(SRC_PATH)
+INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR)
 SRC_FILE = \
       main.c \
       silly_socket.c \
@@ -70,6 +79,7 @@ SRC_FILE = \
       silly_monitor.c \
       pipe.c \
       event.c \
+      force_link.c\
 
 SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
 OBJS = $(patsubst %.c,%.o,$(SRC))
@@ -86,7 +96,8 @@ LIB_SRC = lualib-core.c \
 	lualib-debugger.c \
 	lbase64.c \
 	lhttp.c \
-	mysql/lmysql.c
+	mysql/lmysql.c \
+	lcompress.c
 
 ifeq ($(OPENSSL), ON)
        LIB_SRC += $(patsubst lualib-src/%,%,$(wildcard lualib-src/crypto/*.c))
@@ -100,7 +111,7 @@ all: \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
 
-$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB)
 	$(LD) -o $@ $^ $(LDFLAGS)
 
 $(LUACLIB_PATH):
@@ -133,6 +144,13 @@ clean:
 	-rm -rf $(LUACLIB_PATH)
 	-rm .depend
 	-rm $(SRC_PATH)/*.lib
+	-rm $(ZLIB_DIR)/*.a
+	-rm $(ZLIB_DIR)/Makefile
+	-rm $(ZLIB_DIR)/*.o
+	-rm $(ZLIB_DIR)/example
+	-rm $(ZLIB_DIR)/example64
+	-rm $(ZLIB_DIR)/minigzip
+	-rm $(ZLIB_DIR)/minigzip64
 
 cleanall: clean
 	make -C $(LUA_DIR) clean
@@ -141,8 +159,8 @@ ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
 endif
 
 fmt:
-	-clang-format -i silly-src/*.h
-	-clang-format -i silly-src/*.c
-	-clang-format -i lualib-src/l*.c
-	-clang-format -i lualib-src/crypto/l*.c
+	-clang-format -style=file -i silly-src/*.h
+	-clang-format -style=file -i silly-src/*.c
+	-clang-format -style=file -i lualib-src/l*.c
+	-clang-format -style=file -i lualib-src/crypto/l*.c
 

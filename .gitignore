@@ -6,6 +6,13 @@ tags
 server
 client
 /deps/lua/lua
+/deps/zlib/zconf.h
+/deps/zlib/*.log
+/deps/zlib/example
+/deps/zlib/example64
+/deps/zlib/minigzip
+/deps/zlib/minigzip64
+/deps/zlib/Makefile
 luac
 *.ko
 *.obj
