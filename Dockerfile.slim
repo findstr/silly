@@ -1,0 +1,46 @@
+# 阶段1: 构建阶段
+FROM debian:bookworm-slim AS builder
+
+ENV TZ=Asia/Shanghai
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    tzdata \
+    git \
+    build-essential \
+    autoconf \
+    libreadline-dev \
+    libssl-dev \
+    wget \
+    unzip \
+    ca-certificates &&\
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+ADD . .
+
+RUN make MALLOC=libc
+
+# 阶段2: 运行时镜像
+FROM debian:bookworm-slim
+
+ENV TZ=Asia/Shanghai
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libssl3 \
+    libgcc-s1 && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/silly /opt/
+COPY --from=builder /build/lualib /opt/lualib
+COPY --from=builder /build/luaclib /opt/luaclib
+
+WORKDIR /app
+ENTRYPOINT ["/opt/silly"]
