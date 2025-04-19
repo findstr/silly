@@ -180,9 +180,15 @@ int main(int argc, char *argv[])
 	silly_timer_init();
 	status = silly_run(&config);
 	silly_daemon_stop(&config);
+	if (silly_log_visible(SILLY_LOG_INFO)) {
+		silly_log_head(SILLY_LOG_INFO);
+	}
+	// NOTE: silly_log_header depend silly_timer_now
 	silly_timer_exit();
-	silly_log_info("%s exit, leak memory size:%zu\n", argv[0],
+	if (silly_log_visible(SILLY_LOG_INFO)) {
+		silly_log_fmt("%s exit, leak memory size:%zu\n", argv[0],
 		       silly_memused());
+	}
 	silly_log_flush();
 	return status;
 }

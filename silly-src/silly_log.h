@@ -10,7 +10,7 @@ enum silly_log_level {
 	SILLY_LOG_ERROR = 3,
 };
 
-void silly_log_init();
+void silly_log_init(const struct silly_config *config);
 void silly_log_openfile(const char *path);
 void silly_log_setlevel(enum silly_log_level level);
 enum silly_log_level silly_log_getlevel();

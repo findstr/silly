@@ -1,6 +1,7 @@
 #ifndef _TIMER_H
 #define _TIMER_H
 
+#include <time.h>
 #include <stdint.h>
 
 void silly_timer_init();

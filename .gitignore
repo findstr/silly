@@ -5,6 +5,7 @@
 tags
 server
 client
+.vscode/
 /deps/lua/lua
 /deps/zlib/zconf.h
 /deps/zlib/*.log
