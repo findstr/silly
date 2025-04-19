@@ -1,0 +1,68 @@
+# Git and CI configuration
+.github/
+
+# Build artifacts and binaries
+build/
+bin/
+*.o
+*.d
+.depend
+tags
+
+# Project-specific artifacts
+/silly
+luac
+
+# Dependency sources and logs
+/deps/lua/lua
+/deps/zlib/*.log
+/deps/zlib/example
+/deps/zlib/example64
+/deps/zlib/minigzip
+/deps/zlib/minigzip64
+/deps/zlib/Makefile
+
+# Libraries and shared objects
+*.ko
+*.obj
+*.elf
+*.lib
+*.a
+*.la
+*.lo
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Executables and intermediate files
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE files
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Node modules and VuePress
+node_modules/
+.vuepress/.cache/
+.vuepress/.temp/
+.vuepress/dist/
