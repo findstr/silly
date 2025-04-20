@@ -22,7 +22,7 @@ RUN apt-get update && \
 WORKDIR /build
 ADD . .
 
-RUN make MALLOC=libc
+RUN make
 
 # 阶段2: 运行时镜像
 FROM debian:bookworm-slim
@@ -41,6 +41,13 @@ RUN apt-get update && \
 COPY --from=builder /build/silly /opt/
 COPY --from=builder /build/lualib /opt/lualib
 COPY --from=builder /build/luaclib /opt/luaclib
+COPY --from=builder /build/deps/jemalloc/include/jemalloc/jemalloc.h /opt/include/jemalloc/
+COPY --from=builder /build/silly-src/*.h /opt/include/
+COPY --from=builder /build/deps/lua/lua.hpp /opt/include/lua/
+COPY --from=builder /build/deps/lua/luaconf.h /opt/include/lua/
+COPY --from=builder /build/deps/lua/lua.h /opt/include/lua/
+COPY --from=builder /build/deps/lua/lualib.h /opt/include/lua/
+COPY --from=builder /build/deps/lua/lauxlib.h /opt/include/lua/
 
 WORKDIR /app
 ENTRYPOINT ["/opt/silly"]
