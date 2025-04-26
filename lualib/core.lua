@@ -216,6 +216,10 @@ function core.fork(func)
 	return t
 end
 
+function core.status(t)
+	return task_status[t]
+end
+
 function core.wait()
 	local t = task_running
 	local status = task_status[t]

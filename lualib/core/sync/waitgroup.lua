@@ -12,7 +12,7 @@ end
 
 function M:fork(func)
 	self.count = self.count +1
-	core.fork(function()
+	local co = core.fork(function()
 		local ok, err = core.pcall(func)
 		if not ok then
 			logger.error("[waitgroup] fork err:", err)
@@ -27,6 +27,7 @@ function M:fork(func)
 			end
 		end
 	end)
+	return co
 end
 
 function M:wait()
