@@ -266,7 +266,7 @@ local function frame_header_server(ch, id, flag, dat)
 			method = header[':method'],
 			path = path,
 			query = query,
-			remote_addr = ch.remote_addr,
+			remoteaddr = ch.remoteaddr,
 			--private members
 			id = id,
 			co = false,
@@ -549,7 +549,7 @@ function M.httpd(handler, fd, transport, addr)
 	local ch = {
 		--client and server common
 		fd = fd,
-		remote_addr = addr,
+		remoteaddr = addr,
 		transport = transport,
 		streams = {},
 		wait_for_write = {},
@@ -607,7 +607,7 @@ function C.open_stream(ch)
 		sendheader = nil,
 		status = nil,
 		version = "HTTP/2",
-		remote_addr = ch.remote_addr,
+		remoteaddr = ch.remoteaddr,
 		[1] = nil,	--for stash data
 	}, stream_mt)
 	ch.streams[id] = stream
@@ -624,7 +624,7 @@ function M.newchannel(scheme, fd, transport, addr)
 	local ch = setmetatable({
 		--client and server common
 		fd = fd,
-		remote_addr = addr,
+		remoteaddr = addr,
 		transport = transport,
 		headers = {},
 		streams = {},

@@ -157,10 +157,10 @@ local stream_mt = {
 		s.header = header
 		if header["content-length"] then
 			local len = tonumber(header["content-length"])
-			s.content_length = len
+			s.contentlength = len
 			s.eof = len == 0
 		elseif header["transfer-encoding"] == chunked then
-			s.content_length = chunked
+			s.contentlength = chunked
 		else
 			s.eof = true
 		end
@@ -176,11 +176,11 @@ local stream_mt = {
 		end
 		local fd = s.fd
 		local transport = s.transport
-		local content_length = s.content_length
-		if not content_length then
+		local contentlength = s.contentlength
+		if not contentlength then
 			return "", "no body"
 		end
-		if content_length == chunked then
+		if contentlength == chunked then
 			local dat, err = read_chunk(fd, transport)
 			s.eof = not dat or #dat == 0
 			return dat, err
@@ -189,7 +189,7 @@ local stream_mt = {
 		-- first it read all body data,
 		-- second the connections is broken
 		s.eof = true
-		local body, err = transport.read(fd, content_length)
+		local body, err = transport.read(fd, contentlength)
 		if not body then
 			return "", err
 		end
@@ -199,11 +199,11 @@ local stream_mt = {
 		if s.eof then
 			return "", "EOF"
 		end
-		local content_length = s.content_length
-		if not content_length then
+		local contentlength = s.contentlength
+		if not contentlength then
 			return "", "no body"
 		end
-		if content_length == chunked then
+		if contentlength == chunked then
 			local buf = {}
 			repeat
 				local dat, err = s:read()
@@ -246,7 +246,7 @@ stream_mt.__index = stream_mt
 
 --- @class core.http.h1stream:core.http.h1stream_mt
 --- @field fd integer
---- @field remote_addr string
+--- @field remoteaddr string
 --- @field transport core.net.tcp|core.net.tls
 --- @field version string
 --- @field header table<string, string>?
@@ -255,7 +255,7 @@ stream_mt.__index = stream_mt
 --- @field method string?
 --- @field path string?
 --- @field query table<string, string>?
---- @field content_length integer|string|nil
+--- @field contentlength integer|string|nil
 
 ---@param scheme string
 ---@param fd integer
@@ -264,7 +264,7 @@ stream_mt.__index = stream_mt
 function M.new(scheme, fd, transport, addr)
 	return setmetatable({
 		fd = fd,
-		remote_addr = addr,
+		remoteaddr = addr,
 		transport = transport,
 		version = "HTTP/1.1",
 		header = nil,
@@ -272,7 +272,7 @@ function M.new(scheme, fd, transport, addr)
 		method = nil,
 		path = nil,
 		query = nil,
-		content_length = nil,
+		contentlength = nil,
 		eof = false,
 	}, stream_mt)
 end
@@ -294,17 +294,17 @@ function M.httpd(handler, fd, transport, addr)
 		end
 		local eof = false
 		---@type string|number
-		local content_length = header["content-length"]
-		if content_length then
-			content_length = tonumber(content_length)
-			if not content_length then
+		local contentlength = header["content-length"]
+		if contentlength then
+			contentlength = tonumber(contentlength)
+			if not contentlength then
 				local dat = compose(response_line, 400, statusname[400])
 				write(fd, dat)
 				break
 			end
-			eof = content_length == 0
+			eof = contentlength == 0
 		elseif header["transfer-encoding"] == chunked then
-			content_length = chunked
+			contentlength = chunked
 		end
 		--request line
 		local method, target, ver =
@@ -326,8 +326,8 @@ function M.httpd(handler, fd, transport, addr)
 			path = path,
 			header = header,
 			query = query,
-			remote_addr = addr,
-			content_length = content_length,
+			remoteaddr = addr,
+			contentlength= contentlength,
 			eof = eof,
 		}, stream_mt)
 		if tonumber(ver) > 1.1 then

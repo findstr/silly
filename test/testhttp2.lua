@@ -54,7 +54,7 @@ local server = http.listen {
 		}
 	},
 	handler = function(stream)
-		testaux.assertneq(stream.remote_addr, nil, "http2.server remote_addr")
+		testaux.assertneq(stream.remoteaddr, nil, "http2.server remoteaddr")
 		testaux.asserteq(stream.version, "HTTP/2", "http2.server version")
 		testaux.asserteq(stream.query.foo, "bar", "http2.server query")
 		core.sleep(math.random(1, 300))

@@ -124,7 +124,7 @@ do
 	core.sleep(500) -- wait for server to close connection
 	-- test server connection broken
 	handler = function(stream)
-		testaux.assertneq(stream.remote_addr, nil, "Test 6.2: Server stream contains remote_addr")
+		testaux.assertneq(stream.remoteaddr, nil, "Test 6.2: Server stream contains remoteaddr")
 		local data, err = stream:readall()
 		testaux.asserteq(data, nil, "Test 6.2: Server should not receive data")
 		testaux.assertneq(err, nil, "Test 6.2: Server should not receive data")
