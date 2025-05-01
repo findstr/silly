@@ -292,8 +292,21 @@ do
 		ch2:close()
 	end)
 	local value, err = ch2:pop()
+	testaux.asserteq(value, "test1", "Case8: Pop from closed channel returns value")
+	testaux.asserteq(err, nil, "Case8: Pop from closed channel returns nil error")
+
+	local value, err = ch2:pop()
 	testaux.asserteq(value, nil, "Case8: Pop from closed channel returns nil")
 	testaux.asserteq(err, "channel closed", "Case8: Pop from closed channel returns error")
+
+	local ch3 = channel.new()
+	core.fork(function()
+		ch3:push("test1")
+		ch3:clear()
+	end)
+	local value, err = ch3:pop()
+	testaux.asserteq(value, "test1", "Case8: Pop from clear channel returns correct value")
+	testaux.asserteq(err, nil, "Case8: Pop from closed channel returns nil error")
 end
 
 print("All channel tests passed!")
