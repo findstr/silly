@@ -28,18 +28,22 @@ end
 ---@param dat any
 ---@return boolean, string? error
 function channel.push(self, dat)
+	if not dat then
+		return false, "nil data"
+	end
 	if self.closed then
 		return false, "channel closed"
 	end
-	local pushi = self.pushi
-	self.queue[pushi] = dat
-	pushi = pushi + 1
-	assert(pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
-	self.pushi = pushi
 	local co = self.co
 	if co then
 		self.co = nil
-		core.wakeup(co)
+		core.wakeup(co, dat)
+	else
+		local pushi = self.pushi
+		self.queue[pushi] = dat
+		pushi = pushi + 1
+		assert(pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
+		self.pushi = pushi
 	end
 	return true, nil
 end
@@ -51,10 +55,11 @@ function channel.pop(self)
 		end
 		assert(not self.co)
 		self.co = core.running()
-		core.wait()
-		if self.popi == self.pushi then
+		local dat = core.wait()
+		if not dat then
 			return nil, "channel closed"
 		end
+		return dat, nil
 	end
 	assert(self.popi - self.pushi < 0)
 	local i = self.popi
