@@ -40,6 +40,10 @@
 #define SOCKET_MAX_EXP (16)
 #endif
 
+#ifndef TCP_READ_BUF_SIZE
+#define TCP_READ_BUF_SIZE  (4096)
+#endif
+
 #ifndef TIMER_RESOLUTION
 #define TIMER_RESOLUTION (10)                     //ms
 #endif

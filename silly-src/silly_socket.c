@@ -98,7 +98,6 @@ struct socket {
 	fd_t fd;
 	unsigned char protocol;
 	unsigned char reading;
-	int presize;
 	enum stype type;
 	size_t wloffset;
 	struct wlist *wlhead;
@@ -214,7 +213,6 @@ static void socketpool_init(struct silly_socket *ss)
 		pool->sid = -1;
 		pool->fd = -1;
 		pool->type = STYPE_RESERVE;
-		pool->presize = MIN_READBUF_LEN;
 		pool->wloffset = 0;
 		pool->wlhead = NULL;
 		pool->wltail = &pool->wlhead;
@@ -303,7 +301,6 @@ static struct socket *allocsocket(struct silly_socket *ss, fd_t fd,
 			assert(s->wlhead == NULL);
 			assert(s->wltail == &s->wlhead);
 			s->protocol = protocol;
-			s->presize = MIN_READBUF_LEN;
 			s->sid = id;
 			s->fd = fd;
 			s->wloffset = 0;
@@ -688,24 +685,15 @@ static ssize_t sendudp(fd_t fd, uint8_t *data, size_t sz,
 static int forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
 	ssize_t sz;
-	ssize_t presize = s->presize;
-	uint8_t *buf = (uint8_t *)silly_malloc(presize);
-	sz = readn(s->fd, buf, presize);
+	uint8_t tmpbuf[TCP_READ_BUF_SIZE];
+	sz = readn(s->fd, tmpbuf, sizeof(tmpbuf));
 	//half close socket need no data
 	if (sz > 0 && s->type != STYPE_SHUTDOWN) {
+		uint8_t *buf = (uint8_t *)silly_malloc(sz);
+		memcpy(buf, tmpbuf, sz);
 		report_data(ss, s, SILLY_SDATA, buf, sz);
-		//to predict the pakcet size
-		if (sz == presize) {
-			s->presize *= 2;
-		} else if (presize > MIN_READBUF_LEN) {
-			//s->presize at leatest is 2 * MIN_READBUF_LEN
-			int half = presize / 2;
-			if (sz < half)
-				s->presize = half;
-		}
 		ss->netstat.recvsize += sz;
 	} else {
-		silly_free(buf);
 		if (sz < 0) {
 			report_close(ss, s, errno);
 			freesocket(ss, s);
