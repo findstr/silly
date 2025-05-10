@@ -90,10 +90,10 @@ LIB_SRC = lualib-core.c \
 	lualib-metrics.c \
 	lualib-logger.c \
 	lualib-profiler.c \
-	lualib-netstream.c \
 	lualib-netpacket.c \
 	lualib-tls.c \
 	lualib-debugger.c \
+	lnetstream.c \
 	lbase64.c \
 	lhttp.c \
 	mysql/lmysql.c \

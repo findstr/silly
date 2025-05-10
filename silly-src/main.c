@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
 	silly_timer_exit();
 	if (silly_log_visible(SILLY_LOG_INFO)) {
 		silly_log_fmt("%s exit, leak memory size:%zu\n", argv[0],
-		       silly_memused());
+			      silly_memused());
 	}
 	silly_log_flush();
 	return status;

@@ -41,15 +41,15 @@
 #endif
 
 #ifndef TCP_READ_BUF_SIZE
-#define TCP_READ_BUF_SIZE  (4096)
+#define TCP_READ_BUF_SIZE (4096)
 #endif
 
 #ifndef TIMER_RESOLUTION
-#define TIMER_RESOLUTION (10)                     //ms
+#define TIMER_RESOLUTION (10) //ms
 #endif
 
 #ifndef TIMER_ACCURACY
-#define TIMER_ACCURACY (50)                       //ms
+#define TIMER_ACCURACY (50) //ms
 #endif
 
 #ifndef TIMER_DELAY_WARNING
@@ -57,7 +57,7 @@
 #endif
 
 #ifndef MONITOR_MSG_SLOW_TIME
-#define MONITOR_MSG_SLOW_TIME (1000)              //ms
+#define MONITOR_MSG_SLOW_TIME (1000) //ms
 #endif
 
 #ifndef LOG_BUF_SIZE
