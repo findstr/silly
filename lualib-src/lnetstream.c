@@ -95,6 +95,7 @@ static struct node_buffer *nb_expand(struct node_buffer *nb)
 	char delim[2] = { 0, 0 };
 	int cap_exp = NB_INIT_EXP;
 	if (nb != NULL) {
+		int size_exp = 0;
 		delim[0] = nb->delim[0];
 		delim[1] = nb->delim[1];
 		bytes = nb->bytes;
@@ -103,9 +104,12 @@ static struct node_buffer *nb_expand(struct node_buffer *nb)
 		assert(size >= 0);
 		assert(last_checki >= 0);
 		//round up to the nearest power of 2
-		cap_exp = max(ceillog2(size), cap_exp);
-		memmove(&nb->nodes[0], &nb->nodes[nb->readi],
-			size * sizeof(struct node));
+		size_exp = ceillog2(size+1);
+		cap_exp = max(size_exp, cap_exp);
+		if (nb->readi > 0) {
+			memmove(&nb->nodes[0], &nb->nodes[nb->readi],
+				size * sizeof(struct node));
+		}
 	}
 	int cap = 1 << cap_exp;
 	int need = sizeof(struct node_buffer) + sizeof(struct node) * (cap - 1);
@@ -559,6 +563,14 @@ static int tpush(lua_State *L)
 	return 0;
 }
 
+static int tcap(lua_State *L)
+{
+	struct socket_buffer *sb;
+	sb = (struct socket_buffer *)luaL_checkudata(L, SB, METANAME);
+	lua_pushinteger(L, sb->nb->cap);
+	return 1;
+}
+
 int luaopen_core_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
@@ -572,6 +584,7 @@ int luaopen_core_netstream(lua_State *L)
 		{ "readall",  lreadall  },
 		{ "todata",   ltodata   },
 		{ "tpush",    tpush     },
+		{ "tcap",     tcap      },
 		{ NULL,       NULL      },
 	};
 	luaL_newlib(L, tbl);

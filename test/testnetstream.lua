@@ -118,6 +118,25 @@ do
     testaux.asserteq(z, "f", "Case 9.3 can't dop the last char")
 end
 
+-- Test 10: test node buffer expand
+do
+    local sb = ns.new(fd)
+    for i = 1, 64 do
+        ns.tpush(sb, fd, "a")
+    end
+    local x = ns.read(sb, 64)
+    testaux.asserteq(x, string.rep("a", 64), "Case 10.1: read 1 char")
+    testaux.asserteq(ns.tcap(sb), 64, "Case 10.2: node buffer not expand")
+    ns.tpush(sb, fd, "a")
+    ns.tpush(sb, fd, "a")
+    testaux.asserteq(ns.tcap(sb), 64, "Case 10.3: node buffer not expand")
+    for i = 1, 62 do
+        ns.tpush(sb, fd, "a")
+    end
+    testaux.asserteq(ns.tcap(sb), 64, "Case 10.4: node buffer not expand")
+    ns.tpush(sb, fd, "a")
+    testaux.asserteq(ns.tcap(sb), 128, "Case 10.5: node buffer expand")
+end
 
 print("All netstream edge tests passed!")
 
