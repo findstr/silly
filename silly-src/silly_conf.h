@@ -41,7 +41,7 @@
 #endif
 
 #ifndef TCP_READ_BUF_SIZE
-#define TCP_READ_BUF_SIZE (4096)
+#define TCP_READ_BUF_SIZE (2 * 1024 * 1024) //2MB
 #endif
 
 #ifndef TIMER_RESOLUTION

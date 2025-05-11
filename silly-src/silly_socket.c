@@ -41,7 +41,6 @@ EAGAIN:           \
 #define CMDBUF_SIZE (8 * sizeof(struct cmdpacket))
 #define MAX_UDP_PACKET (512)
 #define MAX_SOCKET_COUNT (1 << SOCKET_MAX_EXP)
-#define MIN_READBUF_LEN (64)
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 #define HASH(sid) (sid & (MAX_SOCKET_COUNT - 1))
@@ -129,6 +128,8 @@ struct silly_socket {
 	struct silly_netstat netstat;
 	//error message
 	char errmsg[256];
+	//temp buffer
+	uint8_t readbuf[TCP_READ_BUF_SIZE];
 };
 
 //for read one complete packet once system call, fix the packet length
@@ -685,12 +686,11 @@ static ssize_t sendudp(fd_t fd, uint8_t *data, size_t sz,
 static int forward_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
 	ssize_t sz;
-	uint8_t tmpbuf[TCP_READ_BUF_SIZE];
-	sz = readn(s->fd, tmpbuf, sizeof(tmpbuf));
+	sz = readn(s->fd, ss->readbuf, sizeof(ss->readbuf));
 	//half close socket need no data
 	if (sz > 0 && s->type != STYPE_SHUTDOWN) {
 		uint8_t *buf = (uint8_t *)silly_malloc(sz);
-		memcpy(buf, tmpbuf, sz);
+		memcpy(buf, ss->readbuf, sz);
 		report_data(ss, s, SILLY_SDATA, buf, sz);
 		ss->netstat.recvsize += sz;
 	} else {
