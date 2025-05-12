@@ -136,7 +136,7 @@ $(LUACLIB_PATH)/test.$(SO): $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -c -o $@ $<
 
 testall:
-	make TEST=ON all
+	make TEST=ON MALLOC=glibc all
 	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:

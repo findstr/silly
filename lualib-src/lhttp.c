@@ -12,11 +12,14 @@
 #ifdef SILLY_TEST
 #define HTTP2_HEADER_SIZE (4096)
 #else
-#define HTTP2_HEADER_SIZE (250)
+#define HTTP2_HEADER_SIZE (256)
 #endif
-#define FIELD_BUFSZ (HTTP2_HEADER_SIZE + 6)
-#define FIELD_FMT "%s: %s"
 #define FRAME_HDR_SIZE (9)
+
+struct lstr {
+	const char *str;
+	size_t len;
+};
 
 ///////////////////////////hpack///////////////////////////
 
@@ -35,7 +38,6 @@ struct unpack_ctx {
 	int stat;
 	int dyna;
 	unsigned int flag;
-	unsigned char *buf;
 	const unsigned char *p;
 	const unsigned char *e;
 	struct hpack *hpack;
@@ -44,6 +46,10 @@ struct unpack_ctx {
 struct pack_ctx {
 	int stat;
 	int dyna;
+	int kstk;
+	int vstk;
+	struct lstr kstr;
+	struct lstr vstr;
 	luaL_Buffer b;
 	struct hpack *hpack;
 };
@@ -231,9 +237,9 @@ static void create_huffman_tree(lua_State *L)
 		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
-static inline size_t field_size(size_t ksz, size_t vsz)
+static inline size_t field_size(const struct lstr *kstr, const struct lstr *vstr)
 {
-	return ksz + vsz + 32;
+	return kstr->len + vstr->len + 32;
 }
 
 static int lhpack_new(lua_State *L)
@@ -288,62 +294,65 @@ static inline void write_index_kv(luaL_Buffer *b, uint32_t id)
 	write_varint(b, 0x01, id, 7);
 }
 
-static inline void write_literal(luaL_Buffer *b, const char *s, int sz)
+static inline void write_literal(luaL_Buffer *b, const struct lstr *str)
 {
-	int len = huffman_len(s, sz);
-	if (len < sz) {
+	size_t len = huffman_len(str->str, str->len);
+	if (len < str->len) {
 		write_varint(b, 0x1, len, 7);
-		huffman_encode(b, s, sz);
+		huffman_encode(b, str->str, str->len);
 	} else {
-		write_varint(b, 0x0, sz, 7);
-		luaL_addlstring(b, s, sz);
+		write_varint(b, 0x0, str->len, 7);
+		luaL_addlstring(b, str->str, str->len);
 	}
 }
 
-static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid, const char *vs,
-			       size_t vsz, int cache)
+static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid, const struct lstr *vstr,
+			       int cache)
 {
 	if (cache) {
 		write_varint(b, 0x01, kid, 6);
 	} else {
 		write_varint(b, 0x0, kid, 4);
 	}
-	write_literal(b, vs, vsz);
+	write_literal(b, vstr);
 }
 
-static inline void write_sk_sv(luaL_Buffer *b, const char *ks, size_t ksz,
-			       const char *vs, size_t vsz, int cache)
+static inline void write_sk_sv(luaL_Buffer *b, const struct lstr *ks,
+			       const struct lstr *vs, int cache)
 {
 	if (cache) {
 		luaL_addchar(b, 0x40);
 	} else {
 		luaL_addchar(b, 0);
 	}
-	write_literal(b, ks, ksz);
-	write_literal(b, vs, vsz);
+	write_literal(b, ks);
+	write_literal(b, vs);
 }
 
-#define format_field(buf, ks, vs) \
-	snprintf(buf, sizeof(buf) / sizeof(buf[0]), "%s: %s", ks, vs)
+static inline void push_kv(lua_State *L, const struct lstr *kstr, const struct lstr *vstr)
+{
+	luaL_Buffer b;
+	luaL_buffinit(L, &b);
+	luaL_addlstring(&b, kstr->str, kstr->len);
+	luaL_addlstring(&b, ": ", 2);
+	luaL_addlstring(&b, vstr->str, vstr->len);
+	luaL_pushresult(&b);
+}
 
 static void prune(lua_State *L, struct hpack *ctx, int dyna)
 {
 	int idx = 0;
 	int i, type;
-	char buf[FIELD_BUFSZ];
 	for (i = ctx->queue_tail; i < ctx->queue_head; i++) {
 		++idx;
 		type = lua_geti(L, dyna, i);
 		if (type == LUA_TTABLE) {
-			int len;
-			size_t ksz, vsz;
-			const char *ks, *vs;
+			struct lstr kstr, vstr;
 			lua_geti(L, -1, 1);
-			ks = lua_tolstring(L, -1, &ksz);
+			kstr.str = lua_tolstring(L, -1, &kstr.len);
 			lua_geti(L, -2, 2);
-			vs = lua_tolstring(L, -1, &vsz);
-			len = format_field(buf, ks, vs);
-			lua_pushlstring(L, buf, len);
+			vstr.str = lua_tolstring(L, -1, &vstr.len);
+			push_kv(L, &kstr, &vstr);
 			lua_pushinteger(L, idx);
 			lua_settable(L, dyna);
 			lua_pop(L, 2);
@@ -368,20 +377,16 @@ static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 		return 1;
 	int min_idx = ctx->queue_used_min;
 	while (ctx->queue_tail < min_idx) {
-		int len;
-		size_t ksz, vsz;
-		const char *ks, *vs;
-		char buf[FIELD_BUFSZ];
+		struct lstr kstr, vstr;
 		int i = ctx->queue_tail++;
 		int type = lua_geti(L, dyna, i);
 		assert(type == LUA_TTABLE);
 		lua_geti(L, -1, 1);
-		ks = lua_tolstring(L, -1, &ksz);
+		kstr.str = lua_tolstring(L, -1, &kstr.len);
 		lua_geti(L, -2, 2);
-		vs = lua_tolstring(L, -1, &vsz);
+		vstr.str = lua_tolstring(L, -1, &vstr.len);
 
-		len = format_field(buf, ks, vs);
-		lua_pushlstring(L, buf, len);
+		push_kv(L, &kstr, &vstr);
 		lua_pushnil(L);
 		lua_settable(L, dyna);
 
@@ -390,7 +395,7 @@ static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 		lua_pushnil(L);
 		lua_seti(L, dyna, i);
 		++ctx->evict_count;
-		ctx->table_size -= field_size(ksz, vsz);
+		ctx->table_size -= field_size(&kstr, &vstr);
 	}
 	int en = ctx->evict_count;
 	if (en > (ctx->queue_head / 2) && en > 64)
@@ -399,9 +404,8 @@ static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 }
 
 static inline int add_to_table(lua_State *L, struct hpack *ctx, int dyna, int k,
-			       int v, int kv, int ksz, int vsz)
+			       int v, int kv, int fsz)
 {
-	int fsz = field_size(ksz, vsz);
 	if (!try_evict(L, ctx, dyna, fsz))
 		return 0;
 	int idx = ctx->queue_head++;
@@ -420,26 +424,25 @@ static inline int add_to_table(lua_State *L, struct hpack *ctx, int dyna, int k,
 	return 1;
 }
 
-static inline void pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
+static inline void pack_field(lua_State *L, struct pack_ctx *pctx)
 {
+	int top;
 	int cancache;
-	size_t ksz, vsz, kv;
-	const char *ks = luaL_tolstring(L, k, &ksz);
-	const char *vs = luaL_tolstring(L, v, &vsz);
 	luaL_Buffer *b = &pctx->b;
 	struct hpack *ctx = pctx->hpack;
-	cancache = (ksz + vsz) < HTTP2_HEADER_SIZE;
+	int fsz = field_size(&pctx->kstr, &pctx->vstr);
+	cancache = fsz < HTTP2_HEADER_SIZE;
+	top = lua_gettop(L);
 	if (cancache) { //try index key and value
-		int len, type;
-		char buf[FIELD_BUFSZ];
-		len = format_field(buf, ks, vs);
-		lua_pushlstring(L, buf, len);
-		kv = lua_gettop(L);
+		int type;
+		push_kv(L, &pctx->kstr, &pctx->vstr);
 
 		lua_pushvalue(L, -1);
 		type = lua_gettable(L, pctx->stat);
 		if (type == LUA_TNUMBER) {
-			write_index_kv(b, lua_tointeger(L, -1));
+			lua_Integer id = lua_tointeger(L, -1);
+			lua_settop(L, top);
+			write_index_kv(b, id);
 			return;
 		}
 		lua_pop(L, 1);
@@ -448,91 +451,107 @@ static inline void pack_field(lua_State *L, struct pack_ctx *pctx, int k, int v)
 		type = lua_gettable(L, pctx->dyna);
 		if (type == LUA_TNUMBER) {
 			int idx = lua_tointeger(L, -1);
+			lua_settop(L, top);
 			int id = dynamic_id(ctx, idx);
 			if (idx < ctx->queue_used_min)
 				ctx->queue_used_min = idx;
 			write_index_kv(b, id);
 			return;
 		}
+		lua_pop(L, 1);
 	}
 	if (cancache) {
-		cancache = add_to_table(L, ctx, pctx->dyna, k, v, kv, ksz, vsz);
+		cancache = add_to_table(L, ctx, pctx->dyna,
+			pctx->kstk, pctx->vstk, top+1, fsz);
 	}
-	lua_pushvalue(L, k);
+	lua_pushvalue(L, pctx->kstk);
 	if (lua_gettable(L, pctx->stat) == LUA_TNUMBER) {
 		int id = lua_tointeger(L, -1);
-		write_ik_sv(b, id, vs, vsz, cancache);
+		lua_settop(L, top);
+		write_ik_sv(b, id, &pctx->vstr, cancache);
 	} else {
-		write_sk_sv(b, ks, ksz, vs, vsz, cancache);
+		lua_settop(L, top);
+		write_sk_sv(b, &pctx->kstr, &pctx->vstr, cancache);
 	}
 	return;
+}
+
+static inline void copy_str_to_stack(lua_State *L, int from, int to, struct lstr *str)
+{
+	str->str = luaL_tolstring(L, from, &str->len);
+	lua_copy(L, -1, to);
 }
 
 //hpack.pack(ctx, header)
 static int lhpack_pack(lua_State *L)
 {
-	int i, top;
+	int i, argc, top;
+	int kstk, vstk, kbackup, vbackup;
 	struct pack_ctx pctx;
 	pctx.hpack = luaL_checkudata(L, 1, "HPACK");
 	pctx.hpack->queue_used_min = pctx.hpack->queue_head;
-	top = lua_gettop(L);
-	luaL_buffinit(L, &pctx.b);
+	argc = lua_gettop(L);
 	lua_pushvalue(L, lua_upvalueindex(1)); //static_table
 	lua_getiuservalue(L, 1, 1);            //dynamic_table
-	pctx.dyna = lua_gettop(L);
-	pctx.stat = pctx.dyna - 1;
-	for (i = 3; i < top; i += 2)
-		pack_field(L, &pctx, i, i + 1);
+	pctx.stat = argc + 1;
+	pctx.dyna = pctx.stat + 1;
+	lua_settop(L, pctx.dyna+4);
+	kbackup = pctx.dyna+1;
+	vbackup = pctx.dyna+2;
+	kstk = pctx.dyna+3;
+	vstk = pctx.dyna+4;
+	luaL_buffinit(L, &pctx.b);
+	top = lua_gettop(L);
+	lua_checkstack(L, LUA_MINSTACK);
+	for (i = 3; i < argc; i += 2) {
+		pctx.kstk = i;
+		pctx.vstk = i + 1;
+		pctx.kstr.str = luaL_tolstring(L, pctx.kstk, &pctx.kstr.len);
+		pctx.vstr.str = luaL_tolstring(L, pctx.vstk, &pctx.vstr.len);
+		pack_field(L, &pctx);
+		lua_settop(L, top); 		// keep the luaL_buffer on the top
+	}
+
 	if (lua_type(L, 2) != LUA_TNIL) {
-		lua_pushnil(L);
+		lua_pushnil(L); //next key
+		pctx.kstk = kstk;
+		pctx.vstk = vstk;
 		while (lua_next(L, 2) != 0) {
-			top = lua_gettop(L);
-			int k = lua_absindex(L, -2);
-			int v = lua_absindex(L, -1);
-			if (lua_type(L, v) == LUA_TTABLE) {
-				int n = lua_rawlen(L, v);
+			lua_copy(L, top+1, kbackup);	//backup the key
+			lua_copy(L, top+2, vbackup);	//backup the value
+			copy_str_to_stack(L, kbackup, kstk, &pctx.kstr);
+			lua_settop(L, top);
+			if (lua_type(L, vbackup) == LUA_TTABLE) {
+				int n = lua_rawlen(L, vbackup);
 				for (int i = 1; i <= n; i++) {
-					lua_rawgeti(L, v, i);
-					pack_field(L, &pctx, k,
-						   lua_absindex(L, -1));
+					lua_rawgeti(L, vbackup, i);
+					copy_str_to_stack(L, -1, vstk, &pctx.vstr);
+					lua_settop(L, top);
+					// when call pack_field, should keep can't grow the stack
+					pack_field(L, &pctx);
 				}
 			} else {
-				pack_field(L, &pctx, k, v);
+				copy_str_to_stack(L, vbackup, vstk, &pctx.vstr);
+				lua_settop(L, top);
+				// when call pack_field, should keep can't grow the stack
+				pack_field(L, &pctx);
 			}
-			lua_settop(L, top - 1);
+			lua_pushvalue(L, kbackup);
 		}
 	}
 	luaL_pushresult(&pctx.b);
 	return 1;
 }
 
-static void concat_table(lua_State *L, struct unpack_ctx *ctx, int t)
+static void concat_table(lua_State *L, luaL_Buffer *b, int t)
 {
 	int i = 0;
-	size_t sz = 0;
-	unsigned char *p;
 	for (;;) {
-		size_t n;
 		if (lua_geti(L, t, ++i) == LUA_TNIL) {
 			lua_pop(L, 1);
 			break;
 		}
-		lua_tolstring(L, -1, &n);
-		sz += n;
-	}
-	p = ctx->buf = silly_malloc(sz);
-	ctx->p = ctx->buf;
-	ctx->e = p + sz;
-	for (;;) {
-		size_t n;
-		const char *s;
-		if (lua_geti(L, t, ++i) == LUA_TNIL) {
-			lua_pop(L, 1);
-			break;
-		}
-		s = lua_tolstring(L, -1, &n);
-		memcpy(p, s, n);
-		p += n;
+		luaL_addvalue(b);
 	}
 }
 
@@ -630,9 +649,13 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 			return ret;
 	} else {
 		++uctx->p;
-		push_sv(L, uctx);
+		ret = push_sv(L, uctx);
+		if (ret < 0)
+			return ret;
 	}
-	push_sv(L, uctx);
+	ret = push_sv(L, uctx);
+	if (ret < 0)
+		return ret;
 	return 0;
 }
 
@@ -640,17 +663,20 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 static int lhpack_unpack(lua_State *L)
 {
 	int htbl, top;
+	luaL_Buffer b;
 	struct unpack_ctx uctx;
 	uctx.hpack = luaL_checkudata(L, 1, "HPACK");
 	uctx.hpack->queue_used_min = uctx.hpack->queue_head;
 	uctx.huffman = lua_touserdata(L, lua_upvalueindex(2));
 	if (lua_type(L, 2) != LUA_TTABLE) {
 		size_t sz;
-		uctx.buf = NULL;
 		uctx.p = (const unsigned char *)luaL_checklstring(L, 2, &sz);
 		uctx.e = uctx.p + sz;
 	} else {
-		concat_table(L, &uctx, 2);
+		luaL_buffinit(L, &b);
+		concat_table(L, &b, 2);
+		uctx.p = (const unsigned char *)luaL_buffaddr(&b);
+		uctx.e = uctx.p + luaL_bufflen(&b);
 	}
 	//try predict the header hash size
 	lua_createtable(L, 0, 64);
@@ -668,22 +694,16 @@ static int lhpack_unpack(lua_State *L)
 			if ((ret = read_index_kv(L, &uctx)) < 0) //bit7
 				return 0;
 		} else if ((n & 0xc0) == 0x40) { //bit6
-			char *p;
-			luaL_Buffer b;
-			int bufsz, len, stk;
-			size_t ksz, vsz;
-			const char *ks, *vs;
+			int stk;
+			struct lstr kstr, vstr;
 			if ((ret = read_ik_sv(L, &uctx, 6)) < 0)
-				return ret;
-			ks = lua_tolstring(L, -2, &ksz);
-			vs = lua_tolstring(L, -1, &vsz);
-			bufsz = ksz + vsz + 6;
-			p = luaL_buffinitsize(L, &b, bufsz);
-			len = snprintf(p, bufsz, FIELD_FMT, ks, vs);
-			luaL_pushresultsize(&b, len);
+				return 0;
+			kstr.str = lua_tolstring(L, -2, &kstr.len);
+			vstr.str = lua_tolstring(L, -1, &vstr.len);
+			push_kv(L, &kstr, &vstr);
 			stk = lua_absindex(L, -3);
 			add_to_table(L, uctx.hpack, uctx.dyna, stk, stk + 1,
-				     stk + 2, ksz, vsz);
+				     stk + 2, field_size(&kstr, &vstr));
 			lua_pop(L, 1);
 		} else if ((n & 0xf0) == 0x0 || (n & 0xf0) == 0x10) { //bit4
 			if ((ret = read_ik_sv(L, &uctx, 4)) < 0)
@@ -752,8 +772,7 @@ static void create_static_table(lua_State *L)
 			lua_settable(L, t);
 		}
 		if (v != NULL) {
-			int len;
-			char buf[128];
+			struct lstr kstr, vstr;
 			//local t = {k, v}
 			lua_createtable(L, 2, 0);
 			lua_pushstring(L, k);
@@ -763,8 +782,11 @@ static void create_static_table(lua_State *L)
 			//static_table[id] = t
 			lua_seti(L, t, id);
 			//static_tbl[format("%s %s", k, v)] = id
-			len = format_field(buf, k, v);
-			lua_pushlstring(L, buf, len);
+			kstr.str = k;
+			kstr.len = strlen(k);
+			vstr.str = v;
+			vstr.len = strlen(v);
+			push_kv(L, &kstr, &vstr);
 			lua_pushinteger(L, id);
 			lua_settable(L, t);
 		}
@@ -781,15 +803,13 @@ static int dbg_evictcount(lua_State *L)
 
 static int dbg_stringid(lua_State *L)
 {
-	int len, type;
-	char buf[FIELD_BUFSZ];
+	int type;
 	lua_getiuservalue(L, 1, 1); //dynamic_table
 	int dyna = lua_gettop(L);
-	size_t ksz, vsz;
-	const char *ks = luaL_tolstring(L, 2, &ksz);
-	const char *vs = luaL_tolstring(L, 3, &vsz);
-	len = format_field(buf, ks, vs);
-	lua_pushlstring(L, buf, len);
+	struct lstr kstr, vstr;
+	kstr.str = luaL_tolstring(L, 2, &kstr.len);
+	vstr.str = luaL_tolstring(L, 3, &vstr.len);
+	push_kv(L, &kstr, &vstr);
 
 	lua_pushvalue(L, -1);
 	type = lua_gettable(L, dyna);

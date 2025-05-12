@@ -163,7 +163,7 @@ do
 		}
 	})
 
-	local decoded = hpack.unpack(decoder, buffer1 .. buffer2)
+	local decoded = hpack.unpack(decoder, {buffer1, buffer2})
 	print(require "core.json".encode(decoded))
 	-- Check if multiple headers with same name are handled correctly
 	local set_cookies = decoded["set-cookie"]
@@ -416,4 +416,23 @@ do
 	})
 	local decoded = hpack.unpack(decoder, buffer)
 	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 15: table size update")
+end
+
+-- Test 16: encode empty table
+do
+	local encoder = hpack.new(4096)
+	local decoder = hpack.new(4096)
+	local buffer = hpack.pack(encoder, {})
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.asserteq(next(decoded), nil, "Test 16: encode empty table")
+
+	local buffer = hpack.pack(encoder, {
+		["x-custom-header"] =  "test-value",
+		["cookie"] =  {},
+		["x-custom-header2"] =  "test-value2",
+	})
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.asserteq(decoded["cookie"], nil, "Test 16: encode empty table")
+	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 16: encode empty table")
+	testaux.asserteq(decoded["x-custom-header2"], "test-value2", "Test 16: encode empty table")
 end
