@@ -1,15 +1,22 @@
-name: Build Docker Image (Alpine & Debian)
+name: Build Docker Image
 
 on:
   push:
     branches: [ master ]
+  release:
+    types: [ published ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: ALIYUN
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      matrix:
+        variant: [alpine, slim]
 
     steps:
       - uses: actions/checkout@v3
@@ -24,22 +31,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push alpine
-        uses: docker/build-push-action@v5
+      - name: Log in to Aliyun Container Registry
+        uses: docker/login-action@v3
         with:
-          context: .
-          file: Dockerfile.alpine
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository }}:alpine
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push slim (debian)
+      - name: Extract metadata for ${{ matrix.variant }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            registry.cn-hangzhou.aliyuncs.com/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' && matrix.variant == 'slim' }}
+            type=semver,pattern={{version}}-${{ matrix.variant }},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}}-${{ matrix.variant }},enable=${{ github.event_name == 'release' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Docker image for ${matrix.variant}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build & push ${{ matrix.variant }} image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.slim
-          push: true
+          file: Dockerfile.${{ matrix.variant }}
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/${{ github.repository }}:slim
-            ghcr.io/${{ github.repository }}:latest
+          push: true
+          tags:   ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ghcr.io cleanup action
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          delete-untagged: true
