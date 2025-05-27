@@ -9,11 +9,41 @@ Silly is a lightweight and minimalist server framework designed for efficient se
 
 Silly 是一个轻量、极简的服务器程序框架。它将 C 语言的高性能与 Lua 的灵活性相结合，特别适合游戏服务器开发和其他高性能网络应用程序。
 
+## Performance | 性能表现
+
+### Benchmark Results | 基准测试结果
+Test Environment | 测试环境：
+- CPU：Intel(R) Core(TM) i7-10700 CPU @ 2.90GHz
+- Test Tool: redis-benchmark
+- 测试工具：redis-benchmark
+
+[**Test Results** | **测试结果**](https://github.com/findstr/silly/wiki/Benchmark):
+```
+====== PING_INLINE ======
+  100000 requests completed in 0.42 seconds
+  100 parallel clients
+  3 bytes payload
+Summary:
+  throughput summary: 235849.06 requests per second
+  latency summary (msec):
+          avg       min       p50       p95       p99       max
+        0.230     0.080     0.223     0.279     0.367     1.527
+====== PING_MBULK ======
+  100000 requests completed in 0.44 seconds
+  100 parallel clients
+  3 bytes payload
+Summary:
+  throughput summary: 224719.11 requests per second
+  latency summary (msec):
+          avg       min       p50       p95       p99       max
+        0.241     0.136     0.231     0.335     0.479     0.887
+```
+
 ## Example at a Glance | 代码一览
 
 Here is a simple example that demonstrates how to easily write an echo server with Silly to handle 100,000+ concurrent requests per second:
 
-这是一个简单的示例，展示了如何使用 Silly 轻松编写处理每秒 10w+ 并发请求的 echo server:
+这是一个简单的示例，展示了如何使用 Silly 轻松编写处理每秒 20w+ 并发请求的 echo server:
 
 ```lua
 local tcp = require "core.net.tcp"
@@ -93,46 +123,9 @@ nc localhost 8888
    - 高分辨率定时器系统
    - 默认：10ms 分辨率，50ms 精度
 
-## Performance | 性能表现
-
-### Benchmark Results | 基准测试结果
-Test Environment | 测试环境：
-- CPU: Intel(R) Core(TM) i5-4440 @ 3.10GHz
-- Test Tool: redis-benchmark
-- 测试工具：redis-benchmark
-
-**PING_INLINE Test Results** | **PING_INLINE 测试结果**:
-```
-100000 requests completed in 0.76 seconds
-1000 parallel clients
-3 bytes payload
-keep alive: 1
-
-0.00% <= 2 milliseconds
-0.03% <= 3 milliseconds
-70.15% <= 4 milliseconds
-99.35% <= 5 milliseconds
-99.70% <= 6 milliseconds
-99.98% <= 7 milliseconds
-100.00% <= 7 milliseconds
-131926.12 requests per second
-```
-
 ## Getting Started | 快速开始
 
-### Prerequisites | 前置要求
-
-#### Debian/Ubuntu
-```bash
-apt-get install libreadline-dev
-```
-
-#### CentOS
-```bash
-yum install readline-devel
-```
-
-### Installation | 安装
+### Build | 编译
 
 ```bash
 make
