@@ -1,4 +1,4 @@
-.PNONY: all clean cleanall testall fmt
+.PHONY: all clean cleanall testall fmt
 
 INCLUDE :=
 #---------
