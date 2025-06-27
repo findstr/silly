@@ -1,10 +1,10 @@
 local c = require "core.metrics.c"
 local gauge = require "core.metrics.gauge"
-local setmetatable = setmetatable
 
 local M = {}
 M.__index = M
 
+---@return core.metrics.collector
 function M:new()
 	local je_resident = gauge(
 		"jemalloc_resident",
@@ -22,17 +22,17 @@ function M:new()
 		"jemalloc_retained",
 		"Total number of bytes in virtual memory mappings that were retained."
 	)
-	local collect = function(_, buf, len)
+	local collect = function(_, buf)
 		local resident, active, allocated, retained = c.jestat()
 		je_resident:set(resident)
 		je_active:set(active)
 		je_allocated:set(allocated)
 		je_retained:set(retained)
-		buf[len+1] = je_resident
-		buf[len+2] = je_active
-		buf[len+3] = je_allocated
-		buf[len+4] = je_retained
-		return len + 4
+		local len = #buf
+		buf[len + 1] = je_resident
+		buf[len + 2] = je_active
+		buf[len + 3] = je_allocated
+		buf[len + 4] = je_retained
 	end
 	local c = {
 		name = "Jemalloc",

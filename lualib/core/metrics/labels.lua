@@ -1,39 +1,47 @@
 local assert = assert
-local sort = table.sort
+local tostring = tostring
 local concat = table.concat
-local format = string.format
-local setmetatable = setmetatable
 
-local cmp = function(a, b)
-	return a[2] < b[2]
-end
-local function labels(mt)
-	return function(self, ...)
-		local labels = self.labelnames
-		local buf = {}
-		local values = {...}
-		for i = 1, #labels do
-			local val = assert(values[i])
-			buf[i] = format('%s="%s"', labels[i], val)
-		end
-		local key = '{' .. concat(buf, ',') .. '}'
-		for i = 1, #self do
-			local value = self[i]
-			if value[2] == key then
-				return value
-			end
-		end
-		local value = setmetatable({
-			name = self.name,
-			help = self.help,
-			[1] = 0,
-			[2] = key
-		}, mt)
-		self[#self + 1] = value
-		sort(self, cmp)
-		return value
+local M = {}
+
+local buf = {}
+local function compose(lnames, values)
+	assert(#lnames == #values)
+	local n = #lnames
+	local j = 1
+	for i = 1, n do
+		buf[j] = lnames[i]
+		buf[j + 1] = '="'
+		buf[j + 2] = tostring(values[i])
+		buf[j + 3] = '",'
+		j = j + 4
 	end
+	buf[j-1] = '"'
+	local str = concat(buf)
+	for i = 1, #buf do
+		buf[i] = nil
+	end
+	return str
 end
 
-return labels
+function M.key(lcache, lnames, values)
+	local n = #values
+	for i = 1, n - 1 do
+		local t = lcache[i]
+		if not t then
+			t = {}
+			lcache[i] = t
+		end
+		lcache[i] = t
+	end
+	local value = values[n]
+	local t = lcache[value]
+	if not t then
+		t = compose(lnames, values)
+		lcache[value] = t
+	end
+	return t
+end
+
+return M
 

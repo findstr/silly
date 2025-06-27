@@ -1,14 +1,17 @@
+---@class core.metrics.registry
+---@field [integer] core.metrics.collector
 local M = {}
+local mt = {__index = M}
+
 local remove = table.remove
 local setmetatable = setmetatable
 
-local mt = {__index = M}
-
-
+---@return core.metrics.registry
 function M:new()
-	return setmetatable({metrics = {}}, mt)
+	return setmetatable({}, mt)
 end
 
+---@param obj core.metrics.collector
 function M:register(obj)
 	for i = 1, #self do
 		if self[i] == obj then
@@ -18,6 +21,7 @@ function M:register(obj)
 	self[#self + 1] = obj
 end
 
+---@param obj core.metrics.collector
 function M:unregister(obj)
 	for i = 1, #self do
 		if self[i] == obj then
@@ -27,14 +31,11 @@ function M:unregister(obj)
 	end
 end
 
+---@return core.metrics.metric[]
 function M:collect()
-	local len = 0
-	local metrics = self.metrics
+	local metrics = {}
 	for i = 1, #self do
-		len = self[i]:collect(metrics, len)
-	end
-	for i = len+1, #metrics do
-		metrics[i] = nil
+		self[i]:collect(metrics)
 	end
 	return metrics
 end

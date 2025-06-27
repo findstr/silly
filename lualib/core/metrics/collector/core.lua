@@ -1,11 +1,11 @@
 local core = require "core"
 local c = require "core.metrics.c"
 local gauge = require "core.metrics.gauge"
-local setmetatable = setmetatable
 
 local M = {}
 M.__index = M
 
+---@return core.metrics.collector
 function M:new()
 	local worker_queue = gauge(
 		"core_worker_queue",
@@ -48,7 +48,8 @@ function M:new()
 		"Total number of byted received via socket."
 	)
 
-	local collect = function(_, buf, len)
+	---@param buf core.metrics.metric[]
+	local collect = function(_, buf)
 		local worker_queue_size = c.workerstat()
 		local timer_active_size, timer_expired_size = c.timerstat()
 		local task_pool_size, task_ready_size = core.taskstat()
@@ -69,18 +70,17 @@ function M:new()
 		socket_send:set(socket_send_size)
 		socket_recv:set(socket_recv_size)
 
-		buf[len + 1] = worker_queue
-		buf[len + 2] = timer_active
-		buf[len + 3] = timer_expired
-		buf[len + 4] = task_pool
-		buf[len + 5] = task_ready
-		buf[len + 6] = tcp_connecting
-		buf[len + 7] = tcp_client
-		buf[len + 8] = socket_queue
-		buf[len + 9] = socket_send
-		buf[len + 10] = socket_recv
-
-		return len + 10
+		local len = #buf
+		buf[len+1] = worker_queue
+		buf[len+2] = timer_active
+		buf[len+3] = timer_expired
+		buf[len+4] = task_pool
+		buf[len+5] = task_ready
+		buf[len+6] = tcp_connecting
+		buf[len+7] = tcp_client
+		buf[len+8] = socket_queue
+		buf[len+9] = socket_send
+		buf[len+10] = socket_recv
 	end
 	local c = {
 		name = "Core",

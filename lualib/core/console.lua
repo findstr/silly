@@ -95,7 +95,7 @@ function console.info()
 	local collectors = prometheus.registry()
 	for i = 1, #collectors do
 		local collector = collectors[i]
-		local n = collector:collect(list, 0)
+		local n = collector:collect(list)
 		local name = collector.name
 		buf[#buf + 1] = "#" .. name
 		if name == "Process" then

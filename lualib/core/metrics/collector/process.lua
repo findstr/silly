@@ -1,17 +1,17 @@
 local c = require "core.metrics.c"
-local time = require "core.time"
+local counter = require "core.metrics.counter"
 local gauge = require "core.metrics.gauge"
-local setmetatable = setmetatable
 
 local M = {}
 M.__index = M
 
+---@return core.metrics.collector
 function M:new()
-	local cpu_seconds_usr = gauge(
+	local cpu_seconds_usr = counter(
 		"process_cpu_seconds_user",
 		"Total user CPU time spent in seconds."
 	)
-	local cpu_seconds_sys = gauge(
+	local cpu_seconds_sys = counter(
 		"process_cpu_seconds_system",
 		"Total system CPU time spent in seconds."
 	)
@@ -23,15 +23,17 @@ function M:new()
 		"process_heap_bytes",
 		"Process heap size in bytes allocated by application."
 	)
-	local collect = function(_, buf, len)
+	local collect = function(_, buf)
 		local sys, usr = c.cpustat()
+		cpu_seconds_usr:add(usr - cpu_seconds_usr.value)
+		cpu_seconds_sys:add(sys - cpu_seconds_sys.value)
+
 		local vmrss, heap = c.memstat()
 
-		cpu_seconds_usr:set(usr)
-		cpu_seconds_sys:set(sys)
 		resident_memory_bytes:set(vmrss)
 		heap_bytes:set(heap)
 
+		local len = #buf
 		buf[len + 1] = cpu_seconds_usr
 		buf[len + 2] = cpu_seconds_sys
 		buf[len + 3] = resident_memory_bytes

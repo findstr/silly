@@ -1,39 +1,90 @@
 local labels = require "core.metrics.labels"
-local helper = require "core.metrics.helper"
+---@class core.metrics.gauge_mt : core.metrics.collector
+local M = {}
 
-local mt
-local label_mt
+---@class core.metrics.gaugesub : core.metrics.gauge_mt
+---@field value number?
 
-mt = {
-	__index = nil,
-	new = nil,
-	collect = helper.collect,
-	add = helper.add,
-	inc = helper.inc,
-	sub = helper.sub,
-	dec = helper.dec,
-	set = helper.set,
-}
+---@class core.metrics.gauge : core.metrics.gaugesub
+---@field name string
+---@field help string
+---@field kind string
+---@field value number?
 
-label_mt = {
-	__index = nil,
-	new = nil,
-	collect = helper.collect,
-	labels = labels({__index = {
-		add = helper.add,
-		inc = helper.inc,
-		sub = helper.sub,
-		dec = helper.dec,
-		set = helper.set,
-	}})
-}
+---@class core.metrics.gaugevec : core.metrics.gauge_mt
+---@field labelnames string[]
+---@field labelcache table<string|number, table>
+---@field metrics table<string, core.metrics.gaugesub>
 
-local new = helper.new("gauge", {__index = mt}, {__index = label_mt})
+local mt = {__index = M}
 
-mt.new = new
-label_mt.new = new
+local setmetatable = setmetatable
 
-mt.__index = mt
-label_mt.__index = label_mt
+---@param self core.metrics.gaugesub
+---@param v number
+function M:set(v)
+	self.value = v
+end
+
+---@param self core.metrics.gauge
+---@param v number
+function M:add(v)
+	self.value = self.value + 1
+end
+function M:inc()
+	self.value = self.value + 1
+end
+---@param v number
+function M:sub(v)
+	self.value = self.value - v
+end
+function M:dec()
+	self.value = self.value - 1
+end
+
+---@param self core.metrics.gauge
+---@param buf core.metrics.metric[]
+function M.collect(self, buf)
+	buf[#buf+1] = self
+end
+
+---@param self core.metrics.gaugevec
+---@param ... string|number
+---@return core.metrics.gaugesub
+function M.labels(self, ...)
+	local metrics = self.metrics
+	local k = labels.key(self.labelcache, self.labelnames, {...})
+	local g = metrics[k]
+	if not g then
+		g = setmetatable({
+			value = 0,
+		}, mt)
+		metrics[k] = g
+	end
+	return g
+end
+
+---@param name string
+---@param help string
+---@param labelnames string[]?
+---@return core.metrics.gauge | core.metrics.gaugevec
+local function new (name, help, labelnames)
+	if not labelnames then
+		return setmetatable({
+			name = name,
+			help = help,
+			kind = "gauge",
+			value = 0,	--the value
+		}, mt)
+	end
+	return setmetatable({
+		name = name,
+		help = help,
+		kind = "gauge",
+		metrics = {},
+		labelnames = labelnames,
+		labelcache = {},
+	}, mt)
+end
 
 return new
