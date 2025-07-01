@@ -19,13 +19,14 @@ static const char *load_config = "\
 	local config = {}\
 	local function eval(parent, tbl)\
 		for k, v in pairs(tbl) do\
+			local kk = k\
 			if #parent > 0 then\
-				k = parent .. '.' .. tostring(k)\
+				kk = parent .. '.' .. tostring(kk)\
 			end\
 			if type(v) == 'table' then\
-				eval(k, v)\
-			elseif not env[k] then\
-				env[k] = v\
+				eval(kk, v)\
+			elseif not env[kk] then\
+				env[kk] = v\
 			end\
 		end\
 		return t\
@@ -71,8 +72,7 @@ static int lload(lua_State *L)
 	if (err != LUA_OK) {
 		const char *err = lua_tostring(L, -1);
 		err = skipcode(err);
-		lua_pushstring(L, err);
-		lua_replace(L, -2);
+		return luaL_error(L, "%s", err);
 	} else {
 		lua_pushnil(L);
 	}

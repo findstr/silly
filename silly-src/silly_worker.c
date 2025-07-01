@@ -228,7 +228,7 @@ void silly_worker_start(const struct silly_config *config)
 	int err;
 	int dir_len;
 	int lib_len;
-	lua_State *L = lua_newstate(lua_alloc, NULL);
+	lua_State *L = lua_newstate(lua_alloc, NULL, rand());
 	luaL_openlibs(L);
 	W->argc = config->argc;
 	W->argv = config->argv;

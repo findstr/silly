@@ -26,7 +26,7 @@ function M:set(v)
 	self.value = v
 end
 
----@param self core.metrics.gauge
+---@param self core.metrics.gaugesub
 ---@param v number
 function M:add(v)
 	self.value = self.value + 1
