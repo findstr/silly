@@ -25,6 +25,7 @@ local assert = assert
 local pairs = pairs
 local sort = table.sort
 local setmetatable = setmetatable
+global none
 
 -- default bucket boundaries (same as Prometheus default)
 local defaultbuckets = {0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0}

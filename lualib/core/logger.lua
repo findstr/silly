@@ -2,6 +2,10 @@ local core = require "core"
 local env = require "core.env"
 local c = require "core.logger.c"
 
+local pairs = pairs
+
+global none
+
 local function nop(...)
 end
 

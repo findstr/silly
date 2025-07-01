@@ -13,6 +13,9 @@ local sub = string.sub
 local gsub = string.gsub
 local char = string.char
 local byte = string.byte
+
+global none
+
 local json = {}
 
 ---------encode

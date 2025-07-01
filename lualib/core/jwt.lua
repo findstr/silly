@@ -3,10 +3,14 @@ local ec = require 'core.crypto.ec'
 local rsa = require 'core.crypto.rsa'
 local hmac = require 'core.crypto.hmac'
 local base64 = require 'core.base64'
+
+local setmetatable = setmetatable
 local jsonencode = json.encode
 local jsondecode = json.decode
 local b64encode = base64.urlsafe_encode
 local b64decode = base64.urlsafe_decode
+
+global none
 
 local jwt = {}
 

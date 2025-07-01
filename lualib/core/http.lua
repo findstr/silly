@@ -3,6 +3,8 @@ local transport = require "core.http.transport"
 local parseurl = helper.parseurl
 local setmetatable = setmetatable
 
+global none
+
 local alpn_protos = {"http/1.1", "h2"}
 
 local M = {}

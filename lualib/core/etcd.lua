@@ -15,6 +15,7 @@ local M = {}
 
 local next = next
 local pairs = pairs
+local ipairs = ipairs
 local assert = assert
 local sort = table.sort
 local sub = string.sub
@@ -22,6 +23,8 @@ local char = string.char
 local sleep = core.sleep
 local timeout = core.timeout
 local setmetatable = setmetatable
+
+global none
 
 local no_prefix_end = "\0"
 

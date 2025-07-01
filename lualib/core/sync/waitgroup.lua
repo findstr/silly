@@ -1,5 +1,10 @@
 local core = require "core"
 local logger = require "core.logger"
+
+local setmetatable = setmetatable
+
+global none
+
 ---@class core.sync.waitgroup
 ---@field count integer
 local M = {}

@@ -19,6 +19,7 @@ local M = {}
 local mt = {__index = M}
 
 local setmetatable = setmetatable
+global none
 
 ---@param self core.metrics.gaugesub
 ---@param v number

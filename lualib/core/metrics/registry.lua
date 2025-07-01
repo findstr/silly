@@ -5,6 +5,7 @@ local mt = {__index = M}
 
 local remove = table.remove
 local setmetatable = setmetatable
+global none
 
 ---@return core.metrics.registry
 function M:new()

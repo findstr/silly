@@ -1,6 +1,7 @@
 local assert = assert
 local tostring = tostring
 local concat = table.concat
+global none
 
 local M = {}
 

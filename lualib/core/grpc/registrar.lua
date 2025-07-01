@@ -1,12 +1,14 @@
+local assert = assert
+local pairs = pairs
 local format = string.format
+local setmetatable = setmetatable
+global none
 
 ---@class core.grpc.registrar
 ---@field input_name table<string, string>
 ---@field output_name table<string, string>
 ---@field handlers table<string, function>
 local M = {}
-
-local setmetatable = setmetatable
 
 M.__index = M
 

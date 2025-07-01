@@ -8,10 +8,15 @@ local type = type
 local pairs = pairs
 local pcall = pcall
 local loadfile = loadfile
+local setmetatable = setmetatable
+local collectgarbage = collectgarbage
+local gmatch = string.gmatch
 local lower = string.lower
 local format = string.format
 local concat = table.concat
 local unpack = table.unpack
+
+global none
 
 local prompt = "console> "
 local desc = {
@@ -186,7 +191,7 @@ return function (config)
 			if not l then
 				break
 			end
-			for w in string.gmatch(l, "%g+") do
+			for w in gmatch(l, "%g+") do
 				param[#param + 1] = w
 			end
 			local res = process(fd, config, param, l)

@@ -2,11 +2,14 @@ local core = require "core"
 local mutex = require "core.sync.mutex".new()
 local logger = require "core.logger"
 local ipairs = ipairs
+local type = type
 local tonumber = tonumber
 local unpack = table.unpack
 local concat = table.concat
 local remove = table.remove
 local key = "stdin"
+
+global io
 
 ---@type thread|nil
 local waiting = nil

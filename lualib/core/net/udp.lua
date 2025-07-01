@@ -2,6 +2,8 @@ local core = require "core"
 local ns = require "core.netstream"
 local assert = assert
 
+global none
+
 ---@class core.net.udp
 local socket = {}
 

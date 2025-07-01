@@ -3,6 +3,8 @@ local helper = require "core.http.helper"
 local logger = require "core.logger"
 local statusname = require "core.http.statusname"
 local type = type
+local pairs = pairs
+local ipairs = ipairs
 local tonumber = tonumber
 local lower = string.lower
 local format = string.format
@@ -10,6 +12,7 @@ local gmatch = string.gmatch
 local concat = table.concat
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
+global none
 
 local M = {}
 

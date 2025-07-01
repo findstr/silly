@@ -1,9 +1,15 @@
-local M = {}
 local helper = require "core.http.helper"
+local assert = assert
+local pcall = pcall
+local setmetatable = setmetatable
 local tconcat = table.concat
 local tremove = table.remove
 local type, pairs = type, pairs
 local nexttoken
+global none
+
+local M = {}
+
 local tag = [["'</>=]]
 local T = {
 [tag:byte(1)] = function(str, start) -- "

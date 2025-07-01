@@ -9,6 +9,8 @@ local setupvalue = debug.setupvalue
 local upvalid = debug.upvalueid
 local upvaljoin = debug.upvaluejoin
 
+global none
+
 local M = {}
 local mt = {__index = M}
 

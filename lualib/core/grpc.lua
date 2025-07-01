@@ -5,6 +5,7 @@ local transport = require "core.http.transport"
 local pb = require "pb"
 
 local assert = assert
+local pairs = pairs
 local pack = string.pack
 local unpack = string.unpack
 local format = string.format
@@ -12,6 +13,8 @@ local sub = string.sub
 local concat = table.concat
 local tonumber = tonumber
 local setmetatable = setmetatable
+
+global none
 
 local M = {}
 

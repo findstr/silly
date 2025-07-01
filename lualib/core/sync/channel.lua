@@ -1,5 +1,8 @@
 local core = require "core"
 local assert = assert
+local setmetatable = setmetatable
+
+global none
 
 ---@class core.sync.channel
 ---@field queue table

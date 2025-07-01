@@ -3,7 +3,9 @@ local base64 = require "core.base64"
 local sha1 = require "core.crypto.hash".new("sha1")
 local utils = require "core.crypto.utils"
 
+local assert = assert
 local pairs = pairs
+local setmetatable = setmetatable
 local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
@@ -12,6 +14,9 @@ local randomkey = utils.randomkey
 
 ---@class core.websocket
 local M = {}
+
+global none
+
 local NIL = ""
 local guid = [[258EAFA5-E914-47DA-95CA-C5AB0DC85B11]]
 local func_cache = setmetatable({}, {__mode="kv"})

@@ -7,6 +7,8 @@ local weakmt = {__mode="v"}
 local lockcache = setmetatable({}, weakmt)
 local proxycache = setmetatable({}, weakmt)
 
+global none
+
 ---@class core.sync.mutex
 ---@field lockobj table
 local M = {}

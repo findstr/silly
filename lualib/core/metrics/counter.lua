@@ -17,7 +17,9 @@ local M = {}
 
 local mt = {__index = M}
 
+local assert = assert
 local setmetatable = setmetatable
+global none
 
 ---@param self core.metrics.countersub
 ---@param v number

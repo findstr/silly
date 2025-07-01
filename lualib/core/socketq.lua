@@ -3,6 +3,9 @@ local core = require "core"
 
 local pairs = pairs
 local assert = assert
+local setmetatable = setmetatable
+
+global none
 
 local CONNECTING   = 1
 local CONNECTED    = 2

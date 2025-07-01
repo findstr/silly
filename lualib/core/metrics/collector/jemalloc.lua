@@ -1,5 +1,6 @@
 local c = require "core.metrics.c"
 local gauge = require "core.metrics.gauge"
+global none
 
 local M = {}
 M.__index = M

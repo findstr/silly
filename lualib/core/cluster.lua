@@ -15,6 +15,8 @@ local timeout = core.timeout
 local timercancel = core.timercancel
 local setmetatable = setmetatable
 
+global none
+
 local mt = {
 	__gc = function(self)
 		local fdaddr = self.__fdaddr

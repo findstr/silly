@@ -15,6 +15,8 @@ local setmetatable = setmetatable
 local timenow = time.monotonicsec
 local maxinteger = math.maxinteger
 
+global io
+
 local session = 0
 local dns_server
 local connectfd

@@ -2,6 +2,14 @@ local core = require "core"
 local logger = require "core.logger"
 local helper = require "core.debugger.helper"
 local sethook = helper.hook
+local type = type
+local pairs = pairs
+local assert = assert
+local ipairs = ipairs
+local tonumber = tonumber
+local tconcat = table.concat
+local tunpack = table.unpack
+local corunning = coroutine.running
 local getinfo = debug.getinfo
 local getlocal = debug.getlocal
 local getupvalue = debug.getupvalue
@@ -32,6 +40,8 @@ local hookfunc = nil
 local lockthread = nil
 
 local livethread = NIL
+
+global string, debug, math
 
 
 local function cleardat(tbl)
@@ -128,7 +138,7 @@ local function checkhit(info, runline)
 end
 
 local function breakin(info, runline)
-	assert(coroutine.running() == core.running())
+	assert(corunning() == core.running())
 	local source = info.source
 	lastfile = source
 	lastline = runline
@@ -289,7 +299,7 @@ local function dumpval(title, i, name, val)
 	if type(val) == "table" then
 		local out = {}
 		dumptbl(val, out)
-		val = table.concat(out, "")
+		val = tconcat(out, "")
 		return format("%s $%s %s = %s\n", title, i, name, val)
 	elseif type(val) == "string" then
 		val = dumpstr(val)
@@ -534,7 +544,7 @@ local function cmdline(fd)
 		end
 		local func = CMD[param[1]]
 		if func then
-			local ret = func(table.unpack(param, 2))
+			local ret = func(tunpack(param, 2))
 			if ret then
 				cwrite(ret)
 				cleardat(ret)
@@ -552,6 +562,7 @@ start = function(read, write)
 	if debuglock then
 		return 'debugger is already opened by other user'
 	end
+	local _
 	enter()
 	cread = read
 	cwrite = write

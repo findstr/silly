@@ -4,8 +4,11 @@ local counter = require "core.metrics.counter"
 local gauge = require "core.metrics.gauge"
 local histogram = require "core.metrics.histogram"
 
+local pairs = pairs
+local setmetatable = setmetatable
 local tostring = tostring
 local concat = table.concat
+global require
 
 local M ={}
 

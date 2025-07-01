@@ -4,9 +4,11 @@ local type = type
 local assert = assert
 local tostring = tostring
 local tonumber = tonumber
+local setmetatable = setmetatable
 local sub = string.sub
 local upper = string.upper
 local format = string.format
+global none
 
 ---@class core.db.redis
 ---@field sock core.socketq

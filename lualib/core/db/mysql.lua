@@ -22,6 +22,7 @@ local tcp_connect = tcp.connect
 local tcp_close = tcp.close
 local tcp_read = tcp.read
 local tcp_write = tcp.write
+global none
 
 local digest = hash.digest
 local sha1 = hash.new("sha1")

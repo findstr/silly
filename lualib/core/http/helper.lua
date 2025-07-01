@@ -8,9 +8,11 @@ local insert = table.insert
 local concat = table.concat
 local utf8char = utf8.char
 local strchar = string.char
+local assert = assert
 local pairs = pairs
 local tonumber = tonumber
 local type = type
+global none
 
 local helper = {}
 

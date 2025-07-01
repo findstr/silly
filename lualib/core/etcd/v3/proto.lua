@@ -1,5 +1,7 @@
 local protoc = require "protoc"
 local assert = assert
+global none
+
 local p = protoc:new()
 
 assert(p:load([[

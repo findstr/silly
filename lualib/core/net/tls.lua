@@ -1,11 +1,16 @@
 local core = require "core"
 local logger = require "core.logger"
+
 local type = type
-local concat = table.concat
 local assert = assert
+local ipairs = ipairs
+local concat = table.concat
+local char = string.char
+local setmetatable = setmetatable
+
+global require
 
 local socket_pool = {}
-
 
 ---@class core.net.tls
 ---@field fd integer
@@ -25,7 +30,6 @@ local tls
 local client_ctx
 
 ---@alias core.net.tls.alpn_proto "http/1.1" | "h2"
-local char = string.char
 local alpnwired = setmetatable({}, {__index = function(t, k)
 	local v = char(#k) .. k
 	t[k] = v

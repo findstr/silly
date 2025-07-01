@@ -14,6 +14,7 @@ local pack = string.pack
 local unpack = string.unpack
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
+global none
 
 ---@class core.http.h2stream.channel_mt
 local C = {}
