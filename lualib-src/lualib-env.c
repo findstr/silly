@@ -21,7 +21,7 @@ static const char *load_config = "\
 		for k, v in pairs(tbl) do\
 			local kk = k\
 			if #parent > 0 then\
-				kk = parent .. '.' .. tostring(kk)\
+				kk = parent .. '.' .. tostring(k)\
 			end\
 			if type(v) == 'table' then\
 				eval(kk, v)\
@@ -65,14 +65,18 @@ static int lload(lua_State *L)
 {
 	int err;
 	err = luaL_loadstring(L, load_config);
-	assert(err == LUA_OK);
+	if (err != LUA_OK) {
+		const char *err = lua_tostring(L, -1);
+		return luaL_error(L, "load config code error:%s", err);
+	}
 	lua_pushvalue(L, lua_upvalueindex(1)); //env_table
 	lua_pushvalue(L, 1);
 	err = lua_pcall(L, 2, 0, 0);
 	if (err != LUA_OK) {
 		const char *err = lua_tostring(L, -1);
 		err = skipcode(err);
-		return luaL_error(L, "%s", err);
+		lua_pushstring(L, err);
+		lua_replace(L, -2);
 	} else {
 		lua_pushnil(L);
 	}
