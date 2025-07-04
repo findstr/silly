@@ -188,7 +188,7 @@ end
 -- Test 6: Concurrent stress test
 do
 	server_handler = function(sock)
-		core.sleep(100)
+		core.sleep(300)
 		sock:write("foo", "pong")
 		sock:close()
 	end
@@ -198,7 +198,7 @@ do
 			local sock = websocket.connect("ws://" .. TEST_HOST .. ":" .. TEST_PORT)
 			testaux.asserteq(not not sock, true, "Test 6: Connect server")
 			assert(sock)
-			local ok = sock:write("bar", "ping")
+			local ok, err = sock:write("bar", "ping")
 			testaux.asserteq(ok, true, "Test 6: Write ping")
 			local data, typ = sock:read()
 			testaux.asserteq(data, "foo", "Test 6: Read pong")
