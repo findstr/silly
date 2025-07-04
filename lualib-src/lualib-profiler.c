@@ -249,6 +249,12 @@ static int ldump(lua_State *L)
 	return 1;
 }
 
+static int lnow(lua_State *L)
+{
+	lua_pushinteger(L, (lua_Integer)timestamp());
+	return 1;
+}
+
 static inline void newmetatable(lua_State *L)
 {
 	lua_newtable(L);
@@ -266,6 +272,7 @@ int luaopen_core_profiler(lua_State *L)
                 { "yield",  lyield  },
 		{ "resume", lresume },
                 { "dump",   ldump   },
+                { "now",    lnow    },
                 { NULL,     NULL    },
 	};
 
