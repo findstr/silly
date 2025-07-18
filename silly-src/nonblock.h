@@ -1,6 +1,8 @@
 #ifndef _NONBLOCK_H
 #define _NONBLOCK_H
 
+#include "silly_log.h"
+
 #ifndef __WIN32
 static inline void nonblock(fd_t fd)
 {

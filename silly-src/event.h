@@ -1,5 +1,5 @@
-#ifndef _POLL_H
-#define _POLL_H
+#ifndef _EVENT_H
+#define _EVENT_H
 
 #if defined(__linux__)
 

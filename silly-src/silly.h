@@ -1,9 +1,9 @@
 #ifndef _SILLY_H
 #define _SILLY_H
+#include "silly_conf.h"
 #include <assert.h>
 #include <stdint.h>
 #include <limits.h>
-#include "silly_conf.h"
 #include "silly_malloc.h"
 
 #ifndef PATH_MAX

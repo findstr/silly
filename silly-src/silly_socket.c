@@ -1,4 +1,4 @@
-#include "silly_conf.h"
+#include "silly.h"
 #include <assert.h>
 #include <stdio.h>
 #include <errno.h>
@@ -6,14 +6,15 @@
 #include <string.h>
 #include <fcntl.h>
 
-#include "silly.h"
+#include "array.h"
 #include "atomic.h"
 #include "compiler.h"
 #include "net.h"
-#include "silly_log.h"
 #include "pipe.h"
 #include "event.h"
 #include "nonblock.h"
+#include "spinlock.h"
+#include "silly_log.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
@@ -119,9 +120,9 @@ struct silly_socket {
 	//when data less then 64k(from APUE)
 	int ctrlsendfd;
 	int ctrlrecvfd;
-	int ctrlcount;
-	int cmdcap;
-	uint8_t *cmdbuf;
+	int cmdwriting;
+	struct array cmdbuf[2];
+	spinlock_t cmdlock;
 	//reserve id(for socket fd remap)
 	int reserveid;
 	//netstat
@@ -400,11 +401,34 @@ static int ntop(union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
 		snprintf(&buf[namelen], SOCKET_NAMELEN - namelen, ":%d", port);
 	return namelen;
 }
-
-static void pipe_blockread(fd_t fd, void *pk, int n)
+static int cmdbuf_write(struct silly_socket *ss, void *dat, int size)
 {
+	int first;
+	struct array *cb;
+	spinlock_lock(&ss->cmdlock);
+	cb = &ss->cmdbuf[ss->cmdwriting];
+	first = cb->size == 0;
+	array_append(cb, dat, size);
+	spinlock_unlock(&ss->cmdlock);
+	return first;
+}
+
+static struct array *cmdbuf_read(struct silly_socket *ss)
+{
+	struct array *cb;
+	spinlock_lock(&ss->cmdlock);
+	cb = &ss->cmdbuf[ss->cmdwriting];
+	ss->cmdwriting = 1 - ss->cmdwriting;
+	ss->cmdbuf[ss->cmdwriting].size = 0;
+	spinlock_unlock(&ss->cmdlock);
+	return cb;
+}
+
+static void pipe_blockread(fd_t fd)
+{
+	uint8_t val;
 	for (;;) {
-		ssize_t err = pipe_read(fd, pk, n);
+		ssize_t err = pipe_read(fd, &val, 1);
 		if (err == -1) {
 			if (likely(errno == EINTR))
 				continue;
@@ -412,16 +436,20 @@ static void pipe_blockread(fd_t fd, void *pk, int n)
 					strerror(errno));
 			return;
 		}
-		assert(err == n);
-		atomic_sub_return(&SSOCKET->ctrlcount, n);
+		assert(err == 1);
 		return;
 	}
 }
 
 static int pipe_blockwrite(fd_t fd, void *pk, int sz)
 {
+	int first;
+	uint8_t val = 0;
+	first = cmdbuf_write(SSOCKET, pk, sz);
+	if (!first)
+		return 0;
 	for (;;) {
-		ssize_t err = pipe_write(fd, pk, sz);
+		ssize_t err = pipe_write(fd, &val, 1);
 		if (err == -1) {
 			if (likely(errno == EINTR))
 				continue;
@@ -429,8 +457,7 @@ static int pipe_blockwrite(fd_t fd, void *pk, int sz)
 					strerror(errno));
 			return -1;
 		}
-		atomic_add(&SSOCKET->ctrlcount, sz);
-		assert(err == sz);
+		assert(err == 1);
 		return 0;
 	}
 }
@@ -1404,27 +1431,19 @@ void silly_socket_terminate()
 //'R'   --> read ctrl(udp)
 //'T'	--> terminate(exit poll)
 
-static void resize_cmdbuf(struct silly_socket *ss, size_t sz)
-{
-	ss->cmdcap = sz;
-	ss->cmdbuf = (uint8_t *)silly_realloc(ss->cmdbuf, sizeof(uint8_t) * sz);
-	return;
-}
-
 static int cmd_process(struct silly_socket *ss)
 {
-	int count;
+	int count = 0;
 	int close = 0;
 	uint8_t *ptr, *end;
-	count = ss->ctrlcount;
-	if (count <= 0)
+	struct array *cmdbuf;
+	cmdbuf = cmdbuf_read(ss);
+	if (cmdbuf->size == 0)
 		return close;
-	if (count > ss->cmdcap)
-		resize_cmdbuf(ss, count);
-	pipe_blockread(ss->ctrlrecvfd, ss->cmdbuf, count);
-	ptr = ss->cmdbuf;
-	end = ptr + count;
+	ptr = cmdbuf->buf;
+	end = ptr + cmdbuf->size;
 	while (ptr < end) {
+		count++;
 		struct cmdpacket *cmd = (struct cmdpacket *)ptr;
 		switch (cmd->u.type) {
 		case 'L':
@@ -1472,6 +1491,7 @@ static int cmd_process(struct silly_socket *ss)
 			break;
 		}
 	}
+	pipe_blockread(ss->ctrlrecvfd);
 	return close;
 }
 
@@ -1604,10 +1624,12 @@ int silly_socket_init()
 	ss->reservefd = open("/dev/null", O_RDONLY);
 	ss->ctrlsendfd = fds[1];
 	ss->ctrlrecvfd = fds[0];
-	ss->ctrlcount = 0;
 	ss->eventindex = 0;
 	ss->eventcount = 0;
-	resize_cmdbuf(ss, CMDBUF_SIZE);
+	spinlock_init(&ss->cmdlock);
+	ss->cmdwriting = 0;
+	array_init(&ss->cmdbuf[0], CMDBUF_SIZE);
+	array_init(&ss->cmdbuf[1], CMDBUF_SIZE);
 	resize_eventbuf(ss, EVENT_SIZE);
 	SSOCKET = ss;
 	return 0;
@@ -1622,7 +1644,6 @@ end:
 		closesocket(fds[1]);
 	if (ss)
 		silly_free(ss);
-
 	return -errno;
 }
 
@@ -1643,7 +1664,8 @@ void silly_socket_exit()
 		}
 		++s;
 	}
-	silly_free(SSOCKET->cmdbuf);
+	array_free(&SSOCKET->cmdbuf[0]);
+	array_free(&SSOCKET->cmdbuf[1]);
 	silly_free(SSOCKET->eventbuf);
 	silly_free(SSOCKET->socketpool);
 	silly_free(SSOCKET);
@@ -1657,7 +1679,8 @@ const char *silly_socket_pollapi()
 
 int silly_socket_ctrlcount()
 {
-	return SSOCKET->ctrlcount;
+	//TODO:
+	return 0;
 }
 
 struct silly_netstat *silly_socket_netstat()

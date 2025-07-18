@@ -1,6 +1,8 @@
 #ifndef _SPINLOCK_H
 #define _SPINLOCK_H
 
+#include "silly_conf.h"
+
 #ifndef USE_SPINLOCK
 #include "atomic.h"
 typedef int spinlock_t;
