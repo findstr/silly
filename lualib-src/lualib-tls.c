@@ -32,7 +32,7 @@ struct ctx {
 };
 
 struct tls {
-	int fd;
+	int64_t fd;
 	SSL *ssl;
 	BIO *in_bio;
 	BIO *out_bio;
@@ -89,7 +89,7 @@ static struct ctx *new_tls_ctx(lua_State *L, int mode, int ctx_count,
 	return ctx;
 }
 
-static struct tls *new_tls(lua_State *L, int fd)
+static struct tls *new_tls(lua_State *L, int64_t fd)
 {
 	struct tls *tls;
 	tls = (struct tls *)lua_newuserdatauv(L, sizeof(*tls), 0);
@@ -290,7 +290,7 @@ static int lctx_server(lua_State *L)
 
 static int ltls_open(lua_State *L)
 {
-	int fd;
+	int64_t fd;
 	size_t alpn_size;
 	struct ctx *ctx;
 	struct tls *tls;

@@ -192,7 +192,7 @@ static int push_once(lua_State *L, int fd, int size, const uint8_t *buff)
 	return eat;
 }
 
-static void push(lua_State *L, int sid, uint8_t *data, int data_size)
+static void push(lua_State *L, int64_t sid, uint8_t *data, int data_size)
 {
 	int n;
 	int left;
@@ -208,7 +208,7 @@ static void push(lua_State *L, int sid, uint8_t *data, int data_size)
 	return;
 }
 
-static void clear_incomplete(lua_State *L, int sid)
+static void clear_incomplete(lua_State *L, int64_t sid)
 {
 	struct netpacket *p = get_netpacket(L);
 	struct incomplete *ic = get_incomplete(p, sid);
@@ -357,8 +357,7 @@ static int lresponse(lua_State *L)
 
 static int lclear(lua_State *L)
 {
-	int sid = luaL_checkinteger(L, 2);
-	assert(sid >= 0);
+	int64_t sid = luaL_checkinteger(L, 2);
 	clear_incomplete(L, sid);
 
 	return 0;

@@ -140,7 +140,7 @@ static int lpollapi(lua_State *L)
 	return 1;
 }
 
-static inline void table_set_int(lua_State *L, int table, const char *k, int v)
+static inline void table_set_int(lua_State *L, int table, const char *k, lua_Integer v)
 {
 	lua_pushinteger(L, v);
 	lua_setfield(L, table - 1, k);
@@ -176,7 +176,7 @@ static int ltimerstat(lua_State *L)
 
 static int lsocketstat(lua_State *L)
 {
-	int sid;
+	int64_t sid;
 	struct silly_socketstat info;
 	sid = luaL_checkinteger(L, 1);
 	silly_socket_socketstat(sid, &info);

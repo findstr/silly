@@ -27,7 +27,35 @@ struct {
 	const struct silly_config *conf;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
+	pthread_mutex_t startmutex;
+	pthread_cond_t startcond;
+	volatile int startok;
 } R;
+
+static void start_init()
+{
+	R.startok = 0;
+	pthread_mutex_init(&R.startmutex, NULL);
+	pthread_cond_init(&R.startcond, NULL);
+}
+
+static void start_wait()
+{
+	pthread_mutex_lock(&R.startmutex);
+	while (R.startok == 0) {
+		pthread_cond_wait(&R.startcond, &R.startmutex);
+	}
+	pthread_mutex_unlock(&R.startmutex);
+	R.startok = 0;
+}
+
+static void start_signal()
+{
+	pthread_mutex_lock(&R.startmutex);
+	R.startok = 1;
+	pthread_cond_signal(&R.startcond);
+	pthread_mutex_unlock(&R.startmutex);
+}
 
 static void *thread_timer(void *arg)
 {
@@ -35,6 +63,7 @@ static void *thread_timer(void *arg)
 	struct timespec req;
 	req.tv_sec = TIMER_ACCURACY / 1000;
 	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
+	start_signal();
 	silly_trace_set(TRACE_TIMER_ID);
 	silly_log_info("[timer] start\n");
 	for (;;) {
@@ -53,6 +82,16 @@ static void *thread_timer(void *arg)
 static void *thread_socket(void *arg)
 {
 	(void)arg;
+	const struct silly_config *c;
+	c = (struct silly_config *)arg;
+	int err;
+	err = silly_socket_init();
+	if (unlikely(err < 0)) {
+		silly_log_error("%s socket init fail:%d\n", c->selfname,
+				err);
+		exit(-err);
+	}
+	start_signal();
 	silly_trace_set(TRACE_SOCKET_ID);
 	silly_log_info("[socket] start\n");
 	for (;;) {
@@ -71,7 +110,9 @@ static void *thread_worker(void *arg)
 	const struct silly_config *c;
 	c = (struct silly_config *)arg;
 	silly_log_info("[worker] start\n");
+	silly_worker_init();
 	silly_worker_start(c);
+	start_signal();
 	pthread_mutex_lock(&R.mutex);
 	silly_trace_set(TRACE_WORKER_ID);
 	while (R.running) {
@@ -168,6 +209,7 @@ static void *thread_stdin(void *arg)
 
 static void monitor_check()
 {
+	silly_monitor_init();
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
 	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
@@ -202,35 +244,29 @@ static void thread_create(pthread_t *tid, void *(*start)(void *), void *arg,
 #else
 	(void)cpuid;
 #endif
+	start_wait();
 	return;
 }
 
-int silly_run(const struct silly_config *config)
+int silly_run(struct silly_config *config)
 {
 	int i;
-	int err;
 	pthread_t pid[4];
 	R.running = 1;
+	R.workerstatus = 1;
 	R.conf = config;
 	R.exitstatus = 0;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
+	start_init();
 	silly_signal_init();
-	err = silly_socket_init();
-	if (unlikely(err < 0)) {
-		silly_log_error("%s socket init fail:%d\n", config->selfname,
-				err);
-		return -err;
-	}
-	silly_worker_init();
-	silly_monitor_init();
 	srand(time(NULL));
 	silly_log_info("%s %s is running ...\n", config->selfname,
 		       SILLY_RELEASE);
 	silly_log_info("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
 		       config->timeraffinity, config->socketaffinity,
 		       config->workeraffinity);
-	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
+	thread_create(&pid[0], thread_socket, (void *)config, config->socketaffinity);
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
 	thread_create(&pid[2], thread_worker, (void *)config,
 		      config->workeraffinity);

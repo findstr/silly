@@ -68,4 +68,12 @@
 #define LOG_ENABLE_FILE_LINE
 #endif
 
+#define MAX_UDP_PACKET (512)
+
+#if SOCKET_MAX_EXP > 30
+#error "SOCKET_MAX_EXP must be less than 30"
+#endif
+
+#define MAX_SOCKET_COUNT (1 << SOCKET_MAX_EXP)
+
 #endif

@@ -195,6 +195,24 @@ function testaux.hexdump(s)
 	return (s:gsub('.', function(c) return string.format('%02X', string.byte(c)) end))
 end
 
+function testaux.connect(host, port)
+	local fd = c.connect(host, port)
+	if fd < 0 then
+		return nil, "connect failed"
+	end
+	core.sleep(0)
+	return fd
+end
+
+testaux.getsockname = c.getsockname
+testaux.listen = c.listen
+testaux.close = c.close
+testaux.recv = c.recv
+function testaux.send(fd, dat)
+	c.send(fd, dat)
+	core.sleep(0)
+end
+
 return testaux
 
 

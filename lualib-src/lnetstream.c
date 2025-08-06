@@ -46,7 +46,7 @@ struct node_buffer {
 };
 
 struct socket_buffer {
-	int sid;
+	uint64_t sid;
 	int limit;
 	int pause;
 	struct node_buffer *nb;
@@ -379,7 +379,7 @@ static inline void read_adjust(struct socket_buffer *sb)
 //@return
 //	socket buffer
 
-static int push(lua_State *L, int sid, char *data, int sz)
+static int push(lua_State *L, uint64_t sid, char *data, int sz)
 {
 	struct node *new;
 	struct socket_buffer *sb;
@@ -555,7 +555,7 @@ static int ltodata(lua_State *L)
 static int tpush(lua_State *L)
 {
 	size_t sz;
-	int fd = luaL_checkinteger(L, 2);
+	int64_t fd = luaL_checkinteger(L, 2);
 	const char *src = luaL_checklstring(L, 3, &sz);
 	void *dat = silly_malloc(sz);
 	memcpy(dat, src, sz);

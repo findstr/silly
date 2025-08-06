@@ -12,7 +12,6 @@
 #define SP_UD(e) (e->data.ptr)
 #define SP_INVALID (fd_t)(INVALID_HANDLE_VALUE)
 
-typedef intptr_t fd_t;
 typedef struct epoll_event event_t;
 
 static inline fd_t sp_create(int nr)

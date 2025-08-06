@@ -10,7 +10,7 @@ SO := so
 LUA_PLAT :=
 
 ifeq ($(uname_S),Linux)
-	LDFLAGS += -ldl -Wl,-E -lrt
+	LDFLAGS += -ldl -Wl,-E -lrt -luring
 	SHARED += --share -fPIC
 	SO = so
 	A = a

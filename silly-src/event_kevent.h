@@ -12,7 +12,7 @@
 #define SP_UD(e) (e->udata)
 
 #define SP_INVALID (-1)
-typedef int fd_t;
+
 typedef struct kevent event_t;
 
 static inline int sp_create(int nr)

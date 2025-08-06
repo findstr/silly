@@ -19,7 +19,7 @@ struct silly_netstat {
 };
 
 struct silly_socketstat {
-	int sid;
+	uint64_t sid;
 	int fd;
 	const char *type;
 	const char *protocol;
@@ -32,24 +32,24 @@ int silly_socket_init();
 void silly_socket_exit();
 void silly_socket_terminate();
 const char *silly_socket_lasterror();
-int silly_socket_listen(const char *ip, const char *port, int backlog);
-int silly_socket_connect(const char *ip, const char *port, const char *bindip,
+int64_t silly_socket_listen(const char *ip, const char *port, int backlog);
+int64_t silly_socket_connect(const char *ip, const char *port, const char *bindip,
 			 const char *bindport);
-int silly_socket_udpbind(const char *ip, const char *port);
-int silly_socket_udpconnect(const char *ip, const char *port,
+int64_t silly_socket_udpbind(const char *ip, const char *port);
+int64_t silly_socket_udpconnect(const char *ip, const char *port,
 			    const char *bindip, const char *bindport);
 
 int silly_socket_salen(const void *data);
 int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN]);
 
-void silly_socket_readctrl(int sid, int ctrl);
-int silly_socket_sendsize(int sid);
+void silly_socket_readctrl(int64_t sid, int ctrl);
+int silly_socket_sendsize(int64_t sid);
 
-int silly_socket_send(int sid, uint8_t *buff, size_t sz,
+int silly_socket_send(int64_t sid, uint8_t *buff, size_t sz,
 		      silly_finalizer_t finalizer);
-int silly_socket_udpsend(int sid, uint8_t *buff, size_t sz, const uint8_t *addr,
+int silly_socket_udpsend(int64_t sid, uint8_t *buff, size_t sz, const uint8_t *addr,
 			 size_t addrlen, silly_finalizer_t finalizer);
-int silly_socket_close(int sid);
+int silly_socket_close(int64_t sid);
 
 int silly_socket_poll();
 
@@ -57,6 +57,6 @@ const char *silly_socket_pollapi();
 
 int silly_socket_ctrlcount();
 struct silly_netstat *silly_socket_netstat();
-void silly_socket_socketstat(int sid, struct silly_socketstat *info);
+void silly_socket_socketstat(int64_t sid, struct silly_socketstat *info);
 
 #endif

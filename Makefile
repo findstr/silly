@@ -1,4 +1,4 @@
-.PHONY: all clean cleanall testall fmt
+.PHONY: all clean cleanall test testall fmt
 
 INCLUDE :=
 #---------
@@ -78,7 +78,7 @@ SRC_FILE = \
       silly_trace.c \
       silly_monitor.c \
       pipe.c \
-      event.c \
+      uring.c \
       force_link.c\
 
 SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
@@ -135,8 +135,10 @@ $(LUACLIB_PATH)/test.$(SO): $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 %.o:%.c
 	$(CC) $(CFLAGS) $(INCLUDE) -c -o $@ $<
 
-testall:
+test:
 	make TEST=ON MALLOC=glibc all
+
+testall: test
 	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:

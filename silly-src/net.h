@@ -10,6 +10,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
+
+typedef int fd_t;
 #define translate_socket_errno(x) (x)
 #endif
 
@@ -22,6 +24,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
+typedef int fd_t;
 #define translate_socket_errno(x) (x)
 #endif
 
@@ -31,6 +34,8 @@
 #include <iphlpapi.h>
 #include <ws2def.h>
 #include "silly_log.h"
+
+typedef intptr_t fd_t;
 
 static inline int translate_socket_errno(int err)
 {
@@ -96,6 +101,23 @@ static inline int translate_socket_errno(int err)
 	}
 }
 
+#endif
+
+#if EAGAIN == EWOULDBLOCK
+#define ETRYAGAIN EAGAIN
+#else
+#define ETRYAGAIN \
+EAGAIN:           \
+	case EWOULDBLOCK
+#endif
+
+#ifdef __WIN32
+#define CONNECT_IN_PROGRESS EWOULDBLOCK
+#undef errno
+#define errno translate_socket_errno(WSAGetLastError())
+#else
+#define CONNECT_IN_PROGRESS EINPROGRESS
+#define closesocket close
 #endif
 
 #endif
