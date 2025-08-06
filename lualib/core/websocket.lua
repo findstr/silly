@@ -4,6 +4,9 @@ local sha1 = require "core.crypto.hash".new("sha1")
 local utils = require "core.crypto.utils"
 
 local pairs = pairs
+local tostring = tostring
+local setmetatable = setmetatable
+
 local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
@@ -14,9 +17,8 @@ local randomkey = utils.randomkey
 local M = {}
 local NIL = ""
 local guid = [[258EAFA5-E914-47DA-95CA-C5AB0DC85B11]]
-local func_cache = setmetatable({}, {__mode="kv"})
 local func_mask_cache = {
-	[0] = func_cache,
+	[0] = setmetatable({}, {__mode="kv"}),
 	[1] = setmetatable({}, {__mode="kv"}),
 }
 
@@ -41,7 +43,8 @@ local data_type = {
 	["pong"] = 10,
 }
 
-local function read_frame(fd, r)
+
+local function read_frame(fd, r, needmask)
 	local dat
 	local tmp, err = r(fd, 2)
 	if not tmp then -- the frame header is not read, treat as EOF
@@ -52,6 +55,9 @@ local function read_frame(fd, r)
 	local fin, op, mask, payload =
 		(h & 0x80) >> 7, h & 0x0f,
 		(l & 0x80) >> 7, l & 0x7f
+	if needmask ~= mask then
+		return nil, needmask and "need mask but got none" or "got mask but need none"
+	end
 	if payload == 126 then
 		tmp, err = r(fd, 2)
 		if not tmp then
@@ -113,32 +119,52 @@ local function write_frame(w, fd, fin, op, mask, dat)
 end
 
 ---@param r async fun(fd:integer, n:integer):string?, string?
-local function wrap_read(r)
-	local f = func_cache[r]
+local function wrap_read(r, mask)
+	local f = func_mask_cache[mask][r]
 	if f then
 		return f
 	end
 	f = function(sock)
-		local fin = 0
-		local format
-		local buf = {}
+		local stashbuf = sock.stashbuf
 		local fd = sock.fd
+		if not stashbuf then -- read first frame
+			local fin, op, dat = read_frame(fd, r, mask)
+			if not fin then
+				return nil, op, ""
+			end
+			local format = data_type[op]
+			if not format then
+				return nil, "unknown frame type:" .. tostring(op), ""
+			end
+			if fin ~= 0 then
+				return dat, format
+			end
+			stashbuf = {dat}
+			sock.stashtype = format
+			sock.stashbuf = stashbuf
+		end
+		local fin = 0
 		while fin == 0 do
 			local op, dat, err
-			fin, op, dat = read_frame(fd, r)
+			fin, op, dat = read_frame(fd, r, mask)
 			if not fin then
 				return nil, op, ""
 			end
 			if op ~= 0 then
-				format = data_type[op]
+				return dat, data_type[op]
 			end
-			buf[#buf + 1] = dat
+			stashbuf[#stashbuf + 1] = dat
 		end
-		return concat(buf), format
+		local dat = concat(stashbuf)
+		local format = sock.stashtype
+		sock.stashbuf = nil
+		sock.stashtype = nil
+		return dat, format
 	end
-	func_cache[r] = f
+	func_mask_cache[mask][r] = f
 	return f
 end
+
 
 local function wrap_write(w, mask)
 	local f = func_mask_cache[mask][w]
@@ -147,10 +173,13 @@ local function wrap_write(w, mask)
 	end
 	--local MAX_FRAGMENT = 64*1024-1
 	f = function(sock, dat, typ)
+		dat = dat or NIL
+		if #dat > 125 and typ ~= "text" and typ ~= "binary" then
+			return false, "all control frames MUST have a payload length of 125 bytes or less"
+		end
 		local ok, err
 		local fd = sock.fd
 		typ = typ or "binary"
-		dat = dat or NIL
 		local len = #dat
 		local op = assert(data_type[typ], typ)
 		if len >= 2^16 then
@@ -180,7 +209,7 @@ local function wrap_write(w, mask)
 end
 
 local function wrap_close(c)
-	local f = func_cache[c]
+	local f = func_mask_cache[0][c]
 	if f then
 		return f
 	end
@@ -189,7 +218,7 @@ local function wrap_close(c)
 		sock:write(nil, "close")
 		return c(sock.fd)
 	end
-	func_cache[c] = f
+	func_mask_cache[0][c] = f
 	return f
 end
 
@@ -226,19 +255,24 @@ local function handshake(stream)
 end
 
 ---@param stream core.http.h1stream
+---@param isclient boolean
 ---@return core.websocket.socket
-local function upgrade(stream)
+local function upgrade(stream, isclient)
 	local transport = stream.transport
 	local read = transport.read
 	local write = transport.write
 	local close = transport.close
+	local rmask = isclient and 0 or 1
+	local wmask = isclient and 1 or 0
 	---@class core.websocket.socket
 	local sock = {
 		fd = stream.fd,
 		stream = stream,
-		read = wrap_read(read),
-		write = wrap_write(write, 1),
+		read = wrap_read(read, rmask),
+		write = wrap_write(write, wmask),
 		close = wrap_close(close),
+		stashtype = nil,
+		stashbuf = nil,
 	}
 	return sock
 end
@@ -247,7 +281,7 @@ local function wrap_handshake(handler)
 	---@param stream core.http.h1stream
 	return function(stream)
 		if handshake(stream) then
-			local sock = upgrade(stream)
+			local sock = upgrade(stream, false)
 			handler(sock)
 		else
 			stream:close()
@@ -282,7 +316,7 @@ function M.connect(url, header)
 	if not status or status ~= 101 then
 		return nil, "websocket.connect fail"
 	end
-	return upgrade(stream), nil
+	return upgrade(stream, true), nil
 end
 
 return M
