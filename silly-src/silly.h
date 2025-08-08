@@ -5,6 +5,7 @@
 #include <limits.h>
 #include "silly_conf.h"
 #include "silly_malloc.h"
+#include "silly_socket.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 256
@@ -70,11 +71,15 @@ struct silly_message_texpire { //timer expire
 
 struct silly_message_socket { //socket accept
 	COMMONFIELD
-	int sid;
-	//SACCEPT, it used as portid,
+	socket_id_t sid;
+	//SACCEPT, it used as listenid,
 	//SCLOSE used as errorcode
 	//SDATA/SUDP  used by length
-	int ud;
+	union {
+		int err;
+		socket_id_t listenid;
+		size_t size;
+	};
 	uint8_t *data;
 };
 

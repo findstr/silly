@@ -46,7 +46,7 @@ struct node_buffer {
 };
 
 struct socket_buffer {
-	int sid;
+	socket_id_t sid;
 	int limit;
 	int pause;
 	struct node_buffer *nb;
@@ -379,7 +379,7 @@ static inline void read_adjust(struct socket_buffer *sb)
 //@return
 //	socket buffer
 
-static int push(lua_State *L, int sid, char *data, int sz)
+static int push(lua_State *L, socket_id_t sid, char *data, int sz)
 {
 	struct node *new;
 	struct socket_buffer *sb;
@@ -518,7 +518,7 @@ static int lpush(lua_State *L)
 		//prevent silly_work free the msg->data
 		//it will be exist until it be read out
 		msg->data = NULL;
-		size = push(L, msg->sid, str, msg->ud);
+		size = push(L, msg->sid, str, msg->size);
 		break;
 	case SILLY_SACCEPT:
 	case SILLY_SCLOSE:
@@ -542,7 +542,7 @@ static int ltodata(lua_State *L)
 	case SILLY_SUDP:
 	case SILLY_SDATA:
 		data = tosocket(sm)->data;
-		datasz = tosocket(sm)->ud;
+		datasz = tosocket(sm)->size;
 		break;
 	default:
 		luaL_error(L, "tomsgstring unsupport message type");
@@ -555,7 +555,7 @@ static int ltodata(lua_State *L)
 static int tpush(lua_State *L)
 {
 	size_t sz;
-	int fd = luaL_checkinteger(L, 2);
+	socket_id_t fd = luaL_checkinteger(L, 2);
 	const char *src = luaL_checklstring(L, 3, &sz);
 	void *dat = silly_malloc(sz);
 	memcpy(dat, src, sz);

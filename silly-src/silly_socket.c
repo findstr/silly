@@ -76,7 +76,7 @@ static const char *stype_name[] = {
 //because we only care about 'ipv6' and 'ipv4'
 #define SA_LEN(sa)                                                \
 	((sa).sa_family == AF_INET ? sizeof(struct sockaddr_in) : \
-				     sizeof(struct sockaddr_in6))
+					 sizeof(struct sockaddr_in6))
 
 union sockaddr_full {
 	struct sockaddr sa;
@@ -93,7 +93,7 @@ struct wlist {
 };
 
 struct socket {
-	int sid; //socket descriptor
+	socket_id_t sid; //socket descriptor
 	fd_t fd;
 	unsigned char protocol;
 	unsigned char reading;
@@ -123,7 +123,7 @@ struct silly_socket {
 	int cmdcap;
 	uint8_t *cmdbuf;
 	//reserve id(for socket fd remap)
-	int reserveid;
+	socket_id_t reserveid;
 	//netstat
 	struct silly_netstat netstat;
 	//error message
@@ -136,28 +136,28 @@ struct silly_socket {
 #define cmdcommon int type
 struct cmdlisten { //'L/B' -> listen or bind
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 };
 
 struct cmdconnect { //'C' -> tcp connect
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 	union sockaddr_full addr;
 };
 
 struct cmdopen { //'O' -> udp connect
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 };
 
 struct cmdkick { //'K' --> close
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 };
 
 struct cmdsend { //'S' --> tcp send
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 	int size;
 	uint8_t *data;
 	silly_finalizer_t finalizer;
@@ -170,7 +170,7 @@ struct cmdudpsend { //'U' --> udp send
 
 struct cmdreadctrl { //'R' --> read ctrl
 	cmdcommon;
-	int sid;
+	socket_id_t sid;
 	int ctrl;
 };
 
@@ -209,7 +209,11 @@ static void socketpool_init(struct silly_socket *ss)
 	int i;
 	struct socket *pool = silly_malloc(sizeof(*pool) * MAX_SOCKET_COUNT);
 	ss->socketpool = pool;
+#ifdef SILLY_TEST
+	ss->reserveid = UINT32_MAX;
+#else
 	ss->reserveid = -1;
+#endif
 	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
 		pool->sid = -1;
 		pool->fd = -1;
@@ -223,7 +227,7 @@ static void socketpool_init(struct silly_socket *ss)
 }
 
 static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
-				silly_finalizer_t finalizer)
+					silly_finalizer_t finalizer)
 {
 	struct wlist *w;
 	w = (struct wlist *)silly_malloc(sizeof(*w));
@@ -238,8 +242,8 @@ static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
 }
 
 static inline void wlist_appendudp(struct socket *s, uint8_t *buf, size_t size,
-				   silly_finalizer_t finalizer,
-				   const union sockaddr_full *addr)
+						   silly_finalizer_t finalizer,
+						   const union sockaddr_full *addr)
 {
 	int addrsz;
 	struct wlist *w;
@@ -282,10 +286,10 @@ static inline int wlist_empty(struct socket *s)
 }
 
 static struct socket *allocsocket(struct silly_socket *ss, fd_t fd,
-				  enum stype type, unsigned char protocol)
+						  enum stype type, unsigned char protocol)
 {
 	int i;
-	int id;
+	socket_id_t id;
 	assert(protocol == PROTOCOL_TCP || protocol == PROTOCOL_UDP ||
 	       protocol == PROTOCOL_PIPE);
 	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
@@ -326,7 +330,7 @@ static inline void netstat_close(struct silly_socket *ss, struct socket *s)
 static inline void freesocket(struct silly_socket *ss, struct socket *s)
 {
 	if (unlikely(s->type == STYPE_RESERVE)) {
-		const char *fmt = "[socket] freesocket sid:%d error type:%d\n";
+		const char *fmt = "[socket] freesocket sid:%lld error type:%d\n";
 		silly_log_error(fmt, s->sid, s->type);
 		return;
 	}
@@ -409,7 +413,7 @@ static void pipe_blockread(fd_t fd, void *pk, int n)
 			if (likely(errno == EINTR))
 				continue;
 			silly_log_error("[socket] pip_blockread error:%s\n",
-					strerror(errno));
+							strerror(errno));
 			return;
 		}
 		assert(err == n);
@@ -426,7 +430,7 @@ static int pipe_blockwrite(fd_t fd, void *pk, int sz)
 			if (likely(errno == EINTR))
 				continue;
 			silly_log_error("[socket] pipe_blockwrite error:%s",
-					strerror(errno));
+						strerror(errno));
 			return -1;
 		}
 		atomic_add(&SSOCKET->ctrlcount, sz);
@@ -478,7 +482,7 @@ static void report_accept(struct silly_socket *ss, struct socket *listen)
 	sa = silly_malloc(sizeof(*sa) + namelen + 1);
 	sa->type = SILLY_SACCEPT;
 	sa->sid = s->sid;
-	sa->ud = listen->sid;
+	sa->listenid = listen->sid;
 	sa->data = (uint8_t *)(sa + 1);
 	*sa->data = namelen;
 	memcpy(sa->data + 1, namebuf, namelen);
@@ -500,7 +504,7 @@ static void report_close(struct silly_socket *ss, struct socket *s, int err)
 	sc = silly_malloc(sizeof(*sc));
 	sc->type = SILLY_SCLOSE;
 	sc->sid = s->sid;
-	sc->ud = err;
+	sc->err = err;
 	silly_worker_push(tocommon(sc));
 	return;
 }
@@ -514,7 +518,7 @@ static void report_data(struct silly_socket *ss, struct socket *s, int type,
 	assert(type == SILLY_SDATA || type == SILLY_SUDP);
 	sd->type = type;
 	sd->sid = s->sid;
-	sd->ud = sz;
+	sd->size = sz;
 	sd->data = data;
 	silly_worker_push(tocommon(sd));
 	return;
@@ -536,7 +540,7 @@ static void read_enable(struct silly_socket *ss, struct cmdreadctrl *cmd)
 {
 	int flag;
 	struct socket *s;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	int enable = cmd->ctrl;
 	s = &ss->socketpool[HASH(sid)];
 	if (s->reading == enable)
@@ -557,7 +561,7 @@ static inline int checkconnected(struct silly_socket *ss, struct socket *s)
 	if (unlikely(ret < 0)) {
 		err = errno;
 		silly_log_error("[socket] checkconnected:%s\n",
-				strerror(errno));
+						strerror(errno));
 		goto err;
 	}
 	if (unlikely(err != 0)) {
@@ -738,7 +742,7 @@ int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN])
 	return ntop(addr, name);
 }
 
-void silly_socket_readctrl(int sid, int flag)
+void silly_socket_readctrl(socket_id_t sid, int flag)
 {
 	struct socket *s;
 	struct cmdreadctrl cmd;
@@ -752,7 +756,7 @@ void silly_socket_readctrl(int sid, int flag)
 	return;
 }
 
-int silly_socket_sendsize(int sid)
+int silly_socket_sendsize(socket_id_t sid)
 {
 	int size = 0;
 	struct wlist *w;
@@ -844,7 +848,7 @@ struct addrinfo *getsockaddr(int protocol, const char *ip, const char *port)
 	if ((err = getaddrinfo(ip, port, &hints, &res))) {
 		set_errmsg(SSOCKET, gai_strerror(err));
 		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
-				port, gai_strerror(err));
+							port, gai_strerror(err));
 		return NULL;
 	}
 	return res;
@@ -863,7 +867,7 @@ static int bindfd(fd_t fd, int protocol, const char *ip, const char *port)
 	if (err < 0) {
 		set_errmsg(SSOCKET, strerror(errno));
 		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
-				port, strerror(errno));
+							port, strerror(errno));
 	}
 	freeaddrinfo(info);
 	return err;
@@ -887,7 +891,7 @@ static int dolisten(const char *ip, const char *port, int backlog)
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0)) {
 		snprintf(SSOCKET->errmsg, sizeof(SSOCKET->errmsg), "%s",
-			 strerror(errno));
+						strerror(errno));
 		goto end;
 	}
 	nonblock(fd);
@@ -911,7 +915,7 @@ const char *silly_socket_lasterror()
 	return SSOCKET->errmsg;
 }
 
-int silly_socket_listen(const char *ip, const char *port, int backlog)
+socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog)
 {
 	fd_t fd;
 	struct socket *s;
@@ -923,7 +927,7 @@ int silly_socket_listen(const char *ip, const char *port, int backlog)
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
 		silly_log_error("[socket] listen %s:%s:%d allocsocket fail\n",
-				ip, port, backlog);
+							ip, port, backlog);
 		closesocket(fd);
 		return -1;
 	}
@@ -933,7 +937,7 @@ int silly_socket_listen(const char *ip, const char *port, int backlog)
 	return s->sid;
 }
 
-int silly_socket_udpbind(const char *ip, const char *port)
+socket_id_t silly_socket_udpbind(const char *ip, const char *port)
 {
 	int err;
 	fd_t fd = -1;
@@ -958,7 +962,7 @@ int silly_socket_udpbind(const char *ip, const char *port)
 	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (unlikely(s == NULL)) {
 		silly_log_error("[socket] udpbind %s:%s allocsocket fail\n", ip,
-				port);
+							port);
 		goto end;
 	}
 	freeaddrinfo(info);
@@ -978,14 +982,14 @@ static int trylisten(struct silly_socket *ss, struct cmdlisten *cmd)
 {
 	int err;
 	struct socket *s;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	s = &ss->socketpool[HASH(sid)];
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
 	if (unlikely(err < 0)) {
 		silly_log_error("[socket] trylisten error:%s\n",
-				strerror(errno));
+						strerror(errno));
 		report_close(ss, s, errno);
 		closesocket(s->fd);
 		freesocket(ss, s);
@@ -999,14 +1003,14 @@ static int tryudpbind(struct silly_socket *ss, struct cmdlisten *cmd)
 {
 	int err;
 	struct socket *s;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	s = &ss->socketpool[HASH(sid)];
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
 	if (unlikely(err < 0)) {
 		silly_log_error("[socket] tryudpbind error:%s\n",
-				strerror(errno));
+						strerror(errno));
 		report_close(ss, s, errno);
 		closesocket(s->fd);
 		freesocket(ss, s);
@@ -1018,7 +1022,7 @@ static int tryudpbind(struct silly_socket *ss, struct cmdlisten *cmd)
 	return err;
 }
 
-int silly_socket_connect(const char *ip, const char *port, const char *bindip,
+socket_id_t silly_socket_connect(const char *ip, const char *port, const char *bindip,
 			 const char *bindport)
 {
 	int err, fd = -1;
@@ -1060,7 +1064,7 @@ static void tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	int err;
 	fd_t fd;
 	struct socket *s;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	union sockaddr_full *addr;
 	s = &ss->socketpool[HASH(sid)];
 	assert(s->fd >= 0);
@@ -1103,7 +1107,8 @@ static void tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	return;
 }
 
-int silly_socket_udpconnect(const char *ip, const char *port,
+
+socket_id_t silly_socket_udpconnect(const char *ip, const char *port,
 			    const char *bindip, const char *bindport)
 {
 	int err;
@@ -1150,7 +1155,7 @@ end:
 static void tryudpconnect(struct silly_socket *ss, struct cmdopen *cmd)
 {
 	int err;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	struct socket *s = &ss->socketpool[HASH(sid)];
 	assert(s->sid == sid);
 	assert(s->fd >= 0);
@@ -1164,26 +1169,26 @@ static void tryudpconnect(struct silly_socket *ss, struct cmdopen *cmd)
 	return;
 }
 
-int silly_socket_close(int sid)
+int silly_socket_close(socket_id_t sid)
 {
 	int type;
 	struct cmdkick cmd;
 	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
 	if (unlikely(s->sid != sid)) {
 		silly_log_error("[socket] silly_socket_close incorrect "
-				"socket %d:%d\n",
-				sid, s->sid);
+							"socket %lld:%lld\n",
+							sid, s->sid);
 		return -1;
 	}
 	type = s->type;
 	if (unlikely(type == STYPE_CTRL)) {
 		silly_log_error("[socket] silly_socket_close ctrl socket:%d\n",
-				sid);
+							sid);
 		return -1;
 	}
 	if (unlikely(type == STYPE_RESERVE)) {
 		silly_log_warn(
-			"[socket] silly_socket_close reserve socket:%d\n", sid);
+			"[socket] silly_socket_close reserve socket:%llu\n", sid);
 		return -1;
 	}
 	cmd.type = 'K';
@@ -1195,19 +1200,19 @@ int silly_socket_close(int sid)
 static int tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 {
 	int type;
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	struct socket *s = &ss->socketpool[HASH(sid)];
 	if (unlikely(s->sid != sid)) {
 		silly_log_error("[socket] tryclose incorrect "
-				"socket %d:%d\n",
-				sid, s->sid);
+							"socket %lld:%lld\n",
+							sid, s->sid);
 		return -1;
 	}
 	type = s->type;
 	if (unlikely(type == STYPE_CTRL || type == STYPE_RESERVE)) {
 		silly_log_error("[socket] tryclose unsupport "
-				"type %d:%d\n",
-				sid, type);
+							"type %d:%d\n",
+							sid, type);
 		return -1;
 	}
 	if (wlist_empty(s)) { //already send all the data, directly close it
@@ -1219,7 +1224,7 @@ static int tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 	}
 }
 
-int silly_socket_send(int sid, uint8_t *buf, size_t sz,
+int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
 		      silly_finalizer_t finalizer)
 {
 	int type;
@@ -1228,19 +1233,20 @@ int silly_socket_send(int sid, uint8_t *buf, size_t sz,
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(buf);
-		silly_log_error("[socket] silly_socket_send invalid sid:%d\n",
-				sid);
+		silly_log_error("[socket] silly_socket_send invalid sid:%llu\n",
+							sid);
 		return -1;
 	}
 	type = s->type;
 	if (unlikely(!(type == STYPE_SOCKET || type == STYPE_CONNECTING ||
-		       type == STYPE_ALLOCED))) {
+			       type == STYPE_ALLOCED))) {
 		finalizer(buf);
 		silly_log_error("[socket] silly_socket_send incorrect type "
-				"sid:%d type:%d\n",
-				sid, type);
+							"sid:%llu type:%d\n",
+							sid, type);
 		return -1;
 	}
+
 	if (unlikely(sz == 0)) {
 		finalizer(buf);
 		return -1;
@@ -1254,7 +1260,7 @@ int silly_socket_send(int sid, uint8_t *buf, size_t sz,
 	return 0;
 }
 
-int silly_socket_udpsend(int sid, uint8_t *buf, size_t sz, const uint8_t *addr,
+int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t *addr,
 			 size_t addrlen, silly_finalizer_t finalizer)
 {
 	int type;
@@ -1263,19 +1269,20 @@ int silly_socket_udpsend(int sid, uint8_t *buf, size_t sz, const uint8_t *addr,
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(buf);
-		silly_log_error("[socket] silly_socket_send invalid sid:%d\n",
-				sid);
+		silly_log_error("[socket] silly_socket_send invalid sid:%llu\n",
+							sid);
 		return -1;
 	}
 	type = s->type;
 	if (unlikely(!(type == STYPE_SOCKET || type == STYPE_UDPBIND ||
-		       type == STYPE_ALLOCED))) {
+			       type == STYPE_ALLOCED))) {
 		finalizer(buf);
 		silly_log_error("[socket] silly_socket_send incorrect type "
-				"sid:%d type:%d\n",
-				sid, type);
+							"sid:%llu type:%d\n",
+							sid, type);
 		return -1;
 	}
+
 	if (unlikely(type == STYPE_UDPBIND && addr == NULL)) {
 		finalizer(buf);
 		silly_log_error(
@@ -1297,7 +1304,7 @@ int silly_socket_udpsend(int sid, uint8_t *buf, size_t sz, const uint8_t *addr,
 
 static int trysend(struct silly_socket *ss, struct cmdsend *cmd)
 {
-	int sid = cmd->sid;
+	socket_id_t sid = cmd->sid;
 	uint8_t *data = cmd->data;
 	size_t sz = cmd->size;
 	silly_finalizer_t finalizer = cmd->finalizer;
@@ -1305,17 +1312,18 @@ static int trysend(struct silly_socket *ss, struct cmdsend *cmd)
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(data);
 		silly_log_error("[socket] trysend incorrect socket "
-				"sid:%d:%d type:%d\n",
-				sid, s->sid, s->protocol);
+							"sid:%llu:%llu type:%d\n",
+							sid, s->sid, s->protocol);
 		return 0;
 	}
 	if (unlikely(s->type != STYPE_SOCKET && s->type != STYPE_CONNECTING)) {
 		finalizer(data);
 		silly_log_error("[socket] trysend incorrect type "
-				"sid:%d type:%d\n",
-				sid, s->type);
+							"sid:%llu type:%d\n",
+							sid, s->type);
 		return 0;
 	}
+
 	ss->netstat.sendsize += sz;
 	if (wlist_empty(s) && s->type == STYPE_SOCKET) { //try send
 		ssize_t n = sendn(s->fd, data, sz);
@@ -1342,7 +1350,7 @@ static int tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 {
 	size_t size;
 	uint8_t *data;
-	int sid = cmd->send.sid;
+	socket_id_t sid = cmd->send.sid;
 	union sockaddr_full *addr;
 	silly_finalizer_t finalizer;
 	finalizer = cmd->send.finalizer;
@@ -1351,17 +1359,18 @@ static int tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(data);
 		silly_log_error("[socket] tryudpsend incorrect socket "
-				"sid:%d:%d type:%d\n",
-				sid, s->sid, s->protocol);
+							"sid:%llu:%llu type:%d\n",
+							sid, s->sid, s->protocol);
 		return 0;
 	}
 	if (unlikely(s->type != STYPE_SOCKET && s->type != STYPE_UDPBIND)) {
 		finalizer(data);
 		silly_log_error("[socket] tryudpsend incorrect type "
-				"sid:%d type:%d\n",
-				sid, s->type);
+							"sid:%llu type:%d\n",
+							sid, s->type);
 		return 0;
 	}
+
 	size = cmd->send.size;
 	ss->netstat.sendsize += size;
 	if (s->type == STYPE_UDPBIND) {
@@ -1466,8 +1475,8 @@ static int cmd_process(struct silly_socket *ss)
 			return -1;
 		default:
 			silly_log_error("[socket] cmd_process:"
-					"unkonw operation:%d\n",
-					cmd->u.type);
+							"unkonw operation:%d\n",
+							cmd->u.type);
 			assert(!"oh, no!");
 			break;
 		}
@@ -1529,7 +1538,7 @@ int silly_socket_poll()
 		default:
 			silly_log_error(
 				"[socket] poll: unkonw socket type:%d\n",
-				s->type);
+							s->type);
 			continue;
 		}
 		if (SP_READ(e)) {
@@ -1542,8 +1551,8 @@ int silly_socket_poll()
 				break;
 			default:
 				silly_log_error("[socket] poll:"
-						"unsupport protocol:%d\n",
-						s->protocol);
+							"unsupport protocol:%d\n",
+							s->protocol);
 				continue;
 			}
 			//this socket have already occurs error,
@@ -1665,7 +1674,7 @@ struct silly_netstat *silly_socket_netstat()
 	return &SSOCKET->netstat;
 }
 
-void silly_socket_socketstat(int sid, struct silly_socketstat *info)
+void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 {
 	struct socket *s;
 	s = &SSOCKET->socketpool[HASH(sid)];

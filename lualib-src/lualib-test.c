@@ -31,12 +31,12 @@ static int lnewdatamsg(lua_State *L)
 {
 	size_t sz;
 	struct silly_message_socket *sm;
-	int sid = luaL_checkinteger(L, 1);
+	socket_id_t sid = luaL_checkinteger(L, 1);
 	const char *buff = luaL_checklstring(L, 2, &sz);
 	sm = tosocket(newmsg(L, sizeof(*sm)));
 	sm->type = SILLY_SDATA;
 	sm->sid = sid;
-	sm->ud = sz;
+	sm->size = sz;
 	sm->data = silly_malloc(sz);
 	memcpy(sm->data, buff, sz);
 	return 1;
