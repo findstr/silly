@@ -117,13 +117,13 @@ static inline void table_set_str(lua_State *L, int table, const char *k,
 
 static int lnetstat(lua_State *L)
 {
-	struct silly_netstat *stat;
-	stat = silly_socket_netstat();
-	lua_pushinteger(L, stat->connecting);
-	lua_pushinteger(L, stat->tcpclient);
+	struct silly_netstat stat;
+	silly_socket_netstat(&stat);
+	lua_pushinteger(L, stat.connecting);
+	lua_pushinteger(L, stat.tcpclient);
 	lua_pushinteger(L, silly_socket_ctrlcount());
-	lua_pushinteger(L, stat->sendsize);
-	lua_pushinteger(L, stat->recvsize);
+	lua_pushinteger(L, stat.sendsize);
+	lua_pushinteger(L, stat.recvsize);
 	return 5;
 }
 

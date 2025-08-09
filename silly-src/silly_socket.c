@@ -16,7 +16,50 @@
 #include "silly_malloc.h"
 #include "silly_socket.h"
 
-//STYPE == socket type
+/*
+ * === Socket Field Concurrency Rules ===
+ *
+ * [!!WARNING!!]
+ * This socket pool allows lock-free reading **only of the `sid` field**.
+ * Direct access by Worker threads to other `struct socket` fields can
+ * race with concurrent modifications from the Socket thread.
+ * Read the rules below carefully to avoid subtle bugs.
+ *
+ * --- The Concurrency Model: Optimistic Reads with `sid` Verification ---
+ *
+ * A `struct socket *s` obtained from `pool_get()` is NOT locked.
+ * The Socket thread may free or reuse the socket at any time.
+ *
+ * Reading any field other than `s->sid` is a data race.
+ * For non-pointer fields, this can result in stale or torn reads.
+ *
+ * Reads by Worker threads are "optimistic" — correctness is ensured
+ * because the Socket thread validates `sid` before performing any
+ * state-changing operation. The versioned `sid` acts as an optimistic lock.
+ *
+ * --- The Rule of Safe Interaction ---
+ *
+ * Worker thread logic must never depend on values from fields other than `s->sid`.
+ * Such dependencies are racy and can cause operations to be silently dropped
+ * by the Socket thread during `sid` verification.
+ *
+ * --- Correct Workflow ---
+ *
+ * To ensure correctness, send commands (with `sid`) to the Socket thread,
+ * which safely accesses all socket fields on behalf of Worker threads.
+ *
+ * --- Optional Optimization (Not Recommended) ---
+ *
+ * Making socket fields atomic and reading them with sid re-verification
+ * might seem attractive, but it cannot guarantee a consistent snapshot
+ * of the socket's state.
+ *
+ * Since `sid` only changes on free, it does not protect against concurrent
+ * updates to other fields. Strict correctness requires a full seqlock,
+ * which is not implemented here.
+ *
+ * Therefore, Worker threads should avoid relying on multi-field atomic reads.
+ */
 
 #if EAGAIN == EWOULDBLOCK
 #define ETRYAGAIN EAGAIN
@@ -82,13 +125,14 @@ struct wlist {
 };
 
 struct socket {
-	socket_id_t sid; //socket descriptor
+	_Atomic(socket_id_t) sid; //socket descriptor
 	fd_t fd;
 	uint16_t version;
 	unsigned char protocol;
 	unsigned char reading;
 	enum stype type;
-	size_t wloffset;
+	atomic_uint_least32_t wlbytes;
+	uint32_t wloffset;
 	struct wlist *wlhead;
 	struct wlist **wltail;
 	struct socket *next;
@@ -212,6 +256,7 @@ static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
 	w->udpaddress = NULL;
 	*s->wltail = w;
 	s->wltail = &w->next;
+	atomic_fetch_add_explicit(&s->wlbytes, size-s->wloffset, memory_order_relaxed);
 	return;
 }
 
@@ -235,6 +280,7 @@ static inline void wlist_appendudp(struct socket *s, uint8_t *buf, size_t size,
 	}
 	*s->wltail = w;
 	s->wltail = &w->next;
+	atomic_fetch_add_explicit(&s->wlbytes, size, memory_order_relaxed);
 	return;
 }
 
@@ -252,6 +298,7 @@ static void wlist_free(struct socket *s)
 	}
 	s->wlhead = NULL;
 	s->wltail = &s->wlhead;
+	atomic_store_explicit(&s->wlbytes, 0, memory_order_relaxed);
 	return;
 }
 
@@ -262,7 +309,6 @@ static inline int wlist_empty(struct socket *s)
 
 static void socket_default(struct socket *s)
 {
-	s->sid = -1;
 	s->fd = -1;
 	s->type = STYPE_RESERVE;
 	s->wloffset = 0;
@@ -271,6 +317,8 @@ static void socket_default(struct socket *s)
 	s->wlhead = NULL;
 	s->wltail = &s->wlhead;
 	s->next = NULL;
+	atomic_store_explicit(&s->wlbytes, 0, memory_order_relaxed);
+	atomic_store_explicit(&s->sid, -1, memory_order_relaxed);
 }
 
 static void pool_init(struct socket_pool *p)
@@ -290,15 +338,13 @@ static void pool_init(struct socket_pool *p)
 		*p->free_tail = s;
 		p->free_tail = &s->next;
 	}
-	p->free_head = p->free_head->next; // 0 is reserved
-	p->slots[0].next = NULL;
-	p->slots[0].sid = 0;
 	return;
 }
 
 static struct socket *pool_alloc(struct socket_pool *p, fd_t fd,
 	enum stype type, unsigned char protocol)
 {
+	socket_id_t id;
 	assert(protocol == PROTOCOL_TCP || protocol == PROTOCOL_UDP ||
 	       protocol == PROTOCOL_PIPE);
 	spinlock_lock(&p->lock);
@@ -316,8 +362,9 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd,
 	s->fd = fd;
 	s->type = type;
 	s->protocol = protocol;
-	s->sid = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s-&p->slots[0]);
 	s->reading = 1;
+	id = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s-&p->slots[0]);
+	atomic_store_explicit(&s->sid, id, memory_order_release);
 	return s;
 }
 
@@ -335,6 +382,8 @@ static void pool_free(struct socket_pool *p, struct socket *s)
 static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
 {
 	struct socket *s = &p->slots[HASH(id)];
+	if (unlikely(atomic_load_explicit(&s->sid, memory_order_acquire) != id))
+		return NULL;
 	return s;
 }
 
@@ -759,7 +808,7 @@ void silly_socket_readctrl(socket_id_t sid, int flag)
 	struct socket *s;
 	struct op_readenable op = {0};
 	s = pool_get(&SSOCKET->pool, sid);
-	if (s->type != STYPE_SOCKET)
+	if (unlikely(s == NULL))
 		return;
 	op.hdr.op = OP_READ_ENABLE;
 	op.hdr.sid = sid;
@@ -784,17 +833,11 @@ static void op_read_enable(struct silly_socket *ss, struct op_readenable *op, st
 
 int silly_socket_sendsize(socket_id_t sid)
 {
-	int size = 0;
-	struct wlist *w;
 	struct socket *s;
 	s = pool_get(&SSOCKET->pool, sid);
-	if (s->type != STYPE_SOCKET)
-		return size;
-	//TODO: race access
-	for (w = s->wlhead; w != NULL; w = w->next)
-		size += w->size;
-	size -= s->wloffset;
-	return size;
+	if (unlikely(s == NULL))
+		return 0;
+	return atomic_load_explicit(&s->wlbytes, memory_order_relaxed);
 }
 
 static int send_msg_tcp(struct silly_socket *ss, struct socket *s)
@@ -812,6 +855,7 @@ static int send_msg_tcp(struct silly_socket *ss, struct socket *s)
 			return -1;
 		}
 		s->wloffset += sz;
+		atomic_fetch_sub_explicit(&s->wlbytes, sz, memory_order_relaxed);
 		if (s->wloffset < w->size) //send some
 			break;
 		assert((size_t)s->wloffset == w->size);
@@ -842,6 +886,7 @@ static int send_msg_udp(struct silly_socket *ss, struct socket *s)
 		sz = sendudp(s->fd, w->buf, w->size, w->udpaddress);
 		if (sz == -2) //EAGAIN, so block it
 			break;
+		atomic_fetch_sub_explicit(&s->wlbytes, sz, memory_order_relaxed);
 		assert(sz == -1 || (size_t)sz == w->size);
 		//send fail && send ok will clear
 		s->wlhead = w->next;
@@ -1026,8 +1071,6 @@ end:
 	return -1;
 }
 
-
-
 static int op_udp_listen(struct silly_socket *ss, struct op_listen *op, struct socket *s)
 {
 	int err;
@@ -1193,24 +1236,10 @@ static void op_udp_connect(struct silly_socket *ss, struct op_connect *op, struc
 
 int silly_socket_close(socket_id_t sid)
 {
-	int type;
 	struct op_close op = {0};
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
-	if (unlikely(s->sid != sid)) {
-		silly_log_error("[socket] silly_socket_close incorrect "
-							"socket %lld:%lld\n",
-							sid, s->sid);
-		return -1;
-	}
-	type = s->type;
-	if (unlikely(type == STYPE_CTRL)) {
-		silly_log_error("[socket] silly_socket_close ctrl socket:%d\n",
-							sid);
-		return -1;
-	}
-	if (unlikely(type == STYPE_RESERVE)) {
-		silly_log_warn(
-			"[socket] silly_socket_close reserve socket:%llu\n", sid);
+	if (unlikely(s == NULL)) {
+		silly_log_error("[socket] silly_socket_close invalid sid:%llu\n", sid);
 		return -1;
 	}
 	op.hdr.op = OP_CLOSE;
@@ -1241,24 +1270,14 @@ static int op_tcp_close(struct silly_socket *ss, struct op_close *op, struct soc
 int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
 		void (*freex)(void *))
 {
-	int type;
 	struct op_tcpsend op = {0};
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	if (freex == NULL)
 		freex = silly_free;
-	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
+	if (unlikely(s == NULL)) {
 		freex(buf);
 		silly_log_error("[socket] silly_socket_send invalid sid:%llu\n",
 							sid);
-		return -1;
-	}
-	type = s->type;
-	if (unlikely(!(type == STYPE_SOCKET || type == STYPE_CONNECTING ||
-			       type == STYPE_ALLOCED))) {
-		freex(buf);
-		silly_log_error("[socket] silly_socket_send incorrect type "
-							"sid:%llu type:%d\n",
-							sid, type);
 		return -1;
 	}
 	if (unlikely(sz == 0)) {
@@ -1320,30 +1339,13 @@ static int op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op, struct so
 int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t *addr,
 			 size_t addrlen, void (*freex)(void *))
 {
-	int type;
 	struct op_udpsend op = {0};
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	freex = freex ? freex : silly_free;
-	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
+	if (unlikely(s == NULL)) {
 		freex(buf);
 		silly_log_error("[socket] silly_socket_send invalid sid:%llu\n",
 							sid);
-		return -1;
-	}
-	type = s->type;
-	if (unlikely(!(type == STYPE_SOCKET || type == STYPE_UDPBIND ||
-			       type == STYPE_ALLOCED))) {
-		freex(buf);
-		silly_log_error("[socket] silly_socket_send incorrect type "
-							"sid:%llu type:%d\n",
-							sid, type);
-		return -1;
-	}
-
-	if (unlikely(type == STYPE_UDPBIND && addr == NULL)) {
-		freex(buf);
-		silly_log_error(
-			"[socket] udpsend udpbind must specify dest addr\n");
 		return -1;
 	}
 	op.hdr.op = OP_UDP_SEND;
@@ -1443,9 +1445,9 @@ static int op_process(struct silly_socket *ss)
 		assert(op->hdr.size > 0);
 		ptr += op->hdr.size;
 		s = pool_get(&ss->pool, op->hdr.sid);
-		if (s->sid != op->hdr.sid) {
-			silly_log_error("[socket] op_process sid:%llu:%llu invalid\n",
-							op->hdr.sid, s->sid);
+		if (s == NULL) {
+			silly_log_error("[socket] op_process sid:%llu invalid\n",
+							op->hdr.sid);
 			continue;
 		}
 		switch (op->hdr.op) {
@@ -1671,32 +1673,52 @@ int silly_socket_ctrlcount()
 	return atomic_load_explicit(&SSOCKET->ctrlcount, memory_order_relaxed);
 }
 
-struct silly_netstat *silly_socket_netstat()
+void silly_socket_netstat(struct silly_netstat *stat)
 {
-	return &SSOCKET->netstat;
+	stat->connecting = atomic_load_explicit(&SSOCKET->netstat.connecting, memory_order_relaxed);
+	stat->tcpclient = atomic_load_explicit(&SSOCKET->netstat.tcpclient, memory_order_relaxed);
+	stat->recvsize = atomic_load_explicit(&SSOCKET->netstat.recvsize, memory_order_relaxed);
+	stat->sendsize = atomic_load_explicit(&SSOCKET->netstat.sendsize, memory_order_relaxed);
+	return;
 }
 
+// NOTE: This function uses an optimistic read pattern. It is not guaranteed
+// to be fully consistent and may return a snapshot of fields read at slightly
+// different moments. For its intended, non-critical monitoring purpose, this
+// trade-off for lower latency is considered acceptable.
 void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 {
 	struct socket *s;
-	s = pool_get(&SSOCKET->pool, sid);
 	memset(info, 0, sizeof(*info));
-	info->sid = s->sid;
-	info->fd = s->fd;
-	info->type = stype_name[s->type];
-	info->protocol = protocol_name[s->protocol];
-	if (s->fd >= 0 && s->protocol != PROTOCOL_PIPE) {
+	s = pool_get(&SSOCKET->pool, sid);
+	if (s == NULL) {
+		silly_log_error("[socket] silly_socket_socketstat sid:%llu invalid\n", sid);
+		return;
+	}
+	int fd = s->fd;
+	int type = s->type;
+	int protocol = s->protocol;
+	s = pool_get(&SSOCKET->pool, sid);
+	if (s == NULL) {
+		silly_log_error("[socket] silly_socket_socketstat sid:%llu invalid\n", sid);
+		return;
+	}
+	info->sid = sid;
+	info->fd = fd;
+	info->type = stype_name[type];
+	info->protocol = protocol_name[protocol];
+	if (info->fd >= 0 && protocol != PROTOCOL_PIPE) {
 		int namelen;
 		socklen_t len;
 		union sockaddr_full addr;
 		char namebuf[SOCKET_NAMELEN];
 		len = sizeof(addr);
-		getsockname(s->fd, (struct sockaddr *)&addr, &len);
+		getsockname(info->fd, (struct sockaddr *)&addr, &len);
 		namelen = ntop(&addr, namebuf);
 		memcpy(info->localaddr, namebuf, namelen);
-		if (s->type != STYPE_LISTEN) {
+		if (type != STYPE_LISTEN) {
 			len = sizeof(addr);
-			getpeername(s->fd, (struct sockaddr *)&addr, &len);
+			getpeername(fd, (struct sockaddr *)&addr, &len);
 			namelen = ntop(&addr, namebuf);
 			memcpy((void *)info->remoteaddr, namebuf, namelen);
 		} else {
@@ -1707,3 +1729,4 @@ void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 	}
 	return;
 }
+

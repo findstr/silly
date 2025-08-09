@@ -2,6 +2,7 @@
 #define _SILLY_SOCKET_H
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include "platform.h"
 
 typedef int64_t socket_id_t;
@@ -12,10 +13,10 @@ typedef int64_t socket_id_t;
 #define SOCKET_READ_ENABLE (1)
 
 struct silly_netstat {
-	int connecting;
-	int tcpclient;
-	size_t recvsize;
-	size_t sendsize;
+	atomic_uint_least16_t connecting;
+	atomic_uint_least16_t tcpclient;
+	atomic_uint_least32_t recvsize;
+	atomic_uint_least32_t sendsize;
 };
 
 struct silly_socketstat {
@@ -56,7 +57,7 @@ int silly_socket_poll();
 const char *silly_socket_pollapi();
 
 int silly_socket_ctrlcount();
-struct silly_netstat *silly_socket_netstat();
+void silly_socket_netstat(struct silly_netstat *stat);
 void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info);
 
 #endif
