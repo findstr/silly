@@ -11,8 +11,6 @@ typedef int64_t socket_id_t;
 #define SOCKET_READ_PAUSE (0)
 #define SOCKET_READ_ENABLE (1)
 
-typedef void (*silly_finalizer_t)(void *ptr);
-
 struct silly_netstat {
 	int connecting;
 	int tcpclient;
@@ -48,9 +46,9 @@ void silly_socket_readctrl(socket_id_t sid, int ctrl);
 int silly_socket_sendsize(socket_id_t sid);
 
 int silly_socket_send(socket_id_t sid, uint8_t *buff, size_t sz,
-		      silly_finalizer_t finalizer);
+		void (*free)(void *));
 int silly_socket_udpsend(socket_id_t sid, uint8_t *buff, size_t sz, const uint8_t *addr,
-			 size_t addrlen, silly_finalizer_t finalizer);
+			 size_t addrlen, void (*free)(void *));
 int silly_socket_close(socket_id_t sid);
 
 int silly_socket_poll();
