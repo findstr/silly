@@ -144,6 +144,12 @@ clean:
 	-rm -rf $(LUACLIB_PATH)
 	-rm .depend
 	-rm $(SRC_PATH)/*.lib
+
+cleanall: clean
+	make -C $(LUA_DIR) clean
+ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
+	make -C $(JEMALLOC_DIR) clean && rm $(JEMALLOC_DIR)/Makefile
+endif
 	-rm $(ZLIB_DIR)/*.a
 	-rm $(ZLIB_DIR)/Makefile
 	-rm $(ZLIB_DIR)/*.o
@@ -151,12 +157,6 @@ clean:
 	-rm $(ZLIB_DIR)/example64
 	-rm $(ZLIB_DIR)/minigzip
 	-rm $(ZLIB_DIR)/minigzip64
-
-cleanall: clean
-	make -C $(LUA_DIR) clean
-ifneq (,$(wildcard $(JEMALLOC_DIR)/Makefile))
-	make -C $(JEMALLOC_DIR) clean && rm $(JEMALLOC_DIR)/Makefile
-endif
 
 fmt:
 	-clang-format -style=file -i silly-src/*.h
