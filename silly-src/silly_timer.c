@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <stdatomic.h>
 
 #ifdef __MACH__
 #include <mach/clock.h>
@@ -11,7 +12,6 @@
 #endif
 
 #include "silly.h"
-#include "atomic.h"
 #include "spinlock.h"
 #include "compiler.h"
 #include "silly_conf.h"
@@ -67,13 +67,13 @@ struct silly_timer {
 	spinlock_t lock;
 	struct pool pool;
 	uint32_t expire;
-	uint64_t ticktime;
-	uint64_t clocktime;
-	uint64_t monotonic;
+	atomic_uint_least64_t ticktime;
+	atomic_uint_least64_t clocktime;
+	atomic_uint_least64_t monotonic;
 	struct slot_root root;
 	struct slot_level level[4];
-	uint32_t expired_count;
-	uint32_t active_count;
+	atomic_int_least32_t expired_count;
+	atomic_int_least32_t active_count;
 };
 
 static struct silly_timer *T;
@@ -173,31 +173,31 @@ static inline void pool_freelist(struct pool *pool, struct node *head,
 
 uint64_t silly_timer_now()
 {
-	return T->clocktime * TIMER_RESOLUTION;
+	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) * TIMER_RESOLUTION;
 }
 
 time_t silly_timer_nowsec()
 {
 	int scale = 1000 / TIMER_RESOLUTION;
-	return T->clocktime / scale;
+	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) / scale;
 }
 
 uint64_t silly_timer_monotonic()
 {
-	return T->monotonic * TIMER_RESOLUTION;
+	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) * TIMER_RESOLUTION;
 }
 
 time_t silly_timer_monotonicsec()
 {
 	int scale = 1000 / TIMER_RESOLUTION;
-	return T->monotonic / scale;
+	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) / scale;
 }
 
 uint32_t silly_timer_info(uint32_t *expired)
 {
 	if (expired != NULL)
-		*expired = T->expired_count;
-	return T->active_count;
+		*expired = atomic_load_explicit(&T->expired_count, memory_order_relaxed);
+	return atomic_load_explicit(&T->active_count, memory_order_relaxed);
 }
 
 static inline void linklist(struct node **list, struct node *n)
@@ -266,13 +266,13 @@ uint64_t silly_timer_timeout(uint32_t expire, uint32_t userdata)
 {
 	uint64_t session;
 	struct node *n;
-	atomic_add(&T->active_count, 1);
-	atomic_add(&T->expired_count, 1);
+	atomic_fetch_add_explicit(&T->active_count, 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(&T->expired_count, 1, memory_order_relaxed);
 	lock(T);
 	n = pool_newnode(T, &T->pool);
 	n->userdata = userdata;
 	session = session_of(n);
-	n->expire = expire / TIMER_RESOLUTION + T->ticktime;
+	n->expire = expire / TIMER_RESOLUTION + atomic_load_explicit(&T->ticktime, memory_order_relaxed);
 	add_node(T, n);
 	unlock(T);
 	return session;
@@ -283,7 +283,7 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 	struct node *n;
 	uint32_t version = version_of(session);
 	uint32_t cookie = cookie_of(session);
-	atomic_sub(&T->active_count, 1);
+	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	lock(T);
 	n = pool_locate(&T->pool, cookie);
 	if (n->version != version) {
@@ -305,7 +305,7 @@ static void timeout(struct silly_timer *t, struct node *n)
 	(void)t;
 	struct silly_message_texpire *te;
 	uint64_t session = session_of(n);
-	atomic_sub(&T->active_count, 1);
+	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	te = silly_malloc(sizeof(*te));
 	te->type = SILLY_TEXPIRE;
 	te->session = session;
@@ -409,25 +409,26 @@ void silly_timer_update()
 	struct node *head;
 	struct node **tail;
 	uint64_t time = ticktime();
-	if (T->ticktime == time)
+	uint64_t cur_ticktime = atomic_load_explicit(&T->ticktime, memory_order_relaxed);
+	if (cur_ticktime == time)
 		return;
-	if (unlikely(T->ticktime > time)) {
+	if (unlikely(cur_ticktime > time)) {
 		silly_log_error("[timer] time rewind change "
 				"from %lld to %lld\n",
-				T->ticktime, time);
+				cur_ticktime, time);
 	}
-	delta = time - T->ticktime;
+	delta = time - cur_ticktime;
 	assert(delta > 0);
 	if (unlikely(delta > TIMER_DELAY_WARNING / TIMER_RESOLUTION)) {
 		silly_log_warn("[timer] update delta is too big, "
 			       "from:%lld ms to %lld ms\n",
-			       T->ticktime * TIMER_RESOLUTION,
+			       cur_ticktime * TIMER_RESOLUTION,
 			       time * TIMER_RESOLUTION);
 	}
 	//uint64_t on x86 platform, can't assign as a atomic
-	atomic_lock(&T->ticktime, time);
-	atomic_add(&T->clocktime, delta);
-	atomic_add(&T->monotonic, delta);
+	atomic_exchange_explicit(&T->ticktime, time, memory_order_relaxed);
+	atomic_fetch_add_explicit(&T->clocktime, delta, memory_order_relaxed);
+	atomic_fetch_add_explicit(&T->monotonic, delta, memory_order_relaxed);
 	head = NULL;
 	tail = &head;
 	for (i = 0; i < delta; i++)
@@ -437,7 +438,7 @@ void silly_timer_update()
 		pool_freelist(&T->pool, head, tail);
 		unlock(T);
 	}
-	assert((uint32_t)T->ticktime == T->expire);
+	assert((uint32_t)atomic_load_explicit(&T->ticktime, memory_order_relaxed) == T->expire);
 	return;
 }
 
@@ -445,10 +446,12 @@ void silly_timer_init()
 {
 	T = silly_malloc(sizeof(*T));
 	memset(T, 0, sizeof(*T));
-	T->clocktime = clocktime();
-	T->ticktime = ticktime();
-	T->expire = T->ticktime;
-	T->monotonic = 0;
+	uint64_t cur_ticktime;
+	atomic_store_explicit(&T->clocktime, clocktime(), memory_order_relaxed);
+	cur_ticktime = ticktime();
+	atomic_store_explicit(&T->ticktime, cur_ticktime, memory_order_relaxed);
+	T->expire = cur_ticktime;
+	atomic_store_explicit(&T->monotonic, 0, memory_order_relaxed);
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
 	return;

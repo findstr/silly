@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
-#include "atomic.h"
+#include <stdatomic.h>
+
 #include "silly.h"
 #include "silly_malloc.h"
 
@@ -14,7 +15,7 @@
 #include <malloc/malloc.h>
 #endif
 
-static size_t allocsize = 0;
+static atomic_ptrdiff_t allocsize = 0;
 
 #ifndef DISABLE_JEMALLOC
 
@@ -47,24 +48,23 @@ void *silly_malloc(size_t sz)
 {
 	void *ptr = MALLOC(sz);
 	int real = xalloc_usable_size(ptr);
-	atomic_add(&allocsize, real);
+	atomic_fetch_add_explicit(&allocsize, real, memory_order_relaxed);
 	return ptr;
 }
 
 void *silly_realloc(void *ptr, size_t sz)
 {
-	size_t realo = xalloc_usable_size(ptr);
-	atomic_sub(&allocsize, realo);
+	ssize_t realo = xalloc_usable_size(ptr);
 	ptr = REALLOC(ptr, sz);
-	size_t realn = xalloc_usable_size(ptr);
-	atomic_add(&allocsize, realn);
+	ssize_t realn = xalloc_usable_size(ptr);
+	atomic_fetch_add_explicit(&allocsize, realn - realo, memory_order_relaxed);
 	return ptr;
 }
 
 void silly_free(void *ptr)
 {
 	size_t real = xalloc_usable_size(ptr);
-	atomic_sub(&allocsize, real);
+	atomic_fetch_sub_explicit(&allocsize, real, memory_order_relaxed);
 	FREE(ptr);
 }
 
@@ -82,7 +82,7 @@ const char *silly_allocator()
 
 size_t silly_memused()
 {
-	return allocsize;
+	return atomic_load_explicit(&allocsize, memory_order_relaxed);
 }
 
 //Resident Set Size
@@ -122,6 +122,6 @@ size_t silly_memrss()
 	rss = strtoll(p, NULL, 10) * page;
 	return rss;
 #else
-	return allocsize;
+	return atomic_load_explicit(&allocsize, memory_order_relaxed);
 #endif
 }

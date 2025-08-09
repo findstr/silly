@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 
 #include "silly.h"
-#include "atomic.h"
 #include "compiler.h"
 #include "net.h"
 #include "silly_log.h"
@@ -129,7 +129,7 @@ struct silly_socket {
 	//when data less then 64k(from APUE)
 	int ctrlsendfd;
 	int ctrlrecvfd;
-	int ctrlcount;
+	atomic_int_least32_t ctrlcount;
 	int cmdcap;
 	uint8_t *cmdbuf;
 	//reserve id(for socket fd remap)
@@ -445,7 +445,7 @@ static void pipe_blockread(fd_t fd, void *pk, int n)
 			return;
 		}
 		assert(err == n);
-		atomic_sub_return(&SSOCKET->ctrlcount, n);
+		atomic_fetch_sub_explicit(&SSOCKET->ctrlcount, n, memory_order_relaxed);
 		return;
 	}
 }
@@ -461,7 +461,7 @@ static int pipe_blockwrite(fd_t fd, void *pk, int sz)
 						strerror(errno));
 			return -1;
 		}
-		atomic_add(&SSOCKET->ctrlcount, sz);
+		atomic_fetch_add_explicit(&SSOCKET->ctrlcount, sz, memory_order_relaxed);
 		assert(err == sz);
 		return 0;
 	}
@@ -1454,7 +1454,7 @@ static int cmd_process(struct silly_socket *ss)
 	int count;
 	int close = 0;
 	uint8_t *ptr, *end;
-	count = ss->ctrlcount;
+	count = atomic_load_explicit(&ss->ctrlcount, memory_order_relaxed);
 	if (count <= 0)
 		return close;
 	if (count > ss->cmdcap)
@@ -1642,7 +1642,7 @@ int silly_socket_init()
 	ss->reservefd = open("/dev/null", O_RDONLY);
 	ss->ctrlsendfd = fds[1];
 	ss->ctrlrecvfd = fds[0];
-	ss->ctrlcount = 0;
+	atomic_store_explicit(&ss->ctrlcount, 0, memory_order_relaxed);
 	ss->eventindex = 0;
 	ss->eventcount = 0;
 	resize_cmdbuf(ss, CMDBUF_SIZE);
@@ -1694,7 +1694,7 @@ const char *silly_socket_pollapi()
 
 int silly_socket_ctrlcount()
 {
-	return SSOCKET->ctrlcount;
+	return atomic_load_explicit(&SSOCKET->ctrlcount, memory_order_relaxed);
 }
 
 struct silly_netstat *silly_socket_netstat()

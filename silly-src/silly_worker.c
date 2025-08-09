@@ -5,9 +5,10 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include <stdatomic.h>
 #include "silly.h"
 #include "compiler.h"
-#include "atomic.h"
+
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -25,7 +26,7 @@ struct silly_worker {
 	lua_State *L;
 	lua_State *running;
 	uint32_t id;
-	uint32_t process_id;
+	atomic_uint_least32_t process_id;
 	size_t maxmsg;
 	lua_Hook oldhook;
 	int openhook;
@@ -65,7 +66,7 @@ void silly_worker_dispatch()
 	struct silly_message *msg;
 	struct silly_message *tmp;
 	msg = silly_queue_pop(W->queue);
-	atomic_add(&W->process_id, 1);
+	atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
 	if (msg == NULL) {
 #ifdef LUA_GC_STEP
 		lua_gc(W->L, LUA_GCSTEP, LUA_GC_STEP);
@@ -74,7 +75,7 @@ void silly_worker_dispatch()
 	}
 	do {
 		do {
-			atomic_add(&W->process_id, 1);
+			atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
 			W->callback(W->L, msg);
 			tmp = msg;
 			msg = msg->next;
@@ -299,7 +300,7 @@ void silly_worker_resume(lua_State *L)
 
 uint32_t silly_worker_processid()
 {
-	return W->process_id;
+	return atomic_load_explicit(&W->process_id, memory_order_relaxed);
 }
 
 static void warn_hook(lua_State *L, lua_Debug *ar)

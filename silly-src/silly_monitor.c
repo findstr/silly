@@ -1,5 +1,4 @@
 #include "silly.h"
-#include "atomic.h"
 #include "compiler.h"
 #include "silly_log.h"
 #include "silly_worker.h"

@@ -1,4 +1,4 @@
-.PHONY: all clean cleanall testall fmt
+.PHONY: all clean cleanall test testall fmt
 
 INCLUDE :=
 #---------
@@ -135,8 +135,10 @@ $(LUACLIB_PATH)/test.$(SO): $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
 %.o:%.c
 	$(CC) $(CFLAGS) $(INCLUDE) -c -o $@ $<
 
-testall:
+test:
 	make TEST=ON MALLOC=glibc all
+
+testall: test
 	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:

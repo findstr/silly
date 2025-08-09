@@ -1,12 +1,21 @@
 #ifndef _SPINLOCK_H
 #define _SPINLOCK_H
 
+#include <stdatomic.h>
 #ifndef USE_SPINLOCK
-#include "atomic.h"
-typedef int spinlock_t;
+
+#if defined(__x86_64__)
+#include <immintrin.h> // For _mm_pause
+#define atomic_pause_() _mm_pause()
+#else
+#define atomic_pause_() ((void)0)
+#endif
+
+typedef atomic_int spinlock_t;
+
 static inline void spinlock_init(spinlock_t *lock)
 {
-	*lock = 0;
+	atomic_init(lock, 0);
 }
 
 static inline void spinlock_destroy(spinlock_t *lock)
@@ -16,13 +25,17 @@ static inline void spinlock_destroy(spinlock_t *lock)
 
 static inline void spinlock_lock(spinlock_t *lock)
 {
-	while (atomic_lock(lock, 1))
-		;
+	for (;;) {
+		if (!atomic_exchange_explicit(lock, 1, memory_order_acquire))
+			return;
+		while (atomic_load_explicit(lock, memory_order_relaxed))
+			atomic_pause_();
+	}
 }
 
 static inline void spinlock_unlock(spinlock_t *lock)
 {
-	atomic_release(lock);
+	atomic_store_explicit(lock, 0, memory_order_release);
 }
 
 #else
