@@ -63,7 +63,14 @@ $(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
 
 #-----------project
 LUACLIB_PATH ?= luaclib
-INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR)
+# Platform directory mapping
+ifeq ($(LUA_PLAT),mingw)
+PLAT_DIR = win
+else
+PLAT_DIR = unix
+endif
+
+INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR) -I $(SRC_PATH)/$(PLAT_DIR)
 SRC_FILE = \
       main.c \
       silly_socket.c \
@@ -77,11 +84,12 @@ SRC_FILE = \
       silly_log.c \
       silly_trace.c \
       silly_monitor.c \
-      pipe.c \
-      event.c \
       force_link.c\
 
-SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
+# Combine common and platform-specific sources
+COMMON_SRC = $(addprefix $(SRC_PATH)/, $(SRC_FILE))
+PLAT_SRC = $(wildcard $(SRC_PATH)/$(PLAT_DIR)/*.c)
+SRC = $(COMMON_SRC) $(PLAT_SRC)
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 LIB_SRC = lualib-core.c \

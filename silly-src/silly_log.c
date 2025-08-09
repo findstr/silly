@@ -9,13 +9,11 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "platform.h"
 #include "silly_timer.h"
 #include "silly_trace.h"
 #include "silly_log.h"
 
-#ifdef __WIN32
-#define localtime_r(t, tm) localtime_s(tm, t)
-#endif
 
 static int is_daemon = 0;
 static enum silly_log_level log_level = SILLY_LOG_INFO;

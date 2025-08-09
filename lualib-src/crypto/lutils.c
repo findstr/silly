@@ -10,9 +10,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 
-#ifdef __WIN32
-#define random() rand()
-#endif
+#include "platform.h"
 
 static int lrandomkey(lua_State *L)
 {

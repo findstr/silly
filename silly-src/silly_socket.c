@@ -3,18 +3,15 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <string.h>
 #include <fcntl.h>
+#include <string.h>
 #include <stdatomic.h>
 
 #include "silly.h"
 #include "compiler.h"
-#include "net.h"
 #include "silly_log.h"
-#include "pipe.h"
-#include "event.h"
+#include "platform.h"
 #include "spinlock.h"
-#include "nonblock.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
@@ -27,15 +24,6 @@
 #define ETRYAGAIN \
 EAGAIN:           \
 	case EWOULDBLOCK
-#endif
-
-#ifdef __WIN32
-#define CONNECT_IN_PROGRESS EWOULDBLOCK
-#undef errno
-#define errno translate_socket_errno(WSAGetLastError())
-#else
-#define CONNECT_IN_PROGRESS EINPROGRESS
-#define closesocket close
 #endif
 
 #define EVENT_SIZE (128)

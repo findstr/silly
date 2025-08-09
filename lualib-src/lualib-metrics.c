@@ -8,15 +8,13 @@
 #include <dirent.h>
 #include <string.h>
 #include <sys/time.h>
-#ifndef __WIN32
-#include <sys/resource.h>
-#endif
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
 
 #include "silly.h"
 #include "compiler.h"
+#include "platform.h"
 #include "silly_log.h"
 #include "silly_run.h"
 #include "silly_worker.h"
@@ -38,61 +36,25 @@ static int lmemallocator(lua_State *L)
 
 static int lcpustat(lua_State *L)
 {
-#ifndef __WIN32
-	struct rusage ru;
 	float stime, utime;
-	getrusage(RUSAGE_SELF, &ru);
-	stime = (float)ru.ru_stime.tv_sec;
-	stime += (float)ru.ru_stime.tv_usec / 1000000;
-	utime = (float)ru.ru_utime.tv_sec;
-	utime += (float)ru.ru_utime.tv_usec / 1000000;
+	cpu_usage(&stime, &utime);
 	lua_pushnumber(L, stime);
 	lua_pushnumber(L, utime);
-#else
-	lua_pushnumber(L, 0);
-	lua_pushnumber(L, 0);
-#endif
 	return 2;
 }
 
 static int lmaxfds(lua_State *L)
 {
-#ifndef __WIN32
-	struct rlimit rlim;
-	int ret = getrlimit(RLIMIT_NOFILE, &rlim);
-	if (ret != 0) {
-		silly_log_error("[metrics] getrlimit errno:%d", errno);
-		rlim.rlim_cur = 0;
-		rlim.rlim_max = 0;
-	}
-	lua_pushinteger(L, rlim.rlim_cur); //soft
-	lua_pushinteger(L, rlim.rlim_max); //hard
-#else
-	lua_pushinteger(L, 0);
-	lua_pushinteger(L, 0);
-#endif
+	int soft, hard;
+	fd_open_limit(&soft, &hard);
+	lua_pushinteger(L, soft);
+	lua_pushinteger(L, hard);
 	return 2;
 }
 
 static int lopenfds(lua_State *L)
 {
-	int fd_count = 0;
-#ifdef __linux__
-	struct dirent *entry;
-	DIR *fd_dir = opendir("/proc/self/fd");
-	if (fd_dir == NULL) {
-		silly_log_error("[metrics] failed to open /proc/self/fd");
-		lua_pushinteger(L, 0);
-		return 1;
-	}
-	while ((entry = readdir(fd_dir)) != NULL) {
-		if (entry->d_name[0] != '.') {
-			fd_count++;
-		}
-	}
-	closedir(fd_dir);
-#endif
-	lua_pushinteger(L, fd_count);
+	lua_pushinteger(L, open_fd_count());
 	return 1;
 }
 

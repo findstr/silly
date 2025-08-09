@@ -1,6 +1,8 @@
 #ifndef _SILLY_LOG_H
 #define _SILLY_LOG_H
 
+#include <stddef.h>
+
 struct silly_config;
 
 enum silly_log_level {

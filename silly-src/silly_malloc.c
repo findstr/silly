@@ -5,14 +5,11 @@
 #include <stdatomic.h>
 
 #include "silly.h"
+#include "platform.h"
 #include "silly_malloc.h"
 
 #ifndef DISABLE_JEMALLOC
 #include <jemalloc/jemalloc.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#elif defined(__MACH__)
-#include <malloc/malloc.h>
 #endif
 
 static atomic_ptrdiff_t allocsize = 0;
@@ -35,12 +32,8 @@ static inline size_t xalloc_usable_size(void *ptr)
 {
 #ifndef DISABLE_JEMALLOC
 	return je_malloc_usable_size(ptr);
-#elif defined(__linux__)
-	return malloc_usable_size(ptr);
-#elif defined(__MACH__)
-	return malloc_size(ptr);
 #else
-	return 0;
+	return libc_malloc_usable_size(ptr);
 #endif
 }
 
@@ -88,39 +81,8 @@ size_t silly_memused()
 //Resident Set Size
 size_t silly_memrss()
 {
-#if defined(__linux__)
-	size_t rss;
-	char *p, *end;
-	int i, fd, err;
-	char buf[4096];
-	char filename[256];
-	int page = sysconf(_SC_PAGESIZE);
-	snprintf(filename, sizeof(filename), "/proc/%d/stat", getpid());
-	fd = open(filename, O_RDONLY);
-	if (fd == -1)
-		return 0;
-	err = read(fd, buf, 4095);
-	close(fd);
-	if (err <= 0)
-		return 0;
-	//RSS is the 24th field in /proc/$pid/stat
-	i = 0;
-	p = buf;
-	end = &buf[err];
-	while (p < end) {
-		if (*p++ != ' ')
-			continue;
-		if ((++i) == 23)
-			break;
-	}
-	if (i != 23)
-		return 0;
-	end = strchr(p, ' ');
-	if (end == NULL)
-		return 0;
-	*end = '\0';
-	rss = strtoll(p, NULL, 10) * page;
-	return rss;
+#if defined(memory_rss)
+	return memory_rss();
 #else
 	return atomic_load_explicit(&allocsize, memory_order_relaxed);
 #endif

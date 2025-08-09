@@ -2,7 +2,7 @@
 #define _SILLY_SOCKET_H
 
 #include <stdint.h>
-#include "net.h"
+#include "platform.h"
 
 typedef int64_t socket_id_t;
 //sid == socket number, it will be remap in silly_socket, not a real socket fd
