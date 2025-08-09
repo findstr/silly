@@ -36,8 +36,8 @@
 #endif
 
 //(1 << 16) = 65536
-#ifndef SOCKET_MAX_EXP
-#define SOCKET_MAX_EXP (16)
+#ifndef SOCKET_POOL_EXP
+#define SOCKET_POOL_EXP (16)
 #endif
 
 #ifndef TCP_READ_BUF_SIZE

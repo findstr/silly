@@ -13,6 +13,7 @@
 #include "silly_log.h"
 #include "pipe.h"
 #include "event.h"
+#include "spinlock.h"
 #include "nonblock.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
@@ -40,10 +41,10 @@ EAGAIN:           \
 #define EVENT_SIZE (128)
 #define CMDBUF_SIZE (8 * sizeof(struct cmdpacket))
 #define MAX_UDP_PACKET (512)
-#define MAX_SOCKET_COUNT (1 << SOCKET_MAX_EXP)
+#define SOCKET_POOL_SIZE (1 << SOCKET_POOL_EXP)
+#define HASH(sid) (sid & (SOCKET_POOL_SIZE - 1))
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-#define HASH(sid) (sid & (MAX_SOCKET_COUNT - 1))
 
 #define PROTOCOL_TCP 1
 #define PROTOCOL_UDP 2
@@ -95,12 +96,21 @@ struct wlist {
 struct socket {
 	socket_id_t sid; //socket descriptor
 	fd_t fd;
+	uint16_t version;
 	unsigned char protocol;
 	unsigned char reading;
 	enum stype type;
 	size_t wloffset;
 	struct wlist *wlhead;
 	struct wlist **wltail;
+	struct socket *next;
+};
+
+struct socket_pool {
+	spinlock_t lock;
+	struct socket slots[SOCKET_POOL_SIZE];
+	struct socket *free_head;
+	struct socket **free_tail;
 };
 
 struct silly_socket {
@@ -114,7 +124,7 @@ struct silly_socket {
 	size_t eventcap;
 	event_t *eventbuf;
 	//socket pool
-	struct socket *socketpool;
+	struct socket_pool pool;
 	//ctrl pipe, call write can be automatic
 	//when data less then 64k(from APUE)
 	int ctrlsendfd;
@@ -194,38 +204,6 @@ struct cmdpacket {
 
 static struct silly_socket *SSOCKET;
 
-static inline void reset_errmsg(struct silly_socket *ss)
-{
-	ss->errmsg[0] = '\0';
-}
-
-static inline void set_errmsg(struct silly_socket *ss, const char *str)
-{
-	snprintf(ss->errmsg, sizeof(ss->errmsg), "%s", str);
-}
-
-static void socketpool_init(struct silly_socket *ss)
-{
-	int i;
-	struct socket *pool = silly_malloc(sizeof(*pool) * MAX_SOCKET_COUNT);
-	ss->socketpool = pool;
-#ifdef SILLY_TEST
-	ss->reserveid = UINT32_MAX;
-#else
-	ss->reserveid = -1;
-#endif
-	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
-		pool->sid = -1;
-		pool->fd = -1;
-		pool->type = STYPE_RESERVE;
-		pool->wloffset = 0;
-		pool->wlhead = NULL;
-		pool->wltail = &pool->wlhead;
-		pool++;
-	}
-	return;
-}
-
 static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
 					silly_finalizer_t finalizer)
 {
@@ -280,42 +258,95 @@ static void wlist_free(struct socket *s)
 	s->wltail = &s->wlhead;
 	return;
 }
+
 static inline int wlist_empty(struct socket *s)
 {
 	return s->wlhead == NULL ? 1 : 0;
 }
 
-static struct socket *allocsocket(struct silly_socket *ss, fd_t fd,
-						  enum stype type, unsigned char protocol)
+static void socket_default(struct socket *s)
+{
+	s->sid = -1;
+	s->fd = -1;
+	s->type = STYPE_RESERVE;
+	s->wloffset = 0;
+	s->protocol = 0;
+	s->reading = 0;
+	s->wlhead = NULL;
+	s->wltail = &s->wlhead;
+	s->next = NULL;
+}
+
+static void pool_init(struct socket_pool *p)
 {
 	int i;
-	socket_id_t id;
+	spinlock_init(&p->lock);
+	p->free_head = NULL;
+	p->free_tail = &p->free_head;
+	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
+		struct socket *s = &p->slots[i];
+		socket_default(s);
+#ifdef SILLY_TEST
+		s->version = UINT16_MAX;
+#else
+		s->version = 0;
+#endif
+		*p->free_tail = s;
+		p->free_tail = &s->next;
+	}
+	return;
+}
+
+static struct socket *pool_alloc(struct socket_pool *p, fd_t fd,
+	enum stype type, unsigned char protocol)
+{
 	assert(protocol == PROTOCOL_TCP || protocol == PROTOCOL_UDP ||
 	       protocol == PROTOCOL_PIPE);
-	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
-		id = atomic_add_return(&ss->reserveid, 1);
-		if (unlikely(id < 0)) {
-			id = id & 0x7fffffff;
-			atomic_and_return(&ss->reserveid, 0x7fffffff);
-		}
-		struct socket *s = &ss->socketpool[HASH(id)];
-		if (s->type != STYPE_RESERVE) {
-			continue;
-		}
-		if (atomic_swap(&s->type, STYPE_RESERVE, type)) {
-			assert(s->wlhead == NULL);
-			assert(s->wltail == &s->wlhead);
-			s->protocol = protocol;
-			s->sid = id;
-			s->fd = fd;
-			s->wloffset = 0;
-			s->reading = 1;
-			return s;
-		}
+	spinlock_lock(&p->lock);
+	if (p->free_head == NULL) {
+		spinlock_unlock(&p->lock);
+		silly_log_error("[socket] pool_alloc fail, find no empty entry\n");
+		return NULL;
 	}
-	set_errmsg(ss, "socket pool is full");
-	silly_log_error("[socket] allocsocket fail, find no empty entry\n");
-	return NULL;
+	struct socket *s = p->free_head;
+	p->free_head = s->next;
+	if (p->free_head == NULL) {
+		p->free_tail = &p->free_head;
+	}
+	spinlock_unlock(&p->lock);
+	s->fd = fd;
+	s->type = type;
+	s->protocol = protocol;
+	s->sid = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s-&p->slots[0]);
+	s->reading = 1;
+	return s;
+}
+
+static void pool_free(struct socket_pool *p, struct socket *s)
+{
+	wlist_free(s);
+	s->version++;
+	socket_default(s);
+	spinlock_lock(&p->lock);
+	*p->free_tail = s;
+	p->free_tail = &s->next;
+	spinlock_unlock(&p->lock);
+}
+
+static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
+{
+	struct socket *s = &p->slots[HASH(id)];
+	return s;
+}
+
+static inline void reset_errmsg(struct silly_socket *ss)
+{
+	ss->errmsg[0] = '\0';
+}
+
+static inline void set_errmsg(struct silly_socket *ss, const char *str)
+{
+	snprintf(ss->errmsg, sizeof(ss->errmsg), "%s", str);
 }
 
 static inline void netstat_close(struct silly_socket *ss, struct socket *s)
@@ -339,11 +370,8 @@ static inline void freesocket(struct silly_socket *ss, struct socket *s)
 		closesocket(s->fd);
 		s->fd = -1;
 	}
-	wlist_free(s);
-	assert(s->wlhead == NULL);
 	netstat_close(ss, s);
-	atomic_barrier();
-	s->type = STYPE_RESERVE;
+	pool_free(&ss->pool, s);
 }
 
 static void clear_socket_event(struct silly_socket *ss)
@@ -468,8 +496,9 @@ static void report_accept(struct silly_socket *ss, struct socket *listen)
 #endif
 	keepalive(fd);
 	nodelay(fd);
-	s = allocsocket(ss, fd, STYPE_SOCKET, PROTOCOL_TCP);
+	s = pool_alloc(&ss->pool, fd, STYPE_SOCKET, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
+		set_errmsg(ss, "socket pool is full");
 		closesocket(fd);
 		return;
 	}
@@ -542,7 +571,7 @@ static void read_enable(struct silly_socket *ss, struct cmdreadctrl *cmd)
 	struct socket *s;
 	socket_id_t sid = cmd->sid;
 	int enable = cmd->ctrl;
-	s = &ss->socketpool[HASH(sid)];
+	s = pool_get(&ss->pool, sid);
 	if (s->reading == enable)
 		return;
 	s->reading = enable;
@@ -746,7 +775,7 @@ void silly_socket_readctrl(socket_id_t sid, int flag)
 {
 	struct socket *s;
 	struct cmdreadctrl cmd;
-	s = &SSOCKET->socketpool[HASH(sid)];
+	s = pool_get(&SSOCKET->pool, sid);
 	if (s->type != STYPE_SOCKET)
 		return;
 	cmd.type = 'R';
@@ -761,7 +790,7 @@ int silly_socket_sendsize(socket_id_t sid)
 	int size = 0;
 	struct wlist *w;
 	struct socket *s;
-	s = &SSOCKET->socketpool[HASH(sid)];
+	s = pool_get(&SSOCKET->pool, sid);
 	if (s->type != STYPE_SOCKET)
 		return size;
 	for (w = s->wlhead; w != NULL; w = w->next)
@@ -924,9 +953,9 @@ socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog)
 	fd = dolisten(ip, port, backlog);
 	if (unlikely(fd < 0))
 		return -errno;
-	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
+	s = pool_alloc(&SSOCKET->pool, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL)) {
-		silly_log_error("[socket] listen %s:%s:%d allocsocket fail\n",
+		silly_log_error("[socket] listen %s:%s:%d pool_alloc fail\n",
 							ip, port, backlog);
 		closesocket(fd);
 		return -1;
@@ -959,9 +988,9 @@ socket_id_t silly_socket_udpbind(const char *ip, const char *port)
 		goto end;
 	}
 	nonblock(fd);
-	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_UDP);
+	s = pool_alloc(&SSOCKET->pool, fd, STYPE_ALLOCED, PROTOCOL_UDP);
 	if (unlikely(s == NULL)) {
-		silly_log_error("[socket] udpbind %s:%s allocsocket fail\n", ip,
+		silly_log_error("[socket] udpbind %s:%s pool_alloc fail\n", ip,
 							port);
 		goto end;
 	}
@@ -983,7 +1012,7 @@ static int trylisten(struct silly_socket *ss, struct cmdlisten *cmd)
 	int err;
 	struct socket *s;
 	socket_id_t sid = cmd->sid;
-	s = &ss->socketpool[HASH(sid)];
+	s = pool_get(&ss->pool, sid);
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
@@ -1004,7 +1033,7 @@ static int tryudpbind(struct silly_socket *ss, struct cmdlisten *cmd)
 	int err;
 	struct socket *s;
 	socket_id_t sid = cmd->sid;
-	s = &ss->socketpool[HASH(sid)];
+	s = pool_get(&ss->pool, sid);
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
 	err = sp_add(ss->spfd, s->fd, s);
@@ -1043,7 +1072,7 @@ socket_id_t silly_socket_connect(const char *ip, const char *port, const char *b
 	err = bindfd(fd, IPPROTO_TCP, bindip, bindport);
 	if (unlikely(err < 0))
 		goto end;
-	s = allocsocket(SSOCKET, fd, STYPE_ALLOCED, PROTOCOL_TCP);
+	s = pool_alloc(&SSOCKET->pool, fd, STYPE_ALLOCED, PROTOCOL_TCP);
 	if (unlikely(s == NULL))
 		goto end;
 	cmd.type = 'C';
@@ -1066,7 +1095,7 @@ static void tryconnect(struct silly_socket *ss, struct cmdconnect *cmd)
 	struct socket *s;
 	socket_id_t sid = cmd->sid;
 	union sockaddr_full *addr;
-	s = &ss->socketpool[HASH(sid)];
+	s = pool_get(&ss->pool, sid);
 	assert(s->fd >= 0);
 	assert(s->sid == sid);
 	assert(s->type == STYPE_ALLOCED);
@@ -1135,7 +1164,7 @@ socket_id_t silly_socket_udpconnect(const char *ip, const char *port,
 	err = connect(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0))
 		goto end;
-	s = allocsocket(SSOCKET, fd, STYPE_SOCKET, PROTOCOL_UDP);
+	s = pool_alloc(&SSOCKET->pool, fd, STYPE_SOCKET, PROTOCOL_UDP);
 	if (unlikely(s == NULL))
 		goto end;
 	assert(s->type == STYPE_SOCKET);
@@ -1156,7 +1185,7 @@ static void tryudpconnect(struct silly_socket *ss, struct cmdopen *cmd)
 {
 	int err;
 	socket_id_t sid = cmd->sid;
-	struct socket *s = &ss->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&ss->pool, sid);
 	assert(s->sid == sid);
 	assert(s->fd >= 0);
 	assert(s->type == STYPE_SOCKET);
@@ -1173,7 +1202,7 @@ int silly_socket_close(socket_id_t sid)
 {
 	int type;
 	struct cmdkick cmd;
-	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	if (unlikely(s->sid != sid)) {
 		silly_log_error("[socket] silly_socket_close incorrect "
 							"socket %lld:%lld\n",
@@ -1201,7 +1230,7 @@ static int tryclose(struct silly_socket *ss, struct cmdkick *cmd)
 {
 	int type;
 	socket_id_t sid = cmd->sid;
-	struct socket *s = &ss->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&ss->pool, sid);
 	if (unlikely(s->sid != sid)) {
 		silly_log_error("[socket] tryclose incorrect "
 							"socket %lld:%lld\n",
@@ -1229,7 +1258,7 @@ int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
 {
 	int type;
 	struct cmdsend cmd;
-	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(buf);
@@ -1265,7 +1294,7 @@ int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t
 {
 	int type;
 	struct cmdudpsend cmd;
-	struct socket *s = &SSOCKET->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	finalizer = finalizer ? finalizer : silly_free;
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(buf);
@@ -1308,7 +1337,7 @@ static int trysend(struct silly_socket *ss, struct cmdsend *cmd)
 	uint8_t *data = cmd->data;
 	size_t sz = cmd->size;
 	silly_finalizer_t finalizer = cmd->finalizer;
-	struct socket *s = &ss->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&ss->pool, sid);
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_TCP)) {
 		finalizer(data);
 		silly_log_error("[socket] trysend incorrect socket "
@@ -1355,7 +1384,7 @@ static int tryudpsend(struct silly_socket *ss, struct cmdudpsend *cmd)
 	silly_finalizer_t finalizer;
 	finalizer = cmd->send.finalizer;
 	data = cmd->send.data;
-	struct socket *s = &ss->socketpool[HASH(sid)];
+	struct socket *s = pool_get(&ss->pool, sid);
 	if (unlikely(s->sid != sid || s->protocol != PROTOCOL_UDP)) {
 		finalizer(data);
 		silly_log_error("[socket] tryudpsend incorrect socket "
@@ -1594,11 +1623,11 @@ int silly_socket_init()
 	struct socket *s = NULL;
 	struct silly_socket *ss = silly_malloc(sizeof(*ss));
 	memset(ss, 0, sizeof(*ss));
-	socketpool_init(ss);
+	pool_init(&ss->pool);
 	spfd = sp_create(EVENT_SIZE);
 	if (unlikely(spfd == SP_INVALID))
 		goto end;
-	s = allocsocket(ss, -1, STYPE_CTRL, PROTOCOL_PIPE);
+	s = pool_alloc(&ss->pool, -1, STYPE_CTRL, PROTOCOL_PIPE);
 	assert(s);
 	//use the pipe and not the socketpair because
 	//the pipe will be automatic
@@ -1643,8 +1672,8 @@ void silly_socket_exit()
 	closesocket(SSOCKET->reservefd);
 	closesocket(SSOCKET->ctrlsendfd);
 	closesocket(SSOCKET->ctrlrecvfd);
-	struct socket *s = &SSOCKET->socketpool[0];
-	for (i = 0; i < MAX_SOCKET_COUNT; i++) {
+	struct socket *s = &SSOCKET->pool.slots[0];
+	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
 		enum stype type = s->type;
 		if (type == STYPE_SOCKET || type == STYPE_LISTEN ||
 		    type == STYPE_SHUTDOWN) {
@@ -1654,7 +1683,6 @@ void silly_socket_exit()
 	}
 	silly_free(SSOCKET->cmdbuf);
 	silly_free(SSOCKET->eventbuf);
-	silly_free(SSOCKET->socketpool);
 	silly_free(SSOCKET);
 	return;
 }
@@ -1677,7 +1705,7 @@ struct silly_netstat *silly_socket_netstat()
 void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 {
 	struct socket *s;
-	s = &SSOCKET->socketpool[HASH(sid)];
+	s = pool_get(&SSOCKET->pool, sid);
 	memset(info, 0, sizeof(*info));
 	info->sid = s->sid;
 	info->fd = s->fd;
