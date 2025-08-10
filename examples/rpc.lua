@@ -88,6 +88,7 @@ core.start(function()
 				assert(ack.txt == txt)
 				core.sleep(1000)
 			end
+			client.close(fd)
 		end)
 	end
 end)

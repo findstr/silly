@@ -102,6 +102,7 @@ local function init_event(self, conf)
 			logger.error("[rpc.server] EVENT.close", err)
 		end
 		np.clear(ctx, fd)
+		tcp_close(fd)
 	end
 
 	function EVENT.data()

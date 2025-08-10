@@ -20,6 +20,7 @@ local server, err = websocket.listen {
 	addr = TEST_HOST .. ":" .. TEST_PORT,
 	handler = function(sock)
 		server_handler(sock)
+		server_handler = nop
 	end,
 }
 testaux.asserteq(not not server, true, "start websocket server")
@@ -32,9 +33,19 @@ local tls_server, err = websocket.listen {
 	},
 	handler = function(sock)
 		tls_server_handler(sock)
+		tls_server_handler = nop
 	end,
 }
 testaux.asserteq(not not tls_server, true, "start tls websocket server")
+
+local function wait_done()
+	while server_handler ~= nop do
+		core.sleep(100)
+	end
+	while tls_server_handler ~= nop do
+		core.sleep(100)
+	end
+end
 
 -- Test 1: Basic connection establishment
 do
@@ -46,6 +57,7 @@ do
 	testaux.asserteq(err, nil, "Test 1: Basic connection")
 	assert(sock)
 	sock:close()
+	wait_done()
 end
 
 -- Test 2: Frame validation (Enhanced)
@@ -83,9 +95,7 @@ do
 					break
 				end
 				testaux.asserteq(typ, vec.type, string.format("Test 2.%s: frame type check", case_num))
-
-				testaux.asserteq(typ, vec.type,
-						string.format("Test 2.%s: frame type check"))
+				testaux.asserteq(typ, vec.type, string.format("Test 2.%s: frame type check", case_num))
 				if #data > 0 then
 					received[#received + 1] = data
 				end
@@ -104,6 +114,7 @@ do
 		local ok, err = sock:write(vec.data, vec.type)
 		testaux.asserteq(ok, true, string.format("Test 2.%s: Write data", case_num))
 		sock:close()
+		wait_done()
 	end
 	-- test client read
 	for _, vec in ipairs(test_vectors) do
@@ -119,6 +130,7 @@ do
 		testaux.asserteq(data, vec.data, string.format("Test 2.%s: Read data", case_num))
 		testaux.asserteq(typ, vec.type, string.format("Test 2.%s: Read type", case_num))
 		sock:close()
+		wait_done()
 	end
 end
 
@@ -148,6 +160,7 @@ do
 	testaux.asserteq(type, "close", "Test 3: Close frame not received")
 	testaux.asserteq(dat, "", "Test 3: Close frame data mismatch")
 	sock:close()
+	wait_done()
 end
 
 -- Test 4: Error condition handling
@@ -155,13 +168,14 @@ do
 	server_handler = function(sock)
 		local data, typ = sock:read()
 		testaux.asserteq(data, nil, "Test 4: read broken data")
-		testaux.asserteq(typ, "closed", "Test 4: read broken error")
+		testaux.asserteq(typ, "end of file", "Test 4: read broken error")
 	end
 
 	local sock = websocket.connect("ws://" .. TEST_HOST .. ":" .. TEST_PORT)
 	testaux.asserteq(not not sock, true, "Test 4: Connect server")
 	assert(sock)
 	tcp.close(sock.fd)
+	wait_done()
 end
 
 -- Test 5: TLS encrypted connection
@@ -182,7 +196,8 @@ do
 	print("connect tls", sock, err)
 	local sock, err = websocket.connect("wss://" .. TEST_HOST .. ":" .. TEST_PORT)
 	testaux.asserteq(sock, nil, "Test 5: wss can't Connect non-tls server")
-	testaux.asserteq(err, "closed", "Test 5: wss can't Connect non-tls error")
+	testaux.asserteq(err, "end of file", "Test 5: wss can't Connect non-tls error")
+	wait_done()
 end
 
 -- Test 6: Concurrent stress test
@@ -207,5 +222,6 @@ do
 		end)
 	end
 	wg:wait()
+	wait_done()
 end
 

@@ -307,7 +307,7 @@ static void timeout(struct silly_timer *t, struct node *n)
 	uint64_t session = session_of(n);
 	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	te = silly_malloc(sizeof(*te));
-	te->type = SILLY_TEXPIRE;
+	te->type = SILLY_TIMER_EXPIRE;
 	te->session = session;
 	te->userdata = n->userdata;
 	silly_worker_push(tocommon(te));

@@ -1,6 +1,6 @@
 #include <stdio.h>
-#include "spinlock.h"
 #include "silly.h"
+#include "spinlock.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
 

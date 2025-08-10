@@ -13,6 +13,7 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "errnoex.h"
 #include "silly_trace.h"
 #include "silly_log.h"
 #include "silly_run.h"
@@ -21,6 +22,35 @@
 #include "silly_malloc.h"
 #include "silly_timer.h"
 #include "silly_signal.h"
+
+static void new_error_table(lua_State *L)
+{
+#define def(code, str) lua_pushliteral(L, str); lua_seti(L, -2, code)
+	lua_newtable(L);
+	def(EX_ADDRINFO, "getaddrinfo failed");
+	def(EX_NOSOCKET, "no free socket");
+	def(EX_CLOSING, "socket is closing");
+	def(EX_CLOSED, "socket is closed");
+	def(EX_EOF, "end of file");
+#undef def
+	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
+}
+
+static inline void push_error(lua_State *L, int code)
+{
+	if (code == 0) {
+		lua_pushnil(L);
+		return;
+	}
+	lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
+	if (lua_rawgeti(L, -1, code) == LUA_TNIL) {
+		lua_pop(L, 1);
+		lua_pushstring(L, strerror(code));
+		lua_pushvalue(L, -1);
+		lua_rawseti(L, -3, code);
+	}
+	lua_remove(L, -2);
+}
 
 static void dispatch(lua_State *L, struct silly_message *sm)
 {
@@ -31,49 +61,56 @@ static void dispatch(lua_State *L, struct silly_message *sm)
 	size_t addrlen;
 	type = lua_rawgetp(L, LUA_REGISTRYINDEX, dispatch);
 	if (unlikely(type != LUA_TFUNCTION)) {
-		silly_log_error("[silly.core] callback need function"
+		silly_log_error("[core] callback need function"
 				"but got:%s\n",
 				lua_typename(L, type));
 		return;
 	}
 	lua_pushinteger(L, sm->type);
 	switch (sm->type) {
-	case SILLY_TEXPIRE:
+	case SILLY_TIMER_EXPIRE:
 		lua_pushinteger(L, totexpire(sm)->session);
 		lua_pushinteger(L, totexpire(sm)->userdata);
 		args += 2;
 		break;
-	case SILLY_SACCEPT:
-		addrlen = *tosocket(sm)->data;
-		addr = (char *)tosocket(sm)->data + 1;
+	case SILLY_SOCKET_ACCEPT:
+		addrlen = *tosocket(sm)->u.accept.addr;
+		addr = (char *)tosocket(sm)->u.accept.addr+ 1;
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, tosocket(sm)->listenid);
+		lua_pushinteger(L, tosocket(sm)->u.accept.listenid);
 		lua_pushlstring(L, addr, addrlen);
 		args += 4;
 		break;
-	case SILLY_SCONNECTED:
+	case SILLY_SOCKET_CONNECT:
+		lua_pushinteger(L, tosocket(sm)->sid);
+		lua_pushlightuserdata(L, sm);
+		push_error(L, tosocket(sm)->u.connect.err);
+		args += 3;
+		break;
+	case SILLY_SOCKET_LISTEN:
+		lua_pushinteger(L, tosocket(sm)->sid);
+		lua_pushlightuserdata(L, sm);
+		push_error(L, tosocket(sm)->u.listen.err);
+		args += 3;
+		break;
+	case SILLY_SOCKET_DATA:
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		args += 2;
 		break;
-	case SILLY_SDATA:
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		args += 2;
-		break;
-	case SILLY_SUDP:
-		addr = (char *)tosocket(sm)->data + tosocket(sm)->size;
+	case SILLY_SOCKET_UDP:
+		addr = (char *)tosocket(sm)->u.data.ptr + tosocket(sm)->u.data.size;
 		addrlen = silly_socket_salen(addr);
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
 		lua_pushlstring(L, addr, addrlen);
 		args += 3;
 		break;
-	case SILLY_SCLOSE:
+	case SILLY_SOCKET_CLOSE:
 		lua_pushinteger(L, tosocket(sm)->sid);
 		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, tosocket(sm)->err);
+		push_error(L, tosocket(sm)->u.close.err);
 		args += 3;
 		break;
 	case SILLY_SIGNAL:
@@ -91,7 +128,7 @@ static void dispatch(lua_State *L, struct silly_message *sm)
 		break;
 	default:
 		silly_log_error(
-			"[silly.core] callback unknow message type:%d\n",
+			"[core] callback unknow message type:%d\n",
 			sm->type);
 		assert(0);
 		break;
@@ -99,7 +136,7 @@ static void dispatch(lua_State *L, struct silly_message *sm)
 	/*the first stack slot of main thread is always trace function */
 	err = lua_pcall(L, args, 0, 1);
 	if (unlikely(err != LUA_OK)) {
-		silly_log_error("[silly.core] callback call fail:%d:%s\n", err,
+		silly_log_error("[core] callback fail:%d:%s\n", err,
 				lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
@@ -353,7 +390,7 @@ static int socketconnect(lua_State *L, connect_t *connect)
 	fd = connect(ip, port, bip, bport);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		lua_pushstring(L, silly_socket_lasterror());
+		push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -374,7 +411,7 @@ static int ltcplisten(lua_State *L)
 	socket_id_t fd = silly_socket_listen(ip, port, backlog);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		lua_pushstring(L, silly_socket_lasterror());
+		push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -405,8 +442,14 @@ static int ltcpsend(lua_State *L)
 				  lua_typename(L, 2));
 	}
 	err = silly_socket_send(sid, buff, size, NULL);
-	lua_pushboolean(L, err < 0 ? 0 : 1);
-	return 1;
+	if (err < 0) {
+		lua_pushboolean(L, 0);
+		push_error(L, -err);
+	} else {
+		lua_pushboolean(L, 1);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int ltcpmulticast(lua_State *L)
@@ -419,8 +462,14 @@ static int ltcpmulticast(lua_State *L)
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
 	err = silly_socket_send(sid, buff, size, multifinalizer);
-	lua_pushboolean(L, err < 0 ? 0 : 1);
-	return 1;
+	if (err < 0) {
+		lua_pushboolean(L, 0);
+		push_error(L, -err);
+	} else {
+		lua_pushboolean(L, 1);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int ludpconnect(lua_State *L)
@@ -435,7 +484,7 @@ static int ludpbind(lua_State *L)
 	socket_id_t fd = silly_socket_udpbind(ip, port);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		lua_pushstring(L, silly_socket_lasterror());
+		push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -474,8 +523,14 @@ static int ludpsend(lua_State *L)
 	if (!lua_isnoneornil(L, idx))
 		addr = (const uint8_t *)luaL_checklstring(L, idx, &addrlen);
 	err = silly_socket_udpsend(sid, buff, size, addr, addrlen, NULL);
-	lua_pushboolean(L, err < 0 ? 0 : 1);
-	return 1;
+	if (err < 0) {
+		lua_pushboolean(L, 0);
+		push_error(L, -err);
+	} else {
+		lua_pushboolean(L, 1);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int lntop(lua_State *L)
@@ -495,8 +550,14 @@ static int lclose(lua_State *L)
 	socket_id_t sid;
 	sid = luaL_checkinteger(L, 1);
 	err = silly_socket_close(sid);
-	lua_pushboolean(L, err < 0 ? 0 : 1);
-	return 1;
+	if (err < 0) {
+		lua_pushboolean(L, 0);
+		push_error(L, -err);
+	} else {
+		lua_pushboolean(L, 1);
+		lua_pushnil(L);
+	}
+	return 2;
 }
 
 static int lreadctrl(lua_State *L)
@@ -594,15 +655,9 @@ int luaopen_core_c(lua_State *L)
 	};
 
 	luaL_checkversion(L);
-	lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
-	lua_State *m = lua_tothread(L, -1);
-	lua_pop(L, 1);
-
-	lua_pushlightuserdata(L, (void *)m);
-	lua_gettable(L, LUA_REGISTRYINDEX);
-	silly_worker_callback(dispatch);
+	new_error_table(L);
 	luaL_newlibtable(L, tbl);
 	luaL_setfuncs(L, tbl, 0);
-
+	silly_worker_callback(dispatch);
 	return 1;
 }

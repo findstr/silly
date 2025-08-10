@@ -109,9 +109,10 @@ local server = {
 	close = function(self)
 		local fd = self.fd
 		if fd then
-			self.transport.close(fd)
 			self.fd = nil
+			return self.transport.close(fd)
 		end
+		return false, "closed"
 	end
 }
 local server_mt = {

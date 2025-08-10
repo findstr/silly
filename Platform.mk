@@ -1,6 +1,6 @@
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not')
-CC := gcc -std=gnu99
+CC := gcc -std=gnu11
 LD := gcc
 CFLAGS = -g3 -O2 -Wall -Wextra -DSILLY_GIT_SHA1=$(GITSHA1) $(MYCFLAGS)
 LDFLAGS := -lm -lpthread $(MYLDFLAGS)

@@ -1,5 +1,4 @@
 local core = require "core"
-local json = require "core.json"
 local http = require "core.http"
 
 http.listen {

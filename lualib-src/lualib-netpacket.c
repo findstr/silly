@@ -394,14 +394,14 @@ static int lmessage(lua_State *L)
 	struct silly_message_socket *sm = tosocket(lua_touserdata(L, 2));
 	lua_settop(L, 1);
 	switch (sm->type) {
-	case SILLY_SDATA:
-		push(L, sm->sid, sm->data, sm->size);
+	case SILLY_SOCKET_DATA:
+		push(L, sm->sid, sm->u.data.ptr, sm->u.data.size);
 		return 0;
-	case SILLY_SCLOSE:
+	case SILLY_SOCKET_CLOSE:
 		clear_incomplete(L, sm->sid);
 		return 0;
-	case SILLY_SACCEPT:
-	case SILLY_SCONNECTED:
+	case SILLY_SOCKET_ACCEPT:
+	case SILLY_SOCKET_CONNECT:
 		return 0;
 	default:
 		silly_log_error("lmessage unspport:%d\n", sm->type);

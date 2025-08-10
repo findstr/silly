@@ -17,7 +17,7 @@ jobs:
     - uses: actions/checkout@v4
     - shell: msys2 {0}
       run: |
-        make TEST=ON
+        make test
         ./silly test/test.lua --test.timer.checkdelta=500
   build-macosx:
     runs-on: macos-latest
@@ -32,7 +32,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: make
       run: |
-        make TEST=ON
+        make test
         ./silly test/test.lua --test.timer.checkdelta=500
   build-linux:
     runs-on: ubuntu-latest
@@ -57,5 +57,5 @@ jobs:
     - uses: actions/checkout@v4
     - name: make
       run: |
-        make TEST=ON
+        make test
         ./silly test/test.lua

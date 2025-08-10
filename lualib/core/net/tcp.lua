@@ -5,12 +5,16 @@ local assert = assert
 
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
+---@type table<integer, core.net.tcp>
 local socket_pool = {}
+
 ---@class core.net.tcp
 ---@field fd integer
----@field delim boolean
+---@field delim boolean|string|integer|nil
 ---@field co thread|nil
----@field closing boolean
+---@field err string|nil
+---@field sbuffer any
+---@field disp async fun(fd:integer, addr:string)?
 local socket = {}
 
 local EVENT = {}
@@ -25,7 +29,7 @@ local function new_socket(fd)
 		delim = false,
 		---@type thread|nil
 		co = nil,
-		closing = false,
+		err = nil,
 		sbuffer = ns.new(fd),
 	}
 	assert(not socket_pool[fd])
@@ -45,7 +49,7 @@ local function suspend(s)
 	s.co = co
 	local dat = core.wait()
 	if not dat then
-		return nil, "closed"
+		return nil, s.err
 	end
 	return dat, nil
 end
@@ -72,10 +76,9 @@ function EVENT.close(fd, _, errno)
 	if s == nil then
 		return
 	end
-	s.closing = true
+	s.err = errno
 	if s.co then
 		wakeup(s, nil)
-		del_socket(s)
 	end
 end
 
@@ -106,7 +109,7 @@ function EVENT.data(fd, message)
 	end
 end
 
-local function socket_dispatch(typ, fd, message, ...)
+local function callback(typ, fd, message, ...)
 	EVENT[typ](fd, message, ...)
 end
 
@@ -117,15 +120,17 @@ end
 function socket.listen(addr, disp, backlog)
 	assert(addr)
 	assert(disp)
-	local portid, err = core.tcp_listen(addr, socket_dispatch, backlog)
-	if portid then
-		socket_pool[portid] = {
-			fd = portid,
+	local listenid, err = core.tcp_listen(addr, callback, backlog)
+	if listenid then
+		socket_pool[listenid] = {
+			fd = listenid,
 			disp = disp,
-			co = false
+			co = nil,
+			err = nil,
+			delim = nil
 		}
 	end
-	return portid, err
+	return listenid, err
 end
 
 ---@async
@@ -133,7 +138,7 @@ end
 ---@param bind string|nil
 ---@return integer|nil, string? error
 function socket.connect(ip, bind)
-	local fd, err = core.tcp_connect(ip, socket_dispatch, bind)
+	local fd, err = core.tcp_connect(ip, callback, bind)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -180,9 +185,9 @@ function socket.read(fd, n)
 	if r then
 		return r, nil
 	end
-	if s.closing then
-		del_socket(s)
-		return nil, "socket closing"
+	local err = s.err
+	if err then
+		return nil, err
 	end
 	s.delim = n
 	return suspend(s)
@@ -197,9 +202,8 @@ function socket.readall(fd, max)
 		return nil, "socket closed"
 	end
 	local r = ns.readall(s.sbuffer, max)
-	if r == "" and s.closing then
-		del_socket(s)
-		return nil, "socket closing"
+	if r == "" and s.err then
+		return nil, s.err
 	end
 	return r, nil
 end
@@ -218,9 +222,8 @@ function socket.readline(fd, delim)
 	if r then
 		return r, nil
 	end
-	if s.closing then
-		del_socket(s)
-		return nil, "socket closing"
+	if s.err then
+		return nil, s.err
 	end
 	s.delim = delim
 	return suspend(s)
@@ -243,7 +246,7 @@ socket.sendsize = core.sendsize
 ---@return boolean
 function socket.isalive(fd)
 	local s = socket_pool[fd]
-	return s and not s.closing
+	return s and not s.err
 end
 
 return socket

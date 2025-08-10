@@ -513,16 +513,13 @@ static int lpush(lua_State *L)
 	char *str;
 	struct silly_message_socket *msg = tosocket(lua_touserdata(L, SB + 1));
 	switch (msg->type) {
-	case SILLY_SDATA:
-		str = (char *)msg->data;
+	case SILLY_SOCKET_DATA:
+		str = (char *)msg->u.data.ptr;
 		//prevent silly_work free the msg->data
 		//it will be exist until it be read out
-		msg->data = NULL;
-		size = push(L, msg->sid, str, msg->size);
+		msg->u.data.ptr = NULL;
+		size = push(L, msg->sid, str, msg->u.data.size);
 		break;
-	case SILLY_SACCEPT:
-	case SILLY_SCLOSE:
-	case SILLY_SCONNECTED:
 	default:
 		size = 0;
 		silly_log_error("lmessage unsupport:%d\n", msg->type);
@@ -539,10 +536,10 @@ static int ltodata(lua_State *L)
 	size_t datasz;
 	struct silly_message *sm = (struct silly_message *)lua_touserdata(L, 1);
 	switch (sm->type) {
-	case SILLY_SUDP:
-	case SILLY_SDATA:
-		data = tosocket(sm)->data;
-		datasz = tosocket(sm)->size;
+	case SILLY_SOCKET_UDP:
+	case SILLY_SOCKET_DATA:
+		data = tosocket(sm)->u.data.ptr;
+		datasz = tosocket(sm)->u.data.size;
 		break;
 	default:
 		luaL_error(L, "tomsgstring unsupport message type");

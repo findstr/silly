@@ -49,14 +49,15 @@ struct silly_config {
 };
 
 enum silly_message_type {
-	SILLY_TEXPIRE = 1,    //timer expire
-	SILLY_SACCEPT = 2,    //new connetiong
-	SILLY_SCLOSE = 3,     //close from client
-	SILLY_SCONNECTED = 4, //async connect result
-	SILLY_SDATA = 5,      //data packet(raw) from client
-	SILLY_SUDP = 6,       //data packet(raw) from client(udp)
-	SILLY_SIGNAL = 7,     //signal
-	SILLY_STDIN = 8,      //stdin
+	SILLY_SIGNAL = 1,           //signal
+	SILLY_STDIN = 2,           //stdin
+	SILLY_TIMER_EXPIRE = 3,     //timer expire
+	SILLY_SOCKET_LISTEN = 4,    //async listen ok
+	SILLY_SOCKET_CONNECT = 5,   //async connect result
+	SILLY_SOCKET_ACCEPT = 6,    //new conneting
+	SILLY_SOCKET_DATA = 7,      //data packet(raw) from client
+	SILLY_SOCKET_UDP = 8,       //data packet(raw) from client(udp)
+	SILLY_SOCKET_CLOSE = 9,     //error from client
 };
 
 struct silly_message {
@@ -72,15 +73,25 @@ struct silly_message_texpire { //timer expire
 struct silly_message_socket { //socket accept
 	COMMONFIELD
 	socket_id_t sid;
-	//SACCEPT, it used as listenid,
-	//SCLOSE used as errorcode
-	//SDATA/SUDP  used by length
 	union {
-		int err;
-		socket_id_t listenid;
-		size_t size;
-	};
-	uint8_t *data;
+		struct {
+			int err;
+		} connect;
+		struct {
+			int err;
+		} listen;
+		struct {
+			socket_id_t listenid;
+			uint8_t *addr;
+		} accept;
+		struct {
+			size_t size;
+			uint8_t *ptr;
+		} data;
+		struct {
+			int err;
+		} close;
+	} u;
 };
 
 struct silly_message_signal { //signal
@@ -97,8 +108,8 @@ struct silly_message_stdin { //stdin
 static inline void silly_message_free(struct silly_message *msg)
 {
 	int type = msg->type;
-	if (type == SILLY_SDATA || type == SILLY_SUDP)
-		silly_free(tosocket(msg)->data);
+	if (type == SILLY_SOCKET_DATA || type == SILLY_SOCKET_UDP)
+		silly_free(tosocket(msg)->u.data.ptr);
 	silly_free(msg);
 }
 

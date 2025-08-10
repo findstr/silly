@@ -19,6 +19,7 @@ local modules = {
 	"testdom",
 	"testtimer",
 	"testtcp",
+	"testtcp2",
 	"testudp",
 	"testdns",
 	"testrpc",

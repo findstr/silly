@@ -8,7 +8,8 @@
 
 #define SP_READ(e) (e->filter == EVFILT_READ)
 #define SP_WRITE(e) (e->filter == EVFILT_WRITE)
-#define SP_ERR(e) ((e->filter != EVFILT_READ) && (e->filter != EVFILT_WRITE))
+#define SP_ERR(e) ((e->flags & EV_ERROR) != 0)
+#define SP_EOF(e) ((e->flags & EV_EOF) != 0)
 #define SP_UD(e) (e->udata)
 
 #define SP_INVALID (-1)
@@ -34,11 +35,10 @@ static inline int sp_wait(fd_t sp, event_t *event_buff, int cnt)
 
 static inline int sp_del(fd_t sp, int fd)
 {
-	struct kevent event[1];
+	struct kevent event[2];
 	EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-	kevent(sp, event, 1, NULL, 0, NULL);
-	EV_SET(&event[0], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-	kevent(sp, event, 1, NULL, 0, NULL);
+	EV_SET(&event[1], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+	kevent(sp, event, 2, NULL, 0, NULL);
 
 	return 0;
 }
@@ -55,23 +55,10 @@ static inline int sp_ctrl(fd_t sp, fd_t fd, void *ud, int flag)
 
 static inline int sp_add(fd_t sp, fd_t fd, void *ud)
 {
-	int ret;
-	struct kevent event[1];
-	EV_SET(&event[0], fd, EVFILT_READ, EV_ADD, 0, 0, ud);
-	ret = kevent(sp, event, 1, NULL, 0, NULL);
-	if (ret == -1)
-		return -1;
-
-	EV_SET(&event[0], fd, EVFILT_WRITE, EV_ADD, 0, 0, ud);
-	ret = kevent(sp, event, 1, NULL, 0, NULL);
-	if (ret == -1) {
-		EV_SET(&event[0], fd, EVFILT_READ, EV_DELETE, 0, 0, ud);
-		kevent(sp, event, 1, NULL, 0, NULL);
-	}
-	ret = sp_ctrl(sp, fd, ud, SP_IN);
-	if (ret == -1)
-		sp_del(sp, fd);
-	return ret;
+	struct kevent events[2];
+	EV_SET(&events[0], fd, EVFILT_READ, EV_ADD, 0, 0, ud);
+	EV_SET(&events[1], fd, EVFILT_WRITE, EV_ADD | EV_DISABLE, 0, 0, ud);
+	return kevent(sp, events, 2, NULL, 0, NULL);
 }
 
 #endif

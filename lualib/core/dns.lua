@@ -248,7 +248,7 @@ do --parse hosts
 	end
 end
 
-local function callback(msg, _)
+local function callback(msg, err)
 	local pos
 	if msg then
 		local ID, FLAG,
@@ -268,6 +268,8 @@ local function callback(msg, _)
 			core.wakeup(co, false)
 			wait_coroutine[k] = nil
 		end
+		logger.info("[dns] udp error:", err)
+		udp.close(connectfd)
 		connectfd = nil
 	end
 end

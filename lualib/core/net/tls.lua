@@ -6,12 +6,11 @@ local assert = assert
 
 local socket_pool = {}
 
-
 ---@class core.net.tls
 ---@field fd integer
 ---@field delim string|number|nil
 ---@field co thread|nil
----@field closing boolean
+---@field err string|nil
 ---@field alpnproto string?
 ---@field ctx any?
 ---@field ssl any?
@@ -55,7 +54,7 @@ local function new_socket(fd, ctx, hostname, alpnprotos)
 		---@type thread|nil
 		co = nil,
 		ssl = tls.open(ctx, fd, hostname, alpnstr),
-		closing = false,
+		err = nil,
 		alpnproto = nil,
 	}
 	socket_pool[fd] = s
@@ -80,7 +79,7 @@ local function suspend(s)
 	s.co = core.running()
 	local dat = core.wait()
 	if not dat then
-		return nil, "closed"
+		return nil, s.err
 	end
 	return dat, nil
 end
@@ -96,8 +95,8 @@ local function handshake(s)
 	return suspend(s)
 end
 
-function EVENT.accept(fd, _, portid, addr)
-	local lc = socket_pool[portid]
+function EVENT.accept(fd, _, listenid, addr)
+	local lc = socket_pool[listenid]
 	local s = new_socket(fd, lc.ctx, nil, nil)
 	local dat, _ = handshake(s)
 	if not dat then
@@ -111,16 +110,15 @@ function EVENT.accept(fd, _, portid, addr)
 end
 
 ---@param fd integer
----@param errno integer?
+---@param errno string?
 function EVENT.close(fd, _, errno)
 	local s = socket_pool[fd]
 	if s == nil then
 		return
 	end
-	s.closing = true
+	s.err = errno
 	if s.co then
 		wakeup(s, nil)
-		del_socket(s)
 	end
 end
 
@@ -130,27 +128,20 @@ function EVENT.data(fd, message)
 		return
 	end
 	local delim = s.delim
-		tls.message(s.ssl, message)
+	tls.message(s.ssl, message)
 	if not delim then	--non suspend read
 		return
 	end
 	if type(delim) == "number" then
 		local dat = tls.read(s.ssl, delim)
 		if dat then
-			local n = delim - #dat
-			if n == 0 then
-				s.delim = false
-			else
-				s.delim = n
-			end
+			s.delim = false
 			wakeup(s, dat)
 		end
 	elseif delim == "\n" then
-		local dat, ok = tls.readline(s.ssl)
-		if dat ~= "" then
-			if ok then
-				s.delim = false
-			end
+		local dat = tls.readline(s.ssl)
+		if dat then
+			s.delim = false
 			wakeup(s, dat)
 		end
 	elseif delim == "~" then
@@ -241,24 +232,7 @@ function M.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	core.socket_close(fd)
-	return true, nil
-end
-
----@param d string
----@return string?, string? error
-local function readuntil(s, d)
-	local buf = {d}
-	while s.delim do
-		local r = suspend(s)
-		if not r then
-			return nil, "socket closed"
-		end
-		if r ~= "" then
-			buf[#buf+1] = r
-		end
-	end
-	return concat(buf)
+	return core.socket_close(fd)
 end
 
 ---@async
@@ -271,15 +245,14 @@ function M.read(fd, n)
 		return nil, "socket closed"
 	end
 	local d = tls.read(s.ssl, n)
-	if #d == n then
+	if d then
 		return d, nil
 	end
-	if s.closing then
-		del_socket(s)
-		return nil, "socket closing"
+	if s.err then
+		return nil, s.err
 	end
-	s.delim = n - #d
-	return readuntil(s, d)
+	s.delim = n
+	return suspend(s)
 end
 
 ---@param fd integer
@@ -290,9 +263,8 @@ function M.readall(fd)
 		return nil, "socket closed"
 	end
 	local r = tls.readall(s.ssl)
-	if r == "" and s.closing then
-		del_socket(s)
-		return nil, "socket closing"
+	if r == "" and s.err then
+		return nil, s.err
 	end
 	return r, nil
 end
@@ -304,13 +276,12 @@ function M.readline(fd)
 	if not s then
 		return nil, "socket closed"
 	end
-	local d, ok
-	d, ok = tls.readline(s.ssl)
-	if ok then
+	local d = tls.readline(s.ssl)
+	if d then
 		return d, nil
 	end
 	s.delim = "\n"
-	return readuntil(s, d)
+	return suspend(s)
 end
 
 ---@param fd integer
@@ -321,10 +292,7 @@ function M.write(fd, str)
 	if not s then
 		return false, "socket closed"
 	end
-	if s.closing then
-		return false, "socket closing"
-	end
-	return tls.write(s.ssl, str), nil
+	return tls.write(s.ssl, str)
 end
 
 ---@param fd integer
@@ -341,7 +309,7 @@ end
 ---@return boolean
 function M.isalive(fd)
 	local s = socket_pool[fd]
-	return s and not s.closing
+	return s and not s.err
 end
 
 return M

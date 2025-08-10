@@ -1,8 +1,11 @@
 #ifndef _SPINLOCK_H
 #define _SPINLOCK_H
 
-#include <stdatomic.h>
+#include "silly_conf.h"
+
 #ifndef USE_SPINLOCK
+
+#include <stdatomic.h>
 
 #if defined(__x86_64__)
 #include <immintrin.h> // For _mm_pause

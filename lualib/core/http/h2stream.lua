@@ -432,6 +432,7 @@ local function common_dispatch(ch, frame_process)
 	while ch.fd do
 		local t,f,d,id = read_frame(ch.fd, read)
 		if not t then
+			ch.transport.close(ch.fd)
 			ch.fd = nil
 			break
 		end

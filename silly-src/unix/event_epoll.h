@@ -2,12 +2,13 @@
 #define _EVENT_EPOLL_H
 #include <sys/epoll.h>
 
-#define SP_IN EPOLLIN
+#define SP_IN (EPOLLIN|EPOLLRDHUP)
 #define SP_OUT EPOLLOUT
 
-#define SP_READ(e) (e->events & EPOLLIN)
-#define SP_WRITE(e) (e->events & EPOLLOUT)
-#define SP_ERR(e) (e->events & (EPOLLERR | EPOLLHUP))
+#define SP_READ(e) ((e->events & EPOLLIN) != 0)
+#define SP_WRITE(e) ((e->events & EPOLLOUT) != 0)
+#define SP_ERR(e) ((e->events & (EPOLLERR | EPOLLHUP)) != 0)
+#define SP_EOF(e) ((e->events & EPOLLRDHUP) != 0)
 #define SP_UD(e) (e->data.ptr)
 #define SP_INVALID (-1)
 

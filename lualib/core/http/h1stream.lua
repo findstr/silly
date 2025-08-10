@@ -286,7 +286,7 @@ function M.httpd(handler, fd, transport, addr)
 		if not first then
 			break
 		end
-		local header, _ = readheader(fd, readline)
+		local header, err = readheader(fd, readline)
 		if not header then
 			local dat = compose(response_line, 400, statusname[400])
 			write(fd, dat)

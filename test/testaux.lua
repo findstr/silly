@@ -25,13 +25,8 @@ end
 
 local function escape(a)
 	if type(a) == "string" then
-		return a:gsub("([\x0d\x0a])", function(s)
-			local c = s:byte(1)
-			if c == 0x0d then
-				return "\\r"
-			else
-				return "\\n"
-			end
+		return a:gsub("([%c\x7f-\xff])", function(s)
+			return string.format("\\x%02x", s:byte(1))
 		end)
 	elseif type(a) == "table" then
 		local l = {}
