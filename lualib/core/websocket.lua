@@ -56,7 +56,7 @@ local function read_frame(fd, r, needmask)
 		(h & 0x80) >> 7, h & 0x0f,
 		(l & 0x80) >> 7, l & 0x7f
 	if needmask ~= mask then
-		return nil, needmask and "need mask but got none" or "got mask but need none"
+		return nil, needmask == 1 and "need mask but got none" or "got mask but need none"
 	end
 	if payload == 126 then
 		tmp, err = r(fd, 2)
@@ -173,13 +173,13 @@ local function wrap_write(w, mask)
 	end
 	--local MAX_FRAGMENT = 64*1024-1
 	f = function(sock, dat, typ)
+		typ = typ or "binary"
 		dat = dat or NIL
 		if #dat > 125 and typ ~= "text" and typ ~= "binary" then
 			return false, "all control frames MUST have a payload length of 125 bytes or less"
 		end
 		local ok, err
 		local fd = sock.fd
-		typ = typ or "binary"
 		local len = #dat
 		local op = assert(data_type[typ], typ)
 		if len >= 2^16 then
