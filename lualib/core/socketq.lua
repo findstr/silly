@@ -1,3 +1,4 @@
+local time = require "core.time"
 local tcp = require "core.net.tcp"
 local core = require "core"
 
@@ -201,7 +202,7 @@ local function tryconnect(self)
 			self.sock = sock
 			--wait for responseco exit
 			while self.dispatchco do
-				core.sleep(0)
+				time.sleep(0)
 			end
 			local auth = self.auth
 			self.dispatchco = core.fork(dispatch_response(self))

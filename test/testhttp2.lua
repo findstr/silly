@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local http = require "core.http"
 local transport = require "core.http.transport"
 local crypto = require "core.crypto.utils"
@@ -57,7 +58,7 @@ local server = http.listen {
 		testaux.assertneq(stream.remoteaddr, nil, "http2.server remoteaddr")
 		testaux.asserteq(stream.version, "HTTP/2", "http2.server version")
 		testaux.asserteq(stream.query.foo, "bar", "http2.server query")
-		core.sleep(math.random(1, 300))
+		time.sleep(math.random(1, 300))
 		local status, header = stream:readheader()
 		testaux.asserteq(stream.method, "POST", "http2.server method")
 		testaux.asserteq(stream.path, "/test", "http2.server path")
@@ -124,4 +125,3 @@ for _, ch in pairs(transport.channels()) do
 	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
 	ch:close()
 end
-

@@ -1,9 +1,9 @@
 local core = require "core"
+local signal = require "core.signal"
 local env = require "core.env"
 local c = require "core.logger.c"
 
-local function nop(...)
-end
+local function nop(...)end
 
 local logger = {
 	--const from silly_log.h
@@ -53,7 +53,7 @@ function logger.setlevel(level)
 	c.setlevel(level)
 end
 
-core.signal("SIGUSR1", function(_)
+signal("SIGUSR1", function(_)
 	local path = env.get("logpath")
 	if not path then
 		return

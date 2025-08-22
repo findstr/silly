@@ -1,3 +1,5 @@
+local c = require "core.c"
+local message = require "core.message"
 local core = require "core"
 local mutex = require "core.sync.mutex".new()
 local logger = require "core.logger"
@@ -226,6 +228,6 @@ end
 
 io.stdin = M
 
-core.stdin(dispatch)
+c.register(message.STDIN, dispatch)
 
 return M

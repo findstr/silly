@@ -29,7 +29,7 @@ local function test_timer()
 	for i = 1, total do
 		local n = i * 50
 		local f = gen_closure(n)
-		local s = core.timeout(100 + n, f)
+		local s = time.after(100 + n, f)
 		context[s] = n
 	end
 	WAIT = core.running()
@@ -37,27 +37,26 @@ local function test_timer()
 end
 
 local function test_userdata()
-	core.timeout(1, function(ud)
+	time.after(1, function(ud)
 		testaux.asserteq(ud, 3, "timer userdata")
 	end, 3)
-	core.timeout(1, function(ud)
+	time.after(1, function(ud)
 		testaux.asserteq(ud, "hello", "timer userdata")
 	end, "hello")
-	core.sleep(1000)
+	time.sleep(1000)
 end
 
 local function test_cancel()
 	local key = "foo"
-	local session = core.timeout(1, function(ud)
+	local session = time.after(1, function(ud)
 		testaux.asserteq(ud, 3, "timer userdata")
 		key = "bar"
 	end, 3)
-	core.timercancel(session)
-	core.sleep(1000)
+	time.cancel(session)
+	time.sleep(1000)
 	testaux.assertneq(key, "bar", "test timer cancel")
 end
 
 test_timer()
 test_userdata()
 test_cancel()
-

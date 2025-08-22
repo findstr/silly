@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <stdint.h>
 #include <limits.h>
+#include <lua.h>
+
 #include "silly_conf.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
@@ -30,6 +32,7 @@
 
 #define COMMONFIELD                 \
 	struct silly_message *next; \
+	int (*unpack)(lua_State *L, struct silly_message *msg); \
 	enum silly_message_type type;
 
 struct silly_config {

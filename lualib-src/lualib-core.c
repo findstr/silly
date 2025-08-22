@@ -23,130 +23,18 @@
 #include "silly_timer.h"
 #include "silly_signal.h"
 
-static void new_error_table(lua_State *L)
-{
-#define def(code, str) lua_pushliteral(L, str); lua_seti(L, -2, code)
-	lua_newtable(L);
-	def(EX_ADDRINFO, "getaddrinfo failed");
-	def(EX_NOSOCKET, "no free socket");
-	def(EX_CLOSING, "socket is closing");
-	def(EX_CLOSED, "socket is closed");
-	def(EX_EOF, "end of file");
-#undef def
-	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
-}
+#define UPVAL_ERROR_TABLE  (1)
 
 static inline void push_error(lua_State *L, int code)
 {
-	if (code == 0) {
-		lua_pushnil(L);
-		return;
-	}
-	lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
-	if (lua_rawgeti(L, -1, code) == LUA_TNIL) {
-		lua_pop(L, 1);
-		lua_pushstring(L, strerror(code));
-		lua_pushvalue(L, -1);
-		lua_rawseti(L, -3, code);
-	}
-	lua_remove(L, -2);
-}
-
-static void dispatch(lua_State *L, struct silly_message *sm)
-{
-	int type;
-	int err;
-	int args = 1;
-	const char *addr;
-	size_t addrlen;
-	type = lua_rawgetp(L, LUA_REGISTRYINDEX, dispatch);
-	if (unlikely(type != LUA_TFUNCTION)) {
-		silly_log_error("[core] callback need function"
-				"but got:%s\n",
-				lua_typename(L, type));
-		return;
-	}
-	lua_pushinteger(L, sm->type);
-	switch (sm->type) {
-	case SILLY_TIMER_EXPIRE:
-		lua_pushinteger(L, totexpire(sm)->session);
-		lua_pushinteger(L, totexpire(sm)->userdata);
-		args += 2;
-		break;
-	case SILLY_SOCKET_ACCEPT:
-		addrlen = *tosocket(sm)->u.accept.addr;
-		addr = (char *)tosocket(sm)->u.accept.addr+ 1;
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		lua_pushinteger(L, tosocket(sm)->u.accept.listenid);
-		lua_pushlstring(L, addr, addrlen);
-		args += 4;
-		break;
-	case SILLY_SOCKET_CONNECT:
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		push_error(L, tosocket(sm)->u.connect.err);
-		args += 3;
-		break;
-	case SILLY_SOCKET_LISTEN:
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		push_error(L, tosocket(sm)->u.listen.err);
-		args += 3;
-		break;
-	case SILLY_SOCKET_DATA:
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		args += 2;
-		break;
-	case SILLY_SOCKET_UDP:
-		addr = (char *)tosocket(sm)->u.data.ptr + tosocket(sm)->u.data.size;
-		addrlen = silly_socket_salen(addr);
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		lua_pushlstring(L, addr, addrlen);
-		args += 3;
-		break;
-	case SILLY_SOCKET_CLOSE:
-		lua_pushinteger(L, tosocket(sm)->sid);
-		lua_pushlightuserdata(L, sm);
-		push_error(L, tosocket(sm)->u.close.err);
-		args += 3;
-		break;
-	case SILLY_SIGNAL:
-		lua_pushinteger(L, tosignal(sm)->signum);
-		args += 1;
-		break;
-	case SILLY_STDIN:
-		if (tostdin(sm)->size > 0) {
-			lua_pushlstring(L, (const char *)tostdin(sm)->data,
-					tostdin(sm)->size);
-		} else {
-			lua_pushnil(L);
-		}
-		args += 1;
-		break;
-	default:
-		silly_log_error(
-			"[core] callback unknow message type:%d\n",
-			sm->type);
-		assert(0);
-		break;
-	}
-	/*the first stack slot of main thread is always trace function */
-	err = lua_pcall(L, args, 0, 1);
-	if (unlikely(err != LUA_OK)) {
-		silly_log_error("[core] callback fail:%d:%s\n", err,
-				lua_tostring(L, -1));
-		lua_pop(L, 1);
-	}
-	return;
+	silly_worker_pusherror(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
 }
 
 static int lexit(lua_State *L)
 {
 	int status;
 	status = luaL_optinteger(L, 1, 0);
+	silly_worker_reset();
 	silly_exit(status);
 	return 0;
 }
@@ -195,11 +83,12 @@ static int lversion(lua_State *L)
 	return 1;
 }
 
-static int ldispatch(lua_State *L)
+static int lregister(lua_State *L)
 {
-	lua_pushlightuserdata(L, dispatch);
-	lua_insert(L, -2);
-	lua_settable(L, LUA_REGISTRYINDEX);
+	silly_worker_callbacktable(L);
+	lua_pushvalue(L, 1);
+	lua_pushvalue(L, 2);
+	lua_settable(L, -3);
 	return 0;
 }
 
@@ -621,7 +510,7 @@ int luaopen_core_c(lua_State *L)
 		//core
 		{ "gitsha1",       lgitsha1      },
 		{ "version",       lversion      },
-		{ "dispatch",      ldispatch     },
+		{ "register",      lregister     },
 		{ "timeout",       ltimeout      },
 		{ "timercancel",   ltimercancel  },
 		{ "signalmap",     lsignalmap    },
@@ -655,9 +544,8 @@ int luaopen_core_c(lua_State *L)
 	};
 
 	luaL_checkversion(L);
-	new_error_table(L);
 	luaL_newlibtable(L, tbl);
-	luaL_setfuncs(L, tbl, 0);
-	silly_worker_callback(dispatch);
+	silly_worker_errortable(L);
+	luaL_setfuncs(L, tbl, 1);
 	return 1;
 }

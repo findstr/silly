@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local crypto = require "core.crypto"
 local cluster = require "core.cluster"
@@ -86,7 +87,7 @@ core.start(function()
 				local ack = client.call(fd, "ping", {txt = txt})
 				--print("caller", fd, txt, ack.txt)
 				assert(ack.txt == txt)
-				core.sleep(1000)
+				time.sleep(1000)
 			end
 			client.close(fd)
 		end)

@@ -8,7 +8,8 @@
 #include <stdatomic.h>
 #include "silly.h"
 #include "compiler.h"
-
+#include "repl.h"
+#include "errnoex.h"
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -19,6 +20,12 @@
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #endif
 #define WARNING_THRESHOLD (64)
+
+#define STK_TRACEBACK        (1)
+#define STK_ERROR_TABLE      (2)
+#define STK_CALLBACK_TABLE   (3)
+#define STK_DISPATCH_WAKEUP  (4)
+
 
 struct silly_worker {
 	int argc;
@@ -38,6 +45,29 @@ struct silly_worker {
 
 struct silly_worker *W;
 
+static inline void callback(struct silly_message *sm)
+{
+	int type, err, args;
+	lua_State *L = W->L;
+	type = lua_geti(L, STK_CALLBACK_TABLE, sm->type);
+	if (unlikely(type != LUA_TFUNCTION)) {
+		silly_log_error("[worker] callback need function"
+				"but got:%s\n",
+				lua_typename(L, type));
+		return;
+	}
+	args = sm->unpack(L, sm);
+	/*the first stack slot of main thread is always trace function */
+	err = lua_pcall(L, args, 0, STK_TRACEBACK);
+	if (unlikely(err != LUA_OK)) {
+		silly_log_error("[worker] message:%d callback fail:%d:%s\n",
+				sm->type, err, lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
+	lua_pushvalue(W->L, STK_DISPATCH_WAKEUP);
+	lua_call(W->L, 0, 0);
+}
+
 void silly_worker_push(struct silly_message *msg)
 {
 	size_t sz;
@@ -50,12 +80,24 @@ void silly_worker_push(struct silly_message *msg)
 	}
 }
 
+static int stdin_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_stdin *ms = tostdin(msg);
+	if (ms->size > 0) {
+		lua_pushlstring(L, (const char *)ms->data, ms->size);
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
 void silly_worker_stdin(const char *line, int size)
 {
 	struct silly_message_stdin *msg;
 	msg = (struct silly_message_stdin *)silly_malloc(sizeof(*msg) + size -
 							 1);
 	msg->type = SILLY_STDIN;
+	msg->unpack = stdin_unpack;
 	msg->size = size;
 	memcpy(msg->data, line, size);
 	silly_worker_push(tocommon(msg));
@@ -76,7 +118,7 @@ void silly_worker_dispatch()
 	do {
 		do {
 			atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
-			W->callback(W->L, msg);
+			callback(msg);
 			tmp = msg;
 			msg = msg->next;
 			silly_message_free(tmp);
@@ -106,6 +148,62 @@ void silly_worker_callback(void (*callback)(struct lua_State *L,
 	assert(callback);
 	W->callback = callback;
 	return;
+}
+
+static inline void new_error_table(lua_State *L)
+{
+#define def(code, str) lua_pushliteral(L, str); lua_seti(L, -2, code)
+	lua_newtable(L);
+	def(EX_ADDRINFO, "getaddrinfo failed");
+	def(EX_NOSOCKET, "no free socket");
+	def(EX_CLOSING, "socket is closing");
+	def(EX_CLOSED, "socket is closed");
+	def(EX_EOF, "end of file");
+#undef def
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
+}
+
+static inline void new_callback_table(lua_State *L)
+{
+	lua_newtable(L);
+	lua_pushvalue(L, -1);
+	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_callback_table);
+}
+
+void silly_worker_errortable(lua_State *L)
+{
+	lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
+}
+
+void silly_worker_pusherror(lua_State *L, int stk, int code)
+{
+	if (code == 0) {
+		lua_pushnil(L);
+		return;
+	}
+	if (L == W->L) {
+		stk = STK_ERROR_TABLE;
+	}
+	if (lua_rawgeti(L, stk, code) == LUA_TNIL) {
+		lua_pop(L, 1);
+		lua_pushstring(L, strerror(code));
+		lua_pushvalue(L, -1);
+		lua_rawseti(L, stk, code);
+	}
+}
+
+void silly_worker_callbacktable(lua_State *L)
+{
+	lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)new_callback_table);
+}
+
+void silly_worker_reset()
+{
+	lua_newtable(W->L);
+	lua_pushvalue(W->L, -1);
+	lua_replace(W->L, STK_CALLBACK_TABLE);
+	lua_rawsetp(W->L, LUA_REGISTRYINDEX, (void *)new_callback_table);
 }
 
 static void setlibpath(lua_State *L, const char *pathname, const char *libpath)
@@ -158,9 +256,10 @@ static void require_core_stdin(lua_State *L)
 				lua_tostring(L, -1));
 		exit(-1);
 	}
+	lua_pop(L, 1);
 }
 
-static void fetch_core_start(lua_State *L)
+static void fetch_core(lua_State *L, const char *func)
 {
 	lua_getglobal(L, "require");
 	lua_pushstring(L, "core");
@@ -169,60 +268,9 @@ static void fetch_core_start(lua_State *L)
 				lua_tostring(L, -1));
 		exit(-1);
 	}
-	lua_getfield(L, -1, "start");
+	lua_getfield(L, -1, func);
 	lua_remove(L, -2);
 }
-
-static const char *REPL =
-	"local core = require 'core'\n"
-	"local assert = assert\n"
-	"local function execute_line(code, buffer)\n"
-	"	if buffer ~= '' then\n"
-	"		code = buffer .. '\\n' .. code\n"
-	"	end\n"
-	"	local chunk, error = load(code)\n"
-	"	if chunk then\n"
-	"		local success, result = pcall(chunk)\n"
-	"		if success then\n"
-	"			if result ~= nil then\n"
-	"				print(result)\n"
-	"			end\n"
-	"			return true, ''\n"
-	"		else\n"
-	"			print('Error: ' .. result)\n"
-	"			return true, ''\n"
-	"		end\n"
-	"	else\n"
-	"		assert(error)\n"
-	"		if error:match('<eof>') then\n"
-	"			return false, code\n"
-	"		else\n"
-	"			print('Syntax error: ' .. error)\n"
-	"			return true, ''\n"
-	"		end\n"
-	"	end\n"
-	"end\n"
-	"print(string.format('Welcome to Silly %s, built on %s',\n"
-	"	core.version, _VERSION))\n"
-	"local buffer = ''\n"
-	"local prompt = function()\n"
-	"	if buffer == '' then\n"
-	"		return '> '\n"
-	"	else\n"
-	"		return '>> '\n"
-	"	end\n"
-	"end\n"
-	"io.write(prompt())\n"
-	"for line in io.stdin:lines() do\n"
-	"	line = line:match('^%s*(.-)%s*$')\n"
-	"	if line ~= '' then\n"
-	"		local complete, new_buffer = execute_line(line, buffer)\n"
-	"		buffer = new_buffer\n"
-	"	end\n"
-	"	io.write(prompt())\n"
-	"	io.flush()\n"
-	"end\n"
-	"core.exit(0)";
 
 void silly_worker_start(const struct silly_config *config)
 {
@@ -253,10 +301,15 @@ void silly_worker_start(const struct silly_config *config)
 	memcpy(buf + dir_len, "luaclib/?" LUA_LIB_SUFFIX,
 	       sizeof("luaclib/?" LUA_LIB_SUFFIX));
 	setlibpath(L, "cpath", buf);
-	require_core_stdin(L);
-	//exec core.start()
+	assert(lua_gettop(L) == 0);
+	// init permanent table
 	lua_pushcfunction(L, ltraceback);
-	fetch_core_start(L);
+	new_error_table(L);
+	new_callback_table(L);
+	fetch_core(L, "_dispatch_wakeup");
+	// exec core.start()
+	require_core_stdin(L);
+	fetch_core(L, "start");
 	if (config->bootstrap[0] != '\0') {
 		err = luaL_loadfile(L, config->bootstrap);
 		if (unlikely(err)) {
@@ -274,6 +327,8 @@ void silly_worker_start(const struct silly_config *config)
 		lua_close(L);
 		exit(-1);
 	}
+	lua_pushvalue(L, STK_DISPATCH_WAKEUP);
+	lua_call(L, 0, 0);
 	W->L = L;
 	return;
 }

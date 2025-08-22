@@ -40,6 +40,9 @@ static inline size_t xalloc_usable_size(void *ptr)
 void *silly_malloc(size_t sz)
 {
 	void *ptr = MALLOC(sz);
+#ifdef SILLY_TEST
+	memset(ptr, 0, sz);
+#endif
 	int real = xalloc_usable_size(ptr);
 	atomic_fetch_add_explicit(&allocsize, real, memory_order_relaxed);
 	return ptr;

@@ -1,4 +1,5 @@
 local core = require "core"
+local net = require "core.net"
 local logger = require "core.logger"
 local type = type
 local concat = table.concat
@@ -16,8 +17,6 @@ local socket_pool = {}
 ---@field ssl any?
 ---@field disp fun(fd:integer, addr:string)?
 local M = {}
-
-local EVENT = {}
 
 local ctx
 local tls
@@ -95,7 +94,8 @@ local function handshake(s)
 	return suspend(s)
 end
 
-function EVENT.accept(fd, _, listenid, addr)
+local EVENT = {
+accept = function(fd, listenid, addr)
 	local lc = socket_pool[listenid]
 	local s = new_socket(fd, lc.ctx, nil, nil)
 	local dat, _ = handshake(s)
@@ -107,11 +107,11 @@ function EVENT.accept(fd, _, listenid, addr)
 		logger.error(err)
 		M.close(fd)
 	end
-end
+end,
 
 ---@param fd integer
 ---@param errno string?
-function EVENT.close(fd, _, errno)
+close = function(fd, errno)
 	local s = socket_pool[fd]
 	if s == nil then
 		return
@@ -120,9 +120,9 @@ function EVENT.close(fd, _, errno)
 	if s.co then
 		wakeup(s, nil)
 	end
-end
+end,
 
-function EVENT.data(fd, message)
+data = function(fd, message)
 	local s = socket_pool[fd]
 	if not s then
 		return
@@ -153,10 +153,7 @@ function EVENT.data(fd, message)
 		end
 	end
 end
-
-local function socket_dispatch(type, fd, message, ...)
-	EVENT[type](fd, message, ...)
-end
+}
 
 ---@param ip string
 ---@param bind string|nil
@@ -164,7 +161,7 @@ end
 ---@param alpnprotos core.net.tls.alpn_proto[]|nil
 ---@return integer?, string? error
 local function connect_normal(ip, bind, hostname, alpnprotos)
-	local fd, err = core.tcp_connect(ip, socket_dispatch, bind)
+	local fd, err = net.tcp_connect(ip, EVENT, bind)
 	if not fd then
 		return nil, err
 	end
@@ -202,7 +199,7 @@ function M.listen(conf)
 	assert(conf.addr)
 	assert(conf.disp)
 	assert(#conf.certs > 0)
-	local portid, err = core.tcp_listen(conf.addr, socket_dispatch, conf.backlog)
+	local portid, err = net.tcp_listen(conf.addr, EVENT, conf.backlog)
 	if not portid then
 		return nil, err
 	end
@@ -232,7 +229,7 @@ function M.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	return core.socket_close(fd)
+	return net.socket_close(fd)
 end
 
 ---@async

@@ -422,6 +422,115 @@ static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
 	return s;
 }
 
+static int accept_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_socket *ms = tosocket(msg);
+	int addrlen = *ms->u.accept.addr;
+	char *addr = (char *)ms->u.accept.addr+ 1;
+	lua_pushinteger(L, ms->sid);
+	lua_pushinteger(L, ms->u.accept.listenid);
+	lua_pushlstring(L, addr, addrlen);
+	return 3;
+}
+
+static int listen_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_socket *ms = tosocket(msg);
+	lua_pushinteger(L, ms->sid);
+	silly_worker_pusherror(L, 0, ms->u.listen.err);
+	return 2;
+}
+
+static int connect_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_socket *ms = tosocket(msg);
+	lua_pushinteger(L, ms->sid);
+	silly_worker_pusherror(L, 0, ms->u.connect.err);
+	return 2;
+}
+
+static int close_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_socket *ms = tosocket(msg);
+	lua_pushinteger(L, ms->sid);
+	silly_worker_pusherror(L, 0, ms->u.close.err);
+	return 2;
+}
+
+static int data_unpack(lua_State *L, struct silly_message *msg)
+{
+	int ret = 2;
+	struct silly_message_socket *ms = tosocket(msg);
+	lua_pushinteger(L, ms->sid);
+	lua_pushlightuserdata(L, msg);
+	if (ms->type == SILLY_SOCKET_UDP) {
+		char *addr = (char *)ms->u.data.ptr + ms->u.data.size;
+		int addrlen = silly_socket_salen(addr);
+		lua_pushlstring(L, addr, addrlen);
+		ret = 3;
+	}
+	return ret;
+}
+
+static void report_listen(struct silly_socket *ss, struct socket *s, int err)
+{
+	(void)ss;
+	struct silly_message_socket *sc;
+	sc = silly_malloc(sizeof(*sc));
+	sc->type = SILLY_SOCKET_LISTEN;
+	sc->unpack = listen_unpack;
+	sc->sid = s->sid;
+	sc->u.listen.err = err;
+	silly_worker_push(tocommon(sc));
+	return;
+}
+
+static void report_close(struct silly_socket *ss, struct socket *s, int err)
+{
+	(void)ss;
+	struct silly_message_socket *sc;
+	if (is_muteclose(s))
+		return;
+	set_muteclose(s); // Ensure the close event is emitted only once
+	assert(s->type == SOCKET_TCP_CONNECTION);
+	sc = silly_malloc(sizeof(*sc));
+	sc->type = SILLY_SOCKET_CLOSE;
+	sc->unpack = close_unpack;
+	sc->sid = s->sid;
+	sc->u.close.err = err;
+	silly_worker_push(tocommon(sc));
+	return;
+}
+
+static void report_data(struct silly_socket *ss, struct socket *s, int dtype,
+			uint8_t *data, size_t sz)
+{
+	(void)ss;
+	assert(socket_type(s) == SOCKET_CONNECTION || s->type == SOCKET_UDP_LISTEN);
+	struct silly_message_socket *sd = silly_malloc(sizeof(*sd));
+	assert(dtype == SILLY_SOCKET_DATA || dtype == SILLY_SOCKET_UDP);
+	sd->type = dtype;
+	sd->unpack = data_unpack;
+	sd->sid = s->sid;
+	sd->u.data.size = sz;
+	sd->u.data.ptr = data;
+	silly_worker_push(tocommon(sd));
+	return;
+};
+
+static void report_connect(struct silly_socket *ss, struct socket *s, int err)
+{
+	(void)ss;
+	struct silly_message_socket *sc;
+	sc = silly_malloc(sizeof(*sc));
+	sc->type = SILLY_SOCKET_CONNECT;
+	sc->unpack = connect_unpack;
+	sc->sid = s->sid;
+	sc->u.connect.err = err;
+	silly_worker_push(tocommon(sc));
+	return;
+}
+
 static inline int add_to_sp(struct silly_socket *ss, struct socket *s)
 {
 	int ret = sp_add(ss->spfd, s->fd, s);
@@ -585,6 +694,7 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 	int namelen = ntop(&addr, namebuf);
 	sa = silly_malloc(sizeof(*sa) + namelen + 1);
 	sa->type = SILLY_SOCKET_ACCEPT;
+	sa->unpack = accept_unpack;
 	sa->sid = s->sid;
 	sa->u.accept.listenid = listen->sid;
 	sa->u.accept.addr = (uint8_t *)(sa + 1);
@@ -592,61 +702,6 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 	memcpy(sa->u.accept.addr + 1, namebuf, namelen);
 	silly_worker_push(tocommon(sa));
 	atomic_add(&ss->netstat.tcpclient, 1);
-	return;
-}
-
-static void report_listen(struct silly_socket *ss, struct socket *s, int err)
-{
-	(void)ss;
-	struct silly_message_socket *sc;
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_LISTEN;
-	sc->sid = s->sid;
-	sc->u.listen.err = err;
-	silly_worker_push(tocommon(sc));
-	return;
-}
-
-static void report_close(struct silly_socket *ss, struct socket *s, int err)
-{
-	(void)ss;
-	struct silly_message_socket *sc;
-	if (is_muteclose(s))
-		return;
-	set_muteclose(s); // Ensure the close event is emitted only once
-	assert(s->type == SOCKET_TCP_CONNECTION);
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_CLOSE;
-	sc->sid = s->sid;
-	sc->u.close.err = err;
-	silly_worker_push(tocommon(sc));
-	return;
-}
-
-static void report_data(struct silly_socket *ss, struct socket *s, int dtype,
-			uint8_t *data, size_t sz)
-{
-	(void)ss;
-	assert(socket_type(s) == SOCKET_CONNECTION || s->type == SOCKET_UDP_LISTEN);
-	struct silly_message_socket *sd = silly_malloc(sizeof(*sd));
-	assert(dtype == SILLY_SOCKET_DATA || dtype == SILLY_SOCKET_UDP);
-	sd->type = dtype;
-	sd->sid = s->sid;
-	sd->u.data.size = sz;
-	sd->u.data.ptr = data;
-	silly_worker_push(tocommon(sd));
-	return;
-};
-
-static void report_connect(struct silly_socket *ss, struct socket *s, int err)
-{
-	(void)ss;
-	struct silly_message_socket *sc;
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_CONNECT;
-	sc->sid = s->sid;
-	sc->u.connect.err = err;
-	silly_worker_push(tocommon(sc));
 	return;
 }
 

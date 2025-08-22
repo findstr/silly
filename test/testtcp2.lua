@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local tcp = require "core.net.tcp"
 local testaux = require "test.testaux"
 local listen_cb
@@ -29,9 +30,9 @@ end)
 
 local function wait_done()
 	while listen_cb do
-		core.sleep(100)
+		time.sleep(100)
 	end
-	core.sleep(1000)
+	time.sleep(1000)
 end
 
 -- Test 1: Accept a connection
@@ -78,14 +79,14 @@ do
 			local dat = tcp.write(fd, chunk)
 			testaux.asserteq(dat, true, "Case 3: Write chunk from connection")
 			if i % 8 == 0 then
-				core.sleep(100)  -- Simulate some delay
+				time.sleep(100)  -- Simulate some delay
 			end
 		end
 		tcp.close(fd)
 	end
 	local fd = testaux.connect(ip, port)
 	testaux.assertneq(fd, nil, "Case 3: Connect to server for writing")
-	core.sleep(1000)---
+	time.sleep(1000)---
 	local dat = testaux.recv(fd, #largeBlock)
 	testaux.asserteq(dat, largeBlock, "Case 3: Read large block from connection")
 	wait_done()
@@ -120,13 +121,13 @@ do
 	-- Shutdown write-end, this sends a FIN packet to the server.
 	print("shutdown")
 	testaux.shutdown(cfd, 1) -- 1 for SHUT_WR
-	core.sleep(0)
+	time.sleep(0)
 	-- Client should be able to read the response from server
 	local response = testaux.recv(cfd, 5)
-	testaux.asserteq(response, "world", "Case 4: Client received response after half-close")
+		testaux.asserteq(response, "world", "Case 4: Client received response after half-close")
 	print("Case 4: Client received correct response.")
 	testaux.close(cfd)
-	core.sleep(100) -- wait for server to finish
+	time.sleep(100) -- wait for server to finish
 	wait_done()
 end
 
@@ -167,7 +168,7 @@ do
 	end
 
 	local cfd = testaux.connect(ip, port)
-	core.sleep(100) -- wait for server to close
+	time.sleep(100) -- wait for server to close
 	testaux.close(cfd)
 	wait_done()
 end
@@ -224,13 +225,13 @@ do
 	for i = 1, echo_count do
 		local chunk = "hello" .. i .. "\n"
 		testaux.send(cfd, chunk)
-		core.sleep(0)
+		time.sleep(0)
 		local response = testaux.recv(cfd, #chunk)
 		testaux.asserteq(response, chunk, "Case 8: Client received correct echo")
 	end
 	print("Case 8: All echo chunks received correctly.")
 	testaux.close(cfd)
-	core.sleep(100)
+	time.sleep(100)
 	wait_done()
 end
 
@@ -257,7 +258,7 @@ do
 		print("Case 11: Connection failure was correctly reported.")
 	end)
 
-	core.sleep(200) -- Allow time for the async connection to fail.
+	time.sleep(200) -- Allow time for the async connection to fail.
 	wait_done()
 end
 

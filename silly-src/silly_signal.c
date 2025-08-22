@@ -11,11 +11,19 @@
 
 static int sigbits = 0;
 
+static int signal_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_signal *ms = tosignal(msg);
+	lua_pushinteger(L, ms->signum);
+	return 1;
+}
+
 static void signal_handler(int sig)
 {
 	struct silly_message_signal *ms;
 	ms = silly_malloc(sizeof(*ms));
 	ms->type = SILLY_SIGNAL;
+	ms->unpack = signal_unpack;
 	ms->signum = sig;
 	silly_worker_push(tocommon(ms));
 }

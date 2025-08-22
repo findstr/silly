@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local protoc = require "protoc"
 local grpc = require "core.grpc"
 local crypto = require "core.crypto.utils"
@@ -38,12 +39,12 @@ local function case_one(msg)
 end
 
 local function case_two(msg)
-	core.sleep(100)
+	time.sleep(100)
 	return msg, nil
 end
 
 local function case_three(msg)
-	core.sleep(8000)
+	time.sleep(8000)
 	return msg
 end
 
@@ -112,14 +113,14 @@ local function client_part()
 	case  = case_two
 	for i = 1, 20 do
 		wg:fork(request(i, 50))
-		core.sleep(100)
+		time.sleep(100)
 	end
 	wg:wait()
 	print("case two finish")
 	case = case_three
 	for i = 1, 20 do
 		wg:fork(timeout(i, 2))
-		core.sleep(10)
+		time.sleep(10)
 	end
 	wg:wait()
 	print("case three finish")
@@ -128,7 +129,7 @@ testaux.module("tcp")
 client_part()
 server:close()
 
-core.sleep(1000)
+time.sleep(1000)
 testaux.module("tls")
 server = grpc.listen {
 	addr = "127.0.0.1:8990",

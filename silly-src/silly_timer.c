@@ -176,21 +176,9 @@ uint64_t silly_timer_now()
 	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) * TIMER_RESOLUTION;
 }
 
-time_t silly_timer_nowsec()
-{
-	int scale = 1000 / TIMER_RESOLUTION;
-	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) / scale;
-}
-
 uint64_t silly_timer_monotonic()
 {
 	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) * TIMER_RESOLUTION;
-}
-
-time_t silly_timer_monotonicsec()
-{
-	int scale = 1000 / TIMER_RESOLUTION;
-	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) / scale;
 }
 
 uint32_t silly_timer_info(uint32_t *expired)
@@ -300,6 +288,14 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 	return 1;
 }
 
+static int timer_unpack(lua_State *L, struct silly_message *msg)
+{
+	struct silly_message_texpire *ms = totexpire(msg);
+	lua_pushinteger(L, ms->session);
+	lua_pushinteger(L, ms->userdata);
+	return 2;
+}
+
 static void timeout(struct silly_timer *t, struct node *n)
 {
 	(void)t;
@@ -308,6 +304,7 @@ static void timeout(struct silly_timer *t, struct node *n)
 	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	te = silly_malloc(sizeof(*te));
 	te->type = SILLY_TIMER_EXPIRE;
+	te->unpack = timer_unpack;
 	te->session = session;
 	te->userdata = n->userdata;
 	silly_worker_push(tocommon(te));

@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local helper = require "core.http.helper"
 local hpack = require "core.http2.hpack"
@@ -691,10 +692,10 @@ end
 local function wait(s, expire)
 	local reason
 	if expire then
-		local timer = core.timeout(expire, read_timer, s)
+		local timer = time.after(expire, read_timer, s)
 		reason = core.wait()
 		if reason ~= "timeout" then
-			core.timercancel(timer)
+			time.cancel(timer)
 		end
 	else
 		reason = core.wait()

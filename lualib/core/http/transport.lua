@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local tcp = require "core.net.tcp"
 local tls = require "core.net.tls"
@@ -32,10 +33,10 @@ local function check_alive_timer(_)
 			h2_pool[k] = nil
 		end
 	end
-	core.timeout(1000, check_alive_timer)
+	time.after(1000, check_alive_timer)
 end
 
-core.timeout(1000, check_alive_timer)
+time.after(1000, check_alive_timer)
 
 ---@param scheme string
 ---@param host string

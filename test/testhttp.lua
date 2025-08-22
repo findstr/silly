@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local json = require "core.json"
 local http = require "core.http"
@@ -121,7 +122,7 @@ do
 	testaux.asserteq(response, nil, "Test 6.1: GET should fail")
 	testaux.assertneq(err, nil, "Test 6.1: GET should fail")
 	tcp.close(fd)
-	core.sleep(500) -- wait for server to close connection
+	time.sleep(500) -- wait for server to close connection
 	-- test server connection broken
 	handler = function(stream)
 		testaux.assertneq(stream.remoteaddr, nil, "Test 6.2: Server stream contains remoteaddr")
@@ -135,7 +136,7 @@ do
 	tcp.write(fd, "5\r\nHello\r\n")
 	tcp.write(fd, "5\r\nWorld\r\n")
 	tcp.close(fd)
-	core.sleep(500) -- wait for server to close connection
+	time.sleep(500) -- wait for server to close connection
 end
 
 -- Test 7: HTTP Content-Length and Request Body

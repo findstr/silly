@@ -12,7 +12,7 @@ local unpack = string.unpack
 local format = string.format
 local gmatch = string.gmatch
 local setmetatable = setmetatable
-local timenow = time.monotonicsec
+local timenow = time.monotonic
 local maxinteger = math.maxinteger
 
 local session = 0
@@ -204,7 +204,7 @@ local function merge_answers()
 end
 
 local function answer(dat, start, n)
-	local now = timenow()
+	local now = timenow() // 1000
 	for i = 1, n do
 		local name, pos = readname(dat, start)
 		local qtype, qclass, ttl, rdlen, pos = unpack(">I2I2I4I2", dat, pos)
@@ -278,7 +278,7 @@ local function suspend(session, timeout)
 	local co = core.running()
 	wait_coroutine[session] = co
 	core.fork(function()
-		core.sleep(timeout)
+		time.sleep(timeout)
 		local co = wait_coroutine[session]
 		if not co then
 			return
@@ -338,7 +338,7 @@ local function query(name, typ, timeout)
 		if retry > 3 then
 			return false
 		end
-		core.sleep(timeout * retry)
+		time.sleep(timeout * retry)
 	end
 end
 
@@ -346,7 +346,7 @@ end
 ---@param qtype core.dns.type
 ---@return table|nil, string|nil
 local function findcache(name, qtype)
-	local now = timenow()
+	local now = timenow() // 1000
 	for i = 1, 100 do
 		local rrs = name_cache[name]
 		if not rrs then

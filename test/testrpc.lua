@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local waitgroup = require "core.sync.waitgroup"
 local cluster = require "core.cluster"
 local crypto = require "core.crypto.utils"
@@ -24,12 +25,12 @@ local function case_one(msg, cmd, fd)
 end
 
 local function case_two(msg, cmd, fd)
-	core.sleep(100)
+	time.sleep(100)
 	return msg
 end
 
 local function case_three(msg, cmd, fd)
-	core.sleep(2000)
+	time.sleep(2000)
 end
 
 local callret = {
@@ -154,14 +155,14 @@ local function client_part()
 	case  = case_two
 	for i = 1, 20 do
 		wg:fork(request(client_fd, i, 50, "foo"))
-		core.sleep(100)
+		time.sleep(100)
 	end
 	wg:wait()
 	print("case two finish")
 	case = case_three
 	for i = 1, 20 do
 		wg:fork(timeout(client_fd, i, 2, "foo"))
-		core.sleep(10)
+		time.sleep(10)
 	end
 	wg:wait()
 	print("case three finish")

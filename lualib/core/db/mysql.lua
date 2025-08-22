@@ -16,7 +16,7 @@ local strunpack = string.unpack
 local strpack = string.pack
 local setmetatable = setmetatable
 local tremove = table.remove
-local nowsec = time.nowsec
+local timenow = time.monotonic
 
 local tcp_connect = tcp.connect
 local tcp_close = tcp.close
@@ -619,7 +619,7 @@ local function conn_close(conn)
 		-- trye return to pool
 		local conns_idle = pool.conns_idle
 		if #conns_idle < pool.max_idle_conns then
-			conn.returned_at = nowsec()
+			conn.returned_at = timenow() // 1000
 			conns_idle[#conns_idle + 1] = conn
 			return
 		end
@@ -635,7 +635,7 @@ end
 --- @return conn? conn, err_packet? error
 local function conn_new(pool)
 	local lifetime_since
-	local now = nowsec()
+	local now = timenow() // 1000
 	local conns_idle = pool.conns_idle
 	local max_lifetime = pool.max_lifetime
 	if max_lifetime > 0 then
@@ -703,7 +703,7 @@ local function pool_clear(pool)
 	if pool.is_closed then
 		return
 	end
-	local now = nowsec()
+	local now = timenow() // 1000
 	local idle_since, created_since
 	local max_idle_time = pool.max_idle_time
 	local max_lifetime = pool.max_lifetime
@@ -729,7 +729,7 @@ local function pool_clear(pool)
 	for i = wi, #conns_idle do -- clear old conn
 		conns_idle[i] = nil
 	end
-	core.timeout(1000, pool_clear, pool)
+	time.after(1000, pool_clear, pool)
 end
 
 --- @param self pool
@@ -773,7 +773,7 @@ local function pool_open(opts)
 		is_closed = false,
 	}, pmt)
 	if pool.max_idle_time > 0 or pool.max_lifetime > 0 then
-		core.timeout(1000, pool_clear, pool)
+		time.after(1000, pool_clear, pool)
 	end
 	return pool
 end

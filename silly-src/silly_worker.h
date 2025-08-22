@@ -26,4 +26,8 @@ char **silly_worker_args(int *argc);
 void silly_worker_callback(void (*callback)(struct lua_State *L,
 					    struct silly_message *msg));
 
+void silly_worker_callbacktable(lua_State *L);
+void silly_worker_errortable(lua_State *L);
+void silly_worker_pusherror(lua_State *L, int stk, int code);
+void silly_worker_reset();
 #endif

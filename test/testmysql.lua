@@ -516,12 +516,12 @@ do
 	testaux.asserteq(#pool.conns_idle, 1, "Test 12.1: Should return connection to pool after query")
 
 	-- Test idle timeout
-	core.sleep(2500)
+	time.sleep(2500)
 	testaux.asserteq(#pool.conns_idle, 0, "Test 12.2: Should clean up idle connections after timeout")
 
 	-- Test max lifetime
 	pool:query("SELECT 1") -- Create new connection
-	core.sleep(4000)
+	time.sleep(4000)
 	local res, err = pool:query("SELECT 1")
 	testaux.asserteq(not err, true, "Test 12.3: Should automatically renew expired connections")
 	pool:close()

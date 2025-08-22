@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local env = require "core.env"
 local logger = require "core.logger"
 local metrics = require "core.metrics.c"
@@ -64,19 +65,15 @@ env.set("hello.1.1", "hello")
 assert(env.get("hello.1.1") == "hello")
 
 _ENV.print = print
-core.sleep(1000)
+time.sleep(1000)
 for k, v in ipairs(modules) do
 	M = v .. ":"
 	print("=========start=========")
 	local netinfo1 = netstat()
 	dofile("test/" .. v .. ".lua")
-	core.sleep(500)
+	time.sleep(500)
 	local netinfo2 = netstat()
 	testaux.asserteq(netinfo1.tcpclient, netinfo2.tcpclient)
 	testaux.module("")
 	print("======success==========")
 end
-
-
-
-

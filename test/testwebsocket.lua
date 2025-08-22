@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local tcp = require "core.net.tcp"
 local websocket = require "core.websocket"
 local waitgroup = require "core.sync.waitgroup"
@@ -40,10 +41,10 @@ testaux.asserteq(not not tls_server, true, "start tls websocket server")
 
 local function wait_done()
 	while server_handler ~= nop do
-		core.sleep(100)
+		time.sleep(100)
 	end
 	while tls_server_handler ~= nop do
-		core.sleep(100)
+		time.sleep(100)
 	end
 end
 
@@ -203,7 +204,7 @@ end
 -- Test 6: Concurrent stress test
 do
 	server_handler = function(sock)
-		core.sleep(300)
+		time.sleep(300)
 		sock:write("foo", "pong")
 		sock:close()
 	end
@@ -224,4 +225,3 @@ do
 	wg:wait()
 	wait_done()
 end
-

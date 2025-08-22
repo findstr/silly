@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local patch = require "core.patch"
 local testaux = require "test.testaux"
 local function fix(P, ENV, M1, M2, skip)
@@ -133,13 +134,14 @@ end
 local function case3(P)
 	local M1 = load([[
 	local core = require "core"
+	local time = require "core.time"
 	local M = {}
 	local foo
 	local timer_foo
 	function timer_foo()
 		foo = "hello"
 		print("timer old")
-		core.timeout(100, timer_foo)
+		time.after(100, timer_foo)
 	end
 	function M.timer_foo()
 		timer_foo()
@@ -154,6 +156,7 @@ local function case3(P)
 	local ENV = setmetatable({}, {__index = _ENV})
 	local M2 = load([[
 	local core = require "core"
+	local time = require "core.time"
 	local M = {}
 	local foo
 	local timer_foo
@@ -163,7 +166,7 @@ local function case3(P)
 		end
 		foo = "world"
 		print("timer new")
-		core.timeout(500, timer_foo)
+		time.after(500, timer_foo)
 	end
 	function M.timer_foo()
 		timer_foo()
@@ -180,7 +183,7 @@ local function case3(P)
 
 	print("test patch timer")
 	M1.timer_foo()
-	core.sleep(1000)
+	time.sleep(1000)
 	testaux.asserteq(M1.get_foo(), "hello", "old timer")
 	local up1, up2 = fix(P, ENV, M1, M2, nil)
 	local uv1 = up1.timer_foo.upvals.timer_foo
@@ -188,7 +191,7 @@ local function case3(P)
 	testaux.asserteq(up1.timer_foo.upvals.timer_foo.upid,
 		uv1.upvals.timer_foo.upid, "test upvalueid")
 	debug.setupvalue(uv1.val, uv1.upvals.timer_foo.idx, uv2.upvals.timer_foo.val)
-	core.sleep(1000)
+	time.sleep(1000)
 	testaux.asserteq(M1.get_foo(), "world", "new timer")
 	M1.stop()
 end

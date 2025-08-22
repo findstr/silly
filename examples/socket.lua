@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local crypto = require "core.crypto"
 local socket = require "core.net.tcp"
@@ -44,7 +45,7 @@ core.start(function()
 			end
 			print("recv", fd, l)
 			assert(l == r)
-			core.sleep(1000)
+			time.sleep(1000)
 		end
 		print("close", fd)
 		socket.close(fd)

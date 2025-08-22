@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local udp = require "core.net.udp"
 local crypto = require "core.crypto.utils"
 local testaux = require "test.testaux"
@@ -9,7 +10,7 @@ local recvidx = 0
 local queue = {}
 
 local function udp_server(data, addr)
-	core.sleep(100)
+	time.sleep(100)
 	udp.send(server_fd, data, addr)
 end
 
@@ -26,6 +27,5 @@ for i = 1, 20 do
 	local d = crypto.randomkey(8)
 	queue[i] = d
 	udp.send(client_fd, d)
-	core.sleep(150)
+	time.sleep(150)
 end
-

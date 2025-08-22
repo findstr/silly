@@ -1,6 +1,8 @@
 local core = require "core"
+local net = require "core.net"
 local logger = require "core.logger"
 local ns = require "core.netstream"
+local type = type
 local assert = assert
 
 --when luaVM destroyed, all process will be exit
@@ -16,11 +18,6 @@ local socket_pool = {}
 ---@field sbuffer any
 ---@field disp async fun(fd:integer, addr:string)?
 local socket = {}
-
-local EVENT = {}
-
-local type = type
-local assert = assert
 
 ---@param fd integer
 local function new_socket(fd)
@@ -61,17 +58,19 @@ local function wakeup(s, dat)
 	core.wakeup(co, dat)
 end
 
-function EVENT.accept(fd, _, portid, addr)
-	local lc = socket_pool[portid];
+local EVENT = {
+
+accept = function(fd, listenid, addr)
+	local lc = socket_pool[listenid];
 	new_socket(fd)
 	local ok, err = core.pcall(lc.disp, fd, addr)
 	if not ok then
 		logger.error(err)
 		socket.close(fd)
 	end
-end
+end,
 
-function EVENT.close(fd, _, errno)
+close = function(fd, errno)
 	local s = socket_pool[fd]
 	if s == nil then
 		return
@@ -80,9 +79,9 @@ function EVENT.close(fd, _, errno)
 	if s.co then
 		wakeup(s, nil)
 	end
-end
+end,
 
-function EVENT.data(fd, message)
+data = function(fd, message)
 	local s = socket_pool[fd]
 	if not s then
 		return
@@ -108,10 +107,7 @@ function EVENT.data(fd, message)
 		end
 	end
 end
-
-local function callback(typ, fd, message, ...)
-	EVENT[typ](fd, message, ...)
-end
+}
 
 ---@param addr string
 ---@param disp async fun(fd:integer, addr:string)
@@ -120,7 +116,7 @@ end
 function socket.listen(addr, disp, backlog)
 	assert(addr)
 	assert(disp)
-	local listenid, err = core.tcp_listen(addr, callback, backlog)
+	local listenid, err = net.tcp_listen(addr, EVENT, backlog)
 	if listenid then
 		socket_pool[listenid] = {
 			fd = listenid,
@@ -138,7 +134,7 @@ end
 ---@param bind string|nil
 ---@return integer|nil, string? error
 function socket.connect(ip, bind)
-	local fd, err = core.tcp_connect(ip, callback, bind)
+	local fd, err = net.tcp_connect(ip, EVENT, bind)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -168,7 +164,7 @@ function socket.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	core.socket_close(fd)
+	net.socket_close(fd)
 	return true, nil
 end
 
@@ -239,8 +235,8 @@ function socket.recvsize(fd)
 	return ns.size(s.sbuffer)
 end
 
-socket.write = core.tcp_send
-socket.sendsize = core.sendsize
+socket.write = net.tcp_send
+socket.sendsize = net.sendsize
 
 ---@param fd integer
 ---@return boolean

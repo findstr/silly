@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 
 core.fork(function()
 	print("-------1")
@@ -9,8 +10,7 @@ core.fork(function()
 	print("-------2")
 	core.exit(1)
 end)
-core.timeout(0, function()
+time.after(0, function()
 	print("-------3")
 	core.exit(1)
 end)
-

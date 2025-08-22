@@ -41,7 +41,7 @@ silly_traceid_t silly_trace_new()
 		return (trace_ctx & ~((silly_traceid_t)0xFF)) |
 		       (uint64_t)spanid;
 	}
-	uint16_t time = (uint16_t)(silly_timer_nowsec());
+	uint16_t time = (uint16_t)(silly_timer_now() / 1000);
 	uint16_t seq = atomic_fetch_add_explicit(&seq_idx, 1, memory_order_relaxed) + 1;
 	silly_traceid_t id = (uint64_t)spanid << 48 | (uint64_t)time << 32 |
 			     (uint64_t)seq << 16 | (uint64_t)spanid;

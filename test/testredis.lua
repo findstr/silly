@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local redis = require "core.db.redis"
 local testaux = require "test.testaux"
 
@@ -54,19 +55,19 @@ for i = 1, testcount do
 		idx = idx + 1
 		local id = idx
 		local ok, get = db:incr("foo")
-		core.sleep(math.random(1, 100))
+		time.sleep(math.random(1, 100))
 		testaux.asserteq(ok, true, "INCR foo")
 		testaux.asserteq(id, get, "INCR foo")
 		finish = finish + 1
 		print("----finish:", finish)
 	end)
-	core.sleep(math.random(1, 10))
+	time.sleep(math.random(1, 10))
 end
 while true do
 	if finish == testcount then
 		break
 	end
-	core.sleep(500)
+	time.sleep(500)
 end
 
 db:close()

@@ -1,4 +1,6 @@
 local core = require "core"
+local time = require "core.time"
+local net = require "core.net"
 local dns = require "core.dns"
 local logger = require "core.logger"
 local np = require "core.netpacket"
@@ -6,13 +8,13 @@ local type = type
 local pairs = pairs
 local assert = assert
 local format = string.format
-local tcp_connect = core.tcp_connect
-local tcp_send = core.tcp_send
-local tcp_close = core.socket_close
-local tcp_listen = core.tcp_listen
+local tcp_connect = net.tcp_connect
+local tcp_send = net.tcp_send
+local tcp_close = net.socket_close
+local tcp_listen = net.tcp_listen
 local pcall = core.pcall
-local timeout = core.timeout
-local timercancel = core.timercancel
+local timeout = time.after
+local timercancel = time.cancel
 local setmetatable = setmetatable
 
 local mt = {
@@ -67,7 +69,7 @@ local function close_wrapper(self)
 			return false, "closed"
 		end
 		fdaddr[fd] = nil
-		core.socket_close(fd)
+		tcp_close(fd)
 		return true, "connected"
 	end
 end
@@ -84,34 +86,14 @@ local function init_event(self, conf)
 	local marshal = assert(conf.marshal, "marshal")
 	local unmarshal = assert(conf.unmarshal, "unmarshal")
 	local accept = conf.accept or nop
-	local EVENT = {}
-	function EVENT.accept(fd, _, addr)
-		fdaddr[fd] = addr
-		local ok, err = pcall(accept, fd, addr)
-		if not ok then
-			logger.error("[rpc.server] EVENT.accept", err)
-			np.clear(ctx, fd)
-			core.socket_close(fd)
-		end
-	end
 
-	function EVENT.close(fd, errno)
-		fdaddr[fd] = nil
-		local ok, err = pcall(close, fd, errno)
-		if not ok then
-			logger.error("[rpc.server] EVENT.close", err)
-		end
-		np.clear(ctx, fd)
-		tcp_close(fd)
-	end
-
-	function EVENT.data()
+	local function process()
 		local fd, buf, size, session, cmd, traceid = np.pop(ctx)
 		if not fd then
 			return
 		end
 		local otrace = core.trace(traceid)
-		core.fork(EVENT.data)
+		core.fork(process)
 		while true do
 			if cmd then	--rpc request
 				local body = unmarshal("request", cmd, buf, size)
@@ -159,10 +141,33 @@ local function init_event(self, conf)
 		end
 		core.trace(otrace)
 	end
-	return function(typ, fd, message, ...)
-		np.message(ctx, message)
-		assert(EVENT[typ])(fd, ...)
+
+	local EVENT = {}
+	function EVENT.accept(fd, addr)
+		fdaddr[fd] = addr
+		local ok, err = pcall(accept, fd, addr)
+		if not ok then
+			logger.error("[rpc.server] EVENT.accept", err)
+			np.clear(ctx, fd)
+			tcp_close(fd)
+		end
 	end
+
+	function EVENT.close(fd, errno)
+		fdaddr[fd] = nil
+		local ok, err = pcall(close, fd, errno)
+		if not ok then
+			logger.error("[rpc.server] EVENT.close", err)
+		end
+		np.clear(ctx, fd)
+		tcp_close(fd)
+	end
+
+	function EVENT.data(fd, message)
+		np.message(ctx, message)
+		process()
+	end
+	return EVENT
 end
 
 local function call_wrapper(self, conf)

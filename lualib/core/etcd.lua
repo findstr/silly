@@ -1,3 +1,4 @@
+local time = require "core.time"
 local core = require "core"
 local logger = require "core.logger"
 local grpc = require "core.grpc"
@@ -19,8 +20,8 @@ local assert = assert
 local sort = table.sort
 local sub = string.sub
 local char = string.char
-local sleep = core.sleep
-local timeout = core.timeout
+local sleep = time.sleep
+local timeout = time.after
 local setmetatable = setmetatable
 
 local no_prefix_end = "\0"

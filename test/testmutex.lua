@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local testaux = require "test.testaux"
 local waitgroup = require "core.sync.waitgroup"
 local mutex = require "core.sync.mutex"
@@ -14,7 +15,7 @@ local function testcase1()
 		wg:fork(function()
 			local lock<close> = mutex:lock(key)
 			local n = x
-			core.sleep(100)
+			time.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
 			x = n + 1
 		end)
@@ -22,10 +23,10 @@ local function testcase1()
 	wg:fork(function()
 		local lock<close> = mutex:lock(key)
 		local n = x
-		core.sleep(100)
-		testaux.asserteq(n, x, "test mutex lock")
-		x = n + 1
-	end)
+		time.sleep(100)
+			testaux.asserteq(n, x, "test mutex lock")
+			x = n + 1
+		end)
 	wg:wait()
 	testaux.asserteq(x, 6, "all mutex can be released")
 end
@@ -39,7 +40,7 @@ local function testcase2()
 		wg:fork(function()
 			local lock<close> = mutex:lock(key)
 			local n = x
-			core.sleep(100)
+			time.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
 			x = n + 1
 			lock:unlock()
@@ -48,10 +49,10 @@ local function testcase2()
 	wg:fork(function()
 		local lock<close> = mutex:lock(key)
 		local n = x
-		core.sleep(100)
-		testaux.asserteq(n, x, "test mutex lock")
-		x = n + 1
-	end)
+		time.sleep(100)
+			testaux.asserteq(n, x, "test mutex lock")
+			x = n + 1
+		end)
 	wg:wait()
 	testaux.asserteq(x, 6, "all mutex can be released")
 end
@@ -65,7 +66,7 @@ local function testcase3()
 		wg:fork(function()
 			local lock<close> = mutex:lock(key)
 			local n = x
-			core.sleep(100)
+			time.sleep(100)
 			testaux.asserteq(n, x, "test mutex lock")
 			x = n + 1
 			error("exception")
@@ -75,10 +76,10 @@ local function testcase3()
 	wg:fork(function()
 		local lock<close> = mutex:lock(key)
 		local n = x
-		core.sleep(100)
-		testaux.asserteq(n, x, "test mutex lock")
-		x = n + 1
-	end)
+		time.sleep(100)
+			testaux.asserteq(n, x, "test mutex lock")
+			x = n + 1
+		end)
 	wg:wait()
 	testaux.asserteq(x, 6, "all mutex can be released")
 end
@@ -91,7 +92,7 @@ local function testcase4()
 	wg:fork(function()
 		local lock<close> = mutex:lock(key)
 		local n = x
-		core.sleep(100)
+		time.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
 		x = n + 1
 		lock:unlock()
@@ -100,7 +101,7 @@ local function testcase4()
 	wg:fork(function()
 		local lock<close> = mutex:lock(key)
 		local n = x
-		core.sleep(100)
+		time.sleep(100)
 		testaux.asserteq(n, x, "test mutex lock")
 		x = n + 1
 		lock:unlock()
@@ -162,4 +163,3 @@ testcase3()
 testcase4()
 testcase5()
 testcase6()
-

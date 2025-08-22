@@ -1,4 +1,5 @@
 local core = require "core"
+local time = require "core.time"
 local http = require "core.http"
 local prometheus = require "core.metrics.prometheus"
 local testaux = require "test.testaux"
@@ -66,7 +67,7 @@ local function update_metrics_periodically()
             print("request_duration_seconds:observe", duration)
         end
 
-        core.sleep(1000) -- Sleep for 1 second
+        time.sleep(1000) -- Sleep for 1 second
     end
 end
 
