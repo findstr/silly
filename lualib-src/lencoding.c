@@ -133,7 +133,7 @@ int ldecode(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_base64(lua_State *L)
+int luaopen_core_encoding_base64(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "encode",         lencode         },

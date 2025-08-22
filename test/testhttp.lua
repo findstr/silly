@@ -1,6 +1,6 @@
 local time = require "core.time"
 local core = require "core"
-local json = require "core.json"
+local json = require "core.encoding.json"
 local http = require "core.http"
 local tcp = require "core.net.tcp"
 local testaux = require "test.testaux"

@@ -164,7 +164,7 @@ do
 	})
 
 	local decoded = hpack.unpack(decoder, {buffer1, buffer2})
-	print(require "core.json".encode(decoded))
+	print(require "core.encoding.json".encode(decoded))
 	-- Check if multiple headers with same name are handled correctly
 	local set_cookies = decoded["set-cookie"]
 	local cookies = decoded["cookie"]

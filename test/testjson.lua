@@ -1,4 +1,4 @@
-local json = require "core.json"
+local json = require "core.encoding.json"
 local testaux = require "test.testaux"
 
 -- Test 1: Basic type encoding/decoding

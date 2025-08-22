@@ -102,7 +102,7 @@ LIB_SRC = lualib-core.c \
 	lualib-tls.c \
 	lualib-debugger.c \
 	lnetstream.c \
-	lbase64.c \
+	lencoding.c \
 	lhttp.c \
 	mysql/lmysql.c \
 	lcompress.c

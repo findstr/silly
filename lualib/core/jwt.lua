@@ -1,8 +1,8 @@
-local json = require 'core.json'
 local ec = require 'core.crypto.ec'
 local rsa = require 'core.crypto.rsa'
 local hmac = require 'core.crypto.hmac'
-local base64 = require 'core.base64'
+local base64 = require 'core.encoding.base64'
+local json = require 'core.encoding.json'
 local jsonencode = json.encode
 local jsondecode = json.decode
 local b64encode = base64.urlsafe_encode

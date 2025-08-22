@@ -1,6 +1,6 @@
 local core = require "core"
 local time = require "core.time"
-local json = require "core.json"
+local json = require "core.encoding.json"
 local c = require "test.aux.c"
 local type = type
 local pairs = pairs

@@ -1,5 +1,5 @@
 local http = require "core.http"
-local base64 = require "core.base64"
+local base64 = require "core.encoding.base64"
 local sha1 = require "core.crypto.hash".new("sha1")
 local utils = require "core.crypto.utils"
 

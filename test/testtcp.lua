@@ -1,7 +1,7 @@
 local core = require "core"
 local time = require "core.time"
 local metrics = require "core.metrics.c"
-local json = require "core.json"
+local json = require "core.encoding.json"
 local tcp = require "core.net.tcp"
 local tls = require "core.net.tls"
 local crypto = require "core.crypto.utils"
