@@ -15,6 +15,7 @@ local function netstat()
 end
 
 local modules = {
+	"testhive",
 	"testcompress",
 	"testjson",
 	"testdom",

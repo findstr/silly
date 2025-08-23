@@ -29,4 +29,11 @@ static inline void cpu_usage(float *stime, float *utime)
 	*utime = 0;
 }
 
+static inline int cpu_count(void)
+{
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	return sysinfo.dwNumberOfProcessors;
+}
+
 #endif

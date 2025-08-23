@@ -18,6 +18,7 @@ size_t memory_rss_(void);
 #elif defined(__MACH__)
 #include <malloc/malloc.h>
 #include <sys/event.h>
+#include <sys/sysctl.h>
 #define libc_malloc_usable_size(ptr) malloc_size(ptr)
 #endif
 
@@ -30,5 +31,16 @@ void nonblock(fd_t fd);
 int open_fd_count(void);
 void fd_open_limit(int *soft, int *hard);
 void cpu_usage(float *stime, float *utime);
+static inline int cpu_count(void)
+{
+#if defined(__MACH__)
+	int count = 0;
+	size_t len = sizeof(count);
+	sysctlbyname("hw.ncpu", &count, &len, NULL, 0);
+	return count;
+#else
+	return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+}
 
 #endif

@@ -61,6 +61,7 @@ enum silly_message_type {
 	SILLY_SOCKET_DATA = 7,      //data packet(raw) from client
 	SILLY_SOCKET_UDP = 8,       //data packet(raw) from client(udp)
 	SILLY_SOCKET_CLOSE = 9,     //error from client
+	SILLY_HIVE_DONE = 10,       //task done
 };
 
 struct silly_message {

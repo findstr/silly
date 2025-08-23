@@ -8,6 +8,7 @@ local M = { -- keep sync with silly.h
 	SOCKET_DATA = 7,
 	SOCKET_UDP = 8,
 	SOCKET_CLOSE = 9,
+	HIVE_DONE = 10,
 }
 
 return M

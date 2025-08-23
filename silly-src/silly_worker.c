@@ -142,14 +142,6 @@ size_t silly_worker_msgsize()
 	return silly_queue_size(W->queue);
 }
 
-void silly_worker_callback(void (*callback)(struct lua_State *L,
-					    struct silly_message *msg))
-{
-	assert(callback);
-	W->callback = callback;
-	return;
-}
-
 static inline void new_error_table(lua_State *L)
 {
 #define def(code, str) lua_pushliteral(L, str); lua_seti(L, -2, code)
