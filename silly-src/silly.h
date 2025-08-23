@@ -28,7 +28,6 @@
 #define totexpire(msg) ((struct silly_message_texpire *)(msg))
 #define tosocket(msg) ((struct silly_message_socket *)(msg))
 #define tosignal(msg) ((struct silly_message_signal *)(msg))
-#define tostdin(msg) ((struct silly_message_stdin *)(msg))
 
 #define COMMONFIELD                 \
 	struct silly_message *next; \
@@ -53,7 +52,6 @@ struct silly_config {
 
 enum silly_message_type {
 	SILLY_SIGNAL = 1,           //signal
-	SILLY_STDIN = 2,           //stdin
 	SILLY_TIMER_EXPIRE = 3,     //timer expire
 	SILLY_SOCKET_LISTEN = 4,    //async listen ok
 	SILLY_SOCKET_CONNECT = 5,   //async connect result

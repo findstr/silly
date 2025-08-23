@@ -51,7 +51,7 @@ static inline void callback(struct silly_message *sm)
 	lua_State *L = W->L;
 	type = lua_geti(L, STK_CALLBACK_TABLE, sm->type);
 	if (unlikely(type != LUA_TFUNCTION)) {
-		silly_log_error("[worker] callback need function"
+		silly_log_error("[worker] callback need function "
 				"but got:%s\n",
 				lua_typename(L, type));
 		return;
@@ -78,29 +78,6 @@ void silly_worker_push(struct silly_message *msg)
 			       "message queue length:%zu\n",
 			       sz);
 	}
-}
-
-static int stdin_unpack(lua_State *L, struct silly_message *msg)
-{
-	struct silly_message_stdin *ms = tostdin(msg);
-	if (ms->size > 0) {
-		lua_pushlstring(L, (const char *)ms->data, ms->size);
-	} else {
-		lua_pushnil(L);
-	}
-	return 1;
-}
-
-void silly_worker_stdin(const char *line, int size)
-{
-	struct silly_message_stdin *msg;
-	msg = (struct silly_message_stdin *)silly_malloc(sizeof(*msg) + size -
-							 1);
-	msg->type = SILLY_STDIN;
-	msg->unpack = stdin_unpack;
-	msg->size = size;
-	memcpy(msg->data, line, size);
-	silly_worker_push(tocommon(msg));
 }
 
 void silly_worker_dispatch()
@@ -238,13 +215,13 @@ static int ltraceback(lua_State *L)
 	return 1;
 }
 
-static void require_core_stdin(lua_State *L)
+static void require_core_autoload(lua_State *L)
 {
 	lua_pushcfunction(L, ltraceback);
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "core.stdin");
+	lua_pushstring(L, "core.autoload");
 	if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
-		silly_log_error("[worker] require core.stdin fail,%s\n",
+		silly_log_error("[worker] require core.autoload fail,%s\n",
 				lua_tostring(L, -1));
 		exit(-1);
 	}
@@ -300,7 +277,7 @@ void silly_worker_start(const struct silly_config *config)
 	new_callback_table(L);
 	fetch_core(L, "_dispatch_wakeup");
 	// exec core.start()
-	require_core_stdin(L);
+	require_core_autoload(L);
 	fetch_core(L, "start");
 	if (config->bootstrap[0] != '\0') {
 		err = luaL_loadfile(L, config->bootstrap);

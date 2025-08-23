@@ -89,83 +89,6 @@ static void *thread_worker(void *arg)
 	return NULL;
 }
 
-struct stdin_data {
-	char line[1024];
-	size_t pos;
-};
-
-static void stdin_cleanup(void *arg)
-{
-	if (!R.running) {
-		return;
-	}
-	struct stdin_data *data = (struct stdin_data *)arg;
-	if (data->pos > 0) {
-		silly_worker_stdin(data->line, data->pos);
-	}
-	silly_worker_stdin("", 0);
-}
-
-static void *thread_stdin(void *arg)
-{
-	(void)arg;
-	int c;
-	struct stdin_data data;
-	data.pos = 0;
-
-#ifdef _WIN32
-	HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-	if (hStdin == INVALID_HANDLE_VALUE) {
-		return NULL;
-	}
-	// check input type
-	DWORD fileType = GetFileType(hStdin);
-	BOOL isPipe = (fileType == FILE_TYPE_PIPE);
-#endif
-	pthread_cleanup_push(stdin_cleanup, &data);
-	silly_log_info("[stdin] start\n");
-	while (R.running) {
-#ifdef _WIN32
-		DWORD bytesRead;
-		char buffer = 0;
-		if (!ReadFile(hStdin, &buffer, 1, &bytesRead, NULL)) {
-			DWORD error = GetLastError();
-			if (error == ERROR_OPERATION_ABORTED) {
-				break;
-			}
-			if (error == ERROR_BROKEN_PIPE ||
-			    (isPipe && error == ERROR_HANDLE_EOF)) {
-				// pipe closed or EOF
-				break;
-			}
-			Sleep(300);
-			continue;
-		}
-		if (bytesRead == 0 || buffer == 0x1A) {
-			// pipe closed or EOF
-			break;
-		}
-		c = (unsigned char)buffer;
-#else
-		c = fgetc(stdin);
-		if (c == EOF) {
-			if (errno != EINTR) {
-				break;
-			}
-			continue;
-		}
-#endif
-		data.line[data.pos++] = c;
-		if (data.pos >= sizeof(data.line) - 1 || c == '\n') {
-			silly_worker_stdin(data.line, data.pos);
-			data.pos = 0;
-		}
-	}
-	pthread_cleanup_pop(1);
-	silly_log_info("[stdin] stop\n");
-	return NULL;
-}
-
 static void monitor_check()
 {
 	struct timespec req;
@@ -209,7 +132,7 @@ int silly_run(const struct silly_config *config)
 {
 	int i;
 	int err;
-	pthread_t pid[4];
+	pthread_t pid[3];
 	R.running = 1;
 	R.conf = config;
 	R.exitstatus = 0;
@@ -234,16 +157,9 @@ int silly_run(const struct silly_config *config)
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
 	thread_create(&pid[2], thread_worker, (void *)config,
 		      config->workeraffinity);
-	thread_create(&pid[3], thread_stdin, NULL, -1);
 	monitor_check();
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
-#ifdef _WIN32
-	CancelIoEx(GetStdHandle(STD_INPUT_HANDLE), NULL);
-#else
-	pthread_cancel(pid[3]);
-#endif
-	pthread_join(pid[3], NULL);
 	silly_log_flush();
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
