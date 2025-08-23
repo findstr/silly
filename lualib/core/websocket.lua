@@ -10,6 +10,7 @@ local setmetatable = setmetatable
 local concat = table.concat
 local pack = string.pack
 local unpack = string.unpack
+local format = string.format
 local xor = utils.xor
 local randomkey = utils.randomkey
 
@@ -312,9 +313,9 @@ function M.connect(url, header)
 	if not stream then
 		return nil, err
 	end
-	local status, _ = stream:readheader()
+	local status, err = stream:readheader()
 	if not status or status ~= 101 then
-		return nil, "websocket.connect fail"
+		return nil, format("websocket.connect fail:%s", status or err)
 	end
 	return upgrade(stream, true), nil
 end

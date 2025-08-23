@@ -161,6 +161,7 @@ function socket.close(fd)
 		return false, "socket closed"
 	end
 	if s.co then
+		s.err = "active closed"
 		wakeup(s, nil)
 	end
 	del_socket(s)

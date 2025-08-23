@@ -933,9 +933,7 @@ int silly_socket_sendsize(socket_id_t sid)
 
 static int send_msg_tcp(struct silly_socket *ss, struct socket *s)
 {
-	struct wlist *w;
-	w = s->wlhead;
-	assert(w);
+	struct wlist *w = s->wlhead;
 	while (w) {
 		ssize_t sz;
 		assert(w->size > s->wloffset);
@@ -1612,7 +1610,7 @@ static void parse_read_error(enum read_result ret, int *eof, int *has_error, int
 		*eof = 1;
 		break;
 	case READ_ERROR:
-		*has_error = 1;
+		*has_error = errno;
 		break;
 	case READ_SOME:
 		*has_data_to_read = 1;
@@ -1637,7 +1635,7 @@ int silly_socket_poll()
 		return -1;
 	while (ss->eventindex < ss->eventcount) {
 		int eof = 0;
-		int has_error = 0;
+		int err = 0;
 		int has_data_to_read = 0;
 		int ei = ss->eventindex++;
 		e = &ss->eventbuf[ei];
@@ -1654,22 +1652,25 @@ int silly_socket_poll()
 		case SOCKET_TCP_CONNECTION:
 			if (is_connecting(s)) {
 				clr_connecting(s);
-				checkconnected(ss, s);
 				atomic_sub(&ss->netstat.connecting, 1);
+				checkconnected(ss, s);
 				continue;
 			}
 			if (SP_READ(e)) {
 				int ret = forward_msg_tcp(ss, s);
-				parse_read_error(ret, &eof, &has_error, &has_data_to_read);
+				parse_read_error(ret, &eof, &err, &has_data_to_read);
 			}
 			if (SP_WRITE(e)) {
-				if (send_msg_tcp(ss, s) < 0)
-					has_error = 1;
+				if (send_msg_tcp(ss, s) < 0) {
+					err = errno;
+				}
 			}
 			if (has_data_to_read) // if has data to read, delay the error process to next wait
 				continue;
-			if (has_error || SP_ERR(e)) {
-				int err = get_sock_error(s);
+			if (err == 0 && SP_ERR(e)) {
+				err = get_sock_error(s);
+			}
+			if (err != 0) {
 				report_close(ss, s, err);
 				zombine_socket(s);
 			} else if (eof || SP_EOF(e)) {
