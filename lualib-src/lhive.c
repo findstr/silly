@@ -249,8 +249,8 @@ static void new_hive(lua_State *L)
 	h->thread_min = n;
 	h->thread_max = 2 * n;
 	h->wait_for_join = NULL;
-	store(&h->thread_busy, 0);
-	store(&h->worker_waiting, 0);
+	atomic_init(&h->thread_busy, 0);
+	atomic_init(&h->worker_waiting, 0);
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, new_hive);
 }
@@ -301,7 +301,7 @@ static void create_thread(struct hive *h)
 	ctx->h = h;
 	ctx->shutdown = 0;
 	ctx->next = NULL;
-	store(&ctx->status, THREAD_IDLE);
+	atomic_init(&ctx->status, THREAD_IDLE);
 	pthread_mutex_init(&ctx->lock, NULL);
 	pthread_cond_init(&ctx->cond, NULL);
 	ctx->head = NULL;

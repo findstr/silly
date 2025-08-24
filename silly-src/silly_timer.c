@@ -459,11 +459,13 @@ void silly_timer_init()
 	T = silly_malloc(sizeof(*T));
 	memset(T, 0, sizeof(*T));
 	uint64_t cur_ticktime;
-	atomic_store_explicit(&T->clocktime, clocktime(), memory_order_relaxed);
+	atomic_init(&T->clocktime, clocktime());
 	cur_ticktime = ticktime();
-	atomic_store_explicit(&T->ticktime, cur_ticktime, memory_order_relaxed);
+	atomic_init(&T->ticktime, cur_ticktime);
 	T->expire = cur_ticktime;
-	atomic_store_explicit(&T->monotonic, 0, memory_order_relaxed);
+	atomic_init(&T->monotonic, 0);
+	atomic_init(&T->expired_count, 0);
+	atomic_init(&T->active_count, 0);
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
 	MSG_TYPE_EXPIRE = message_new_type();

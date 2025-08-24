@@ -411,7 +411,9 @@ static void pool_init(struct socket_pool *p)
 	p->free_tail = &p->free_head;
 	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
 		struct socket *s = &p->slots[i];
-
+		atomic_init(&s->sid, -1);
+		atomic_init(&s->state, 0);
+		atomic_init(&s->wlbytes, 0);
 		socket_default(s);
 #ifdef SILLY_TEST
 		s->version = UINT16_MAX;
@@ -1833,7 +1835,11 @@ int silly_socket_init()
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0))
 		goto end;
-	atomic_store_explicit(&ss->ctrlcount, 0, memory_order_relaxed);
+	atomic_init(&ss->ctrlcount, 0);
+	atomic_init(&ss->netstat.connecting, 0);
+	atomic_init(&ss->netstat.tcpclient, 0);
+	atomic_init(&ss->netstat.recvsize, 0);
+	atomic_init(&ss->netstat.sendsize, 0);
 	ss->eventindex = 0;
 	ss->eventcount = 0;
 	resize_cmdbuf(ss, CMDBUF_SIZE);
