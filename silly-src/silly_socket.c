@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 
 #include "silly.h"
+#include "sockaddr.h"
 #include "message.h"
 #include "compiler.h"
 #include "errnoex.h"
@@ -149,18 +150,6 @@ static const char *protocol_name[] = {
 
 static const char *stype_name[] = {
 	"RESERVE", "LISTEN", "CONNECTION", "CTRL",
-};
-
-//replace 'sockaddr_storage' with this struct,
-//because we only care about 'ipv6' and 'ipv4'
-#define SA_LEN(sa)                                                \
-	((sa).sa_family == AF_INET ? sizeof(struct sockaddr_in) : \
-					 sizeof(struct sockaddr_in6))
-
-union sockaddr_full {
-	struct sockaddr sa;
-	struct sockaddr_in v4;
-	struct sockaddr_in6 v6;
 };
 
 struct wlist {
@@ -350,7 +339,7 @@ static inline void wlist_appendudp(struct socket *s, uint8_t *buf, size_t size,
 {
 	int addrsz;
 	struct wlist *w;
-	addrsz = addr ? SA_LEN(addr->sa) : 0;
+	addrsz = sockaddr_len(addr);
 	w = (struct wlist *)silly_malloc(sizeof(*w) + addrsz);
 	w->size = size;
 	w->buf = buf;
@@ -549,7 +538,7 @@ static int udpdata_unpack(lua_State *L, struct silly_message *m)
 	lua_pushinteger(L, md->sid);
 	lua_pushlightuserdata(L, md->ptr);
 	lua_pushinteger(L, md->size);
-	lua_pushlstring(L, (char *)&md->addr, SA_LEN(md->addr.sa));
+	lua_pushlstring(L, (char *)&md->addr, sockaddr_len(&md->addr));
 	md->ptr = NULL;
 	return 4;
 }
@@ -892,7 +881,7 @@ static ssize_t sendudp(fd_t fd, uint8_t *data, size_t sz,
 	const struct sockaddr *sa;
 	if (addr != NULL) {
 		sa = &addr->sa;
-		sa_len = SA_LEN(*sa);
+		sa_len = sockaddr_len(addr);
 	} else {
 		sa = NULL;
 		sa_len = 0;
@@ -981,9 +970,7 @@ static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *
 
 int silly_socket_salen(const void *data)
 {
-	union sockaddr_full *addr;
-	addr = (union sockaddr_full *)data;
-	return SA_LEN(addr->sa);
+	return sockaddr_len((union sockaddr_full *)data);
 }
 
 int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN])
@@ -1322,7 +1309,7 @@ static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op, struc
 	keepalive(fd);
 	nodelay(fd);
 	addr = &op->addr;
-	cret = connect(fd, &addr->sa, SA_LEN(addr->sa));
+	cret = connect(fd, &addr->sa, sockaddr_len(addr));
 	if (unlikely(cret == -1 && errno != CONNECT_IN_PROGRESS)) { //error
 		char namebuf[SOCKET_NAMELEN];
 		const char *fmt = "[socket] connect %s,errno:%d\n";
