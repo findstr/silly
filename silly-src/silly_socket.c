@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 
 #include "silly.h"
+#include "message.h"
 #include "compiler.h"
 #include "errnoex.h"
 #include "silly_log.h"
@@ -285,6 +286,47 @@ struct op_pkt {
 	};
 };
 
+struct message_connect {
+	struct silly_message hdr;
+	socket_id_t sid;
+	int err;
+};
+
+struct message_listen {
+	struct silly_message hdr;
+	socket_id_t sid;
+	int err;
+};
+
+struct message_accept {
+	struct silly_message hdr;
+	socket_id_t sid;
+	socket_id_t listenid;
+	uint8_t *addr;
+};
+
+struct message_tcpdata {
+	struct silly_message hdr;
+	socket_id_t sid;
+	size_t size;
+	uint8_t *ptr;
+};
+
+struct message_udpdata {
+	struct silly_message hdr;
+	socket_id_t sid;
+	size_t size;
+	uint8_t *ptr;
+	union sockaddr_full addr;
+};
+
+struct message_close {
+	struct silly_message hdr;
+	socket_id_t sid;
+	int err;
+};
+
+struct silly_socket_msgtype MSG_TYPE = {0};
 static struct silly_socket *SSOCKET;
 
 static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
@@ -369,6 +411,7 @@ static void pool_init(struct socket_pool *p)
 	p->free_tail = &p->free_head;
 	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
 		struct socket *s = &p->slots[i];
+
 		socket_default(s);
 #ifdef SILLY_TEST
 		s->version = UINT16_MAX;
@@ -422,112 +465,195 @@ static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
 	return s;
 }
 
-static int accept_unpack(lua_State *L, struct silly_message *msg)
+static int ntop(const union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
 {
-	struct silly_message_socket *ms = tosocket(msg);
-	int addrlen = *ms->u.accept.addr;
-	char *addr = (char *)ms->u.accept.addr+ 1;
-	lua_pushinteger(L, ms->sid);
-	lua_pushinteger(L, ms->u.accept.listenid);
+	uint16_t port;
+	int namelen, family;
+	char *buf = namebuf;
+	family = addr->sa.sa_family;
+	if (family == AF_INET) {
+		port = addr->v4.sin_port;
+		inet_ntop(family, &addr->v4.sin_addr, buf, INET_ADDRSTRLEN);
+		namelen = strlen(buf);
+	} else {
+		assert(family == AF_INET6);
+		port = addr->v6.sin6_port;
+		inet_ntop(family, &addr->v6.sin6_addr, buf, INET6_ADDRSTRLEN);
+		namelen = strlen(buf);
+	}
+	port = ntohs(port);
+	namelen +=
+		snprintf(&buf[namelen], SOCKET_NAMELEN - namelen, ":%d", port);
+	return namelen;
+}
+
+static int accept_unpack(lua_State *L, struct silly_message *m)
+{
+	struct message_accept *ma = container_of(m, struct message_accept, hdr);
+	int addrlen = *ma->addr;
+	char *addr = (char *)ma->addr+ 1;
+	lua_pushinteger(L, ma->sid);
+	lua_pushinteger(L, ma->listenid);
 	lua_pushlstring(L, addr, addrlen);
 	return 3;
 }
 
-static int listen_unpack(lua_State *L, struct silly_message *msg)
+static int listen_unpack(lua_State *L, struct silly_message *m)
 {
-	struct silly_message_socket *ms = tosocket(msg);
-	lua_pushinteger(L, ms->sid);
-	silly_worker_pusherror(L, 0, ms->u.listen.err);
+	struct message_listen *ml = container_of(m, struct message_listen, hdr);
+	lua_pushinteger(L, ml->sid);
+	silly_worker_pusherror(L, 0, ml->err);
 	return 2;
 }
 
-static int connect_unpack(lua_State *L, struct silly_message *msg)
+static int connect_unpack(lua_State *L, struct silly_message *m)
 {
-	struct silly_message_socket *ms = tosocket(msg);
-	lua_pushinteger(L, ms->sid);
-	silly_worker_pusherror(L, 0, ms->u.connect.err);
+	struct message_connect *mc = container_of(m, struct message_connect, hdr);
+	lua_pushinteger(L, mc->sid);
+	silly_worker_pusherror(L, 0, mc->err);
 	return 2;
 }
 
-static int close_unpack(lua_State *L, struct silly_message *msg)
+static int close_unpack(lua_State *L, struct silly_message *m)
 {
-	struct silly_message_socket *ms = tosocket(msg);
-	lua_pushinteger(L, ms->sid);
-	silly_worker_pusherror(L, 0, ms->u.close.err);
+	struct message_close *mc = container_of(m, struct message_close, hdr);
+	lua_pushinteger(L, mc->sid);
+	silly_worker_pusherror(L, 0, mc->err);
 	return 2;
 }
 
-static int data_unpack(lua_State *L, struct silly_message *msg)
+static int tcpdata_unpack(lua_State *L, struct silly_message *m)
 {
-	int ret = 2;
-	struct silly_message_socket *ms = tosocket(msg);
-	lua_pushinteger(L, ms->sid);
-	lua_pushlightuserdata(L, msg);
-	if (ms->type == SILLY_SOCKET_UDP) {
-		char *addr = (char *)ms->u.data.ptr + ms->u.data.size;
-		int addrlen = silly_socket_salen(addr);
-		lua_pushlstring(L, addr, addrlen);
-		ret = 3;
+	struct message_tcpdata *md = container_of(m, struct message_tcpdata, hdr);
+	lua_pushinteger(L, md->sid);
+	lua_pushlightuserdata(L, md->ptr);
+	lua_pushinteger(L, md->size);
+	md->ptr = NULL;
+	return 3;
+}
+
+static void tcpdata_free(void *m)
+{
+	struct message_tcpdata *md = container_of(m, struct message_tcpdata, hdr);
+	if (unlikely(md->ptr != NULL)) {
+		silly_free(md->ptr);
 	}
-	return ret;
+	silly_free(md);
+}
+
+static int udpdata_unpack(lua_State *L, struct silly_message *m)
+{
+	struct message_udpdata *md = container_of(m, struct message_udpdata, hdr);
+	lua_pushinteger(L, md->sid);
+	lua_pushlightuserdata(L, md->ptr);
+	lua_pushinteger(L, md->size);
+	lua_pushlstring(L, (char *)&md->addr, SA_LEN(md->addr.sa));
+	md->ptr = NULL;
+	return 4;
+}
+
+static void udpdata_free(void *m)
+{
+	struct message_udpdata *md = container_of(m, struct message_udpdata, hdr);
+	if (unlikely(md->ptr != NULL)) {
+		silly_free(md->ptr);
+	}
+	silly_free(md);
+}
+
+static void report_accept(struct silly_socket *ss, struct socket *listen,
+	struct socket *s, const union sockaddr_full *addr)
+{
+	(void)ss;
+	char namebuf[SOCKET_NAMELEN];
+	struct message_accept *ma;
+	int namelen = ntop(addr, namebuf);
+	ma = silly_malloc(sizeof(*ma) + namelen + 1);
+	ma->hdr.type = MSG_TYPE.accept;
+	ma->hdr.unpack = accept_unpack;
+	ma->hdr.free = silly_free;
+	ma->sid = s->sid;
+	ma->listenid = listen->sid;
+	ma->addr = (uint8_t *)(ma + 1);
+	*ma->addr = namelen;
+	memcpy(ma->addr + 1, namebuf, namelen);
+	silly_worker_push(&ma->hdr);
 }
 
 static void report_listen(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
-	struct silly_message_socket *sc;
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_LISTEN;
-	sc->unpack = listen_unpack;
-	sc->sid = s->sid;
-	sc->u.listen.err = err;
-	silly_worker_push(tocommon(sc));
+	struct message_listen *ml;
+	ml = silly_malloc(sizeof(*ml));
+	ml->hdr.type = MSG_TYPE.listen;
+	ml->hdr.unpack = listen_unpack;
+	ml->hdr.free = silly_free;
+	ml->sid = s->sid;
+	ml->err = err;
+	silly_worker_push(&ml->hdr);
 	return;
 }
 
 static void report_close(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
-	struct silly_message_socket *sc;
+	struct message_close *mc;
 	if (is_muteclose(s))
 		return;
 	set_muteclose(s); // Ensure the close event is emitted only once
 	assert(s->type == SOCKET_TCP_CONNECTION);
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_CLOSE;
-	sc->unpack = close_unpack;
-	sc->sid = s->sid;
-	sc->u.close.err = err;
-	silly_worker_push(tocommon(sc));
+	mc = silly_malloc(sizeof(*mc));
+	mc->hdr.type = MSG_TYPE.close;
+	mc->hdr.unpack = close_unpack;
+	mc->hdr.free = silly_free;
+	mc->sid = s->sid;
+	mc->err = err;
+	silly_worker_push(&mc->hdr);
 	return;
 }
 
-static void report_data(struct silly_socket *ss, struct socket *s, int dtype,
-			uint8_t *data, size_t sz)
+static void report_tcpdata(struct silly_socket *ss, struct socket *s, uint8_t *data, size_t sz)
 {
 	(void)ss;
-	assert(socket_type(s) == SOCKET_CONNECTION || s->type == SOCKET_UDP_LISTEN);
-	struct silly_message_socket *sd = silly_malloc(sizeof(*sd));
-	assert(dtype == SILLY_SOCKET_DATA || dtype == SILLY_SOCKET_UDP);
-	sd->type = dtype;
-	sd->unpack = data_unpack;
-	sd->sid = s->sid;
-	sd->u.data.size = sz;
-	sd->u.data.ptr = data;
-	silly_worker_push(tocommon(sd));
+	assert(s->type == SOCKET_TCP_CONNECTION);
+	struct message_tcpdata *md = silly_malloc(sizeof(*md));
+	md->hdr.type = MSG_TYPE.tcpdata;
+	md->hdr.unpack = tcpdata_unpack;
+	md->hdr.free = tcpdata_free;
+	md->sid = s->sid;
+	md->size = sz;
+	md->ptr = data;
+	silly_worker_push(&md->hdr);
+	return;
+};
+
+static void report_udpdata(struct silly_socket *ss, struct socket *s,
+	uint8_t *data, size_t sz, const union sockaddr_full *addr)
+{
+	(void)ss;
+	assert(s->type == SOCKET_UDP_CONNECTION || s->type == SOCKET_UDP_LISTEN);
+	struct message_udpdata *md = silly_malloc(sizeof(*md));
+	md->hdr.type = MSG_TYPE.udpdata;
+	md->hdr.unpack = udpdata_unpack;
+	md->hdr.free = udpdata_free;
+	md->sid = s->sid;
+	md->size = sz;
+	md->ptr = data;
+	md->addr = *addr;
+	silly_worker_push(&md->hdr);
 	return;
 };
 
 static void report_connect(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
-	struct silly_message_socket *sc;
-	sc = silly_malloc(sizeof(*sc));
-	sc->type = SILLY_SOCKET_CONNECT;
-	sc->unpack = connect_unpack;
-	sc->sid = s->sid;
-	sc->u.connect.err = err;
-	silly_worker_push(tocommon(sc));
+	struct message_connect *mc = silly_malloc(sizeof(*mc));
+	mc->hdr.type = MSG_TYPE.connect;
+	mc->hdr.unpack = connect_unpack;
+	mc->hdr.free = silly_free;
+	mc->sid = s->sid;
+	mc->err = err;
+	silly_worker_push(&mc->hdr);
 	return;
 }
 
@@ -595,28 +721,6 @@ static void keepalive(fd_t fd)
 	silly_log_error("[socket] keepalive error:%s\n", strerror(errno));
 }
 
-static int ntop(union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
-{
-	uint16_t port;
-	int namelen, family;
-	char *buf = namebuf;
-	family = addr->sa.sa_family;
-	if (family == AF_INET) {
-		port = addr->v4.sin_port;
-		inet_ntop(family, &addr->v4.sin_addr, buf, INET_ADDRSTRLEN);
-		namelen = strlen(buf);
-	} else {
-		assert(family == AF_INET6);
-		port = addr->v6.sin6_port;
-		inet_ntop(family, &addr->v6.sin6_addr, buf, INET6_ADDRSTRLEN);
-		namelen = strlen(buf);
-	}
-	port = ntohs(port);
-	namelen +=
-		snprintf(&buf[namelen], SOCKET_NAMELEN - namelen, ":%d", port);
-	return namelen;
-}
-
 static void pipe_blockread(fd_t fd, void *pk, int n)
 {
 	for (;;) {
@@ -656,9 +760,7 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 	int err, fd;
 	struct socket *s;
 	union sockaddr_full addr;
-	struct silly_message_socket *sa;
 	socklen_t len = sizeof(addr);
-	char namebuf[SOCKET_NAMELEN];
 #ifndef USE_ACCEPT4
 	fd = accept(listen->fd, &addr.sa, &len);
 #else
@@ -691,16 +793,7 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 		free_socket(ss, s);
 		return;
 	}
-	int namelen = ntop(&addr, namebuf);
-	sa = silly_malloc(sizeof(*sa) + namelen + 1);
-	sa->type = SILLY_SOCKET_ACCEPT;
-	sa->unpack = accept_unpack;
-	sa->sid = s->sid;
-	sa->u.accept.listenid = listen->sid;
-	sa->u.accept.addr = (uint8_t *)(sa + 1);
-	*sa->u.accept.addr = namelen;
-	memcpy(sa->u.accept.addr + 1, namebuf, namelen);
-	silly_worker_push(tocommon(sa));
+	report_accept(ss, listen, s, &addr);
 	atomic_add(&ss->netstat.tcpclient, 1);
 	return;
 }
@@ -847,7 +940,7 @@ static enum read_result forward_msg_tcp(struct silly_socket *ss, struct socket *
 		}
 		uint8_t *buf = (uint8_t *)silly_malloc(len);
 		memcpy(buf, ss->readbuf, len);
-		report_data(ss, s, SILLY_SOCKET_DATA, buf, len);
+		report_tcpdata(ss, s, buf, len);
 		atomic_add(&ss->netstat.recvsize, len);
 		return len >= (ssize_t)sizeof(ss->readbuf) ? READ_SOME: READ_ALL;
 	}
@@ -856,7 +949,7 @@ static enum read_result forward_msg_tcp(struct silly_socket *ss, struct socket *
 static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *s)
 {
 	uint8_t *data;
-	ssize_t n, sa_len;
+	ssize_t n;
 	union sockaddr_full addr;
 	uint8_t udpbuf[MAX_UDP_PACKET];
 	socklen_t len = sizeof(addr);
@@ -876,13 +969,10 @@ static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *
 				return READ_ERROR;
 			}
 		}
-		sa_len = SA_LEN(addr.sa);
-		data = (uint8_t *)silly_malloc(n + sa_len);
+		data = (uint8_t *)silly_malloc(n);
 		memcpy(data, udpbuf, n);
-		memcpy(data + n, &addr, sa_len);
-		report_data(ss, s, SILLY_SOCKET_UDP, data, n);
+		report_udpdata(ss, s, data, n, &addr);
 		atomic_add(&ss->netstat.recvsize, n);
-
 		return READ_SOME;
 	}
 }
@@ -1711,6 +1801,12 @@ static void resize_eventbuf(struct silly_socket *ss, size_t sz)
 	return;
 }
 
+const struct silly_socket_msgtype *silly_socket_msgtypes()
+{
+	assert(MSG_TYPE.accept != 0);  // ensure silly_socket_init has been called
+	return &MSG_TYPE;
+}
+
 int silly_socket_init()
 {
 	int err;
@@ -1743,6 +1839,12 @@ int silly_socket_init()
 	resize_cmdbuf(ss, CMDBUF_SIZE);
 	resize_eventbuf(ss, EVENT_SIZE);
 	SSOCKET = ss;
+	MSG_TYPE.accept = message_new_type();
+	MSG_TYPE.connect = message_new_type();
+	MSG_TYPE.listen = message_new_type();
+	MSG_TYPE.tcpdata = message_new_type();
+	MSG_TYPE.udpdata = message_new_type();
+	MSG_TYPE.close = message_new_type();
 	return 0;
 end:
 	if (s)

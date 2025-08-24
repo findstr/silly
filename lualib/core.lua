@@ -33,7 +33,7 @@ core.genid = c.genid
 core.gitsha1 = c.gitsha1()
 core.version = c.version()
 core.tostring = c.tostring
-
+core.register = c.register
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
 local task_status = setmetatable({}, weakmt)

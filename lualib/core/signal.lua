@@ -1,7 +1,6 @@
-local c = require "core.c"
 local core = require "core"
+local c = require "core.signal.c"
 local logger = require "core.logger.c"
-local message = require "core.message"
 
 local assert = assert
 local task_create = core._task_create
@@ -31,7 +30,7 @@ local function signal(sig, f)
 end
 
 
-c.register(message.SIGNAL, function(signum)
+core.register(c.FIRE, function(signum)
 	local fn = signal_dispatch[signum]
 	if fn then
 		local t = task_create(fn)

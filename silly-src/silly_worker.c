@@ -10,6 +10,7 @@
 #include "compiler.h"
 #include "repl.h"
 #include "errnoex.h"
+#include "message.h"
 #include "silly_log.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -51,6 +52,7 @@ static inline void callback(struct silly_message *sm)
 	lua_State *L = W->L;
 	type = lua_geti(L, STK_CALLBACK_TABLE, sm->type);
 	if (unlikely(type != LUA_TFUNCTION)) {
+		sm->free(sm);
 		silly_log_error("[worker] callback need function "
 				"but got:%s\n",
 				lua_typename(L, type));
@@ -66,6 +68,7 @@ static inline void callback(struct silly_message *sm)
 	}
 	lua_pushvalue(W->L, STK_DISPATCH_WAKEUP);
 	lua_call(W->L, 0, 0);
+	sm->free(sm);
 }
 
 void silly_worker_push(struct silly_message *msg)
@@ -95,10 +98,9 @@ void silly_worker_dispatch()
 	do {
 		do {
 			atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
+			tmp = msg->next;
 			callback(msg);
-			tmp = msg;
-			msg = msg->next;
-			silly_message_free(tmp);
+			msg = tmp;
 		} while (msg);
 		msg = silly_queue_pop(W->queue);
 	} while (msg);
@@ -308,6 +310,7 @@ void silly_worker_init()
 	memset(W, 0, sizeof(*W));
 	W->maxmsg = WARNING_THRESHOLD;
 	W->queue = silly_queue_create();
+	atomic_init(&W->process_id, 0);
 	return;
 }
 

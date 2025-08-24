@@ -13,6 +13,7 @@
 
 #include "silly.h"
 #include "compiler.h"
+#include "message.h"
 #include "spinlock.h"
 #include "silly_log.h"
 #include "silly_malloc.h"
@@ -86,6 +87,8 @@ struct task_message {
 	struct worker *w;
 };
 
+static int MSG_TYPE_HIVE_DONE = 0;
+
 static void copy_value_r(lua_State *L_from, lua_State *L_to, int index, int depth)
 {
 	if (depth > 100)
@@ -143,19 +146,19 @@ static inline void copy_value(lua_State *from, lua_State *to, int index)
 static int msg_unpack(lua_State *L, struct silly_message *m)
 {
 	int n;
-	struct task_message *msg = (struct task_message *)m;
-	lua_pushinteger(L, msg->w->task_id);
-	lua_pushboolean(L, msg->w->pcall_status == LUA_OK);
-	if (msg->w->pcall_status != LUA_OK) {
+	struct task_message *tm = container_of(m, struct task_message, hdr);
+	lua_pushinteger(L, tm->w->task_id);
+	lua_pushboolean(L, tm->w->pcall_status == LUA_OK);
+	if (tm->w->pcall_status != LUA_OK) {
 		n = 1;
-		copy_value(msg->w->L, L, -1);
+		copy_value(tm->w->L, L, -1);
 	} else {
-		n = lua_gettop(msg->w->L);
-		copy_values(msg->w->L, L, 2, n);
+		n = lua_gettop(tm->w->L);
+		copy_values(tm->w->L, L, 2, n);
 		n = n - 1;
 	}
-	lua_settop(msg->w->L, 1);
-	msg->w->task_id = 0;
+	lua_settop(tm->w->L, 1);
+	tm->w->task_id = 0;
 	return n + 2;
 }
 
@@ -283,8 +286,9 @@ static void *thread_func(void *arg)
 		w->pcall_status = lua_pcall(w->L, lua_gettop(w->L) - 2, LUA_MULTRET, 0);
 		sub(&h->thread_busy, 1);
 		msg = (struct task_message *)MALLOC(sizeof(*msg));
-		msg->hdr.type = SILLY_HIVE_DONE;
+		msg->hdr.type = MSG_TYPE_HIVE_DONE;
 		msg->hdr.unpack = msg_unpack;
+		msg->hdr.free = silly_free;
 		msg->w = w;
 		silly_worker_push(&msg->hdr);
 	}
@@ -472,8 +476,11 @@ int luaopen_core_hive_c(lua_State *L) {
 		{"threads", lthreads},
 		{NULL, NULL}
 	};
+	MSG_TYPE_HIVE_DONE = message_new_type();
 	luaL_newlibtable(L, tbl);
 	new_hive(L);
 	luaL_setfuncs(L, tbl, 1);
+	lua_pushinteger(L, MSG_TYPE_HIVE_DONE);
+	lua_setfield(L, -2, "DONE");
 	return 1;
 }

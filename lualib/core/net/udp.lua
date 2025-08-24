@@ -1,4 +1,3 @@
-local core = require "core"
 local net = require "core.net"
 local ns = require "core.netstream"
 local assert = assert
@@ -10,8 +9,8 @@ local socket = {}
 ---@param cb async fun(data:string|nil, addr:string|nil)
 local function udp_callback(cb)
 	local e = {
-		data = function(fd, msg, addr)
-			local data = ns.todata(msg)
+		data = function(fd, ptr, size, addr)
+			local data = ns.todata(ptr, size)
 			cb(data, addr)
 		end,
 		close = function(fd, errno)

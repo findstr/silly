@@ -163,8 +163,8 @@ local function init_event(self, conf)
 		tcp_close(fd)
 	end
 
-	function EVENT.data(fd, message)
-		np.message(ctx, message)
+	function EVENT.data(fd, ptr, size)
+		np.push(ctx, fd, ptr, size)
 		process()
 	end
 	return EVENT

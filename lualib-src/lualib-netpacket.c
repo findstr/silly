@@ -359,7 +359,6 @@ static int lclear(lua_State *L)
 {
 	socket_id_t sid = luaL_checkinteger(L, 2);
 	clear_incomplete(L, sid);
-
 	return 0;
 }
 
@@ -389,25 +388,14 @@ static int ldrop(lua_State *L)
 //	netpacket
 //	type
 //	fd
-static int lmessage(lua_State *L)
+static int lpush(lua_State *L)
 {
-	struct silly_message_socket *sm = tosocket(lua_touserdata(L, 2));
-	lua_settop(L, 1);
-	switch (sm->type) {
-	case SILLY_SOCKET_DATA:
-		push(L, sm->sid, sm->u.data.ptr, sm->u.data.size);
-		return 0;
-	case SILLY_SOCKET_CLOSE:
-		clear_incomplete(L, sm->sid);
-		return 0;
-	case SILLY_SOCKET_ACCEPT:
-	case SILLY_SOCKET_CONNECT:
-		return 0;
-	default:
-		silly_log_error("lmessage unspport:%d\n", sm->type);
-		assert(!"never come here");
-		return 0;
-	}
+	socket_id_t fd = luaL_checkinteger(L, 2);
+	uint8_t *ptr = lua_touserdata(L, 3);
+	int size = luaL_checkinteger(L, 4);
+	push(L, fd, ptr, size);
+	silly_free(ptr);
+	return 0;
 }
 
 static int packet_gc(lua_State *L)
@@ -438,7 +426,7 @@ int luaopen_core_netpacket(lua_State *L)
 		{ "clear",    lclear    },
 		{ "drop",     ldrop     },
 		{ "tostring", ltostring },
-		{ "message",  lmessage  },
+		{ "push",     lpush     },
 		{ NULL,       NULL      },
 	};
 	luaL_checkversion(L);

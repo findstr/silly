@@ -21,4 +21,8 @@
 #define unlikely(x) (x)
 #endif
 
+#include <stddef.h> // For offsetof
+#define container_of(ptr, type, member) \
+	((type *)((char *)(ptr) - offsetof(type, member)))
+
 #endif

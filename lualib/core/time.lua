@@ -1,7 +1,5 @@
-local c = require "core.c"
-local tc = require "core.time.c"
 local core = require "core"
-local message = require "core.message"
+local c = require "core.time.c"
 
 local assert = assert
 local type = type
@@ -17,8 +15,8 @@ local timer_user_data = {}
 
 local M = {}
 
-M.now = tc.now
-M.monotonic = tc.monotonic
+M.now = c.now
+M.monotonic = c.monotonic
 
 local function nop(_) end
 
@@ -62,7 +60,7 @@ function M.cancel(session)
 end
 
 
-c.register(message.TIMER_EXPIRE, function(session, userid)
+core.register(c.EXPIRE, function(session, userid)
 	local t = sleep_session_task[session]
 	if t then
 		sleep_session_task[session] = nil

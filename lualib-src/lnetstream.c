@@ -379,12 +379,11 @@ static inline void read_adjust(struct socket_buffer *sb)
 //@return
 //	socket buffer
 
-static int push(lua_State *L, socket_id_t sid, char *data, int sz)
+static int push(lua_State *L, char *data, int sz)
 {
 	struct node *new;
 	struct socket_buffer *sb;
 	sb = (struct socket_buffer *)luaL_checkudata(L, SB, METANAME);
-	assert(sb->sid == sid);
 	new = nb_append(&sb->nb);
 	new->size = sz;
 	new->buff = data;
@@ -509,54 +508,29 @@ static int llimit(lua_State *L)
 
 static int lpush(lua_State *L)
 {
-	int size;
-	char *str;
-	struct silly_message_socket *msg = tosocket(lua_touserdata(L, SB + 1));
-	switch (msg->type) {
-	case SILLY_SOCKET_DATA:
-		str = (char *)msg->u.data.ptr;
-		//prevent silly_work free the msg->data
-		//it will be exist until it be read out
-		msg->u.data.ptr = NULL;
-		size = push(L, msg->sid, str, msg->u.data.size);
-		break;
-	default:
-		size = 0;
-		silly_log_error("lmessage unsupport:%d\n", msg->type);
-		luaL_error(L, "lmessage unsupport");
-		break;
-	}
-	lua_pushinteger(L, size);
+	char *str = lua_touserdata(L, SB + 1);
+	int size = luaL_checkinteger(L, SB + 2);
+	int total_size = push(L, str, size);
+	lua_pushinteger(L, total_size);
 	return 1;
 }
 
 static int ltodata(lua_State *L)
 {
-	uint8_t *data;
-	size_t datasz;
-	struct silly_message *sm = (struct silly_message *)lua_touserdata(L, 1);
-	switch (sm->type) {
-	case SILLY_SOCKET_UDP:
-	case SILLY_SOCKET_DATA:
-		data = tosocket(sm)->u.data.ptr;
-		datasz = tosocket(sm)->u.data.size;
-		break;
-	default:
-		luaL_error(L, "tomsgstring unsupport message type");
-		return 0;
-	}
+	uint8_t *data = lua_touserdata(L, 1);
+	size_t datasz = luaL_checkinteger(L, 2);
 	lua_pushlstring(L, (char *)data, datasz);
+	silly_free(data);
 	return 1;
 }
 
 static int tpush(lua_State *L)
 {
 	size_t sz;
-	socket_id_t fd = luaL_checkinteger(L, 2);
-	const char *src = luaL_checklstring(L, 3, &sz);
+	const char *src = luaL_checklstring(L, 2, &sz);
 	void *dat = silly_malloc(sz);
 	memcpy(dat, src, sz);
-	push(L, fd, dat, sz);
+	push(L, dat, sz);
 	return 0;
 }
 

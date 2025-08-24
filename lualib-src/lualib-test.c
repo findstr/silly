@@ -5,45 +5,20 @@
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
-#include "platform.h"
 
+#include "platform.h"
 #include "silly.h"
 
-static int lmsggc(lua_State *L)
-{
-	struct silly_message_socket *sm;
-	sm = tosocket(luaL_checkudata(L, 1, "sillymessage"));
-	int type = sm->type;
-	if (type == SILLY_SOCKET_DATA || type == SILLY_SOCKET_UDP)
-		silly_free(tosocket(sm)->u.data.ptr);
-	return 0;
-}
-
-static struct silly_message *newmsg(lua_State *L, size_t sz)
-{
-	struct silly_message *sm = lua_newuserdatauv(L, sz, 0);
-	if (luaL_newmetatable(L, "sillymessage")) {
-		lua_pushcfunction(L, lmsggc);
-		lua_setfield(L, -2, "__gc");
-	}
-	lua_setmetatable(L, -2);
-	return sm;
-}
-
-static int lnewdatamsg(lua_State *L)
+static int lnew(lua_State *L)
 {
 	size_t sz;
-	struct silly_message_socket *sm;
-	socket_id_t sid = luaL_checkinteger(L, 1);
-	const char *buff = luaL_checklstring(L, 2, &sz);
-	sm = tosocket(newmsg(L, sizeof(*sm)));
-	sm->type = SILLY_SOCKET_DATA;
-	sm->sid = sid;
-	sm->u.data.size = sz;
-	sm->u.data.ptr = silly_malloc(sz);
-	memcpy(sm->u.data.ptr, buff, sz);
-	return 1;
-};
+	const char *src = luaL_checklstring(L, 1, &sz);
+	void *dat = silly_malloc(sz);
+	memcpy(dat, src, sz);
+	lua_pushlightuserdata(L, dat);
+	lua_pushinteger(L, sz);
+	return 2;
+}
 
 static int llisten(lua_State *L)
 {
@@ -252,7 +227,7 @@ lclose(lua_State *L)
 int luaopen_test_aux_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "newdatamsg", lnewdatamsg },
+		{ "new", lnew },
 		{ "listen", llisten },
 		{ "accept", laccept },
 		{ "shutdown", lshutdown },

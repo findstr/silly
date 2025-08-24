@@ -560,20 +560,13 @@ static int ltls_handshake(lua_State *L)
 	return 2;
 }
 
-static int ltls_message(lua_State *L)
+static int ltls_push(lua_State *L)
 {
-	struct tls *tls;
-	struct silly_message_socket *msg;
-	tls = luaL_checkudata(L, 1, "TLS");
-	msg = tosocket(lua_touserdata(L, 2));
-	switch (msg->type) {
-	case SILLY_SOCKET_DATA:
-		BIO_write(tls->in_bio, msg->u.data.ptr, msg->u.data.size);
-		break;
-	default:
-		luaL_error(L, "TLS unsupport msg type:%d", msg->type);
-		break;
-	}
+	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	char *str = lua_touserdata(L, 2);
+	int size = luaL_checkinteger(L, 3);
+	BIO_write(tls->in_bio, str, size);
+	silly_free(str);
 	return 0;
 }
 
@@ -625,7 +618,7 @@ int luaopen_core_tls_tls(lua_State *L)
 		{ "readall",   ltls_readall   },
 		{ "readline",  ltls_readline  },
 		{ "handshake", ltls_handshake },
-		{ "message",   ltls_message   },
+		{ "push",      ltls_push      },
 #endif
 		{ NULL,        NULL           },
 	};

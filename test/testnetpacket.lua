@@ -28,8 +28,8 @@ local function buildpacket()
 end
 
 local function justpush(sid, pk)
-	local msg = testaux.newdatamsg(sid, pk)
-	np.message(BUFF, msg)
+	local ptr, size = testaux.new(pk)
+	np.push(BUFF, sid, ptr, size)
 end
 
 local function randompush(sid, pk)

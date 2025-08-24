@@ -1,9 +1,7 @@
-local c = require "core.c"
 local core = require "core"
 local time = require "core.time"
-local hc = require "core.hive.c"
+local c = require "core.hive.c"
 local mutex = require "core.sync.mutex"
-local message = require "core.message"
 
 local error = error
 local pack = table.pack
@@ -19,7 +17,7 @@ local lock = mutex.new()
 
 local prune_timer
 prune_timer = function()
-	hc.prune()
+	c.prune()
 	time.after(1000, prune_timer)
 end
 prune_timer()
@@ -27,20 +25,20 @@ prune_timer()
 ---@class core.hive.worker
 
 ---@type fun(min:integer, max:integer)
-M.limit = hc.limit
+M.limit = c.limit
 ---@type fun():integer
-M.threads = hc.threads
+M.threads = c.threads
 ---@type fun(code:string, ...):core.hive.worker
-M.spawn = hc.spawn
+M.spawn = c.spawn
 ---@type fun()
-M.prune = hc.prune
+M.prune = c.prune
 
 ---@param worker core.hive.worker
 ---@param ... any
 function M.invoke(worker, ...)
 	local l<close> = lock:lock(worker)
 	local t = task_running()
-	local id = hc.push(worker, ...)
+	local id = c.push(worker, ...)
 	working[id] = t
 	local ok, dat = task_yield("HIVE")
 	if not ok then
@@ -50,7 +48,7 @@ function M.invoke(worker, ...)
 	return unpack(dat)
 end
 
-c.register(message.HIVE_DONE, function(id, ok, ...)
+core.register(c.DONE, function(id, ok, ...)
 	local t = working[id]
 	task_resume(t, ok, pack(...))
 end)

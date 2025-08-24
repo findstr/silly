@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "silly.h"
+#include "message.h"
 #include "spinlock.h"
 #include "silly_malloc.h"
 #include "silly_queue.h"
@@ -40,7 +41,7 @@ void silly_queue_free(struct silly_queue *q)
 	while (next) {
 		tmp = next;
 		next = next->next;
-		silly_message_free(tmp);
+		tmp->free(tmp);
 	}
 	unlock(q);
 	spinlock_destroy(&q->lock);

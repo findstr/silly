@@ -81,13 +81,13 @@ close = function(fd, errno)
 	end
 end,
 
-data = function(fd, message)
+data = function(fd, ptr, chunk_size)
 	local s = socket_pool[fd]
 	if not s then
 		return
 	end
 	local sbuffer = s.sbuffer
-	local size = ns.push(sbuffer, message)
+	local size = ns.push(sbuffer, ptr, chunk_size)
 	local delim = s.delim
 	local typ = type(delim)
 	if typ == "number" then

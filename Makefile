@@ -84,6 +84,7 @@ SRC_FILE = \
       silly_log.c \
       silly_trace.c \
       silly_monitor.c \
+      message.c \
       force_link.c\
 
 # Combine common and platform-specific sources
@@ -105,6 +106,8 @@ LIB_SRC = lualib-core.c \
 	lencoding.c \
 	lhive.c \
 	lhttp.c \
+	lnet.c \
+	lsignal.c \
 	mysql/lmysql.c \
 	lcompress.c
 

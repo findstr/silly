@@ -1,7 +1,6 @@
-local c = require "core.c"
 local core = require "core"
 local logger = require "core.logger.c"
-local message = require "core.message"
+local c = require "core.net.c"
 
 local assert = assert
 local smatch = string.match
@@ -145,7 +144,7 @@ function M.socket_close(fd)
 end
 
 --the message handler can't be yield
-c.register(message.SOCKET_ACCEPT, function(fd, listenid, addr)
+core.register(c.ACCEPT, function(fd, listenid, addr)
 	assert(socket_pending[fd] == nil)
 	local cb = accept_callback[listenid]
 	assert(cb, listenid)
@@ -158,7 +157,7 @@ end)
 
 ---@param fd integer
 ---@param errno integer
-c.register(message.SOCKET_CLOSE, function(fd, errno)
+core.register(c.CLOSE, function(fd, errno)
 	local f = close_callback[fd]
 	if f then
 		local t = task_create(f)
@@ -166,7 +165,7 @@ c.register(message.SOCKET_CLOSE, function(fd, errno)
 	end
 end)
 
-c.register(message.SOCKET_LISTEN, function(fd, errno)
+core.register(c.LISTEN, function(fd, errno)
 	local t = socket_pending[fd]
 	if t == nil then --have already closed
 		assert(accept_callback[fd] == nil)
@@ -175,7 +174,7 @@ c.register(message.SOCKET_LISTEN, function(fd, errno)
 	task_resume(t, errno)
 end)
 
-c.register(message.SOCKET_CONNECT, function(fd, errno)
+core.register(c.CONNECT, function(fd, errno)
 	local t = socket_pending[fd]
 	if t == nil then	--have already closed
 		assert(data_callback[fd] == nil)
@@ -184,21 +183,21 @@ c.register(message.SOCKET_CONNECT, function(fd, errno)
 	task_resume(t, errno)
 end)
 
-c.register(message.SOCKET_DATA, function(fd, msg)
+core.register(c.TCPDATA, function(fd, ptr, size)
 	local f = data_callback[fd]
 	if f then
 		local t = task_create(f)
-		task_resume(t, fd, msg)
+		task_resume(t, fd, ptr, size)
 	else
 		log_info("[net] SILLY_SDATA fd:", fd, "closed")
 	end
 end)
 
-c.register(message.SOCKET_UDP, function(fd, msg, addr)
+core.register(c.UDPDATA, function(fd, ptr, size, addr)
 	local f = data_callback[fd]
 	if f then
 		local t = task_create(f)
-		task_resume(t, fd, msg, addr)
+		task_resume(t, fd, ptr, size, addr)
 	else
 		log_info("[net] SILLY_UDP fd:", fd, "closed")
 	end

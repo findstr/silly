@@ -7,7 +7,6 @@ struct lua_State;
 
 void silly_worker_init();
 void silly_worker_exit();
-
 void silly_worker_start(const struct silly_config *config);
 
 void silly_worker_push(struct silly_message *msg);

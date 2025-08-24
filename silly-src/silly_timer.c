@@ -14,6 +14,7 @@
 #include "silly.h"
 #include "spinlock.h"
 #include "compiler.h"
+#include "message.h"
 #include "silly_conf.h"
 #include "silly_log.h"
 #include "silly_worker.h"
@@ -76,6 +77,13 @@ struct silly_timer {
 	atomic_int_least32_t active_count;
 };
 
+struct message_expire { //timer expire
+	struct silly_message hdr;
+	uint64_t session;
+	uint64_t userdata;
+};
+
+static int MSG_TYPE_EXPIRE = 0;
 static struct silly_timer *T;
 
 static inline void lock(struct silly_timer *timer)
@@ -288,9 +296,9 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 	return 1;
 }
 
-static int timer_unpack(lua_State *L, struct silly_message *msg)
+static int expire_unpack(lua_State *L, struct silly_message *msg)
 {
-	struct silly_message_texpire *ms = totexpire(msg);
+	struct message_expire *ms = container_of(msg, struct message_expire, hdr);
 	lua_pushinteger(L, ms->session);
 	lua_pushinteger(L, ms->userdata);
 	return 2;
@@ -299,15 +307,16 @@ static int timer_unpack(lua_State *L, struct silly_message *msg)
 static void timeout(struct silly_timer *t, struct node *n)
 {
 	(void)t;
-	struct silly_message_texpire *te;
+	struct message_expire *te;
 	uint64_t session = session_of(n);
 	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	te = silly_malloc(sizeof(*te));
-	te->type = SILLY_TIMER_EXPIRE;
-	te->unpack = timer_unpack;
+	te->hdr.type = MSG_TYPE_EXPIRE;
+	te->hdr.unpack = expire_unpack;
+	te->hdr.free = silly_free;
 	te->session = session;
 	te->userdata = n->userdata;
-	silly_worker_push(tocommon(te));
+	silly_worker_push(&te->hdr);
 	return;
 }
 
@@ -439,6 +448,12 @@ void silly_timer_update()
 	return;
 }
 
+int silly_timer_msgtype()
+{
+	assert(MSG_TYPE_EXPIRE != 0);  // ensure silly_timer_init has been called
+	return MSG_TYPE_EXPIRE;
+}
+
 void silly_timer_init()
 {
 	T = silly_malloc(sizeof(*T));
@@ -451,6 +466,7 @@ void silly_timer_init()
 	atomic_store_explicit(&T->monotonic, 0, memory_order_relaxed);
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
+	MSG_TYPE_EXPIRE = message_new_type();
 	return;
 }
 

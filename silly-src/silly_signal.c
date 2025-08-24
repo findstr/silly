@@ -1,31 +1,46 @@
 #include <signal.h>
 #include <string.h>
 #include <errno.h>
-#include "compiler.h"
+#include <assert.h>
 
+#include "compiler.h"
 #include "silly.h"
+#include "message.h"
 #include "silly_worker.h"
 #include "silly_log.h"
 
 #include "silly_signal.h"
 
 static int sigbits = 0;
+static int MSG_TYPE_SIGNAL = 0;
 
-static int signal_unpack(lua_State *L, struct silly_message *msg)
+struct message_signal {
+	struct silly_message hdr;
+	int signum;
+};
+
+static int signal_unpack(lua_State *L, struct silly_message *m)
 {
-	struct silly_message_signal *ms = tosignal(msg);
+	struct message_signal *ms = container_of(m, struct message_signal, hdr);
 	lua_pushinteger(L, ms->signum);
 	return 1;
 }
 
 static void signal_handler(int sig)
 {
-	struct silly_message_signal *ms;
+	struct message_signal *ms;
 	ms = silly_malloc(sizeof(*ms));
-	ms->type = SILLY_SIGNAL;
-	ms->unpack = signal_unpack;
+	ms->hdr.type = MSG_TYPE_SIGNAL;
+	ms->hdr.unpack = signal_unpack;
+	ms->hdr.free = silly_free;
 	ms->signum = sig;
-	silly_worker_push(tocommon(ms));
+	silly_worker_push(&ms->hdr);
+}
+
+int silly_signal_msgtype()
+{
+	assert(MSG_TYPE_SIGNAL != 0);  // ensure silly_signal_init has been called
+	return MSG_TYPE_SIGNAL;
 }
 
 int silly_signal_init()
@@ -33,6 +48,7 @@ int silly_signal_init()
 #ifndef __WIN32
 	signal(SIGPIPE, SIG_IGN);
 #endif
+	MSG_TYPE_SIGNAL = message_new_type();
 	return 0;
 }
 

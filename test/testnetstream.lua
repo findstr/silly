@@ -28,15 +28,15 @@ end
 do
     local sb = ns.new(fd)
     -- push empty string
-    ns.tpush(sb, fd, "")
+    ns.tpush(sb, "")
     testaux.asserteq(ns.size(sb), 0, "Case 2.1: push empty string, size==0")
     -- push single char
-    ns.tpush(sb, fd, "A")
+    ns.tpush(sb, "A")
     testaux.asserteq(ns.size(sb), 1, "Case 2.2: push single char, size==1")
     testaux.asserteq(ns.read(sb, 1), "A", "Case 2.3: read single char")
     -- push multi-chunk, readall
-    ns.tpush(sb, fd, "foo")
-    ns.tpush(sb, fd, "bar")
+    ns.tpush(sb, "foo")
+    ns.tpush(sb, "bar")
     testaux.asserteq(ns.size(sb), 6, "Case 2.4: push two chunks, size==6")
     testaux.asserteq(ns.readall(sb), "foobar", "Case 2.5: readall returns all data")
     testaux.asserteq(ns.size(sb), 0, "Case 2.6: after readall, size==0")
@@ -47,7 +47,7 @@ end
 -- Test 3: read out of range/negative/zero
 do
     local sb = ns.new(fd)
-    ns.tpush(sb, fd, "abc")
+    ns.tpush(sb, "abc")
     testaux.asserteq(ns.read(sb, 0), "", "Case 3.1: read 0 returns empty string")
     testaux.asserteq(ns.read(sb, -1), "", "Case 3.2: read negative returns empty string")
     testaux.asserteq(ns.read(sb, 10), nil, "Case 3.3: read over size returns nil")
@@ -56,11 +56,11 @@ end
 -- Test 4: readline edge cases
 do
     local sb = ns.new(fd)
-    ns.tpush(sb, fd, "abc\ndef\r\nghi")
+    ns.tpush(sb, "abc\ndef\r\nghi")
     testaux.asserteq(ns.readline(sb, "\n"), "abc\n", "Case 4.1: readline with \\n")
     testaux.asserteq(ns.readline(sb, "\r\n"), "def\r\n", "Case 4.2: readline with \\r\\n")
     testaux.asserteq(ns.readline(sb, "\n"), nil, "Case 4.3: readline not found returns nil")
-    ns.tpush(sb, fd, "\n")
+    ns.tpush(sb, "\n")
     testaux.asserteq(ns.readline(sb, "\n"), "ghi\n", "Case 4.4: readline after append")
     -- empty delimiter
     local ok, err = pcall(function() ns.readline(sb, "") end)
@@ -71,9 +71,9 @@ end
 -- Test 5: readline across nodes
 do
     local sb = ns.new(fd)
-    ns.tpush(sb, fd, "foo")
-    ns.tpush(sb, fd, "bar")
-    ns.tpush(sb, fd, "baz")
+    ns.tpush(sb, "foo")
+    ns.tpush(sb, "bar")
+    ns.tpush(sb, "baz")
     testaux.asserteq(ns.readline(sb, "barb"), "foobarb", "Case 5.1: readline cross node")
     testaux.asserteq(ns.readline(sb, "az"), "az", "Case 5.2: readline cross node at end")
 end
@@ -88,7 +88,7 @@ end
 do
     local sb = ns.new(fd)
     local big = build(1024 * 128)
-    ns.tpush(sb, fd, big)
+    ns.tpush(sb, big)
     testaux.asserteq(ns.read(sb, #big), big, "Case 7.1: tpush/read big data")
 end
 
@@ -96,7 +96,7 @@ end
 do
     local sb = ns.new(fd)
     ns.limit(sb, 1)
-    ns.tpush(sb, fd, "a")
+    ns.tpush(sb, "a")
     -- can still read after pause triggered
     testaux.asserteq(ns.read(sb, 1), "a", "Case 8.1: read after pause")
 end
@@ -104,10 +104,10 @@ end
 -- Test 9: switch delim
 do
     local sb = ns.new(fd)
-    ns.tpush(sb, fd, "a")
-    ns.tpush(sb, fd, "b")
-    ns.tpush(sb, fd, "cd")
-    ns.tpush(sb, fd, "e\rf")
+    ns.tpush(sb, "a")
+    ns.tpush(sb, "b")
+    ns.tpush(sb, "cd")
+    ns.tpush(sb, "e\rf")
     local x = ns.readline(sb, "\r\n")
     -- can't read \r\n line
     testaux.asserteq(x, nil, "Case 9.1: read non line")
@@ -122,19 +122,19 @@ end
 do
     local sb = ns.new(fd)
     for i = 1, 64 do
-        ns.tpush(sb, fd, "a")
+        ns.tpush(sb, "a")
     end
     local x = ns.read(sb, 64)
     testaux.asserteq(x, string.rep("a", 64), "Case 10.1: read 1 char")
     testaux.asserteq(ns.tcap(sb), 64, "Case 10.2: node buffer not expand")
-    ns.tpush(sb, fd, "a")
-    ns.tpush(sb, fd, "a")
+    ns.tpush(sb, "a")
+    ns.tpush(sb, "a")
     testaux.asserteq(ns.tcap(sb), 64, "Case 10.3: node buffer not expand")
     for i = 1, 62 do
-        ns.tpush(sb, fd, "a")
+        ns.tpush(sb, "a")
     end
     testaux.asserteq(ns.tcap(sb), 64, "Case 10.4: node buffer not expand")
-    ns.tpush(sb, fd, "a")
+    ns.tpush(sb, "a")
     testaux.asserteq(ns.tcap(sb), 128, "Case 10.5: node buffer expand")
 end
 

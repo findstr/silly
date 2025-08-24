@@ -122,13 +122,13 @@ close = function(fd, errno)
 	end
 end,
 
-data = function(fd, message)
+data = function(fd, ptr, size)
 	local s = socket_pool[fd]
 	if not s then
 		return
 	end
 	local delim = s.delim
-	tls.message(s.ssl, message)
+	tls.push(s.ssl, ptr, size)
 	if not delim then	--non suspend read
 		return
 	end

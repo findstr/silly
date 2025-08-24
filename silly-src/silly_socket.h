@@ -12,6 +12,15 @@ typedef int64_t socket_id_t;
 #define SOCKET_READ_PAUSE (0)
 #define SOCKET_READ_ENABLE (1)
 
+struct silly_socket_msgtype {
+	int listen;
+	int connect;
+	int accept;
+	int tcpdata;
+	int udpdata;
+	int close;
+};
+
 struct silly_netstat {
 	atomic_uint_least16_t connecting;
 	atomic_uint_least16_t tcpclient;
@@ -32,6 +41,8 @@ struct silly_socketstat {
 int silly_socket_init();
 void silly_socket_exit();
 void silly_socket_terminate();
+const struct silly_socket_msgtype *silly_socket_msgtypes();
+
 socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog);
 socket_id_t silly_socket_udpbind(const char *ip, const char *port);
 socket_id_t silly_socket_connect(const char *ip, const char *port, const char *bindip,

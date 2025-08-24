@@ -18,6 +18,32 @@
 #include "silly_malloc.h"
 #include "silly_timer.h"
 
+static int ltimeout(lua_State *L)
+{
+	uint32_t expire;
+	uint32_t userdata;
+	uint64_t session;
+	expire = luaL_checkinteger(L, 1);
+	userdata = luaL_optinteger(L, 2, 0);
+	session = silly_timer_timeout(expire, userdata);
+	lua_pushinteger(L, (lua_Integer)session);
+	return 1;
+}
+
+static int ltimercancel(lua_State *L)
+{
+	uint32_t ud;
+	uint64_t session = (uint64_t)luaL_checkinteger(L, 1);
+	int ok = silly_timer_cancel(session, &ud);
+	if (ok) {
+		lua_pushinteger(L, ud);
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
+
 static int ltimenow(lua_State *L)
 {
 	uint64_t now = silly_timer_now();
@@ -35,13 +61,16 @@ static int ltimemonotonic(lua_State *L)
 int luaopen_core_time_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "now",          ltimenow          },
-		{ "monotonic",    ltimemonotonic    },
-		//end
-		{ NULL,           NULL              },
+		{ "timeout",       ltimeout        },
+		{ "timercancel",   ltimercancel    },
+		{ "now",           ltimenow        },
+		{ "monotonic",     ltimemonotonic  },
+		{ NULL,           NULL             },
 	};
 
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
+	lua_pushinteger(L, silly_timer_msgtype());
+	lua_setfield(L, -2, "EXPIRE");
 	return 1;
 }
