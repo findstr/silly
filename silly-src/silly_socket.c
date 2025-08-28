@@ -15,6 +15,8 @@
 #include "silly_log.h"
 #include "platform.h"
 #include "spinlock.h"
+#include "trigger.h"
+#include "flipbuf.h"
 #include "silly_worker.h"
 #include "silly_malloc.h"
 #include "silly_socket.h"
@@ -73,7 +75,6 @@ EAGAIN:           \
 #endif
 
 #define EVENT_SIZE (128)
-#define CMDBUF_SIZE (8 * sizeof(struct op_pkt))
 #define MAX_UDP_PACKET (512)
 #define SOCKET_POOL_SIZE (1 << SOCKET_POOL_EXP)
 #define HASH(sid) (sid & (SOCKET_POOL_SIZE - 1))
@@ -192,13 +193,9 @@ struct silly_socket {
 	event_t *eventbuf;
 	//socket pool
 	struct socket_pool pool;
-	//ctrl pipe, call write can be automatic
-	//when data less then 64k(from APUE)
-	int ctrlsendfd;
-	int ctrlrecvfd;
-	atomic_int_least32_t ctrlcount;
-	int cmdcap;
-	uint8_t *cmdbuf;
+	//ctrl trigger for worker-socket thread communication
+	struct trigger ctrl;
+	struct flipbuf opbuf;
 	//reserve id(for socket fd remap)
 	socket_id_t reserveid;
 	//netstat
@@ -712,39 +709,6 @@ static void keepalive(fd_t fd)
 	silly_log_error("[socket] keepalive error:%s\n", strerror(errno));
 }
 
-static void pipe_blockread(fd_t fd, void *pk, int n)
-{
-	for (;;) {
-		ssize_t err = pipe_read(fd, pk, n);
-		if (err == -1) {
-			if (likely(errno == EINTR))
-				continue;
-			silly_log_error("[socket] pip_blockread error:%s\n",
-							strerror(errno));
-			return;
-		}
-		assert(err == n);
-		atomic_fetch_sub_explicit(&SSOCKET->ctrlcount, n, memory_order_relaxed);
-		return;
-	}
-}
-
-static int pipe_blockwrite(fd_t fd, void *pk, int sz)
-{
-	for (;;) {
-		ssize_t err = pipe_write(fd, pk, sz);
-		if (err == -1) {
-			if (likely(errno == EINTR))
-				continue;
-			silly_log_error("[socket] pipe_blockwrite error:%s",
-						strerror(errno));
-			return -1;
-		}
-		atomic_fetch_add_explicit(&SSOCKET->ctrlcount, sz, memory_order_relaxed);
-		assert(err == sz);
-		return 0;
-	}
-}
 
 static void exec_accept(struct silly_socket *ss, struct socket *listen)
 {
@@ -980,6 +944,14 @@ int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN])
 	return ntop(addr, name);
 }
 
+static inline void op_push(struct silly_socket *ss, struct op_hdr *hdr)
+{
+	if (flipbuf_write(&ss->opbuf, (uint8_t *)hdr, hdr->size)) {
+		trigger_fire(&ss->ctrl);
+	}
+	atomic_fetch_add_explicit(&ss->netstat.oprequest, 1, memory_order_relaxed);
+}
+
 void silly_socket_readctrl(socket_id_t sid, int flag)
 {
 	struct socket *s;
@@ -991,7 +963,7 @@ void silly_socket_readctrl(socket_id_t sid, int flag)
 	op.hdr.sid = sid;
 	op.hdr.size = sizeof(op);
 	op.ctrl = flag;
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, sizeof(op));
+	op_push(SSOCKET, &op.hdr);
 	return;
 }
 
@@ -1170,7 +1142,7 @@ socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog)
 	op.hdr.op = OP_TCP_LISTEN;
 	op.hdr.sid = s->sid;
 	op.hdr.size = sizeof(op);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	return s->sid;
 }
 
@@ -1227,7 +1199,7 @@ socket_id_t silly_socket_udpbind(const char *ip, const char *port)
 	op.hdr.op = OP_UDP_LISTEN;
 	op.hdr.sid = s->sid;
 	op.hdr.size = sizeof(op);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	return s->sid;
 end:
 	if (fd >= 0)
@@ -1287,7 +1259,7 @@ socket_id_t silly_socket_connect(const char *ip, const char *port, const char *b
 	op.hdr.size = sizeof(op);
 	assert(sizeof(op.addr) >= info->ai_addrlen);
 	memcpy(&op.addr, info->ai_addr, info->ai_addrlen);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	freeaddrinfo(info);
 	return s->sid;
 end:
@@ -1376,7 +1348,7 @@ socket_id_t silly_socket_udpconnect(const char *ip, const char *port,
 	op.hdr.op = OP_UDP_CONNECT;
 	op.hdr.sid = s->sid;
 	op.hdr.size = sizeof(op);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	freeaddrinfo(info);
 	return s->sid;
 end:
@@ -1427,7 +1399,7 @@ int silly_socket_close(socket_id_t sid)
 	op.hdr.op = OP_CLOSE;
 	op.hdr.sid = sid;
 	op.hdr.size = sizeof(op);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	return 0;
 }
 
@@ -1476,7 +1448,7 @@ int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
 	op.size = sz;
 	op.free = freex;
 	atomic_add(&s->wlbytes, sz);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	return 0;
 }
 
@@ -1540,7 +1512,7 @@ int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t
 		memcpy(&op.addr, addr, addrlen);
 	}
 	atomic_add(&s->wlbytes, sz);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
+	op_push(SSOCKET, &op.hdr);
 	return 0;
 }
 
@@ -1589,33 +1561,23 @@ void silly_socket_terminate()
 	op.hdr.op = OP_EXIT;
 	op.hdr.sid = 0;
 	op.hdr.size = sizeof(op);
-	pipe_blockwrite(SSOCKET->ctrlsendfd, &op, op.hdr.size);
-	return;
-}
-
-static void resize_cmdbuf(struct silly_socket *ss, size_t sz)
-{
-	ss->cmdcap = sz;
-	ss->cmdbuf = (uint8_t *)silly_realloc(ss->cmdbuf, sizeof(uint8_t) * sz);
+	op_push(SSOCKET, &op.hdr);
 	return;
 }
 
 static int op_process(struct silly_socket *ss)
 {
-	int count;
-	int close = 0;
+	struct array *arr;
 	uint8_t *ptr, *end;
-	count = atomic_load_explicit(&ss->ctrlcount, memory_order_relaxed);
-	if (count <= 0)
-		return close;
-	if (count > ss->cmdcap)
-		resize_cmdbuf(ss, count);
-	pipe_blockread(ss->ctrlrecvfd, ss->cmdbuf, count);
-	ptr = ss->cmdbuf;
-	end = ptr + count;
+	if (trigger_consume(&ss->ctrl) <= 0) // no more op to process
+		return 0;
+	arr = flipbuf_flip(&ss->opbuf);
+	ptr = (uint8_t *)arr->buf;
+	end = ptr + arr->size;
 	while (ptr < end) {
 		struct socket *s;
 		struct op_pkt *op = (struct op_pkt *)ptr;
+		atomic_fetch_add_explicit(&ss->netstat.opprocessed, 1, memory_order_relaxed);
 		if (op->hdr.op == OP_EXIT)
 			return -1;
 		assert(op->hdr.size > 0);
@@ -1665,7 +1627,7 @@ static int op_process(struct silly_socket *ss)
 			break;
 		}
 	}
-	return close;
+	return 0;
 }
 
 static void eventwait(struct silly_socket *ss)
@@ -1800,36 +1762,32 @@ int silly_socket_init()
 {
 	int err;
 	fd_t spfd = SP_INVALID;
-	fd_t fds[2] = { -1, -1 };
 	struct socket *s = NULL;
-	struct silly_socket *ss = silly_malloc(sizeof(*ss));
-	memset(ss, 0, sizeof(*ss));
-	pool_init(&ss->pool);
+	struct silly_socket *ss;
 	spfd = sp_create(EVENT_SIZE);
 	if (unlikely(spfd == SP_INVALID))
-		goto end;
-	//use the pipe and not the socketpair because
-	//the pipe will be automatic
-	//when the data size small than PIPE_BUF
-	err = pipe(fds);
+		return -errno;
+	ss = silly_malloc(sizeof(*ss));
+	memset(ss, 0, sizeof(*ss));
+	pool_init(&ss->pool);
+	flipbuf_init(&ss->opbuf);
+	err = trigger_init(&ss->ctrl);
 	if (unlikely(err < 0))
 		goto end;
 	ss->spfd = spfd;
 	ss->reservefd = open("/dev/null", O_RDONLY);
-	ss->ctrlsendfd = fds[1];
-	ss->ctrlrecvfd = fds[0];
-	s = pool_alloc(&ss->pool, ss->ctrlrecvfd, SOCKET_PIPE_CTRL);
+	s = pool_alloc(&ss->pool, trigger_fd(&ss->ctrl), SOCKET_PIPE_CTRL);
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0))
 		goto end;
-	atomic_init(&ss->ctrlcount, 0);
 	atomic_init(&ss->netstat.connecting, 0);
 	atomic_init(&ss->netstat.tcpclient, 0);
 	atomic_init(&ss->netstat.recvsize, 0);
 	atomic_init(&ss->netstat.sendsize, 0);
+	atomic_init(&ss->netstat.oprequest, 0);
+	atomic_init(&ss->netstat.opprocessed, 0);
 	ss->eventindex = 0;
 	ss->eventcount = 0;
-	resize_cmdbuf(ss, CMDBUF_SIZE);
 	resize_eventbuf(ss, EVENT_SIZE);
 	SSOCKET = ss;
 	MSG_TYPE.accept = message_new_type();
@@ -1840,16 +1798,16 @@ int silly_socket_init()
 	MSG_TYPE.close = message_new_type();
 	return 0;
 end:
-	if (s)
+	if (s != NULL)
 		free_socket(ss, s);
-	if (spfd != SP_INVALID)
+	if (spfd != SP_INVALID) {
 		sp_free(spfd);
-	if (fds[0] >= 0)
-		closesocket(fds[0]);
-	if (fds[1] >= 0)
-		closesocket(fds[1]);
-	if (ss)
+	}
+	if (ss != NULL) {
+		trigger_destroy(&ss->ctrl);
+		flipbuf_destroy(&ss->opbuf);
 		silly_free(ss);
+	}
 
 	return -errno;
 }
@@ -1860,8 +1818,7 @@ void silly_socket_exit()
 	assert(SSOCKET);
 	sp_free(SSOCKET->spfd);
 	closesocket(SSOCKET->reservefd);
-	closesocket(SSOCKET->ctrlsendfd);
-	closesocket(SSOCKET->ctrlrecvfd);
+	trigger_destroy(&SSOCKET->ctrl);
 	struct socket *s = &SSOCKET->pool.slots[0];
 	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
 		int type = socket_type(s);
@@ -1870,7 +1827,7 @@ void silly_socket_exit()
 		}
 		++s;
 	}
-	silly_free(SSOCKET->cmdbuf);
+	flipbuf_destroy(&SSOCKET->opbuf);
 	silly_free(SSOCKET->eventbuf);
 	silly_free(SSOCKET);
 	return;
@@ -1881,17 +1838,14 @@ const char *silly_socket_pollapi()
 	return SOCKET_POLL_API;
 }
 
-int silly_socket_ctrlcount()
-{
-	return atomic_load_explicit(&SSOCKET->ctrlcount, memory_order_relaxed);
-}
-
 void silly_socket_netstat(struct silly_netstat *stat)
 {
 	stat->connecting = atomic_load_explicit(&SSOCKET->netstat.connecting, memory_order_relaxed);
 	stat->tcpclient = atomic_load_explicit(&SSOCKET->netstat.tcpclient, memory_order_relaxed);
 	stat->recvsize = atomic_load_explicit(&SSOCKET->netstat.recvsize, memory_order_relaxed);
 	stat->sendsize = atomic_load_explicit(&SSOCKET->netstat.sendsize, memory_order_relaxed);
+	stat->oprequest = atomic_load_explicit(&SSOCKET->netstat.oprequest, memory_order_relaxed);
+	stat->opprocessed = atomic_load_explicit(&SSOCKET->netstat.opprocessed, memory_order_relaxed);
 	return;
 }
 

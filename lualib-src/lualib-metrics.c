@@ -121,7 +121,7 @@ static int lnetstat(lua_State *L)
 	silly_socket_netstat(&stat);
 	lua_pushinteger(L, stat.connecting);
 	lua_pushinteger(L, stat.tcpclient);
-	lua_pushinteger(L, silly_socket_ctrlcount());
+	lua_pushinteger(L, stat.oprequest - stat.opprocessed);
 	lua_pushinteger(L, stat.sendsize);
 	lua_pushinteger(L, stat.recvsize);
 	return 5;

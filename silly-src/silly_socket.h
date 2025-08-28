@@ -26,6 +26,8 @@ struct silly_netstat {
 	atomic_uint_least16_t tcpclient;
 	atomic_uint_least32_t recvsize;
 	atomic_uint_least32_t sendsize;
+	atomic_uint_least32_t oprequest;
+	atomic_uint_least32_t opprocessed;
 };
 
 struct silly_socketstat {
@@ -66,7 +68,6 @@ int silly_socket_poll();
 
 const char *silly_socket_pollapi();
 
-int silly_socket_ctrlcount();
 void silly_socket_netstat(struct silly_netstat *stat);
 void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info);
 

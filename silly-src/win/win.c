@@ -267,6 +267,7 @@ fallback:
 		closesocket(socks[0]);
 		closesocket(socks[1]);
 		WSASetLastError(e);
+		errno = translate_socket_errno(e);
 	}
 
 	socks[0] = socks[1] = -1;
