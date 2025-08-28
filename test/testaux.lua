@@ -1,4 +1,5 @@
 local core = require "core"
+local hive = require "core.hive"
 local time = require "core.time"
 local json = require "core.encoding.json"
 local c = require "test.aux.c"
@@ -46,6 +47,18 @@ local function escape(a)
 	else
 		return a
 	end
+end
+
+local bee = hive.spawn [[
+	package.cpath = package.cpath .. ";luaclib/?.so;luaclib/?.dll"
+	local c = require "test.aux.c"
+	return function(fd, len)
+		return c.recv(fd, len)
+	end
+]]
+
+function testaux.recv(fd, n)
+	return hive.invoke(bee, fd, n)
 end
 
 function testaux.randomdata(sz)

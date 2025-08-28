@@ -225,7 +225,6 @@ do
 	for i = 1, echo_count do
 		local chunk = "hello" .. i .. "\n"
 		testaux.send(cfd, chunk)
-		time.sleep(0)
 		local response = testaux.recv(cfd, #chunk)
 		testaux.asserteq(response, chunk, "Case 8: Client received correct echo")
 	end
