@@ -357,7 +357,7 @@ void silly_worker_warnendless()
 
 void silly_worker_exit()
 {
-	lua_close(W->L);
 	silly_queue_free(W->queue);
+	lua_close(W->L);
 	silly_free(W);
 }

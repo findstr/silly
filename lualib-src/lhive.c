@@ -215,7 +215,7 @@ static int l_worker_gc(lua_State *L)
 	struct worker *w = (struct worker *)lua_touserdata(L, 1);
 	if (unlikely(w->task_id != 0)) {
 		silly_log_warn("[hive] A worker was still busy during GC. This may cause a memory leak report on exit. "
-			"Check for blocking calls or infinite loops in hive tasks.");
+			"Check for blocking calls or infinite loops in hive tasks.\n");
 		// If the worker is still running in the thread pool,
 		// the only possible reason it was garbage collected is that its Lua state has been closed.
 		// In this case, we can rely on the process exit cleanup to handle it automatically.
