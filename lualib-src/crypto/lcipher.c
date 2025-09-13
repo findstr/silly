@@ -16,9 +16,6 @@
 struct cipher {
 	EVP_CIPHER_CTX *ctx;
 	const EVP_CIPHER *cipher;
-	uint8_t *buf;
-	int size;
-	int cap;
 	uint8_t enc;
 	int8_t padding;
 };
@@ -54,12 +51,6 @@ static int lgc(lua_State *L)
 	if (c->ctx != NULL) {
 		EVP_CIPHER_CTX_free(c->ctx);
 		c->ctx = NULL;
-	}
-	if (c->buf != NULL) {
-		silly_free(c->buf);
-		c->buf = NULL;
-		c->size = 0;
-		c->cap = 0;
 	}
 	return 0;
 }
@@ -112,9 +103,6 @@ static int lnewx(lua_State *L, int enc)
 	luaL_setmetatable(L, METATABLE);
 	c->ctx = ctx;
 	c->cipher = cipher;
-	c->buf = NULL;
-	c->size = 0;
-	c->cap = 0;
 	c->enc = (uint8_t)enc;
 	c->padding = -1;
 	return 1;
@@ -128,15 +116,6 @@ static int lnewenc(lua_State *L)
 static int lnewdec(lua_State *L)
 {
 	return lnewx(L, 0);
-}
-
-static void try_expand_buffer(struct cipher *c, int len)
-{
-	len += EVP_CIPHER_CTX_get_block_size(c->ctx);
-	if (c->cap < c->size + len) {
-		c->cap = len + c->size;
-		c->buf = silly_realloc(c->buf, c->cap);
-	}
 }
 
 /// reset(cipher, key, iv)
@@ -157,52 +136,60 @@ static int lxreset(lua_State *L)
 		return luaL_error(L, "cipher set padding error: %s",
 				  ERR_lib_error_string(ERR_get_error()));
 	}
-	c->size = 0;
 	return 0;
 }
 
 /// update(cipher, data)
 static int lxupdate(lua_State *L)
 {
-	int outlen;
+	int need;
+	int outlen = 0;
+	unsigned char *outbuf;
+	luaL_Buffer b;
 	struct luastr data;
 	struct cipher *c = luaL_checkudata(L, 1, METATABLE);
 	luastr_check(L, 2, &data);
-	try_expand_buffer(c, data.len);
-	if (EVP_CipherUpdate(c->ctx, &c->buf[c->size], &outlen, data.str,
+	need = data.len + EVP_CIPHER_CTX_get_block_size(c->ctx);
+	outbuf = (unsigned char *)luaL_buffinitsize(L, &b, need);
+	if (EVP_CipherUpdate(c->ctx, outbuf, &outlen, data.str,
 			     data.len) == 0) {
 		return luaL_error(L, "cipher update error: %s",
 				  ERR_lib_error_string(ERR_get_error()));
 	}
-	c->size += outlen;
-	return 0;
+	luaL_pushresultsize(&b, outlen);
+	return 1;
 }
 
 /// final(cipher, data?)
 static int lxfinal(lua_State *L)
 {
-	int outlen;
+	int need;
+	int outlen = 0;
+	unsigned char *outbuf;
+	luaL_Buffer b;
+	struct luastr data;
 	struct cipher *c = luaL_checkudata(L, 1, METATABLE);
-	if (lua_gettop(L) > 1) {
-		struct luastr data;
-		luastr_check(L, 2, &data);
-		try_expand_buffer(c, data.len);
-		if (EVP_CipherUpdate(c->ctx, &c->buf[c->size], &outlen,
+	luastr_opt(L, 2, &data);
+	need = EVP_CIPHER_CTX_get_block_size(c->ctx);
+	if (data.len > 0) {
+		need += data.len + EVP_CIPHER_CTX_get_block_size(c->ctx);
+	}
+	outbuf = (unsigned char *)luaL_buffinitsize(L, &b, need);
+	if (data.len > 0) {
+		if (EVP_CipherUpdate(c->ctx, outbuf, &outlen,
 				     data.str, data.len) == 0) {
 			return luaL_error(
 				L, "cipher update error: %s",
 				ERR_lib_error_string(ERR_get_error()));
 		}
-		c->size += outlen;
+		luaL_addsize(&b, outlen);
 	}
-	try_expand_buffer(c, 0);
-	if (EVP_CipherFinal_ex(c->ctx, &c->buf[c->size], &outlen) == 0) {
+	if (EVP_CipherFinal_ex(c->ctx, outbuf+luaL_bufflen(&b), &outlen) == 0) {
 		lua_pushnil(L);
 		return 1;
 	}
-	c->size += outlen;
-	lua_pushlstring(L, (const char *)c->buf, c->size);
-	c->size = 0;
+	luaL_addsize(&b, outlen);
+	luaL_pushresult(&b);
 	return 1;
 }
 
@@ -247,16 +234,17 @@ static int lxsettag(lua_State *L)
 static int lxtag(lua_State *L)
 {
 	int ret;
+	luaL_Buffer b;
 	struct cipher *c = luaL_checkudata(L, 1, METATABLE);
 	int taglen = EVP_CIPHER_CTX_tag_length(c->ctx);
-	try_expand_buffer(c, taglen);
+	unsigned char *tagbuf = (unsigned char *)luaL_buffinitsize(L, &b, taglen);
 	ret = EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_AEAD_GET_TAG, taglen,
-				  &c->buf[c->size]);
+				  tagbuf);
 	if (ret == 0) {
 		return luaL_error(L, "cipher tag error: %s",
 				  ERR_lib_error_string(ERR_get_error()));
 	}
-	lua_pushlstring(L, (const char *)&c->buf[c->size], taglen);
+	luaL_pushresultsize(&b, taglen);
 	return 1;
 }
 

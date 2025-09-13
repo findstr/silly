@@ -40,15 +40,13 @@ do
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c:update(test_vectors.aes_128_cbc.plaintext)
-	local encrypted = c:final()
+	local encrypted = c:update(test_vectors.aes_128_cbc.plaintext) .. c:final()
 	testaux.asserteq_hex(encrypted, test_vectors.aes_128_cbc.ciphertext, "Case 1: AES-128-CBC encryption")
 
 	c:reset(test_vectors.aes_128_cbc.key, test_vectors.aes_128_cbc.iv)
 	c:setpadding(0)
-	c:update(test_vectors.aes_128_cbc.plaintext)
-	local encrypted = c:final()
-	testaux.asserteq_hex(encrypted, test_vectors.aes_128_cbc.ciphertext:sub(1,16), "Case 1: AES-128-CBC encryption without padding")
+	local encrypted_nopad = c:update(test_vectors.aes_128_cbc.plaintext) .. c:final()
+	testaux.asserteq_hex(encrypted_nopad, test_vectors.aes_128_cbc.ciphertext:sub(1,16), "Case 1: AES-128-CBC encryption without padding")
 end
 
 -- Test 2: Complete encryption/decryption workflow
@@ -58,16 +56,14 @@ do
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c_enc:update(test_vectors.aes_128_cbc.plaintext)
-	local encrypted = c_enc:final()
+	local encrypted = c_enc:update(test_vectors.aes_128_cbc.plaintext) .. c_enc:final()
 
 	-- Decryption process
 	local c_dec = cipher.decryptor("aes-128-cbc",
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c_dec:update(encrypted)
-	local decrypted = c_dec:final()
+	local decrypted = c_dec:update(encrypted) .. c_dec:final()
 	testaux.asserteq_hex(decrypted, test_vectors.aes_128_cbc.plaintext, "Case 2: AES-128-CBC decryption")
 end
 
@@ -85,8 +81,7 @@ do
 		test_vectors.aes_256_cbc.key,
 		test_vectors.aes_256_cbc.iv
 	)
-	c:update(test_vectors.aes_256_cbc.plaintext)
-	local encrypted = c:final()
+	local encrypted = c:update(test_vectors.aes_256_cbc.plaintext) .. c:final()
 	testaux.asserteq_hex(encrypted, test_vectors.aes_256_cbc.ciphertext, "Case 4: AES-256-CBC encryption")
 end
 
@@ -96,16 +91,15 @@ do
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c:update("hello")
-	local encrypted = c:final(" world")
+	local encrypted = c:update("hello") .. c:final(" world")
 
 	-- Decryption verification
 	local c_dec = cipher.decryptor("aes-128-cbc",
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c_dec:update(encrypted)
-	testaux.asserteq(c_dec:final(), "hello world", "Case 5: Chunked update verification")
+	local decrypted = c_dec:update(encrypted) .. c_dec:final()
+	testaux.asserteq(decrypted, "hello world", "Case 5: Chunked update verification")
 end
 
 -- Test 6: Context reuse with reset
@@ -116,13 +110,11 @@ do
 	)
 
 	-- First encryption
-	c:update("part1")
-	local enc1 = c:final()
+	local enc1 = c:update("part1") .. c:final()
 
 	-- Reset and reuse
 	c:reset(test_vectors.aes_128_cbc.key, test_vectors.aes_128_cbc.iv)
-	c:update("part2")
-	local enc2 = c:final()
+	local enc2 = c:update("part2") .. c:final()
 
 	testaux.asserteq(#enc1, #enc2, "Case 6: Context reuse consistency")
 end
@@ -213,8 +205,7 @@ do
 		test_vectors.aes_128_cbc.key,
 		test_vectors.aes_128_cbc.iv
 	)
-	c:update(data)
-	local obj_enc = c:final()
+	local obj_enc = c:update(data) .. c:final()
 
 	testaux.asserteq_hex(quick_enc, obj_enc, "Case 12: API consistency")
 end

@@ -17,4 +17,11 @@ static inline void luastr_check(lua_State *L, int idx, struct luastr *s)
 	s->len = (int)len;
 }
 
+static inline void luastr_opt(lua_State *L, int idx, struct luastr *s)
+{
+	size_t len;
+	s->str = (const uint8_t *)luaL_optlstring(L, idx, NULL, &len);
+	s->len = (int)len;
+}
+
 #endif
