@@ -38,7 +38,7 @@ local udp_connect = assert(c.udp_connect)
 local socket_close = assert(c.close)
 ---@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil):boolean, string? error
 M.tcp_send = assert(c.tcp_send)
----@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil, addr:string|nil):boolean, string? error
+---@type fun(fd:integer, data:string|lightuserdata|table, size_or_addr:integer|string|nil, addr:string|nil):boolean, string? error
 M.udp_send = assert(c.udp_send)
 ---@type fun(fd:integer, data:lightuserdata, size:integer?, addr:string?): boolean, string? error
 M.tcp_multicast = assert(c.tcp_multicast)

@@ -248,32 +248,6 @@ do --parse hosts
 	end
 end
 
-local function callback(msg, err)
-	local pos
-	if msg then
-		local ID, FLAG,
-		QDCOUNT, ANCOUNT,
-		NSCOUNT, ARCOUNT,
-		QNAME,
-		QTYPE, QCLASS, pos = unpack(parseformat, msg)
-		answer(msg, pos, ANCOUNT)
-		local co = wait_coroutine[ID]
-		if not co then --already timeout
-			return
-		end
-		wait_coroutine[ID] = nil
-		core.wakeup(co, ANCOUNT > 0)
-	else --udp closed
-		for k, co in pairs(wait_coroutine) do
-			core.wakeup(co, false)
-			wait_coroutine[k] = nil
-		end
-		logger.info("[dns] udp error:", err)
-		udp.close(connectfd)
-		connectfd = nil
-	end
-end
-
 local function suspend(session, timeout)
 	local co = core.running()
 	wait_coroutine[session] = co
@@ -307,26 +281,59 @@ local function find_dns_server()
 end
 
 local function connectserver()
+	if connectfd then
+		return
+	end
 	if not dns_server then
 		find_dns_server()
 	end
 	assert(dns_server)
 	logger.info("[dns] server ip:", dns_server)
-	return udp.connect(dns_server, callback)
+	local fd = udp.connect(dns_server)
+	connectfd = fd
+	core.fork(function()
+		while true do
+			local msg, err = udp.recvfrom(fd)
+			if not msg then
+				logger.info("[dns] udp error:", err)
+				break
+			end
+			local ID, FLAG,
+			QDCOUNT, ANCOUNT,
+			NSCOUNT, ARCOUNT,
+			QNAME,
+			QTYPE, QCLASS, pos = unpack(parseformat, msg)
+			answer(msg, pos, ANCOUNT)
+			local co = wait_coroutine[ID]
+			if not co then --already timeout
+				return
+			end
+			wait_coroutine[ID] = nil
+			core.wakeup(co, ANCOUNT > 0)
+		end
+		-- udp error, wakeup all
+		for k, co in pairs(wait_coroutine) do
+			core.wakeup(co, false)
+			wait_coroutine[k] = nil
+		end
+		udp.close(connectfd)
+		connectfd = nil
+	end)
+	return fd
 end
 
 local function query(name, typ, timeout)
+	connectserver()
 	if not connectfd then
-		connectfd = connectserver()
+		return false
 	end
-	assert(connectfd > 0)
 	local retry = 1
 	local s, r = question(name, typ)
 	--RFC 1123 #page-76, the default timeout
 	--should be less than 5 seconds
 	timeout = timeout or 5000
 	while true do
-		local ok = udp.send(connectfd, r)
+		local ok = udp.sendto(connectfd, r)
 		if not ok then
 			return false
 		end
