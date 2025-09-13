@@ -7,8 +7,9 @@ TARGET ?= silly
 OPENSSL ?= ON
 TEST ?= OFF
 MALLOC ?= jemalloc
-SRC_PATH = silly-src
-LIB_PATH = lualib-src
+SRC_PATH = src
+LUACLIB_SRC_PATH = luaclib-src
+LUACLIB_PATH ?= luaclib
 
 #-----------platform
 
@@ -62,7 +63,6 @@ $(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
 	cd $(ZLIB_DIR) && ./configure
 
 #-----------project
-LUACLIB_PATH ?= luaclib
 # Platform directory mapping
 ifeq ($(LUA_PLAT),mingw)
 PLAT_DIR = win
@@ -112,7 +112,7 @@ LIB_SRC = lualib-core.c \
 	lcompress.c
 
 ifeq ($(OPENSSL), ON)
-       LIB_SRC += $(patsubst lualib-src/%,%,$(wildcard lualib-src/crypto/*.c))
+       LIB_SRC += $(patsubst $(LUACLIB_SRC_PATH)/%,%,$(wildcard $(LUACLIB_SRC_PATH)/crypto/*.c))
 endif
 
 all: \
@@ -129,13 +129,13 @@ $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB)
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
-$(LUACLIB_PATH)/core.$(SO): $(addprefix $(LIB_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(INCLUDE) -Ilualib-src -o $@ $^ $(SHARED) $(OPENSSLFLAG)
-$(LUACLIB_PATH)/zproto.$(SO): $(LIB_PATH)/zproto/lzproto.c $(LIB_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/core.$(SO): $(addprefix $(LUACLIB_SRC_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) $(OPENSSLFLAG)
+$(LUACLIB_PATH)/zproto.$(SO): $(LUACLIB_SRC_PATH)/zproto/lzproto.c $(LUACLIB_SRC_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/pb.$(SO): $(LIB_PATH)/pb.c | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/pb.$(SO): $(LUACLIB_SRC_PATH)/pb.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/test.$(SO): $(LIB_PATH)/lualib-test.c | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/test.$(SO): $(LUACLIB_SRC_PATH)/lualib-test.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 
 .depend:
@@ -154,9 +154,9 @@ testall: test
 	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
 
 clean:
+	-rm .depend
 	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
-	-rm .depend
 	-rm $(SRC_PATH)/*.lib
 
 cleanall: clean
@@ -173,8 +173,8 @@ endif
 	-rm $(ZLIB_DIR)/minigzip64
 
 fmt:
-	-clang-format -style=file -i silly-src/*.h
-	-clang-format -style=file -i silly-src/*.c
-	-clang-format -style=file -i lualib-src/l*.c
-	-clang-format -style=file -i lualib-src/crypto/l*.c
+	-clang-format -style=file -i $(SRC_PATH)/*.h
+	-clang-format -style=file -i $(SRC_PATH)/*.c
+	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/l*.c
+	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/crypto/l*.c
 
