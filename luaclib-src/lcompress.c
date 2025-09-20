@@ -105,7 +105,7 @@ static int lgzip_decompress(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_compress_gzip(lua_State *L)
+SILLY_MOD_API int luaopen_core_compress_gzip(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "compress",   lgzip_compress   },

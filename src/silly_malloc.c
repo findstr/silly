@@ -37,7 +37,7 @@ static inline size_t xalloc_usable_size(void *ptr)
 #endif
 }
 
-void *silly_malloc(size_t sz)
+void *mem_alloc(size_t sz)
 {
 	void *ptr = MALLOC(sz);
 #ifdef SILLY_TEST
@@ -48,16 +48,17 @@ void *silly_malloc(size_t sz)
 	return ptr;
 }
 
-void *silly_realloc(void *ptr, size_t sz)
+void *mem_realloc(void *ptr, size_t sz)
 {
 	ssize_t realo = xalloc_usable_size(ptr);
 	ptr = REALLOC(ptr, sz);
 	ssize_t realn = xalloc_usable_size(ptr);
-	atomic_fetch_add_explicit(&allocsize, realn - realo, memory_order_relaxed);
+	atomic_fetch_add_explicit(&allocsize, realn - realo,
+				  memory_order_relaxed);
 	return ptr;
 }
 
-void silly_free(void *ptr)
+void mem_free(void *ptr)
 {
 	size_t real = xalloc_usable_size(ptr);
 	atomic_fetch_sub_explicit(&allocsize, real, memory_order_relaxed);
@@ -66,7 +67,7 @@ void silly_free(void *ptr)
 
 #define BUILD(name, MAJOR, MINOR) (name "-" STR(MAJOR) "." STR(MINOR))
 
-const char *silly_allocator()
+const char *mem_allocator()
 {
 #ifndef DISABLE_JEMALLOC
 	return BUILD("jemalloc", JEMALLOC_VERSION_MAJOR,
@@ -76,13 +77,28 @@ const char *silly_allocator()
 #endif
 }
 
-size_t silly_memused()
+int mem_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp,
+		size_t newlen)
+{
+	(void)name;
+	(void)oldp;
+	(void)oldlenp;
+	(void)newp;
+#ifdef DISABLE_JEMALLOC
+	memset(oldp, 0, *oldlenp);
+	return 0;
+#else
+	return je_mallctl(name, oldp, oldlenp, newp, newlen);
+#endif
+}
+
+size_t mem_used()
 {
 	return atomic_load_explicit(&allocsize, memory_order_relaxed);
 }
 
 //Resident Set Size
-size_t silly_memrss()
+size_t mem_rss()
 {
 #if defined(memory_rss)
 	return memory_rss();

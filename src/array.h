@@ -19,7 +19,7 @@ static inline void array_init(struct array *a, int cap)
 		cap = 16;
 	a->cap = cap;
 	a->size = 0;
-	a->buf = silly_malloc(cap);
+	a->buf = mem_alloc(cap);
 }
 
 static inline void array_write(struct array *a, const uint8_t *data, int size)
@@ -28,7 +28,7 @@ static inline void array_write(struct array *a, const uint8_t *data, int size)
 		int new_cap = a->cap * 2;
 		while (new_cap < a->size + size)
 			new_cap *= 2;
-		a->buf = silly_realloc(a->buf, new_cap);
+		a->buf = mem_realloc(a->buf, new_cap);
 		a->cap = new_cap;
 	}
 	memcpy((uint8_t *)a->buf + a->size, data, size);
@@ -42,7 +42,7 @@ static inline void array_clear(struct array *a)
 
 static inline void array_destroy(struct array *a)
 {
-	silly_free(a->buf);
+	mem_free(a->buf);
 	a->cap = 0;
 	a->size = 0;
 	a->buf = NULL;

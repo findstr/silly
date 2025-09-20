@@ -12,18 +12,8 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "errnoex.h"
-#include "silly_trace.h"
-#include "silly_log.h"
-#include "silly_run.h"
-#include "silly_worker.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
-#include "silly_signal.h"
 
-#define UPVAL_ERROR_TABLE  (1)
+#define UPVAL_ERROR_TABLE (1)
 
 static inline void push_error(lua_State *L, int code)
 {
@@ -177,27 +167,27 @@ static int ltraceget(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//core
-		{ "gitsha1",       lgitsha1      },
-		{ "version",       lversion      },
-		{ "register",      lregister     },
-		{ "signalmap",     lsignalmap    },
-		{ "signal",        lsignal       },
-		{ "genid",         lgenid        },
-		{ "tostring",      ltostring     },
-		{ "getpid",        lgetpid       },
-		{ "strerror",      lstrerror     },
-		{ "exit",          lexit         },
+		{ "gitsha1",    lgitsha1   },
+		{ "version",    lversion   },
+		{ "register",   lregister  },
+		{ "signalmap",  lsignalmap },
+		{ "signal",     lsignal    },
+		{ "genid",      lgenid     },
+		{ "tostring",   ltostring  },
+		{ "getpid",     lgetpid    },
+		{ "strerror",   lstrerror  },
+		{ "exit",       lexit      },
 		//trace
-		{ "trace_span",    ltracespan    },
-		{ "trace_new",     ltracenew     },
-		{ "trace_set",     ltraceset     },
-		{ "trace_get",     ltraceget     },
+		{ "trace_span", ltracespan },
+		{ "trace_new",  ltracenew  },
+		{ "trace_set",  ltraceset  },
+		{ "trace_get",  ltraceget  },
 		//end
-		{ NULL,            NULL          },
+		{ NULL,         NULL       },
 	};
 
 	luaL_checkversion(L);

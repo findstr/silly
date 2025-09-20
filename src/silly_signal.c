@@ -3,8 +3,9 @@
 #include <errno.h>
 #include <assert.h>
 
-#include "compiler.h"
 #include "silly.h"
+#include "silly_malloc.h"
+#include "compiler.h"
 #include "message.h"
 #include "silly_worker.h"
 #include "silly_log.h"
@@ -29,21 +30,21 @@ static int signal_unpack(lua_State *L, struct silly_message *m)
 static void signal_handler(int sig)
 {
 	struct message_signal *ms;
-	ms = silly_malloc(sizeof(*ms));
+	ms = mem_alloc(sizeof(*ms));
 	ms->hdr.type = MSG_TYPE_SIGNAL;
 	ms->hdr.unpack = signal_unpack;
-	ms->hdr.free = silly_free;
+	ms->hdr.free = mem_free;
 	ms->signum = sig;
-	silly_worker_push(&ms->hdr);
+	worker_push(&ms->hdr);
 }
 
-int silly_signal_msgtype()
+int signal_msg_type()
 {
-	assert(MSG_TYPE_SIGNAL != 0);  // ensure silly_signal_init has been called
+	assert(MSG_TYPE_SIGNAL != 0); // ensure signal_init has been called
 	return MSG_TYPE_SIGNAL;
 }
 
-int silly_signal_init()
+int signal_init()
 {
 #ifndef __WIN32
 	signal(SIGPIPE, SIG_IGN);
@@ -52,14 +53,14 @@ int silly_signal_init()
 	return 0;
 }
 
-int silly_signal_watch(int signum)
+int signal_watch(int signum)
 {
 	if ((sigbits & (1 << signum)) != 0) {
 		return 0;
 	}
 	if (signal(signum, signal_handler) == SIG_ERR) {
-		silly_log_error("signal %d ignore fail:%s\n", signum,
-				strerror(errno));
+		log_error("signal %d ignore fail:%s\n", signum,
+			  strerror(errno));
 		return errno;
 	}
 	sigbits |= 1 << signum;

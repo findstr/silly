@@ -19,7 +19,7 @@ void nonblock(fd_t fd)
 			      NULL, WSAGetLastError(),
 			      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buffer,
 			      sizeof(buffer), NULL);
-		silly_log_error("[socket] nonblock fd:%d error:%s\n", fd,
+		log_error("[socket] nonblock fd:%d error:%s\n", fd,
 				buffer);
 	}
 }
@@ -82,7 +82,7 @@ int translate_socket_errno(int err)
 	case WSAEALREADY:
 		return EALREADY;
 	default:
-		silly_log_error("[net] unsupport translate_socket_errno:%d\n",
+		log_error("[net] unsupport translate_socket_errno:%d\n",
 				err);
 		return err;
 	}

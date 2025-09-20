@@ -544,7 +544,7 @@ static int lcompose_stmt_execute(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_db_mysql_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_db_mysql_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "parse_lenenc",              lparse_lenenc              },

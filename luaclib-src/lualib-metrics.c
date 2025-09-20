@@ -13,14 +13,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "platform.h"
-#include "silly_log.h"
-#include "silly_run.h"
-#include "silly_worker.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
 
 #ifndef DISABLE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -37,7 +29,7 @@ static int lmemallocator(lua_State *L)
 static int lcpustat(lua_State *L)
 {
 	float stime, utime;
-	cpu_usage(&stime, &utime);
+	silly_cpu_usage(&stime, &utime);
 	lua_pushnumber(L, stime);
 	lua_pushnumber(L, utime);
 	return 2;
@@ -46,7 +38,7 @@ static int lcpustat(lua_State *L)
 static int lmaxfds(lua_State *L)
 {
 	int soft, hard;
-	fd_open_limit(&soft, &hard);
+	silly_fd_open_limit(&soft, &hard);
 	lua_pushinteger(L, soft);
 	lua_pushinteger(L, hard);
 	return 2;
@@ -54,7 +46,7 @@ static int lmaxfds(lua_State *L)
 
 static int lopenfds(lua_State *L)
 {
-	lua_pushinteger(L, open_fd_count());
+	lua_pushinteger(L, silly_open_fd_count());
 	return 1;
 }
 
@@ -68,18 +60,14 @@ static int lmemstat(lua_State *L)
 static int ljestat(lua_State *L)
 {
 	size_t allocated, active, resident, retained;
-#ifndef DISABLE_JEMALLOC
 	uint64_t epoch = 1;
 	size_t sz = sizeof(epoch);
-	je_mallctl("epoch", &epoch, &sz, &epoch, sz);
+	silly_mallctl("epoch", &epoch, &sz, &epoch, sz);
 	sz = sizeof(size_t);
-	je_mallctl("stats.resident", &resident, &sz, NULL, 0);
-	je_mallctl("stats.active", &active, &sz, NULL, 0);
-	je_mallctl("stats.allocated", &allocated, &sz, NULL, 0);
-	je_mallctl("stats.retained", &retained, &sz, NULL, 0);
-#else
-	allocated = resident = active = retained = 0;
-#endif
+	silly_mallctl("stats.resident", &resident, &sz, NULL, 0);
+	silly_mallctl("stats.active", &active, &sz, NULL, 0);
+	silly_mallctl("stats.allocated", &allocated, &sz, NULL, 0);
+	silly_mallctl("stats.retained", &retained, &sz, NULL, 0);
 	lua_pushinteger(L, allocated);
 	lua_pushinteger(L, active);
 	lua_pushinteger(L, resident);
@@ -102,7 +90,8 @@ static int lpollapi(lua_State *L)
 	return 1;
 }
 
-static inline void table_set_int(lua_State *L, int table, const char *k, lua_Integer v)
+static inline void table_set_int(lua_State *L, int table, const char *k,
+				 lua_Integer v)
 {
 	lua_pushinteger(L, v);
 	lua_setfield(L, table - 1, k);
@@ -159,7 +148,7 @@ static int ltimerresolution(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_metrics_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//build

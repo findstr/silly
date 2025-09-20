@@ -2,38 +2,31 @@
 #define _SILLY_LOG_H
 
 #include <stddef.h>
+#include "silly.h"
+#include "args.h"
 
-struct silly_config;
+void log_init(const struct boot_args *config);
+void log_open_file(const char *path);
+void log_set_level(enum silly_log_level level);
+enum silly_log_level log_get_level();
+void log_head(enum silly_log_level level);
+void log_fmt(const char *fmt, ...);
+void log_append(const char *str, size_t sz);
+void log_flush();
 
-enum silly_log_level {
-	SILLY_LOG_DEBUG = 0,
-	SILLY_LOG_INFO = 1,
-	SILLY_LOG_WARN = 2,
-	SILLY_LOG_ERROR = 3,
-};
-
-void silly_log_init(const struct silly_config *config);
-void silly_log_openfile(const char *path);
-void silly_log_setlevel(enum silly_log_level level);
-enum silly_log_level silly_log_getlevel();
-void silly_log_head(enum silly_log_level level);
-void silly_log_fmt(const char *fmt, ...);
-void silly_log_append(const char *str, size_t sz);
-void silly_log_flush();
-
-#define silly_log_visible(level) (level >= silly_log_getlevel())
-#define silly_log_(level, ...)                   \
-	do {                                     \
-		if (!silly_log_visible(level)) { \
-			break;                   \
-		}                                \
-		silly_log_head(level);           \
-		silly_log_fmt(__VA_ARGS__);      \
+#define log_visible(level) (level >= log_get_level())
+#define log_(level, ...)                   \
+	do {                               \
+		if (!log_visible(level)) { \
+			break;             \
+		}                          \
+		log_head(level);           \
+		log_fmt(__VA_ARGS__);      \
 	} while (0)
 
-#define silly_log_debug(...) silly_log_(SILLY_LOG_DEBUG, __VA_ARGS__)
-#define silly_log_info(...) silly_log_(SILLY_LOG_INFO, __VA_ARGS__)
-#define silly_log_warn(...) silly_log_(SILLY_LOG_WARN, __VA_ARGS__)
-#define silly_log_error(...) silly_log_(SILLY_LOG_ERROR, __VA_ARGS__)
+#define log_debug(...) log_(SILLY_LOG_DEBUG, __VA_ARGS__)
+#define log_info(...) log_(SILLY_LOG_INFO, __VA_ARGS__)
+#define log_warn(...) log_(SILLY_LOG_WARN, __VA_ARGS__)
+#define log_error(...) log_(SILLY_LOG_ERROR, __VA_ARGS__)
 
 #endif

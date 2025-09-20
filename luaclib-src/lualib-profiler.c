@@ -6,6 +6,7 @@
 #include <lualib.h>
 #include <lauxlib.h>
 #include <time.h>
+#include "silly.h"
 #ifdef __macosx__
 #include <mach/mach_init.h>
 #include <mach/thread_act.h>
@@ -257,7 +258,7 @@ static inline void newmetatable(lua_State *L)
 	return;
 }
 
-int luaopen_core_profiler(lua_State *L)
+SILLY_MOD_API int luaopen_core_profiler(lua_State *L)
 {
 	int mi;
 	luaL_Reg tbl[] = {

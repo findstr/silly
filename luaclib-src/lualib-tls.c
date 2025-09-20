@@ -3,6 +3,7 @@
 #include <lauxlib.h>
 #include <stdlib.h>
 #include <string.h>
+#include "silly.h"
 
 #ifdef USE_OPENSSL
 
@@ -11,15 +12,11 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
-#include "silly.h"
-#include "silly_malloc.h"
-#include "silly_socket.h"
-
 #define ssl_malloc silly_malloc
 #define ssl_free silly_free
 #define ssl_realloc silly_realloc
 
-#define STK_BUF_SIZE	(1024)
+#define STK_BUF_SIZE (1024)
 
 struct buf {
 	uint8_t *buf;
@@ -572,7 +569,7 @@ static int ltls_push(lua_State *L)
 
 #endif
 
-int luaopen_core_tls_ctx(lua_State *L)
+SILLY_MOD_API int luaopen_core_tls_ctx(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
@@ -607,7 +604,7 @@ int luaopen_core_tls_ctx(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_tls_tls(lua_State *L)
+SILLY_MOD_API int luaopen_core_tls_tls(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL

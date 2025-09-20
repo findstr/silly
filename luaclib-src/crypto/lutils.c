@@ -10,7 +10,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 
-#include "platform.h"
+#include "silly.h"
 
 static int lrandomkey(lua_State *L)
 {
@@ -43,7 +43,7 @@ static int lxor(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_crypto_utils(lua_State *L)
+SILLY_MOD_API int luaopen_core_crypto_utils(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "xor",       lxor       },

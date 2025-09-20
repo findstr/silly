@@ -3,6 +3,7 @@
 #include <lauxlib.h>
 #include <string.h>
 #include <assert.h>
+#include "silly.h"
 
 static const int HOOKKEY = 0;
 
@@ -98,7 +99,7 @@ static int lhook(lua_State *L)
 	return 0;
 }
 
-int luaopen_core_debugger_helper(lua_State *L)
+SILLY_MOD_API int luaopen_core_debugger_helper(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "hook", lhook },

@@ -73,6 +73,7 @@ endif
 INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR) -I $(SRC_PATH)/$(PLAT_DIR)
 SRC_FILE = \
       main.c \
+      api.c \
       silly_socket.c \
       silly_queue.c \
       silly_worker.c \
@@ -130,7 +131,7 @@ $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/core.$(SO): $(addprefix $(LUACLIB_SRC_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) $(OPENSSLFLAG)
+	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) $(OPENSSLFLAG) -fvisibility=hidden
 $(LUACLIB_PATH)/zproto.$(SO): $(LUACLIB_SRC_PATH)/zproto/lzproto.c $(LUACLIB_SRC_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/pb.$(SO): $(LUACLIB_SRC_PATH)/pb.c | $(LUACLIB_PATH)
@@ -145,7 +146,7 @@ $(LUACLIB_PATH)/test.$(SO): $(LUACLIB_SRC_PATH)/lualib-test.c | $(LUACLIB_PATH)
 -include .depend
 
 %.o:%.c
-	$(CC) $(CFLAGS) $(INCLUDE) -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCLUDE) -fvisibility=hidden -c -o $@ $<
 
 test:
 	make TEST=ON MALLOC=glibc all

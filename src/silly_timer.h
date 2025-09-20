@@ -4,14 +4,14 @@
 #include <time.h>
 #include <stdint.h>
 
-void silly_timer_init();
-void silly_timer_exit();
-int silly_timer_msgtype();
-void silly_timer_update();
-uint64_t silly_timer_timeout(uint32_t expire, uint32_t ud);
-int silly_timer_cancel(uint64_t session, uint32_t *ud);
-uint64_t silly_timer_now();
-uint64_t silly_timer_monotonic();
-uint32_t silly_timer_info(uint32_t *expired);
+void timer_init();
+void timer_exit();
+int timer_msg_type();
+void timer_update();
+uint64_t timer_timeout(uint32_t expire, uint32_t ud);
+int timer_cancel(uint64_t session, uint32_t *ud);
+uint64_t timer_now();
+uint64_t timer_monotonic();
+uint32_t timer_info(uint32_t *expired);
 
 #endif

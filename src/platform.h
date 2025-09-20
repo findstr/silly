@@ -38,9 +38,4 @@
 #define closesocket close
 #endif
 
-#ifdef __WIN32
-#define random() rand()
-#define localtime_r(t, tm) localtime_s(tm, t)
-#endif
-
 #endif

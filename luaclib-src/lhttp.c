@@ -5,8 +5,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "silly.h"
 #include "http2_table.h"
-#include "silly_malloc.h"
 
 #define STATIC_TBL_SIZE (61)
 #ifdef SILLY_TEST
@@ -237,7 +237,8 @@ static void create_huffman_tree(lua_State *L)
 		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
-static inline size_t field_size(const struct lstr *kstr, const struct lstr *vstr)
+static inline size_t field_size(const struct lstr *kstr,
+				const struct lstr *vstr)
 {
 	return kstr->len + vstr->len + 32;
 }
@@ -306,8 +307,8 @@ static inline void write_literal(luaL_Buffer *b, const struct lstr *str)
 	}
 }
 
-static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid, const struct lstr *vstr,
-			       int cache)
+static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid,
+			       const struct lstr *vstr, int cache)
 {
 	if (cache) {
 		write_varint(b, 0x01, kid, 6);
@@ -329,7 +330,8 @@ static inline void write_sk_sv(luaL_Buffer *b, const struct lstr *ks,
 	write_literal(b, vs);
 }
 
-static inline void push_kv(lua_State *L, const struct lstr *kstr, const struct lstr *vstr)
+static inline void push_kv(lua_State *L, const struct lstr *kstr,
+			   const struct lstr *vstr)
 {
 	luaL_Buffer b;
 	luaL_buffinit(L, &b);
@@ -461,8 +463,8 @@ static inline void pack_field(lua_State *L, struct pack_ctx *pctx)
 		lua_pop(L, 1);
 	}
 	if (cancache) {
-		cancache = add_to_table(L, ctx, pctx->dyna,
-			pctx->kstk, pctx->vstk, top+1, fsz);
+		cancache = add_to_table(L, ctx, pctx->dyna, pctx->kstk,
+					pctx->vstk, top + 1, fsz);
 	}
 	lua_pushvalue(L, pctx->kstk);
 	if (lua_gettable(L, pctx->stat) == LUA_TNUMBER) {
@@ -476,7 +478,8 @@ static inline void pack_field(lua_State *L, struct pack_ctx *pctx)
 	return;
 }
 
-static inline void copy_str_to_stack(lua_State *L, int from, int to, struct lstr *str)
+static inline void copy_str_to_stack(lua_State *L, int from, int to,
+				     struct lstr *str)
 {
 	str->str = luaL_tolstring(L, from, &str->len);
 	lua_copy(L, -1, to);
@@ -495,11 +498,11 @@ static int lhpack_pack(lua_State *L)
 	lua_getiuservalue(L, 1, 1);            //dynamic_table
 	pctx.stat = argc + 1;
 	pctx.dyna = pctx.stat + 1;
-	lua_settop(L, pctx.dyna+4);
-	kbackup = pctx.dyna+1;
-	vbackup = pctx.dyna+2;
-	kstk = pctx.dyna+3;
-	vstk = pctx.dyna+4;
+	lua_settop(L, pctx.dyna + 4);
+	kbackup = pctx.dyna + 1;
+	vbackup = pctx.dyna + 2;
+	kstk = pctx.dyna + 3;
+	vstk = pctx.dyna + 4;
 	luaL_buffinit(L, &pctx.b);
 	top = lua_gettop(L);
 	lua_checkstack(L, LUA_MINSTACK);
@@ -509,7 +512,7 @@ static int lhpack_pack(lua_State *L)
 		pctx.kstr.str = luaL_tolstring(L, pctx.kstk, &pctx.kstr.len);
 		pctx.vstr.str = luaL_tolstring(L, pctx.vstk, &pctx.vstr.len);
 		pack_field(L, &pctx);
-		lua_settop(L, top); 		// keep the luaL_buffer on the top
+		lua_settop(L, top); // keep the luaL_buffer on the top
 	}
 
 	if (lua_type(L, 2) != LUA_TNIL) {
@@ -517,15 +520,16 @@ static int lhpack_pack(lua_State *L)
 		pctx.kstk = kstk;
 		pctx.vstk = vstk;
 		while (lua_next(L, 2) != 0) {
-			lua_copy(L, top+1, kbackup);	//backup the key
-			lua_copy(L, top+2, vbackup);	//backup the value
+			lua_copy(L, top + 1, kbackup); //backup the key
+			lua_copy(L, top + 2, vbackup); //backup the value
 			copy_str_to_stack(L, kbackup, kstk, &pctx.kstr);
 			lua_settop(L, top);
 			if (lua_type(L, vbackup) == LUA_TTABLE) {
 				int n = lua_rawlen(L, vbackup);
 				for (int i = 1; i <= n; i++) {
 					lua_rawgeti(L, vbackup, i);
-					copy_str_to_stack(L, -1, vstk, &pctx.vstr);
+					copy_str_to_stack(L, -1, vstk,
+							  &pctx.vstr);
 					lua_settop(L, top);
 					// when call pack_field, should keep can't grow the stack
 					pack_field(L, &pctx);
@@ -820,7 +824,7 @@ static int dbg_stringid(lua_State *L)
 
 #endif
 
-int luaopen_core_http2_hpack(lua_State *L)
+SILLY_MOD_API int luaopen_core_http2_hpack(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",            lhpack_new       },
@@ -1010,7 +1014,7 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_http2_framebuilder(lua_State *L)
+SILLY_MOD_API int luaopen_core_http2_framebuilder(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "header",    lframe_build_header    },

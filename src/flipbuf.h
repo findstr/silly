@@ -27,7 +27,8 @@ static inline void flipbuf_destroy(struct flipbuf *fb)
 	spinlock_destroy(&fb->lock);
 }
 
-static inline int flipbuf_write(struct flipbuf *fb, const uint8_t *data, int size)
+static inline int flipbuf_write(struct flipbuf *fb, const uint8_t *data,
+				int size)
 {
 	int was_empty;
 	struct array *arr;

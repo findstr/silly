@@ -43,14 +43,9 @@ M.udp_send = assert(c.udp_send)
 ---@type fun(fd:integer, data:lightuserdata, size:integer?, addr:string?): boolean, string? error
 M.tcp_multicast = assert(c.tcp_multicast)
 
-local readctrl = assert(c.readctrl)
 M.multipack = assert(c.multipack)
 ---@type fun(fd:integer):integer
 M.sendsize = assert(c.sendsize)
-M.socket_read_ctrl = function (sid, ctrl)
-	return readctrl(sid, ctrl == "enable")
-end
-
 local function listen_wrap(listen)
 	---@param addr string
 	---@param event core.net.event

@@ -12,18 +12,8 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "errnoex.h"
-#include "silly_trace.h"
-#include "silly_log.h"
-#include "silly_run.h"
-#include "silly_worker.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
-#include "silly_signal.h"
 
-#define UPVAL_ERROR_TABLE  (1)
+#define UPVAL_ERROR_TABLE (1)
 #define MULTICAST_SIZE offsetof(struct multicasthdr, data)
 
 struct multicasthdr {
@@ -127,8 +117,8 @@ static inline void *tablebuffer(lua_State *L, int idx, size_t *size)
 	return p;
 }
 
-typedef socket_id_t(connect_t)(const char *ip, const char *port, const char *bip,
-		       const char *bport);
+typedef socket_id_t(connect_t)(const char *ip, const char *port,
+			       const char *bip, const char *bport);
 
 static int socketconnect(lua_State *L, connect_t *connect)
 {
@@ -291,7 +281,7 @@ static int lntop(lua_State *L)
 {
 	int size;
 	const char *addr;
-	char name[SOCKET_NAMELEN];
+	char name[SILLY_SOCKET_NAMELEN];
 	addr = luaL_checkstring(L, 1);
 	size = silly_socket_ntop((uint8_t *)addr, name);
 	lua_pushlstring(L, name, size);
@@ -314,11 +304,11 @@ static int lclose(lua_State *L)
 	return 2;
 }
 
-static int lreadctrl(lua_State *L)
+static int lreadenable(lua_State *L)
 {
 	socket_id_t sid = luaL_checkinteger(L, 1);
-	int ctrl = lua_toboolean(L, 2);
-	silly_socket_readctrl(sid, ctrl);
+	int enable = lua_toboolean(L, 2);
+	silly_socket_readenable(sid, enable);
 	return 0;
 }
 
@@ -334,7 +324,9 @@ static void set_message_type(lua_State *L, int tbl)
 {
 	const struct silly_socket_msgtype *msgtype;
 	msgtype = silly_socket_msgtypes();
-#define SET(name, n) lua_pushinteger(L, n); lua_setfield(L, tbl, name);
+#define SET(name, n)           \
+	lua_pushinteger(L, n); \
+	lua_setfield(L, tbl, name);
 	SET("ACCEPT", msgtype->accept);
 	SET("CONNECT", msgtype->connect);
 	SET("LISTEN", msgtype->listen);
@@ -344,7 +336,7 @@ static void set_message_type(lua_State *L, int tbl)
 #undef SET
 }
 
-int luaopen_core_net_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_net_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "tcp_connect",   ltcpconnect   },
@@ -357,7 +349,7 @@ int luaopen_core_net_c(lua_State *L)
 		{ "sendsize",      lsendsize     },
 		{ "multipack",     lmultipack    },
 		{ "multifree",     lmultifree    },
-		{ "readctrl",      lreadctrl     },
+		{ "readenable",    lreadenable   },
 		{ "ntop",          lntop         },
 		{ "close",         lclose        },
 		{ NULL,            NULL          },

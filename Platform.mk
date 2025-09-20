@@ -10,7 +10,7 @@ SO := so
 LUA_PLAT :=
 
 ifeq ($(uname_S),Linux)
-	LDFLAGS += -ldl -Wl,-E -lrt
+	LDFLAGS += -ldl -lrt -rdynamic
 	SHARED += --share -fPIC
 	SO = so
 	A = a
@@ -27,7 +27,7 @@ ifeq ($(OPENSSL),ON)
 	LDFLAGS += $(shell pkg-config --libs openssl)
 	SHARED += $(shell pkg-config --libs openssl)
 endif
-	LDFLAGS += -ldl -Wl,-no_compact_unwind
+	LDFLAGS += -ldl -Wl,-no_compact_unwind,-export_dynamic
 	SHARED += -dynamiclib -fPIC -Wl,-undefined,dynamic_lookup
 	SO = so
 	A = a
@@ -39,8 +39,8 @@ endif
 endif
 
 ifeq ($(findstring _NT, $(uname_S)),_NT)
-	LDFLAGS += -lws2_32 -Wl,--export-all-symbols,--out-implib,$(SRC_PATH)/lib$(TARGET).lib
-	SHARED += --share -fPIC -L$(SRC_PATH) -l$(TARGET) -lws2_32
+	LDFLAGS += -lws2_32 -Wl,--out-implib,$(SRC_PATH)/lib$(TARGET).lib,--export-all-symbols
+	SHARED += --share -fPIC -L$(SRC_PATH) -l$(TARGET) -lws2_32 -DSILLY_BUILD_SHARED
 	SO = dll
 	A = lib
 	LIBPREFIX =

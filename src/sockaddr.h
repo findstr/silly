@@ -15,8 +15,8 @@ static inline size_t sockaddr_len(const union sockaddr_full *sa)
 {
 	if (sa == NULL)
 		return 0;
-	return (sa->sa.sa_family == AF_INET ? sizeof(struct sockaddr_in) : \
-		sizeof(struct sockaddr_in6));
+	return (sa->sa.sa_family == AF_INET ? sizeof(struct sockaddr_in) :
+					      sizeof(struct sockaddr_in6));
 }
 
 #endif

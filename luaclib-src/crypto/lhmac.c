@@ -8,6 +8,7 @@
 #include <openssl/hmac.h>
 #include <openssl/err.h>
 
+#include "silly.h"
 #include "md_cache.h"
 #include "luastr.h"
 
@@ -50,7 +51,7 @@ static int ldigest(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_crypto_hmac(lua_State *L)
+SILLY_MOD_API int luaopen_core_crypto_hmac(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "digest", ldigest },

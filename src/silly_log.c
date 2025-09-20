@@ -14,7 +14,6 @@
 #include "silly_trace.h"
 #include "silly_log.h"
 
-
 static int is_daemon = 0;
 static enum silly_log_level log_level = SILLY_LOG_INFO;
 static THREAD_LOCAL struct {
@@ -41,7 +40,7 @@ static char hex[] = {
 	'8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 };
 
-void silly_log_openfile(const char *path)
+void log_open_file(const char *path)
 {
 	int fd;
 	if (!is_daemon) {
@@ -57,14 +56,14 @@ void silly_log_openfile(const char *path)
 	}
 }
 
-void silly_log_init(const struct silly_config *config)
+void log_init(const struct boot_args *config)
 {
 	is_daemon = config->daemon;
-	silly_log_openfile(config->logpath);
+	log_open_file(config->logpath);
 	return;
 }
 
-void silly_log_setlevel(enum silly_log_level level)
+void log_set_level(enum silly_log_level level)
 {
 	if (level >= sizeof(level_names) / sizeof(level_names[0])) {
 		//TODO:
@@ -73,7 +72,7 @@ void silly_log_setlevel(enum silly_log_level level)
 	log_level = level;
 }
 
-enum silly_log_level silly_log_getlevel()
+enum silly_log_level log_get_level()
 {
 	return log_level;
 }
@@ -87,9 +86,9 @@ static inline void fmttime()
 	int n;
 	char *end;
 	struct tm tm;
-	uint64_t now = silly_timer_now();
+	uint64_t now = timer_now();
 	time_t sec = now / 1000;
-	silly_traceid_t traceid = silly_trace_get();
+	silly_traceid_t traceid = trace_get();
 	int build_step;
 	if (head_cache.sstr == NULL) {
 		build_step = BUILD_SEC;
@@ -123,7 +122,7 @@ static inline void fmttime()
 	return;
 }
 
-void silly_log_head(enum silly_log_level level)
+void log_head(enum silly_log_level level)
 {
 	fmttime();
 	head_cache.term[0] = level_names[level];
@@ -132,7 +131,7 @@ void silly_log_head(enum silly_log_level level)
 	       head_cache.term + 2 - head_cache.buf, stdout);
 }
 
-void silly_log_fmt(const char *fmt, ...)
+void log_fmt(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -141,12 +140,12 @@ void silly_log_fmt(const char *fmt, ...)
 	return;
 }
 
-void silly_log_append(const char *str, size_t sz)
+void log_append(const char *str, size_t sz)
 {
 	fwrite(str, sizeof(char), sz, stdout);
 }
 
-void silly_log_flush()
+void log_flush()
 {
 	fflush(stdout);
 }

@@ -8,9 +8,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "silly_conf.h"
-#include "compiler.h"
-#include "silly_log.h"
 #include "luastr.h"
 
 #define LOG_TRUE_STR "true"
@@ -344,7 +341,7 @@ static int lerrorf(lua_State *L)
 	return llogf(L, SILLY_LOG_ERROR);
 }
 
-int luaopen_core_logger_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_logger_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "openfile", lopenfile },

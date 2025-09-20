@@ -15,6 +15,19 @@
 #define LUA_LIB_SUFFIX ".so"
 #endif
 
+#if defined(_WIN32)
+#if defined(SILLY_BUILD_SHARED)
+#define SILLY_API __declspec(dllimport)
+#define SILLY_MOD_API __declspec(dllexport)
+#else
+#define SILLY_API __declspec(dllexport)
+#define SILLY_MOD_API __declspec(dllimport)
+#endif
+#else
+#define SILLY_API __attribute__((visibility("default")))
+#define SILLY_MOD_API __attribute__((visibility("default")))
+#endif
+
 //platform related
 
 #ifdef __linux__
@@ -67,5 +80,23 @@
 #ifndef LOG_DISABLE_FILE_LINE
 #define LOG_ENABLE_FILE_LINE
 #endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 256
+#endif
+
+#ifdef __WIN32
+#define random() rand()
+#define localtime_r(t, tm) localtime_s(tm, t)
+#endif
+
+#if defined(__linux__) || defined(__MACH__)
+#include <arpa/inet.h>
+#elif defined(__WIN32)
+#include <ws2tcpip.h>
+#else
+#error "Unsupported platform"
+#endif
+#define SILLY_SOCKET_NAMELEN (INET6_ADDRSTRLEN + 8 + 1) //[ipv6]:port
 
 #endif

@@ -1,31 +1,30 @@
 #ifndef _SILLY_WORKER_H
 #define _SILLY_WORKER_H
 #include <lua.h>
+#include "silly.h"
+#include "args.h"
 
-struct silly_message;
-struct lua_State;
+void worker_init();
+void worker_exit();
+void worker_start(const struct boot_args *config);
 
-void silly_worker_init();
-void silly_worker_exit();
-void silly_worker_start(const struct silly_config *config);
+void worker_push(struct silly_message *msg);
+void worker_dispatch();
 
-void silly_worker_push(struct silly_message *msg);
-void silly_worker_dispatch();
+uint32_t worker_alloc_id();
+size_t worker_msg_size();
 
-uint32_t silly_worker_genid();
-size_t silly_worker_msgsize();
+uint32_t worker_process_id();
+void worker_resume(lua_State *L);
+void worker_warn_endless();
 
-uint32_t silly_worker_processid();
-void silly_worker_resume(lua_State *L);
-void silly_worker_warnendless();
+char **worker_args(int *argc);
 
-char **silly_worker_args(int *argc);
+void worker_callback(void (*callback)(struct lua_State *L,
+				      struct silly_message *msg));
 
-void silly_worker_callback(void (*callback)(struct lua_State *L,
-					    struct silly_message *msg));
-
-void silly_worker_callbacktable(lua_State *L);
-void silly_worker_errortable(lua_State *L);
-void silly_worker_pusherror(lua_State *L, int stk, int code);
-void silly_worker_reset();
+void worker_callback_table(lua_State *L);
+void worker_error_table(lua_State *L);
+void worker_push_error(lua_State *L, int stk, int code);
+void worker_reset();
 #endif

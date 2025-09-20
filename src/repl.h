@@ -52,5 +52,4 @@ static const char *REPL =
 	"end\n"
 	"core.exit(0)";
 
-
 #endif

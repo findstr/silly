@@ -12,12 +12,6 @@
 #include <lualib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "message.h"
-#include "spinlock.h"
-#include "silly_log.h"
-#include "silly_malloc.h"
-#include "silly_worker.h"
 
 #define MT_HIVE "core.hive"
 #define MT_WORKER "core.hive.worker"
@@ -30,19 +24,23 @@
 #define IDLE_TIMEOUT (60) //seconds
 #endif
 
-#define THREAD_IDLE    (0)
+#define THREAD_IDLE (0)
 #define THREAD_WORKING (1)
-#define THREAD_DEAD    (-1)
+#define THREAD_DEAD (-1)
 
 #define MALLOC(size) silly_malloc(size)
 #define REALLOC(ptr, size) silly_realloc(ptr, size)
 #define FREE(ptr) silly_free(ptr)
 
-#define store(ptr, value) atomic_store_explicit(ptr, value, memory_order_relaxed)
+#define store(ptr, value) \
+	atomic_store_explicit(ptr, value, memory_order_relaxed)
 #define load(ptr) atomic_load_explicit(ptr, memory_order_relaxed)
-#define add(ptr, value) atomic_fetch_add_explicit(ptr, value, memory_order_relaxed)
-#define sub(ptr, value) atomic_fetch_sub_explicit(ptr, value, memory_order_relaxed)
-#define release(ptr, value) atomic_store_explicit(ptr, value, memory_order_release)
+#define add(ptr, value) \
+	atomic_fetch_add_explicit(ptr, value, memory_order_relaxed)
+#define sub(ptr, value) \
+	atomic_fetch_sub_explicit(ptr, value, memory_order_relaxed)
+#define release(ptr, value) \
+	atomic_store_explicit(ptr, value, memory_order_release)
 #define acquire(ptr) atomic_load_explicit(ptr, memory_order_acquire)
 
 struct thread_context;
@@ -89,7 +87,8 @@ struct task_message {
 
 static int MSG_TYPE_HIVE_DONE = 0;
 
-static void copy_value_r(lua_State *L_from, lua_State *L_to, int index, int depth)
+static void copy_value_r(lua_State *L_from, lua_State *L_to, int index,
+			 int depth)
 {
 	if (depth > 100)
 		return;
@@ -118,8 +117,10 @@ static void copy_value_r(lua_State *L_from, lua_State *L_to, int index, int dept
 		lua_newtable(L_to);
 		lua_pushnil(L_from);
 		while (lua_next(L_from, index) != 0) {
-			copy_value_r(L_from, L_to, lua_gettop(L_from) - 1, depth + 1);
-			copy_value_r(L_from, L_to, lua_gettop(L_from), depth + 1);
+			copy_value_r(L_from, L_to, lua_gettop(L_from) - 1,
+				     depth + 1);
+			copy_value_r(L_from, L_to, lua_gettop(L_from),
+				     depth + 1);
 			lua_rawset(L_to, -3);
 			lua_pop(L_from, 1);
 		}
@@ -130,7 +131,8 @@ static void copy_value_r(lua_State *L_from, lua_State *L_to, int index, int dept
 	}
 }
 
-static inline void copy_values(lua_State *L_from, lua_State *L_to, int stk, int top)
+static inline void copy_values(lua_State *L_from, lua_State *L_to, int stk,
+			       int top)
 {
 	luaL_checkstack(L_to, top - stk + 1, NULL);
 	for (int i = stk; i <= top; i++) {
@@ -214,7 +216,8 @@ static int l_worker_gc(lua_State *L)
 {
 	struct worker *w = (struct worker *)lua_touserdata(L, 1);
 	if (unlikely(w->task_id != 0)) {
-		silly_log_warn("[hive] A worker was still busy during GC. This may cause a memory leak report on exit. "
+		silly_log_warn(
+			"[hive] A worker was still busy during GC. This may cause a memory leak report on exit. "
 			"Check for blocking calls or infinite loops in hive tasks.\n");
 		// If the worker is still running in the thread pool,
 		// the only possible reason it was garbage collected is that its Lua state has been closed.
@@ -237,7 +240,7 @@ static void new_hive(lua_State *L)
 	}
 	lua_setmetatable(L, -2);
 
-	int n = cpu_count();
+	int n = silly_cpu_count();
 	h->id = 0;
 	h->thread_live = 0;
 	h->round_robin = 0;
@@ -283,7 +286,8 @@ static void *thread_func(void *arg)
 		pthread_mutex_unlock(&ctx->lock);
 		sub(&h->worker_waiting, 1);
 		add(&h->thread_busy, 1);
-		w->pcall_status = lua_pcall(w->L, lua_gettop(w->L) - 2, LUA_MULTRET, 0);
+		w->pcall_status =
+			lua_pcall(w->L, lua_gettop(w->L) - 2, LUA_MULTRET, 0);
 		sub(&h->thread_busy, 1);
 		msg = (struct task_message *)MALLOC(sizeof(*msg));
 		msg->hdr.type = MSG_TYPE_HIVE_DONE;
@@ -310,19 +314,21 @@ static void create_thread(struct hive *h)
 		pthread_mutex_destroy(&ctx->lock);
 		pthread_cond_destroy(&ctx->cond);
 		FREE(ctx);
-		return ;
+		return;
 	}
 	if (h->thread_live >= h->table_capacity) {
 		int n = (h->table_capacity + 1) * 3 / 2;
 		assert(h->thread_live == h->table_capacity);
 		h->table = REALLOC(h->table, n * sizeof(h->table[0]));
-		memset(h->table + h->thread_live, 0, (n - h->thread_live) * sizeof(h->table[0]));
+		memset(h->table + h->thread_live, 0,
+		       (n - h->thread_live) * sizeof(h->table[0]));
 		h->table_capacity = n;
 	}
 	h->table[h->thread_live++] = ctx;
 }
 
-static lua_Integer push_into_hive(lua_State *L, struct hive *h, struct worker *w)
+static lua_Integer push_into_hive(lua_State *L, struct hive *h,
+				  struct worker *w)
 {
 	lua_Integer id;
 	struct thread_context *ctx;
@@ -355,7 +361,8 @@ static int llimit(lua_State *L)
 	h = (struct hive *)(lua_touserdata(L, lua_upvalueindex(UPVAL_HIVE)));
 	int min = luaL_checkinteger(L, 1);
 	int max = luaL_checkinteger(L, 2);
-	luaL_argcheck(L, min <= max, 2, "max must be greater than or equal to min");
+	luaL_argcheck(L, min <= max, 2,
+		      "max must be greater than or equal to min");
 	luaL_argcheck(L, max > 0, 2, "max must be positive");
 	h->thread_min = min;
 	h->thread_max = max;
@@ -371,7 +378,8 @@ static int try_kill_thread(struct thread_context *ctx, time_t dead_time)
 		return 0;
 	}
 	pthread_mutex_lock(&ctx->lock);
-	if (acquire(&ctx->status) == THREAD_IDLE && ctx->idle_start < dead_time && ctx->head == NULL) {
+	if (acquire(&ctx->status) == THREAD_IDLE &&
+	    ctx->idle_start < dead_time && ctx->head == NULL) {
 		ctx->shutdown = 1;
 		pthread_cond_signal(&ctx->cond);
 	}
@@ -449,7 +457,8 @@ static int lspawn(lua_State *L)
 
 static int lpush(lua_State *L)
 {
-	struct hive *h = (struct hive *)(lua_touserdata(L, lua_upvalueindex(UPVAL_HIVE)));
+	struct hive *h = (struct hive *)(lua_touserdata(
+		L, lua_upvalueindex(UPVAL_HIVE)));
 	struct worker *w = (struct worker *)luaL_checkudata(L, 1, MT_WORKER);
 	luaL_argcheck(L, w->task_id == 0, 1, "worker is working");
 	if (lua_gettop(w->L) != 1) {
@@ -462,21 +471,23 @@ static int lpush(lua_State *L)
 
 static int lthreads(lua_State *L)
 {
-	struct hive *h = (struct hive *)(lua_touserdata(L, lua_upvalueindex(UPVAL_HIVE)));
+	struct hive *h = (struct hive *)(lua_touserdata(
+		L, lua_upvalueindex(UPVAL_HIVE)));
 	lua_pushinteger(L, h->thread_live);
 	return 1;
 }
 
-int luaopen_core_hive_c(lua_State *L) {
+SILLY_MOD_API int luaopen_core_hive_c(lua_State *L)
+{
 	const struct luaL_Reg tbl[] = {
-		{"limit", llimit},
-		{"prune", lprune},
-		{"spawn", lspawn},
-		{"push", lpush},
-		{"threads", lthreads},
-		{NULL, NULL}
+		{ "limit",   llimit   },
+                { "prune",   lprune   },
+		{ "spawn",   lspawn   },
+                { "push",    lpush    },
+		{ "threads", lthreads },
+                { NULL,      NULL     }
 	};
-	MSG_TYPE_HIVE_DONE = message_new_type();
+	MSG_TYPE_HIVE_DONE = silly_new_message_type();
 	luaL_newlibtable(L, tbl);
 	new_hive(L);
 	luaL_setfuncs(L, tbl, 1);

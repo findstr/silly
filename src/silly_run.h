@@ -2,7 +2,7 @@
 #define _SILLY_RUN_H
 
 struct silly_config;
-int silly_run(const struct silly_config *config);
-void silly_exit(int status);
+int silly_run(const struct boot_args *config);
+void silly_shutdown(int status);
 
 #endif

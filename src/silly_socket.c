@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 
 #include "silly.h"
+#include "platform.h"
 #include "sockaddr.h"
 #include "message.h"
 #include "compiler.h"
@@ -81,41 +82,44 @@ EAGAIN:           \
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
-#define STATE_POLLING		(1 << 0)
-#define STATE_PENDING		(1 << 1)
-#define STATE_CONNECTING	STATE_PENDING
-#define STATE_LISTENING		STATE_PENDING
-#define STATE_READING		(1 << 2)
-#define STATE_WRITING		(1 << 3)
-#define STATE_CLOSING		(1 << 4)
-#define STATE_MUTECLOSE		(1 << 5)
-#define STATE_ZOMBINE		(1 << 6)
+#define STATE_POLLING (1 << 0)
+#define STATE_PENDING (1 << 1)
+#define STATE_CONNECTING STATE_PENDING
+#define STATE_LISTENING STATE_PENDING
+#define STATE_READING (1 << 2)
+#define STATE_WRITING (1 << 3)
+#define STATE_CLOSING (1 << 4)
+#define STATE_MUTECLOSE (1 << 5)
+#define STATE_ZOMBINE (1 << 6)
 
-#define test_state(s, sx)	((atomic_load_explicit(&(s)->state, memory_order_acquire) & (sx)) != 0)
-#define set_state(s, sx)	atomic_fetch_or_explicit(&(s)->state, (sx), memory_order_release)
-#define clr_state(s, sx)	atomic_fetch_and_explicit(&(s)->state, ~(sx), memory_order_release)
+#define test_state(s, sx) \
+	((atomic_load_explicit(&(s)->state, memory_order_acquire) & (sx)) != 0)
+#define set_state(s, sx) \
+	atomic_fetch_or_explicit(&(s)->state, (sx), memory_order_release)
+#define clr_state(s, sx) \
+	atomic_fetch_and_explicit(&(s)->state, ~(sx), memory_order_release)
 
-#define is_polling(s)		test_state(s, STATE_POLLING)
-#define is_connecting(s)	test_state(s, STATE_CONNECTING)
-#define is_listening(s)		test_state(s, STATE_LISTENING)
-#define is_reading(s)		test_state(s, STATE_READING)
-#define is_writing(s)		test_state(s, STATE_WRITING)
-#define is_closing(s)		test_state(s, STATE_CLOSING)
-#define is_muteclose(s)		test_state(s, STATE_MUTECLOSE)
-#define is_zombine(s)		test_state(s, STATE_ZOMBINE)
+#define is_polling(s) test_state(s, STATE_POLLING)
+#define is_connecting(s) test_state(s, STATE_CONNECTING)
+#define is_listening(s) test_state(s, STATE_LISTENING)
+#define is_reading(s) test_state(s, STATE_READING)
+#define is_writing(s) test_state(s, STATE_WRITING)
+#define is_closing(s) test_state(s, STATE_CLOSING)
+#define is_muteclose(s) test_state(s, STATE_MUTECLOSE)
+#define is_zombine(s) test_state(s, STATE_ZOMBINE)
 
-#define set_connecting(s)	set_state(s, STATE_CONNECTING)
-#define set_listening(s)	set_state(s, STATE_LISTENING)
-#define set_reading(s)		set_state(s, STATE_READING)
-#define set_writing(s)		set_state(s, STATE_WRITING)
-#define set_muteclose(s)	set_state(s, STATE_MUTECLOSE)
-#define set_zombine(s)		set_state(s, STATE_ZOMBINE)
+#define set_connecting(s) set_state(s, STATE_CONNECTING)
+#define set_listening(s) set_state(s, STATE_LISTENING)
+#define set_reading(s) set_state(s, STATE_READING)
+#define set_writing(s) set_state(s, STATE_WRITING)
+#define set_muteclose(s) set_state(s, STATE_MUTECLOSE)
+#define set_zombine(s) set_state(s, STATE_ZOMBINE)
 
-#define clr_connecting(s)	clr_state(s, STATE_CONNECTING)
-#define clr_listening(s)	clr_state(s, STATE_LISTENING)
-#define clr_reading(s)		clr_state(s, STATE_READING)
-#define clr_writing(s)		clr_state(s, STATE_WRITING)
-#define clr_zombine(s)		clr_state(s, STATE_ZOMBINE)
+#define clr_connecting(s) clr_state(s, STATE_CONNECTING)
+#define clr_listening(s) clr_state(s, STATE_LISTENING)
+#define clr_reading(s) clr_state(s, STATE_READING)
+#define clr_writing(s) clr_state(s, STATE_WRITING)
+#define clr_zombine(s) clr_state(s, STATE_ZOMBINE)
 
 #define PROTOCOL_TCP 1
 #define PROTOCOL_UDP 2
@@ -137,10 +141,12 @@ EAGAIN:           \
 #define socket_type(s) (s->type & 0x0f)
 #define socket_protocol(s) ((s->type >> 4) & 0x0f)
 
-#define sid(s)	atomic_load_explicit(&(s)->sid, memory_order_acquire)
+#define sid(s) atomic_load_explicit(&(s)->sid, memory_order_acquire)
 
-#define atomic_add(ptr, val) atomic_fetch_add_explicit(ptr, (val), memory_order_relaxed)
-#define atomic_sub(ptr, val) atomic_fetch_sub_explicit(ptr, (val), memory_order_relaxed)
+#define atomic_add(ptr, val) \
+	atomic_fetch_add_explicit(ptr, (val), memory_order_relaxed)
+#define atomic_sub(ptr, val) \
+	atomic_fetch_sub_explicit(ptr, (val), memory_order_relaxed)
 
 static const char *protocol_name[] = {
 	"INVALID",
@@ -150,7 +156,10 @@ static const char *protocol_name[] = {
 };
 
 static const char *stype_name[] = {
-	"RESERVE", "LISTEN", "CONNECTION", "CTRL",
+	"RESERVE",
+	"LISTEN",
+	"CONNECTION",
+	"CTRL",
 };
 
 struct wlist {
@@ -222,7 +231,7 @@ struct op_hdr {
 	uint16_t size;
 };
 
-struct op_listen{
+struct op_listen {
 	struct op_hdr hdr;
 };
 
@@ -231,7 +240,7 @@ struct op_connect {
 	union sockaddr_full addr;
 };
 
-struct op_close{
+struct op_close {
 	struct op_hdr hdr;
 };
 
@@ -312,14 +321,14 @@ struct message_close {
 	int err;
 };
 
-struct silly_socket_msgtype MSG_TYPE = {0};
+struct silly_socket_msgtype MSG_TYPE = { 0 };
 static struct silly_socket *SSOCKET;
 
 static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
-					void (*freex)(void *))
+				void (*freex)(void *))
 {
 	struct wlist *w;
-	w = (struct wlist *)silly_malloc(sizeof(*w));
+	w = (struct wlist *)mem_alloc(sizeof(*w));
 	w->size = size;
 	w->buf = buf;
 	w->free = freex;
@@ -331,13 +340,13 @@ static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
 }
 
 static inline void wlist_appendudp(struct socket *s, uint8_t *buf, size_t size,
-						   void (*freex)(void *),
-						   const union sockaddr_full *addr)
+				   void (*freex)(void *),
+				   const union sockaddr_full *addr)
 {
 	int addrsz;
 	struct wlist *w;
 	addrsz = sockaddr_len(addr);
-	w = (struct wlist *)silly_malloc(sizeof(*w) + addrsz);
+	w = (struct wlist *)mem_alloc(sizeof(*w) + addrsz);
 	w->size = size;
 	w->buf = buf;
 	w->free = freex;
@@ -363,7 +372,7 @@ static void wlist_free(struct socket *s)
 		w = w->next;
 		assert(t->buf);
 		t->free(t->buf);
-		silly_free(t);
+		mem_free(t);
 	}
 	s->wlhead = NULL;
 	s->wltail = &s->wlhead;
@@ -418,7 +427,7 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 	spinlock_lock(&p->lock);
 	if (p->free_head == NULL) {
 		spinlock_unlock(&p->lock);
-		silly_log_error("[socket] pool_alloc fail, find no empty entry\n");
+		log_error("[socket] pool_alloc fail, find no empty entry\n");
 		return NULL;
 	}
 	struct socket *s = p->free_head;
@@ -429,7 +438,7 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 	spinlock_unlock(&p->lock);
 	s->fd = fd;
 	s->type = type;
-	id = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s-&p->slots[0]);
+	id = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s - &p->slots[0]);
 	atomic_store_explicit(&s->sid, id, memory_order_release);
 	return s;
 }
@@ -453,7 +462,8 @@ static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
 	return s;
 }
 
-static int ntop(const union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
+static int ntop(const union sockaddr_full *addr,
+		char namebuf[SILLY_SOCKET_NAMELEN])
 {
 	uint16_t port;
 	int namelen, family;
@@ -470,8 +480,8 @@ static int ntop(const union sockaddr_full *addr, char namebuf[SOCKET_NAMELEN])
 		namelen = strlen(buf);
 	}
 	port = ntohs(port);
-	namelen +=
-		snprintf(&buf[namelen], SOCKET_NAMELEN - namelen, ":%d", port);
+	namelen += snprintf(&buf[namelen], SILLY_SOCKET_NAMELEN - namelen,
+			    ":%d", port);
 	return namelen;
 }
 
@@ -479,7 +489,7 @@ static int accept_unpack(lua_State *L, struct silly_message *m)
 {
 	struct message_accept *ma = container_of(m, struct message_accept, hdr);
 	int addrlen = *ma->addr;
-	char *addr = (char *)ma->addr+ 1;
+	char *addr = (char *)ma->addr + 1;
 	lua_pushinteger(L, ma->sid);
 	lua_pushinteger(L, ma->listenid);
 	lua_pushlstring(L, addr, addrlen);
@@ -490,15 +500,16 @@ static int listen_unpack(lua_State *L, struct silly_message *m)
 {
 	struct message_listen *ml = container_of(m, struct message_listen, hdr);
 	lua_pushinteger(L, ml->sid);
-	silly_worker_pusherror(L, 0, ml->err);
+	worker_push_error(L, 0, ml->err);
 	return 2;
 }
 
 static int connect_unpack(lua_State *L, struct silly_message *m)
 {
-	struct message_connect *mc = container_of(m, struct message_connect, hdr);
+	struct message_connect *mc =
+		container_of(m, struct message_connect, hdr);
 	lua_pushinteger(L, mc->sid);
-	silly_worker_pusherror(L, 0, mc->err);
+	worker_push_error(L, 0, mc->err);
 	return 2;
 }
 
@@ -506,13 +517,14 @@ static int close_unpack(lua_State *L, struct silly_message *m)
 {
 	struct message_close *mc = container_of(m, struct message_close, hdr);
 	lua_pushinteger(L, mc->sid);
-	silly_worker_pusherror(L, 0, mc->err);
+	worker_push_error(L, 0, mc->err);
 	return 2;
 }
 
 static int tcpdata_unpack(lua_State *L, struct silly_message *m)
 {
-	struct message_tcpdata *md = container_of(m, struct message_tcpdata, hdr);
+	struct message_tcpdata *md =
+		container_of(m, struct message_tcpdata, hdr);
 	lua_pushinteger(L, md->sid);
 	lua_pushlightuserdata(L, md->ptr);
 	lua_pushinteger(L, md->size);
@@ -522,16 +534,18 @@ static int tcpdata_unpack(lua_State *L, struct silly_message *m)
 
 static void tcpdata_free(void *m)
 {
-	struct message_tcpdata *md = container_of(m, struct message_tcpdata, hdr);
+	struct message_tcpdata *md =
+		container_of(m, struct message_tcpdata, hdr);
 	if (unlikely(md->ptr != NULL)) {
-		silly_free(md->ptr);
+		mem_free(md->ptr);
 	}
-	silly_free(md);
+	mem_free(md);
 }
 
 static int udpdata_unpack(lua_State *L, struct silly_message *m)
 {
-	struct message_udpdata *md = container_of(m, struct message_udpdata, hdr);
+	struct message_udpdata *md =
+		container_of(m, struct message_udpdata, hdr);
 	lua_pushinteger(L, md->sid);
 	lua_pushlightuserdata(L, md->ptr);
 	lua_pushinteger(L, md->size);
@@ -542,43 +556,44 @@ static int udpdata_unpack(lua_State *L, struct silly_message *m)
 
 static void udpdata_free(void *m)
 {
-	struct message_udpdata *md = container_of(m, struct message_udpdata, hdr);
+	struct message_udpdata *md =
+		container_of(m, struct message_udpdata, hdr);
 	if (unlikely(md->ptr != NULL)) {
-		silly_free(md->ptr);
+		mem_free(md->ptr);
 	}
-	silly_free(md);
+	mem_free(md);
 }
 
 static void report_accept(struct silly_socket *ss, struct socket *listen,
-	struct socket *s, const union sockaddr_full *addr)
+			  struct socket *s, const union sockaddr_full *addr)
 {
 	(void)ss;
-	char namebuf[SOCKET_NAMELEN];
+	char namebuf[SILLY_SOCKET_NAMELEN];
 	struct message_accept *ma;
 	int namelen = ntop(addr, namebuf);
-	ma = silly_malloc(sizeof(*ma) + namelen + 1);
+	ma = mem_alloc(sizeof(*ma) + namelen + 1);
 	ma->hdr.type = MSG_TYPE.accept;
 	ma->hdr.unpack = accept_unpack;
-	ma->hdr.free = silly_free;
+	ma->hdr.free = mem_free;
 	ma->sid = s->sid;
 	ma->listenid = listen->sid;
 	ma->addr = (uint8_t *)(ma + 1);
 	*ma->addr = namelen;
 	memcpy(ma->addr + 1, namebuf, namelen);
-	silly_worker_push(&ma->hdr);
+	worker_push(&ma->hdr);
 }
 
 static void report_listen(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
 	struct message_listen *ml;
-	ml = silly_malloc(sizeof(*ml));
+	ml = mem_alloc(sizeof(*ml));
 	ml->hdr.type = MSG_TYPE.listen;
 	ml->hdr.unpack = listen_unpack;
-	ml->hdr.free = silly_free;
+	ml->hdr.free = mem_free;
 	ml->sid = s->sid;
 	ml->err = err;
-	silly_worker_push(&ml->hdr);
+	worker_push(&ml->hdr);
 	return;
 }
 
@@ -590,37 +605,40 @@ static void report_close(struct silly_socket *ss, struct socket *s, int err)
 		return;
 	set_muteclose(s); // Ensure the close event is emitted only once
 	assert(s->type == SOCKET_TCP_CONNECTION);
-	mc = silly_malloc(sizeof(*mc));
+	mc = mem_alloc(sizeof(*mc));
 	mc->hdr.type = MSG_TYPE.close;
 	mc->hdr.unpack = close_unpack;
-	mc->hdr.free = silly_free;
+	mc->hdr.free = mem_free;
 	mc->sid = s->sid;
 	mc->err = err;
-	silly_worker_push(&mc->hdr);
+	worker_push(&mc->hdr);
 	return;
 }
 
-static void report_tcpdata(struct silly_socket *ss, struct socket *s, uint8_t *data, size_t sz)
+static void report_tcpdata(struct silly_socket *ss, struct socket *s,
+			   uint8_t *data, size_t sz)
 {
 	(void)ss;
 	assert(s->type == SOCKET_TCP_CONNECTION);
-	struct message_tcpdata *md = silly_malloc(sizeof(*md));
+	struct message_tcpdata *md = mem_alloc(sizeof(*md));
 	md->hdr.type = MSG_TYPE.tcpdata;
 	md->hdr.unpack = tcpdata_unpack;
 	md->hdr.free = tcpdata_free;
 	md->sid = s->sid;
 	md->size = sz;
 	md->ptr = data;
-	silly_worker_push(&md->hdr);
+	worker_push(&md->hdr);
 	return;
 };
 
 static void report_udpdata(struct silly_socket *ss, struct socket *s,
-	uint8_t *data, size_t sz, const union sockaddr_full *addr)
+			   uint8_t *data, size_t sz,
+			   const union sockaddr_full *addr)
 {
 	(void)ss;
-	assert(s->type == SOCKET_UDP_CONNECTION || s->type == SOCKET_UDP_LISTEN);
-	struct message_udpdata *md = silly_malloc(sizeof(*md));
+	assert(s->type == SOCKET_UDP_CONNECTION ||
+	       s->type == SOCKET_UDP_LISTEN);
+	struct message_udpdata *md = mem_alloc(sizeof(*md));
 	md->hdr.type = MSG_TYPE.udpdata;
 	md->hdr.unpack = udpdata_unpack;
 	md->hdr.free = udpdata_free;
@@ -628,20 +646,20 @@ static void report_udpdata(struct silly_socket *ss, struct socket *s,
 	md->size = sz;
 	md->ptr = data;
 	md->addr = *addr;
-	silly_worker_push(&md->hdr);
+	worker_push(&md->hdr);
 	return;
 };
 
 static void report_connect(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
-	struct message_connect *mc = silly_malloc(sizeof(*mc));
+	struct message_connect *mc = mem_alloc(sizeof(*mc));
 	mc->hdr.type = MSG_TYPE.connect;
 	mc->hdr.unpack = connect_unpack;
-	mc->hdr.free = silly_free;
+	mc->hdr.free = mem_free;
 	mc->sid = s->sid;
 	mc->err = err;
-	silly_worker_push(&mc->hdr);
+	worker_push(&mc->hdr);
 	return;
 }
 
@@ -651,7 +669,7 @@ static inline int add_to_sp(struct silly_socket *ss, struct socket *s)
 	if (ret < 0) {
 		return ret;
 	}
-	set_state(s, STATE_POLLING|STATE_READING);
+	set_state(s, STATE_POLLING | STATE_READING);
 	return 0;
 }
 
@@ -661,7 +679,7 @@ static inline void remove_from_sp(struct silly_socket *ss, struct socket *s)
 		return;
 	}
 	sp_del(ss->spfd, s->fd);
-	clr_state(s, STATE_POLLING|STATE_READING|STATE_WRITING);
+	clr_state(s, STATE_POLLING | STATE_READING | STATE_WRITING);
 	closesocket(s->fd);
 	s->fd = -1;
 }
@@ -695,7 +713,7 @@ static void nodelay(fd_t fd)
 	err = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void *)&on, sizeof(on));
 	if (err >= 0)
 		return;
-	silly_log_error("[socket] nodelay error:%s\n", strerror(errno));
+	log_error("[socket] nodelay error:%s\n", strerror(errno));
 	return;
 }
 
@@ -706,9 +724,8 @@ static void keepalive(fd_t fd)
 	err = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&on, sizeof(on));
 	if (err >= 0)
 		return;
-	silly_log_error("[socket] keepalive error:%s\n", strerror(errno));
+	log_error("[socket] keepalive error:%s\n", strerror(errno));
 }
-
 
 static void exec_accept(struct silly_socket *ss, struct socket *listen)
 {
@@ -727,8 +744,7 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 		closesocket(ss->reservefd);
 		fd = accept(listen->fd, NULL, NULL);
 		closesocket(fd);
-		silly_log_error(
-			"[socket] accept reach limit of file descriptor\n");
+		log_error("[socket] accept reach limit of file descriptor\n");
 		ss->reservefd = open("/dev/null", O_RDONLY);
 		return;
 	}
@@ -739,7 +755,7 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 	nodelay(fd);
 	s = pool_alloc(&ss->pool, fd, SOCKET_TCP_CONNECTION);
 	if (unlikely(s == NULL)) {
-		silly_log_error("[socket] accept pool_alloc fail\n");
+		log_error("[socket] accept pool_alloc fail\n");
 		closesocket(fd);
 		return;
 	}
@@ -753,7 +769,8 @@ static void exec_accept(struct silly_socket *ss, struct socket *listen)
 	return;
 }
 
-static inline void rw_enable(struct silly_socket *ss, struct socket *s, int state, int enable)
+static inline void rw_enable(struct silly_socket *ss, struct socket *s,
+			     int state, int enable)
 {
 	int flag = 0;
 	if (test_state(s, state) == enable)
@@ -770,12 +787,14 @@ static inline void rw_enable(struct silly_socket *ss, struct socket *s, int stat
 	sp_ctrl(ss->spfd, s->fd, s, flag);
 }
 
-static inline void write_enable(struct silly_socket *ss, struct socket *s, int enable)
+static inline void write_enable(struct silly_socket *ss, struct socket *s,
+				int enable)
 {
 	rw_enable(ss, s, STATE_WRITING, enable);
 }
 
-static inline void read_enable(struct silly_socket *ss, struct socket *s, int enable)
+static inline void read_enable(struct silly_socket *ss, struct socket *s,
+			       int enable)
 {
 	rw_enable(ss, s, STATE_READING, enable);
 }
@@ -789,7 +808,7 @@ static inline int get_sock_error(struct socket *s)
 	ret = getsockopt(s->fd, SOL_SOCKET, SO_ERROR, (void *)&err, &len);
 	if (unlikely(ret < 0)) {
 		err = errno;
-		silly_log_error("[socket] get_sock_error:%s\n", strerror(errno));
+		log_error("[socket] get_sock_error:%s\n", strerror(errno));
 	}
 	return err;
 }
@@ -800,7 +819,7 @@ static inline int checkconnected(struct silly_socket *ss, struct socket *s)
 	err = get_sock_error(s);
 	if (unlikely(err != 0)) {
 		err = translate_socket_errno(err);
-		silly_log_error("[socket] checkconnected:%s\n", strerror(err));
+		log_error("[socket] checkconnected:%s\n", strerror(err));
 		goto err;
 	}
 	if (wlist_empty(s))
@@ -867,13 +886,18 @@ static ssize_t sendudp(fd_t fd, uint8_t *data, size_t sz,
 }
 
 enum read_result {
-	READ_SOME = 1,	//read some data from socket buffer(the read buffer is not full and not empty)
-	READ_ALL = 2,	//read all data from socket buffer(the read buffer is full)
-	READ_EOF = 3,	//read end of file
-	READ_ERROR = 4,//read error
+	//read some data from socket buffer(the read buffer is not full and not empty)
+	READ_SOME = 1,
+	//read all data from socket buffer(the read buffer is full)
+	READ_ALL = 2,
+	//read end of file
+	READ_EOF = 3,
+	//read error
+	READ_ERROR = 4,
 };
 
-static enum read_result forward_msg_tcp(struct silly_socket *ss, struct socket *s)
+static enum read_result forward_msg_tcp(struct silly_socket *ss,
+					struct socket *s)
 {
 	if (is_closing(s)) {
 		return READ_EOF;
@@ -893,15 +917,17 @@ static enum read_result forward_msg_tcp(struct silly_socket *ss, struct socket *
 		} else if (len == 0) {
 			return READ_EOF;
 		}
-		uint8_t *buf = (uint8_t *)silly_malloc(len);
+		uint8_t *buf = (uint8_t *)mem_alloc(len);
 		memcpy(buf, ss->readbuf, len);
 		report_tcpdata(ss, s, buf, len);
 		atomic_add(&ss->netstat.recvsize, len);
-		return len >= (ssize_t)sizeof(ss->readbuf) ? READ_SOME: READ_ALL;
+		return len >= (ssize_t)sizeof(ss->readbuf) ? READ_SOME :
+							     READ_ALL;
 	}
 }
 
-static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *s)
+static enum read_result forward_msg_udp(struct silly_socket *ss,
+					struct socket *s)
 {
 	uint8_t *data;
 	ssize_t n;
@@ -912,8 +938,8 @@ static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *
 		return READ_EOF;
 	}
 	for (;;) {
-		n = recvfrom(s->fd, (void *)udpbuf, MAX_UDP_PACKET, 0, (struct sockaddr *)&addr,
-			     &len);
+		n = recvfrom(s->fd, (void *)udpbuf, MAX_UDP_PACKET, 0,
+			     (struct sockaddr *)&addr, &len);
 		if (n < 0) {
 			switch (errno) {
 			case EINTR:
@@ -924,7 +950,7 @@ static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *
 				return READ_ERROR;
 			}
 		}
-		data = (uint8_t *)silly_malloc(n);
+		data = (uint8_t *)mem_alloc(n);
 		memcpy(data, udpbuf, n);
 		report_udpdata(ss, s, data, n, &addr);
 		atomic_add(&ss->netstat.recvsize, n);
@@ -932,12 +958,12 @@ static enum read_result forward_msg_udp(struct silly_socket *ss, struct socket *
 	}
 }
 
-int silly_socket_salen(const void *data)
+int socket_salen(const void *data)
 {
 	return sockaddr_len((union sockaddr_full *)data);
 }
 
-int silly_socket_ntop(const void *data, char name[SOCKET_NAMELEN])
+int socket_ntop(const void *data, char name[SILLY_SOCKET_NAMELEN])
 {
 	union sockaddr_full *addr;
 	addr = (union sockaddr_full *)data;
@@ -949,13 +975,14 @@ static inline void op_push(struct silly_socket *ss, struct op_hdr *hdr)
 	if (flipbuf_write(&ss->opbuf, (uint8_t *)hdr, hdr->size)) {
 		trigger_fire(&ss->ctrl);
 	}
-	atomic_fetch_add_explicit(&ss->netstat.oprequest, 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(&ss->netstat.oprequest, 1,
+				  memory_order_relaxed);
 }
 
-void silly_socket_readctrl(socket_id_t sid, int flag)
+void socket_read_enable(socket_id_t sid, int flag)
 {
 	struct socket *s;
-	struct op_readenable op = {0};
+	struct op_readenable op = { 0 };
 	s = pool_get(&SSOCKET->pool, sid);
 	if (unlikely(s == NULL || is_zombine(s)))
 		return;
@@ -967,13 +994,14 @@ void silly_socket_readctrl(socket_id_t sid, int flag)
 	return;
 }
 
-static void op_read_enable(struct silly_socket *ss, struct op_readenable *op, struct socket *s)
+static void op_read_enable(struct silly_socket *ss, struct op_readenable *op,
+			   struct socket *s)
 {
 	int enable = op->ctrl;
 	read_enable(ss, s, enable);
 }
 
-int silly_socket_sendsize(socket_id_t sid)
+int socket_send_size(socket_id_t sid)
 {
 	struct socket *s;
 	s = pool_get(&SSOCKET->pool, sid);
@@ -993,14 +1021,15 @@ static int send_msg_tcp(struct silly_socket *ss, struct socket *s)
 			return -1;
 		}
 		s->wloffset += sz;
-		atomic_fetch_sub_explicit(&s->wlbytes, sz, memory_order_relaxed);
+		atomic_fetch_sub_explicit(&s->wlbytes, sz,
+					  memory_order_relaxed);
 		if (s->wloffset < w->size) //send some
 			break;
 		assert((size_t)s->wloffset == w->size);
 		s->wloffset = 0;
 		s->wlhead = w->next;
 		w->free(w->buf);
-		silly_free(w);
+		mem_free(w);
 		w = s->wlhead;
 		if (w == NULL) { //send ok
 			s->wltail = &s->wlhead;
@@ -1027,12 +1056,13 @@ static int send_msg_udp(struct silly_socket *ss, struct socket *s)
 			break;
 		assert(sz == -1 || (size_t)sz == w->size);
 		if (sz > 0) {
-			atomic_fetch_sub_explicit(&s->wlbytes, sz, memory_order_relaxed);
+			atomic_fetch_sub_explicit(&s->wlbytes, sz,
+						  memory_order_relaxed);
 		}
 		//send fail && send ok will clear
 		s->wlhead = w->next;
 		w->free(w->buf);
-		silly_free(w);
+		mem_free(w);
 		w = s->wlhead;
 		if (w == NULL) { //send all
 			s->wltail = &s->wlhead;
@@ -1046,8 +1076,8 @@ static int send_msg_udp(struct silly_socket *ss, struct socket *s)
 	return 0;
 }
 
-static inline struct addrinfo *getsockaddr(int protocol,
-	const char *ip, const char *port, int *errp)
+static inline struct addrinfo *getsockaddr(int protocol, const char *ip,
+					   const char *port, int *errp)
 {
 	int err;
 	struct addrinfo hints, *res;
@@ -1061,8 +1091,8 @@ static inline struct addrinfo *getsockaddr(int protocol,
 	hints.ai_protocol = protocol;
 	if ((err = getaddrinfo(ip, port, &hints, &res))) {
 		*errp = -EX_ADDRINFO;
-		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
-							port, gai_strerror(err));
+		log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip, port,
+			  gai_strerror(err));
 		return NULL;
 	}
 	return res;
@@ -1080,8 +1110,8 @@ static int bindfd(fd_t fd, int protocol, const char *ip, const char *port)
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (err < 0) {
 		err = -errno;
-		silly_log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip,
-							port, strerror(errno));
+		log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip, port,
+			  strerror(errno));
 	}
 	freeaddrinfo(info);
 	return err;
@@ -1119,22 +1149,22 @@ end:
 	freeaddrinfo(info);
 	if (fd >= 0)
 		closesocket(fd);
-	silly_log_error("[socket] dolisten error:%s\n", strerror(errno));
+	log_error("[socket] dolisten error:%s\n", strerror(errno));
 	return err;
 }
 
-socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog)
+socket_id_t socket_tcp_listen(const char *ip, const char *port, int backlog)
 {
 	fd_t fd;
 	struct socket *s;
-	struct op_listen op = {0};
+	struct op_listen op = { 0 };
 	fd = dolisten(ip, port, backlog);
 	if (unlikely(fd < 0))
 		return fd;
 	s = pool_alloc(&SSOCKET->pool, fd, SOCKET_TCP_LISTEN);
 	if (unlikely(s == NULL)) {
-		silly_log_error("[socket] listen %s:%s:%d pool_alloc fail\n",
-							ip, port, backlog);
+		log_error("[socket] listen %s:%s:%d pool_alloc fail\n", ip,
+			  port, backlog);
 		closesocket(fd);
 		return -EX_NOSOCKET;
 	}
@@ -1146,15 +1176,15 @@ socket_id_t silly_socket_listen(const char *ip, const char *port, int backlog)
 	return s->sid;
 }
 
-static int op_tcp_listen(struct silly_socket *ss, struct op_listen *op, struct socket *s)
+static int op_tcp_listen(struct silly_socket *ss, struct op_listen *op,
+			 struct socket *s)
 {
 	int err;
 	(void)op;
 	assert(is_listening(s) && s->type == SOCKET_TCP_LISTEN);
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0)) {
-		silly_log_error("[socket] trylisten error:%s\n",
-						strerror(errno));
+		log_error("[socket] trylisten error:%s\n", strerror(errno));
 		report_listen(ss, s, errno);
 		closesocket(s->fd);
 		free_socket(ss, s);
@@ -1165,12 +1195,11 @@ static int op_tcp_listen(struct silly_socket *ss, struct op_listen *op, struct s
 	return err;
 }
 
-
-socket_id_t silly_socket_udpbind(const char *ip, const char *port)
+socket_id_t socket_udp_bind(const char *ip, const char *port)
 {
 	int err;
 	fd_t fd = -1;
-	struct op_listen op = {0};
+	struct op_listen op = { 0 };
 	struct addrinfo *info;
 	struct socket *s = NULL;
 	info = getsockaddr(IPPROTO_UDP, ip, port, &err);
@@ -1189,8 +1218,7 @@ socket_id_t silly_socket_udpbind(const char *ip, const char *port)
 	nonblock(fd);
 	s = pool_alloc(&SSOCKET->pool, fd, SOCKET_UDP_LISTEN);
 	if (unlikely(s == NULL)) {
-		silly_log_error("[socket] udpbind %s:%s pool_alloc fail\n",
-			ip, port);
+		log_error("[socket] udpbind %s:%s pool_alloc fail\n", ip, port);
 		err = -EX_NOSOCKET;
 		goto end;
 	}
@@ -1205,19 +1233,19 @@ end:
 	if (fd >= 0)
 		closesocket(fd);
 	freeaddrinfo(info);
-	silly_log_error("[socket] udplisten error:%s\n", strerror(errno));
+	log_error("[socket] udplisten error:%s\n", strerror(errno));
 	return err;
 }
 
-static int op_udp_listen(struct silly_socket *ss, struct op_listen *op, struct socket *s)
+static int op_udp_listen(struct silly_socket *ss, struct op_listen *op,
+			 struct socket *s)
 {
 	int err;
 	(void)op;
 	assert(is_listening(s) && s->type == SOCKET_UDP_LISTEN);
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0)) {
-		silly_log_error("[socket] tryudpbind error:%s\n",
-						strerror(errno));
+		log_error("[socket] tryudpbind error:%s\n", strerror(errno));
 		report_listen(ss, s, errno);
 		closesocket(s->fd);
 		free_socket(ss, s);
@@ -1228,11 +1256,11 @@ static int op_udp_listen(struct silly_socket *ss, struct op_listen *op, struct s
 	return err;
 }
 
-socket_id_t silly_socket_connect(const char *ip, const char *port, const char *bindip,
-			 const char *bindport)
+socket_id_t socket_tcp_connect(const char *ip, const char *port,
+			       const char *bindip, const char *bindport)
 {
 	int err, fd = -1;
-	struct op_connect op = {0};
+	struct op_connect op = { 0 };
 	struct addrinfo *info;
 	struct socket *s = NULL;
 	assert(ip);
@@ -1269,7 +1297,8 @@ end:
 	return err;
 }
 
-static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op, struct socket *s)
+static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op,
+			   struct socket *s)
 {
 	fd_t fd;
 	int cret, sret;
@@ -1283,12 +1312,12 @@ static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op, struc
 	addr = &op->addr;
 	cret = connect(fd, &addr->sa, sockaddr_len(addr));
 	if (unlikely(cret == -1 && errno != CONNECT_IN_PROGRESS)) { //error
-		char namebuf[SOCKET_NAMELEN];
+		char namebuf[SILLY_SOCKET_NAMELEN];
 		const char *fmt = "[socket] connect %s,errno:%d\n";
 		report_connect(ss, s, errno);
 		free_socket(ss, s);
 		ntop(addr, namebuf);
-		silly_log_error(fmt, namebuf, errno);
+		log_error(fmt, namebuf, errno);
 		return;
 	}
 	sret = add_to_sp(ss, s);
@@ -1310,13 +1339,12 @@ static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op, struc
 	}
 }
 
-
-socket_id_t silly_socket_udpconnect(const char *ip, const char *port,
-			    const char *bindip, const char *bindport)
+socket_id_t socket_udp_connect(const char *ip, const char *port,
+			       const char *bindip, const char *bindport)
 {
 	int err;
 	fd_t fd = -1;
-	struct op_connect op = {0};
+	struct op_connect op = { 0 };
 	struct addrinfo *info;
 	struct socket *s = NULL;
 	const char *fmt = "[socket] udpconnect %s:%d, errno:%d\n";
@@ -1355,11 +1383,12 @@ end:
 	if (fd >= 0)
 		closesocket(fd);
 	freeaddrinfo(info);
-	silly_log_error(fmt, ip, port, errno);
+	log_error(fmt, ip, port, errno);
 	return err;
 }
 
-static void op_udp_connect(struct silly_socket *ss, struct op_connect *op, struct socket *s)
+static void op_udp_connect(struct silly_socket *ss, struct op_connect *op,
+			   struct socket *s)
 {
 	int err;
 	(void)op;
@@ -1376,16 +1405,18 @@ static void op_udp_connect(struct silly_socket *ss, struct op_connect *op, struc
 	return;
 }
 
-int silly_socket_close(socket_id_t sid)
+int socket_close(socket_id_t sid)
 {
-	struct op_close op = {0};
+	struct op_close op = { 0 };
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	if (unlikely(s == NULL)) {
-		silly_log_warn("[socket] silly_socket_close already closed sid:%llu\n", sid);
+		log_warn("[socket] socket_close already closed sid:%llu\n",
+			 sid);
 		return -EX_CLOSED;
 	}
 	if (is_closing(s)) {
-		silly_log_warn("[socket] silly_socket_close already closing sid:%llu\n", sid);
+		log_warn("[socket] socket_close already closing sid:%llu\n",
+			 sid);
 		return -EX_CLOSING;
 	}
 	if (is_zombine(s)) {
@@ -1395,7 +1426,7 @@ int silly_socket_close(socket_id_t sid)
 		free_socket(SSOCKET, s);
 		return 0;
 	}
-	set_state(s, STATE_CLOSING|STATE_MUTECLOSE);
+	set_state(s, STATE_CLOSING | STATE_MUTECLOSE);
 	op.hdr.op = OP_CLOSE;
 	op.hdr.sid = sid;
 	op.hdr.size = sizeof(op);
@@ -1403,13 +1434,14 @@ int silly_socket_close(socket_id_t sid)
 	return 0;
 }
 
-static int op_tcp_close(struct silly_socket *ss, struct op_close *op, struct socket *s)
+static int op_tcp_close(struct silly_socket *ss, struct op_close *op,
+			struct socket *s)
 {
 	int type;
 	(void)op;
 	type = s->type;
 	if (unlikely(type == SOCKET_PIPE_CTRL || type == SOCKET_RESERVE)) {
-		silly_log_error("[socket] op_tcp_close unsupport type %d\n", type);
+		log_error("[socket] op_tcp_close unsupport type %d\n", type);
 		return -1;
 	}
 	if (wlist_empty(s)) { //already send all the data, directly close it
@@ -1424,21 +1456,21 @@ static int op_tcp_close(struct silly_socket *ss, struct op_close *op, struct soc
 	}
 }
 
-int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
-		void (*freex)(void *))
+int socket_tcp_send(socket_id_t sid, uint8_t *buf, size_t sz,
+		    void (*freex)(void *))
 {
-	struct op_tcpsend op = {0};
+	struct op_tcpsend op = { 0 };
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
 	if (freex == NULL)
-		freex = silly_free;
+		freex = mem_free;
 	if (unlikely(s == NULL || is_zombine(s))) {
 		freex(buf);
-		silly_log_error("[socket] silly_socket_send sid:%llu closed\n", sid);
+		log_error("[socket] socket_tcp_send sid:%llu closed\n", sid);
 		return -EX_CLOSED;
 	}
 	if (unlikely(sz == 0)) {
 		freex(buf);
-		silly_log_warn("[socket] silly_socket_send empty data sid:%llu\n", sid);
+		log_warn("[socket] socket_tcp_send empty data sid:%llu\n", sid);
 		return 0;
 	}
 	op.hdr.op = OP_TCP_SEND;
@@ -1452,7 +1484,8 @@ int silly_socket_send(socket_id_t sid, uint8_t *buf, size_t sz,
 	return 0;
 }
 
-static void op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op, struct socket *s)
+static void op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op,
+			struct socket *s)
 {
 	uint8_t *data = op->data;
 	size_t sz = op->size;
@@ -1460,10 +1493,10 @@ static void op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op, struct s
 	if (unlikely(s->type != SOCKET_TCP_CONNECTION)) {
 		freex(data);
 		atomic_sub(&s->wlbytes, sz);
-		silly_log_error("[socket] op_tcp_send incorrect socket "
-			"sid:%llu type:%d zombie:%d\n",
-			s->sid, s->type, is_zombine(s));
-		return ;
+		log_error("[socket] op_tcp_send incorrect socket "
+			  "sid:%llu type:%d zombie:%d\n",
+			  s->sid, s->type, is_zombine(s));
+		return;
 	}
 	atomic_add(&ss->netstat.sendsize, sz);
 	if (wlist_empty(s) && !is_connecting(s)) { //try send
@@ -1484,21 +1517,20 @@ static void op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op, struct s
 			atomic_sub(&s->wlbytes, sz);
 		}
 	} else {
-		assert(test_state(s, STATE_WRITING|STATE_READING));
+		assert(test_state(s, STATE_WRITING | STATE_READING));
 		wlist_append(s, data, sz, freex);
 	}
 }
 
-int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t *addr,
-			 size_t addrlen, void (*freex)(void *))
+int socket_udp_send(socket_id_t sid, uint8_t *buf, size_t sz,
+		    const uint8_t *addr, size_t addrlen, void (*freex)(void *))
 {
-	struct op_udpsend op = {0};
+	struct op_udpsend op = { 0 };
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
-	freex = freex ? freex : silly_free;
+	freex = freex ? freex : mem_free;
 	if (unlikely(s == NULL || is_zombine(s))) {
 		freex(buf);
-		silly_log_error("[socket] silly_socket_udpsend invalid sid:%llu\n",
-							sid);
+		log_error("[socket] socket_udp_send invalid sid:%llu\n", sid);
 		return -EX_CLOSED;
 	}
 	op.hdr.op = OP_UDP_SEND;
@@ -1516,7 +1548,8 @@ int silly_socket_udpsend(socket_id_t sid, uint8_t *buf, size_t sz, const uint8_t
 	return 0;
 }
 
-static int op_udp_send(struct silly_socket *ss, struct op_udpsend *op, struct socket *s)
+static int op_udp_send(struct silly_socket *ss, struct op_udpsend *op,
+		       struct socket *s)
 {
 	size_t size;
 	uint8_t *data;
@@ -1526,9 +1559,9 @@ static int op_udp_send(struct silly_socket *ss, struct op_udpsend *op, struct so
 	if (unlikely(socket_protocol(s) != PROTOCOL_UDP)) {
 		freex(data);
 		atomic_sub(&s->wlbytes, op->size);
-		silly_log_error("[socket] op_udp_send incorrect socket "
-			"sid:%llu type:%d zombie:%d\n",
-			s->sid, s->type, is_zombine(s));
+		log_error("[socket] op_udp_send incorrect socket "
+			  "sid:%llu type:%d zombie:%d\n",
+			  s->sid, s->type, is_zombine(s));
 		return 0;
 	}
 	size = op->size;
@@ -1555,9 +1588,9 @@ static int op_udp_send(struct silly_socket *ss, struct op_udpsend *op, struct so
 	return 0;
 }
 
-void silly_socket_terminate()
+void socket_terminate()
 {
-	struct op_exit op = {0};
+	struct op_exit op = { 0 };
 	op.hdr.op = OP_EXIT;
 	op.hdr.sid = 0;
 	op.hdr.size = sizeof(op);
@@ -1577,7 +1610,8 @@ static int op_process(struct silly_socket *ss)
 	while (ptr < end) {
 		struct socket *s;
 		struct op_pkt *op = (struct op_pkt *)ptr;
-		atomic_fetch_add_explicit(&ss->netstat.opprocessed, 1, memory_order_relaxed);
+		atomic_fetch_add_explicit(&ss->netstat.opprocessed, 1,
+					  memory_order_relaxed);
 		if (op->hdr.op == OP_EXIT)
 			return -1;
 		assert(op->hdr.size > 0);
@@ -1589,7 +1623,8 @@ static int op_process(struct silly_socket *ss)
 			} else if (op->hdr.op == OP_UDP_SEND) {
 				op->udpsend.free(op->udpsend.data);
 			}
-			silly_log_warn("[socket] op_process op:%d sid:%llu zombie:%d\n",
+			log_warn(
+				"[socket] op_process op:%d sid:%llu zombie:%d\n",
 				op->hdr.op, op->hdr.sid, s && is_zombine(s));
 			continue;
 		}
@@ -1620,9 +1655,9 @@ static int op_process(struct silly_socket *ss)
 			op_read_enable(ss, &op->readenable, s);
 			break;
 		default:
-			silly_log_error("[socket] op_process:"
-					"unkonw operation:%d\n",
-					op->hdr.op);
+			log_error("[socket] op_process:"
+				  "unkonw operation:%d\n",
+				  op->hdr.op);
 			assert(!"oh, no!");
 			break;
 		}
@@ -1636,7 +1671,7 @@ static void eventwait(struct silly_socket *ss)
 		ss->eventcount = sp_wait(ss->spfd, ss->eventbuf, ss->eventcap);
 		ss->eventindex = 0;
 		if (ss->eventcount < 0) {
-			silly_log_error("[socket] eventwait:%d\n", errno);
+			log_error("[socket] eventwait:%d\n", errno);
 			continue;
 		}
 		break;
@@ -1644,7 +1679,8 @@ static void eventwait(struct silly_socket *ss)
 	return;
 }
 
-static void parse_read_error(enum read_result ret, int *eof, int *has_error, int *has_data_to_read)
+static void parse_read_error(enum read_result ret, int *eof, int *has_error,
+			     int *has_data_to_read)
 {
 	switch (ret) {
 	case READ_EOF:
@@ -1664,7 +1700,7 @@ static void parse_read_error(enum read_result ret, int *eof, int *has_error, int
 	}
 }
 
-int silly_socket_poll()
+int socket_poll()
 {
 	int err;
 	event_t *e;
@@ -1699,7 +1735,8 @@ int silly_socket_poll()
 			}
 			if (SP_READ(e)) {
 				int ret = forward_msg_tcp(ss, s);
-				parse_read_error(ret, &eof, &err, &has_data_to_read);
+				parse_read_error(ret, &eof, &err,
+						 &has_data_to_read);
 			}
 			if (SP_WRITE(e)) {
 				if (send_msg_tcp(ss, s) < 0) {
@@ -1735,9 +1772,8 @@ int silly_socket_poll()
 		case SOCKET_PIPE_CTRL:
 			break;
 		default:
-			silly_log_error(
-				"[socket] poll: unkonw socket type:%d\n",
-							s->type);
+			log_error("[socket] poll: unkonw socket type:%d\n",
+				  s->type);
 			break;
 		}
 	}
@@ -1748,17 +1784,17 @@ static void resize_eventbuf(struct silly_socket *ss, size_t sz)
 {
 	ss->eventcap = sz;
 	ss->eventbuf =
-		(event_t *)silly_realloc(ss->eventbuf, sizeof(event_t) * sz);
+		(event_t *)mem_realloc(ss->eventbuf, sizeof(event_t) * sz);
 	return;
 }
 
-const struct silly_socket_msgtype *silly_socket_msgtypes()
+const struct silly_socket_msgtype *socket_msg_types()
 {
-	assert(MSG_TYPE.accept != 0);  // ensure silly_socket_init has been called
+	assert(MSG_TYPE.accept != 0); // ensure socket_init has been called
 	return &MSG_TYPE;
 }
 
-int silly_socket_init()
+int socket_init()
 {
 	int err;
 	fd_t spfd = SP_INVALID;
@@ -1767,7 +1803,7 @@ int silly_socket_init()
 	spfd = sp_create(EVENT_SIZE);
 	if (unlikely(spfd == SP_INVALID))
 		return -errno;
-	ss = silly_malloc(sizeof(*ss));
+	ss = mem_alloc(sizeof(*ss));
 	memset(ss, 0, sizeof(*ss));
 	pool_init(&ss->pool);
 	flipbuf_init(&ss->opbuf);
@@ -1806,13 +1842,13 @@ end:
 	if (ss != NULL) {
 		trigger_destroy(&ss->ctrl);
 		flipbuf_destroy(&ss->opbuf);
-		silly_free(ss);
+		mem_free(ss);
 	}
 
 	return -errno;
 }
 
-void silly_socket_exit()
+void socket_exit()
 {
 	int i;
 	assert(SSOCKET);
@@ -1828,34 +1864,40 @@ void silly_socket_exit()
 		++s;
 	}
 	flipbuf_destroy(&SSOCKET->opbuf);
-	silly_free(SSOCKET->eventbuf);
-	silly_free(SSOCKET);
+	mem_free(SSOCKET->eventbuf);
+	mem_free(SSOCKET);
 	return;
 }
 
-const char *silly_socket_pollapi()
+const char *socket_pollapi()
 {
 	return SOCKET_POLL_API;
 }
 
-void silly_socket_netstat(struct silly_netstat *stat)
+void socket_netstat(struct silly_netstat *stat)
 {
-	stat->connecting = atomic_load_explicit(&SSOCKET->netstat.connecting, memory_order_relaxed);
-	stat->tcpclient = atomic_load_explicit(&SSOCKET->netstat.tcpclient, memory_order_relaxed);
-	stat->recvsize = atomic_load_explicit(&SSOCKET->netstat.recvsize, memory_order_relaxed);
-	stat->sendsize = atomic_load_explicit(&SSOCKET->netstat.sendsize, memory_order_relaxed);
-	stat->oprequest = atomic_load_explicit(&SSOCKET->netstat.oprequest, memory_order_relaxed);
-	stat->opprocessed = atomic_load_explicit(&SSOCKET->netstat.opprocessed, memory_order_relaxed);
+	stat->connecting = atomic_load_explicit(&SSOCKET->netstat.connecting,
+						memory_order_relaxed);
+	stat->tcpclient = atomic_load_explicit(&SSOCKET->netstat.tcpclient,
+					       memory_order_relaxed);
+	stat->recvsize = atomic_load_explicit(&SSOCKET->netstat.recvsize,
+					      memory_order_relaxed);
+	stat->sendsize = atomic_load_explicit(&SSOCKET->netstat.sendsize,
+					      memory_order_relaxed);
+	stat->oprequest = atomic_load_explicit(&SSOCKET->netstat.oprequest,
+					       memory_order_relaxed);
+	stat->opprocessed = atomic_load_explicit(&SSOCKET->netstat.opprocessed,
+						 memory_order_relaxed);
 	return;
 }
 
-void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
+void socket_stat(socket_id_t sid, struct silly_socketstat *info)
 {
 	struct socket *s;
 	memset(info, 0, sizeof(*info));
 	s = pool_get(&SSOCKET->pool, sid);
 	if (s == NULL) {
-		silly_log_error("[socket] silly_socket_socketstat sid:%llu invalid\n", sid);
+		log_error("[socket] socket_stat sid:%llu invalid\n", sid);
 		return;
 	}
 	int fd = s->fd;
@@ -1863,7 +1905,7 @@ void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 	int type = socket_type(s);
 	s = pool_get(&SSOCKET->pool, sid);
 	if (s == NULL || is_zombine(s)) {
-		silly_log_error("[socket] silly_socket_socketstat sid:%llu invalid\n", sid);
+		log_error("[socket] socket_stat sid:%llu invalid\n", sid);
 		return;
 	}
 	info->sid = sid;
@@ -1874,7 +1916,7 @@ void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 		int namelen;
 		socklen_t len;
 		union sockaddr_full addr;
-		char namebuf[SOCKET_NAMELEN];
+		char namebuf[SILLY_SOCKET_NAMELEN];
 		len = sizeof(addr);
 		getsockname(info->fd, (struct sockaddr *)&addr, &len);
 		namelen = ntop(&addr, namebuf);
@@ -1892,4 +1934,3 @@ void silly_socket_socketstat(socket_id_t sid, struct silly_socketstat *info)
 	}
 	return;
 }
-

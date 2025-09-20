@@ -15,14 +15,14 @@ void nonblock(fd_t fd)
 	int flag;
 	flag = fcntl(fd, F_GETFL, 0);
 	if (unlikely(flag < 0)) {
-		silly_log_error("[unix] nonblock F_GETFL fd:%d error:%s\n",
+		log_error("[unix] nonblock F_GETFL fd:%d error:%s\n",
 				fd, strerror(errno));
 		return;
 	}
 	flag |= O_NONBLOCK;
 	err = fcntl(fd, F_SETFL, flag);
 	if (unlikely(err < 0)) {
-		silly_log_error("[unix] nonblock fd:%d F_SETFL:%s\n",
+		log_error("[unix] nonblock fd:%d F_SETFL:%s\n",
 				fd, strerror(errno));
 	}
 }
@@ -33,7 +33,7 @@ int open_fd_count(void)
 	struct dirent *entry;
 	DIR *fd_dir = opendir("/proc/self/fd");
 	if (fd_dir == NULL) {
-		silly_log_error("[metrics] failed to open /proc/self/fd");
+		log_error("[metrics] failed to open /proc/self/fd");
 		return 0;
 	}
 	while ((entry = readdir(fd_dir)) != NULL) {
@@ -50,7 +50,7 @@ void fd_open_limit(int *soft, int *hard)
 	struct rlimit rlim;
 	int ret = getrlimit(RLIMIT_NOFILE, &rlim);
 	if (ret != 0) {
-		silly_log_error("[metrics] getrlimit errno:%d", errno);
+		log_error("[metrics] getrlimit errno:%d", errno);
 		rlim.rlim_cur = 0;
 		rlim.rlim_max = 0;
 	}

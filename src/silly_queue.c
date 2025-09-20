@@ -25,7 +25,7 @@ static inline void unlock(struct silly_queue *q)
 
 struct silly_queue *silly_queue_create()
 {
-	struct silly_queue *q = (struct silly_queue *)silly_malloc(sizeof(*q));
+	struct silly_queue *q = (struct silly_queue *)mem_alloc(sizeof(*q));
 	q->size = 0;
 	q->head = NULL;
 	q->tail = &q->head;
@@ -45,7 +45,7 @@ void silly_queue_free(struct silly_queue *q)
 	}
 	unlock(q);
 	spinlock_destroy(&q->lock);
-	silly_free(q);
+	mem_free(q);
 	return;
 }
 

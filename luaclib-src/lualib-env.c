@@ -10,9 +10,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "silly_log.h"
-#include "silly_worker.h"
 
 static const char *load_config = "\
 	local env, file = ...\
@@ -117,7 +114,7 @@ static void load_args(lua_State *L)
 	}
 }
 
-int luaopen_core_env(lua_State *L)
+SILLY_MOD_API int luaopen_core_env(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "load", lload },

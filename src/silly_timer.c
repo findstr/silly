@@ -107,9 +107,9 @@ static struct page *pool_newpage(struct pool *pool)
 		size_t newsz;
 		pool->cap = 2 * pool->count;
 		newsz = pool->cap * sizeof(pool->buf[0]);
-		pool->buf = (struct page **)silly_realloc(pool->buf, newsz);
+		pool->buf = (struct page **)mem_realloc(pool->buf, newsz);
 	}
-	p = silly_malloc(sizeof(*p));
+	p = mem_alloc(sizeof(*p));
 	pool->buf[page_id] = p;
 	for (i = 0; i < PAGE_SIZE; i++) {
 		n = &p->buf[i];
@@ -144,8 +144,8 @@ static void pool_free(struct pool *p)
 {
 	uint32_t i;
 	for (i = 0; i < p->count; i++)
-		silly_free(p->buf[i]);
-	silly_free(p->buf);
+		mem_free(p->buf[i]);
+	mem_free(p->buf);
 }
 
 static inline struct node *pool_newnode(struct silly_timer *t,
@@ -179,20 +179,23 @@ static inline void pool_freelist(struct pool *pool, struct node *head,
 	pool->free = head;
 }
 
-uint64_t silly_timer_now()
+uint64_t timer_now()
 {
-	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) * TIMER_RESOLUTION;
+	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) *
+	       TIMER_RESOLUTION;
 }
 
-uint64_t silly_timer_monotonic()
+uint64_t timer_monotonic()
 {
-	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) * TIMER_RESOLUTION;
+	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) *
+	       TIMER_RESOLUTION;
 }
 
-uint32_t silly_timer_info(uint32_t *expired)
+uint32_t timer_info(uint32_t *expired)
 {
 	if (expired != NULL)
-		*expired = atomic_load_explicit(&T->expired_count, memory_order_relaxed);
+		*expired = atomic_load_explicit(&T->expired_count,
+						memory_order_relaxed);
 	return atomic_load_explicit(&T->active_count, memory_order_relaxed);
 }
 
@@ -258,7 +261,7 @@ static inline uint32_t cookie_of(uint64_t session)
 	return (uint32_t)session;
 }
 
-uint64_t silly_timer_timeout(uint32_t expire, uint32_t userdata)
+uint64_t timer_timeout(uint32_t expire, uint32_t userdata)
 {
 	uint64_t session;
 	struct node *n;
@@ -268,13 +271,14 @@ uint64_t silly_timer_timeout(uint32_t expire, uint32_t userdata)
 	n = pool_newnode(T, &T->pool);
 	n->userdata = userdata;
 	session = session_of(n);
-	n->expire = expire / TIMER_RESOLUTION + atomic_load_explicit(&T->ticktime, memory_order_relaxed);
+	n->expire = expire / TIMER_RESOLUTION +
+		    atomic_load_explicit(&T->ticktime, memory_order_relaxed);
 	add_node(T, n);
 	unlock(T);
 	return session;
 }
 
-int silly_timer_cancel(uint64_t session, uint32_t *ud)
+int timer_cancel(uint64_t session, uint32_t *ud)
 {
 	struct node *n;
 	uint32_t version = version_of(session);
@@ -285,8 +289,8 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 	if (n->version != version) {
 		unlock(T);
 		*ud = 0;
-		silly_log_warn("[timer] cancel session late:%d %d", version,
-			       n->version);
+		log_warn("[timer] cancel session late:%d %d", version,
+			 n->version);
 		return 0;
 	}
 	unlinklist(n);
@@ -298,7 +302,8 @@ int silly_timer_cancel(uint64_t session, uint32_t *ud)
 
 static int expire_unpack(lua_State *L, struct silly_message *msg)
 {
-	struct message_expire *ms = container_of(msg, struct message_expire, hdr);
+	struct message_expire *ms =
+		container_of(msg, struct message_expire, hdr);
 	lua_pushinteger(L, ms->session);
 	lua_pushinteger(L, ms->userdata);
 	return 2;
@@ -310,13 +315,13 @@ static void timeout(struct silly_timer *t, struct node *n)
 	struct message_expire *te;
 	uint64_t session = session_of(n);
 	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
-	te = silly_malloc(sizeof(*te));
+	te = mem_alloc(sizeof(*te));
 	te->hdr.type = MSG_TYPE_EXPIRE;
 	te->hdr.unpack = expire_unpack;
-	te->hdr.free = silly_free;
+	te->hdr.free = mem_free;
 	te->session = session;
 	te->userdata = n->userdata;
-	silly_worker_push(&te->hdr);
+	worker_push(&te->hdr);
 	return;
 }
 
@@ -408,28 +413,29 @@ static void update_timer(struct silly_timer *timer, struct node **tail)
 	return;
 }
 
-void silly_timer_update()
+void timer_update()
 {
 	int i;
 	int delta;
 	struct node *head;
 	struct node **tail;
 	uint64_t time = ticktime();
-	uint64_t cur_ticktime = atomic_load_explicit(&T->ticktime, memory_order_relaxed);
+	uint64_t cur_ticktime =
+		atomic_load_explicit(&T->ticktime, memory_order_relaxed);
 	if (cur_ticktime == time)
 		return;
 	if (unlikely(cur_ticktime > time)) {
-		silly_log_error("[timer] time rewind change "
-				"from %lld to %lld\n",
-				cur_ticktime, time);
+		log_error("[timer] time rewind change "
+			  "from %lld to %lld\n",
+			  cur_ticktime, time);
 	}
 	delta = time - cur_ticktime;
 	assert(delta > 0);
 	if (unlikely(delta > TIMER_DELAY_WARNING / TIMER_RESOLUTION)) {
-		silly_log_warn("[timer] update delta is too big, "
-			       "from:%lld ms to %lld ms\n",
-			       cur_ticktime * TIMER_RESOLUTION,
-			       time * TIMER_RESOLUTION);
+		log_warn("[timer] update delta is too big, "
+			 "from:%lld ms to %lld ms\n",
+			 cur_ticktime * TIMER_RESOLUTION,
+			 time * TIMER_RESOLUTION);
 	}
 	//uint64_t on x86 platform, can't assign as a atomic
 	atomic_exchange_explicit(&T->ticktime, time, memory_order_relaxed);
@@ -444,19 +450,20 @@ void silly_timer_update()
 		pool_freelist(&T->pool, head, tail);
 		unlock(T);
 	}
-	assert((uint32_t)atomic_load_explicit(&T->ticktime, memory_order_relaxed) == T->expire);
+	assert((uint32_t)atomic_load_explicit(
+		       &T->ticktime, memory_order_relaxed) == T->expire);
 	return;
 }
 
-int silly_timer_msgtype()
+int timer_msg_type()
 {
-	assert(MSG_TYPE_EXPIRE != 0);  // ensure silly_timer_init has been called
+	assert(MSG_TYPE_EXPIRE != 0); // ensure silly_timer_init has been called
 	return MSG_TYPE_EXPIRE;
 }
 
-void silly_timer_init()
+void timer_init()
 {
-	T = silly_malloc(sizeof(*T));
+	T = mem_alloc(sizeof(*T));
 	memset(T, 0, sizeof(*T));
 	uint64_t cur_ticktime;
 	atomic_init(&T->clocktime, clocktime());
@@ -472,10 +479,10 @@ void silly_timer_init()
 	return;
 }
 
-void silly_timer_exit()
+void timer_exit()
 {
 	spinlock_destroy(&T->lock);
 	pool_free(&T->pool);
-	silly_free(T);
+	mem_free(T);
 	return;
 }

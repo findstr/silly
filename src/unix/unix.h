@@ -1,6 +1,5 @@
 #ifndef _SILLY_UNIX_H
 #define _SILLY_UNIX_H
-
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>

@@ -6,9 +6,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "silly_log.h"
-#include "silly_trace.h"
-#include "silly_malloc.h"
 
 #define ACK_BIT (1UL << 31)
 #define DEFAULT_QUEUE_SIZE 2048
@@ -135,7 +132,8 @@ static void push_complete(lua_State *L, struct netpacket *p,
 	return;
 }
 
-static int push_once(lua_State *L, socket_id_t fd, int size, const uint8_t *buff)
+static int push_once(lua_State *L, socket_id_t fd, int size,
+		     const uint8_t *buff)
 {
 	int eat;
 	struct netpacket *p = get_netpacket(L);
@@ -416,7 +414,7 @@ static int packet_gc(lua_State *L)
 	return 0;
 }
 
-int luaopen_core_netpacket(lua_State *L)
+SILLY_MOD_API int luaopen_core_netpacket(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "create",   lcreate   },

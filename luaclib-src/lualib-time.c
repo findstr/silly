@@ -10,13 +10,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "silly_log.h"
-#include "silly_run.h"
-#include "silly_worker.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
 
 static int ltimeout(lua_State *L)
 {
@@ -43,7 +36,6 @@ static int ltimercancel(lua_State *L)
 	return 1;
 }
 
-
 static int ltimenow(lua_State *L)
 {
 	uint64_t now = silly_timer_now();
@@ -58,14 +50,14 @@ static int ltimemonotonic(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_time_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_time_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "timeout",       ltimeout        },
-		{ "timercancel",   ltimercancel    },
-		{ "now",           ltimenow        },
-		{ "monotonic",     ltimemonotonic  },
-		{ NULL,           NULL             },
+		{ "timeout",     ltimeout       },
+                { "timercancel", ltimercancel   },
+		{ "now",         ltimenow       },
+                { "monotonic",   ltimemonotonic },
+		{ NULL,          NULL           },
 	};
 
 	luaL_checkversion(L);

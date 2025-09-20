@@ -1,7 +1,9 @@
 #ifndef _SILLY_DAEMON_H
 #define _SILLY_DAEMON_H
 
-void silly_daemon_start(const struct silly_config *conf);
-void silly_daemon_stop(const struct silly_config *conf);
+#include "args.h"
+
+void daemon_start(const struct boot_args *conf);
+void daemon_stop(const struct boot_args *conf);
 
 #endif

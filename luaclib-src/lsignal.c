@@ -12,16 +12,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "compiler.h"
-#include "errnoex.h"
-#include "silly_trace.h"
-#include "silly_log.h"
-#include "silly_run.h"
-#include "silly_worker.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
-#include "silly_signal.h"
 
 static int lsignalmap(lua_State *L)
 {
@@ -69,12 +59,12 @@ static int lsignal(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_signal_c(lua_State *L)
+SILLY_MOD_API int luaopen_core_signal_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "signalmap",     lsignalmap    },
-		{ "signal",        lsignal       },
-		{ NULL,            NULL          },
+		{ "signalmap", lsignalmap },
+		{ "signal",    lsignal    },
+		{ NULL,        NULL       },
 	};
 
 	luaL_checkversion(L);

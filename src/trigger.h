@@ -24,7 +24,7 @@ static inline int trigger_init(struct trigger *t)
 	t->recvfd = -1;
 	atomic_init(&t->fired, 0);
 	if (pipe(fds) != 0) {
-		silly_log_error("[trigger] pipe create error:%s\n", strerror(errno));
+		log_error("[trigger] pipe create error:%s\n", strerror(errno));
 		return -1;
 	}
 	// Note: Non-blocking is not set here since pipe_blockwrite/read are used
@@ -58,7 +58,8 @@ static inline int trigger_fire(struct trigger *t)
 		if (err == -1) {
 			if (likely(errno == EINTR))
 				continue;
-			silly_log_error("[trigger] pipe write error:%s\n", strerror(errno));
+			log_error("[trigger] pipe write error:%s\n",
+				  strerror(errno));
 			return -1;
 		}
 		assert(err == 1);
@@ -77,7 +78,8 @@ static inline int trigger_consume(struct trigger *t)
 		if (err == -1) {
 			if (likely(errno == EINTR))
 				continue;
-			silly_log_error("[trigger] pipe read error:%s\n", strerror(errno));
+			log_error("[trigger] pipe read error:%s\n",
+				  strerror(errno));
 			return -1;
 		}
 		assert(err == 1);

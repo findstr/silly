@@ -16,7 +16,7 @@
 static int pidfile;
 extern int daemon(int, int);
 
-static void pidfile_create(const struct silly_config *conf)
+static void pidfile_create(const struct boot_args *conf)
 {
 	int err;
 	const char *path = conf->pidfile;
@@ -25,8 +25,8 @@ static void pidfile_create(const struct silly_config *conf)
 		return;
 	pidfile = open(path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 	if (pidfile == -1) {
-		silly_log_error("[pidfile] create '%s' fail:%s\n", path,
-				strerror(errno));
+		log_error("[pidfile] create '%s' fail:%s\n", path,
+			  strerror(errno));
 		exit(-1);
 	}
 	err = flock(pidfile, LOCK_NB | LOCK_EX);
@@ -35,9 +35,9 @@ static void pidfile_create(const struct silly_config *conf)
 		FILE *fp = fdopen(pidfile, "r+");
 		err = fscanf(fp, "%s\n", pid);
 		(void)err;
-		silly_log_error("[pidfile] lock '%s' fail,"
-				"another instace of '%s' alread run\n",
-				path, pid);
+		log_error("[pidfile] lock '%s' fail,"
+			  "another instace of '%s' alread run\n",
+			  path, pid);
 		fclose(fp);
 		exit(-1);
 	}
@@ -62,7 +62,7 @@ static inline void pidfile_write()
 	return;
 }
 
-static inline void pidfile_delete(const struct silly_config *conf)
+static inline void pidfile_delete(const struct boot_args *conf)
 {
 	if (pidfile == -1)
 		return;
@@ -71,7 +71,7 @@ static inline void pidfile_delete(const struct silly_config *conf)
 	return;
 }
 
-void silly_daemon_start(const struct silly_config *conf)
+void daemon_start(const struct boot_args *conf)
 {
 	int err;
 	if (!conf->daemon)
@@ -80,14 +80,14 @@ void silly_daemon_start(const struct silly_config *conf)
 	err = daemon(1, 0);
 	if (err < 0) {
 		pidfile_delete(conf);
-		silly_log_error("[daemon] %s\n", strerror(errno));
+		log_error("[daemon] %s\n", strerror(errno));
 		exit(0);
 	}
 	pidfile_write();
 	return;
 }
 
-void silly_daemon_stop(const struct silly_config *conf)
+void daemon_stop(const struct boot_args *conf)
 {
 	if (!conf->daemon)
 		return;
@@ -97,15 +97,15 @@ void silly_daemon_stop(const struct silly_config *conf)
 
 #else
 
-void silly_daemon_start(const struct silly_config *conf)
+void daemon_start(const struct boot_args *conf)
 {
 	if (conf->daemon) {
-		silly_log_error("[daemon] platform unsupport daemon\n");
+		log_error("[daemon] platform unsupport daemon\n");
 		exit(0);
 	}
 }
 
-void silly_daemon_stop(const struct silly_config *conf)
+void daemon_stop(const struct boot_args *conf)
 {
 	(void)conf;
 }

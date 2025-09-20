@@ -8,7 +8,7 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
-#include "silly_malloc.h"
+#include "silly.h"
 #include "md_cache.h"
 #include "luastr.h"
 
@@ -143,7 +143,7 @@ static int lxdigest(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_crypto_hash(lua_State *L)
+SILLY_MOD_API int luaopen_core_crypto_hash(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",    lnew     },

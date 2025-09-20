@@ -8,6 +8,8 @@
 #include <lauxlib.h>
 #include <string.h>
 #include "silly.h"
+#include "args.h"
+#include "silly_malloc.h"
 #include "silly_daemon.h"
 #include "silly_trace.h"
 #include "silly_log.h"
@@ -38,7 +40,7 @@ static void print_help(const char *selfname)
 	}
 }
 
-static void parse_args(struct silly_config *config, int argc, char *argv[])
+static void parse_args(struct boot_args *args, int argc, char *argv[])
 {
 	int c;
 	unsigned int i;
@@ -77,7 +79,7 @@ static void parse_args(struct silly_config *config, int argc, char *argv[])
 			break;
 		switch (c) {
 		case 'h':
-			print_help(config->selfname);
+			print_help(args->selfname);
 			exit(0);
 			break;
 		case 'v':
@@ -85,62 +87,57 @@ static void parse_args(struct silly_config *config, int argc, char *argv[])
 			exit(0);
 			break;
 		case 'd':
-			config->daemon = 1;
+			args->daemon = 1;
 			break;
 		case 'p':
-			if (strlen(optarg) >= ARRAY_SIZE(config->logpath)) {
-				silly_log_error(
-					"[option] logpath is too long\n");
+			if (strlen(optarg) >= ARRAY_SIZE(args->logpath)) {
+				log_error("[option] logpath is too long\n");
 			}
-			strncpy(config->logpath, optarg,
-				ARRAY_SIZE(config->logpath) - 1);
+			strncpy(args->logpath, optarg,
+				ARRAY_SIZE(args->logpath) - 1);
 			break;
 		case 'l':
 			for (i = 0; i < ARRAY_SIZE(loglevels); i++) {
 				if (strcmp(loglevels[i].name, optarg) == 0) {
-					silly_log_setlevel(loglevels[i].level);
+					log_set_level(loglevels[i].level);
 					break;
 				}
 			}
 			if (i == ARRAY_SIZE(loglevels)) {
-				silly_log_error(
-					"[option] unknown loglevel:%s\n",
-					optarg);
+				log_error("[option] unknown loglevel:%s\n",
+					  optarg);
 			}
 			break;
 		case 'f':
-			if (strlen(optarg) >= ARRAY_SIZE(config->pidfile)) {
-				silly_log_error(
-					"[option] pidfile is too long\n");
+			if (strlen(optarg) >= ARRAY_SIZE(args->pidfile)) {
+				log_error("[option] pidfile is too long\n");
 			}
-			strncpy(config->pidfile, optarg,
-				ARRAY_SIZE(config->pidfile) - 1);
+			strncpy(args->pidfile, optarg,
+				ARRAY_SIZE(args->pidfile) - 1);
 			break;
 		case 'L':
-			if (strlen(optarg) >= ARRAY_SIZE(config->lualib_path)) {
-				silly_log_error(
-					"[option] lualib_path is too long\n");
+			if (strlen(optarg) >= ARRAY_SIZE(args->lualib_path)) {
+				log_error("[option] lualib_path is too long\n");
 			}
-			strncpy(config->lualib_path, optarg,
-				ARRAY_SIZE(config->lualib_path) - 1);
+			strncpy(args->lualib_path, optarg,
+				ARRAY_SIZE(args->lualib_path) - 1);
 			break;
 		case 'C':
-			if (strlen(optarg) >=
-			    ARRAY_SIZE(config->lualib_cpath)) {
-				silly_log_error(
+			if (strlen(optarg) >= ARRAY_SIZE(args->lualib_cpath)) {
+				log_error(
 					"[option] lualib_cpath is too long\n");
 			}
-			strncpy(config->lualib_cpath, optarg,
-				ARRAY_SIZE(config->lualib_cpath) - 1);
+			strncpy(args->lualib_cpath, optarg,
+				ARRAY_SIZE(args->lualib_cpath) - 1);
 			break;
 		case 'S':
-			config->socketaffinity = atoi(optarg);
+			args->socketaffinity = atoi(optarg);
 			break;
 		case 'W':
-			config->workeraffinity = atoi(optarg);
+			args->workeraffinity = atoi(optarg);
 			break;
 		case 'T':
-			config->timeraffinity = atoi(optarg);
+			args->timeraffinity = atoi(optarg);
 			break;
 		case '?':
 			break;
@@ -162,33 +159,32 @@ static const char *selfname(const char *path)
 int main(int argc, char *argv[])
 {
 	int status;
-	struct silly_config config;
-	memset(&config, 0, sizeof(config));
-	config.argc = argc;
-	config.argv = argv;
-	config.selfpath = argv[0];
-	config.selfname = selfname(argv[0]);
-	config.bootstrap[0] = '\0';
+	struct boot_args args;
+	memset(&args, 0, sizeof(args));
+	args.argc = argc;
+	args.argv = argv;
+	args.selfpath = argv[0];
+	args.selfname = selfname(argv[0]);
+	args.bootstrap[0] = '\0';
 	if (argc > 1) {
-		strncpy(config.bootstrap, argv[1],
-			ARRAY_SIZE(config.bootstrap) - 1);
-		parse_args(&config, argc, argv);
+		strncpy(args.bootstrap, argv[1],
+			ARRAY_SIZE(args.bootstrap) - 1);
+		parse_args(&args, argc, argv);
 	}
-	silly_trace_init();
-	silly_daemon_start(&config);
-	silly_log_init(&config);
-	silly_timer_init();
-	status = silly_run(&config);
-	silly_daemon_stop(&config);
-	if (silly_log_visible(SILLY_LOG_INFO)) {
-		silly_log_head(SILLY_LOG_INFO);
+	trace_init();
+	daemon_start(&args);
+	log_init(&args);
+	timer_init();
+	status = silly_run(&args);
+	daemon_stop(&args);
+	if (log_visible(SILLY_LOG_INFO)) {
+		log_head(SILLY_LOG_INFO);
 	}
-	// NOTE: silly_log_header depend silly_timer_now
-	silly_timer_exit();
-	if (silly_log_visible(SILLY_LOG_INFO)) {
-		silly_log_fmt("%s exit, leak memory size:%zu\n", argv[0],
-			      silly_memused());
+	// NOTE: log_header depend timer_now
+	timer_exit();
+	if (log_visible(SILLY_LOG_INFO)) {
+		log_fmt("%s exit, leak memory size:%zu\n", argv[0], mem_used());
 	}
-	silly_log_flush();
+	log_flush();
 	return status;
 }

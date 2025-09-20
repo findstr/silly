@@ -6,9 +6,6 @@
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "silly_log.h"
-#include "silly_socket.h"
-#include "silly_malloc.h"
 #include "luastr.h"
 
 #ifndef max
@@ -70,13 +67,13 @@ static int ceillog2(unsigned int x)
 		6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
 		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
 		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-		7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
 		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8
+		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8
 	};
 	int l = 0;
 	x--;
@@ -104,7 +101,7 @@ static struct node_buffer *nb_expand(struct node_buffer *nb)
 		assert(size >= 0);
 		assert(last_checki >= 0);
 		//round up to the nearest power of 2
-		size_exp = ceillog2(size+1);
+		size_exp = ceillog2(size + 1);
 		cap_exp = max(size_exp, cap_exp);
 		if (nb->readi > 0) {
 			memmove(&nb->nodes[0], &nb->nodes[nb->readi],
@@ -355,7 +352,7 @@ static inline void read_enable(struct socket_buffer *sb)
 	if (sb->pause == 0)
 		return;
 	sb->pause = 0;
-	silly_socket_readctrl(sb->sid, SOCKET_READ_ENABLE);
+	silly_socket_readenable(sb->sid, 1);
 }
 
 static inline void read_pause(struct socket_buffer *sb)
@@ -363,7 +360,7 @@ static inline void read_pause(struct socket_buffer *sb)
 	if (sb->pause == 1)
 		return;
 	sb->pause = 1;
-	silly_socket_readctrl(sb->sid, SOCKET_READ_PAUSE);
+	silly_socket_readenable(sb->sid, 0);
 }
 
 static inline void read_adjust(struct socket_buffer *sb)
@@ -542,21 +539,21 @@ static int tcap(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_netstream(lua_State *L)
+SILLY_MOD_API int luaopen_core_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",      lnew      },
-		{ "free",     lfree     },
+                { "free",     lfree     },
 		{ "push",     lpush     },
-		{ "read",     lread     },
+                { "read",     lread     },
 		{ "size",     lsize     },
-		{ "limit",    llimit    },
+                { "limit",    llimit    },
 		{ "readline", lreadline },
-		{ "readall",  lreadall  },
+                { "readall",  lreadall  },
 		{ "todata",   ltodata   },
-		{ "tpush",    tpush     },
+                { "tpush",    tpush     },
 		{ "tcap",     tcap      },
-		{ NULL,       NULL      },
+                { NULL,       NULL      },
 	};
 	luaL_newlib(L, tbl);
 	return 1;

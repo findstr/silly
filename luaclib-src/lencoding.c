@@ -5,6 +5,7 @@
 #include <strings.h>
 #include <lua.h>
 #include <lauxlib.h>
+#include "silly.h"
 
 static inline unsigned int undict(int ch)
 {
@@ -133,7 +134,7 @@ int ldecode(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_encoding_base64(lua_State *L)
+SILLY_MOD_API int luaopen_core_encoding_base64(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "encode",         lencode         },

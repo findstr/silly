@@ -15,9 +15,9 @@ void silly_monitor_init()
 
 void silly_monitor_check()
 {
-	uint32_t check_id = silly_worker_processid();
+	uint32_t check_id = worker_process_id();
 	if (unlikely(M.check_id == check_id)) {
-		silly_worker_warnendless();
+		worker_warn_endless();
 	}
 	M.check_id = check_id;
 }

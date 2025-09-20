@@ -8,7 +8,7 @@
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <openssl/err.h>
-#include "silly_malloc.h"
+#include "silly.h"
 #include "luastr.h"
 
 #define METATABLE "core.crypto.cipher"
@@ -151,8 +151,8 @@ static int lxupdate(lua_State *L)
 	luastr_check(L, 2, &data);
 	need = data.len + EVP_CIPHER_CTX_get_block_size(c->ctx);
 	outbuf = (unsigned char *)luaL_buffinitsize(L, &b, need);
-	if (EVP_CipherUpdate(c->ctx, outbuf, &outlen, data.str,
-			     data.len) == 0) {
+	if (EVP_CipherUpdate(c->ctx, outbuf, &outlen, data.str, data.len) ==
+	    0) {
 		return luaL_error(L, "cipher update error: %s",
 				  ERR_lib_error_string(ERR_get_error()));
 	}
@@ -176,15 +176,16 @@ static int lxfinal(lua_State *L)
 	}
 	outbuf = (unsigned char *)luaL_buffinitsize(L, &b, need);
 	if (data.len > 0) {
-		if (EVP_CipherUpdate(c->ctx, outbuf, &outlen,
-				     data.str, data.len) == 0) {
+		if (EVP_CipherUpdate(c->ctx, outbuf, &outlen, data.str,
+				     data.len) == 0) {
 			return luaL_error(
 				L, "cipher update error: %s",
 				ERR_lib_error_string(ERR_get_error()));
 		}
 		luaL_addsize(&b, outlen);
 	}
-	if (EVP_CipherFinal_ex(c->ctx, outbuf+luaL_bufflen(&b), &outlen) == 0) {
+	if (EVP_CipherFinal_ex(c->ctx, outbuf + luaL_bufflen(&b), &outlen) ==
+	    0) {
 		lua_pushnil(L);
 		return 1;
 	}
@@ -237,7 +238,8 @@ static int lxtag(lua_State *L)
 	luaL_Buffer b;
 	struct cipher *c = luaL_checkudata(L, 1, METATABLE);
 	int taglen = EVP_CIPHER_CTX_tag_length(c->ctx);
-	unsigned char *tagbuf = (unsigned char *)luaL_buffinitsize(L, &b, taglen);
+	unsigned char *tagbuf =
+		(unsigned char *)luaL_buffinitsize(L, &b, taglen);
 	ret = EVP_CIPHER_CTX_ctrl(c->ctx, EVP_CTRL_AEAD_GET_TAG, taglen,
 				  tagbuf);
 	if (ret == 0) {
@@ -248,7 +250,7 @@ static int lxtag(lua_State *L)
 	return 1;
 }
 
-int luaopen_core_crypto_cipher(lua_State *L)
+SILLY_MOD_API int luaopen_core_crypto_cipher(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "encryptor",  lnewenc      },

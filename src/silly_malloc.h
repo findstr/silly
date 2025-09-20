@@ -3,12 +3,14 @@
 
 #include <stdlib.h>
 
-void *silly_malloc(size_t sz);
-void *silly_realloc(void *ptr, size_t sz);
-void silly_free(void *ptr);
+void *mem_alloc(size_t sz);
+void *mem_realloc(void *ptr, size_t sz);
+void mem_free(void *ptr);
+int mem_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp,
+		size_t newlen);
 
-const char *silly_allocator();
-size_t silly_memused();
-size_t silly_memrss();
+const char *mem_allocator();
+size_t mem_used();
+size_t mem_rss();
 
 #endif
