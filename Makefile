@@ -74,17 +74,17 @@ INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR) -I $(SRC_PATH)/$(PLAT_DIR
 SRC_FILE = \
       main.c \
       api.c \
-      silly_socket.c \
-      silly_queue.c \
-      silly_worker.c \
-      silly_timer.c \
-      silly_signal.c \
-      silly_run.c \
-      silly_daemon.c \
-      silly_malloc.c \
-      silly_log.c \
-      silly_trace.c \
-      silly_monitor.c \
+      socket.c \
+      queue.c \
+      worker.c \
+      timer.c \
+      sig.c \
+      run.c \
+      daemon.c \
+      mem.c \
+      log.c \
+      trace.c \
+      monitor.c \
       message.c \
       force_link.c\
 

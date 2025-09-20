@@ -2,8 +2,8 @@
 #include "silly.h"
 #include "message.h"
 #include "spinlock.h"
-#include "silly_malloc.h"
-#include "silly_queue.h"
+#include "mem.h"
+#include "queue.h"
 
 struct silly_queue {
 	size_t size;

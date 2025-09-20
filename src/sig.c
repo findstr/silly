@@ -4,13 +4,13 @@
 #include <assert.h>
 
 #include "silly.h"
-#include "silly_malloc.h"
+#include "mem.h"
 #include "compiler.h"
 #include "message.h"
-#include "silly_worker.h"
-#include "silly_log.h"
+#include "worker.h"
+#include "log.h"
 
-#include "silly_signal.h"
+#include "sig.h"
 
 static int sigbits = 0;
 static int MSG_TYPE_SIGNAL = 0;
@@ -38,13 +38,13 @@ static void signal_handler(int sig)
 	worker_push(&ms->hdr);
 }
 
-int signal_msg_type()
+int sig_msg_type()
 {
 	assert(MSG_TYPE_SIGNAL != 0); // ensure signal_init has been called
 	return MSG_TYPE_SIGNAL;
 }
 
-int signal_init()
+int sig_init()
 {
 #ifndef __WIN32
 	signal(SIGPIPE, SIG_IGN);
@@ -53,7 +53,7 @@ int signal_init()
 	return 0;
 }
 
-int signal_watch(int signum)
+int sig_watch(int signum)
 {
 	if ((sigbits & (1 << signum)) != 0) {
 		return 0;

@@ -1,6 +1,5 @@
 #include "silly_conf.h"
 #include <unistd.h>
-#include <signal.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -9,16 +8,16 @@
 
 #include "silly.h"
 #include "compiler.h"
-#include "silly_trace.h"
-#include "silly_log.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
-#include "silly_socket.h"
-#include "silly_worker.h"
-#include "silly_monitor.h"
-#include "silly_signal.h"
+#include "trace.h"
+#include "log.h"
+#include "mem.h"
+#include "timer.h"
+#include "socket.h"
+#include "worker.h"
+#include "monitor.h"
+#include "sig.h"
 
-#include "silly_run.h"
+#include "run.h"
 
 struct {
 	volatile int running;
@@ -138,7 +137,7 @@ int silly_run(const struct boot_args *config)
 	R.exitstatus = 0;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
-	signal_init();
+	sig_init();
 	err = socket_init();
 	if (unlikely(err < 0)) {
 		log_error("%s socket init fail:%d\n", config->selfname, err);

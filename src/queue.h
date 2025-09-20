@@ -1,5 +1,5 @@
-#ifndef _SILLY_QUEUE_H
-#define _SILLY_QUEUE_H
+#ifndef _QUEUE_H
+#define _QUEUE_H
 
 struct silly_message;
 struct silly_queue;

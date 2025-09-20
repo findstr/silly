@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "silly_log.h"
+#include "log.h"
 #include "compiler.h"
 #include "unix.h"
 

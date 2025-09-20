@@ -4,8 +4,8 @@
 #include "silly.h"
 #include "compiler.h"
 
-#include "silly_timer.h"
-#include "silly_trace.h"
+#include "timer.h"
+#include "trace.h"
 
 static silly_tracespan_t spanid;
 static atomic_uint_least16_t seq_idx = 0;

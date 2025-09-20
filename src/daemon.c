@@ -8,8 +8,8 @@
 #include <sys/file.h>
 
 #include "silly.h"
-#include "silly_daemon.h"
-#include "silly_log.h"
+#include "daemon.h"
+#include "log.h"
 
 #ifndef __WIN32
 

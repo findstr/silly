@@ -1,5 +1,5 @@
-#ifndef _SILLY_LOG_H
-#define _SILLY_LOG_H
+#ifndef _LOG_H
+#define _LOG_H
 
 #include <stddef.h>
 #include "silly.h"

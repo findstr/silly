@@ -1,8 +1,8 @@
 #include "silly.h"
 #include "compiler.h"
-#include "silly_log.h"
-#include "silly_worker.h"
-#include "silly_monitor.h"
+#include "log.h"
+#include "worker.h"
+#include "monitor.h"
 
 struct monitor {
 	uint32_t check_id;

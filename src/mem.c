@@ -6,7 +6,7 @@
 
 #include "silly.h"
 #include "platform.h"
-#include "silly_malloc.h"
+#include "mem.h"
 
 #ifndef DISABLE_JEMALLOC
 #include <jemalloc/jemalloc.h>

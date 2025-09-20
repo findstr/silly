@@ -5,7 +5,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <ws2def.h>
-#include "silly_log.h"
+#include "log.h"
 
 #define open_fd_count() 0
 #define libc_malloc_usable_size(ptr) ((void)ptr, 0)

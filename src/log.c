@@ -10,9 +10,9 @@
 #include "silly.h"
 #include "compiler.h"
 #include "platform.h"
-#include "silly_timer.h"
-#include "silly_trace.h"
-#include "silly_log.h"
+#include "timer.h"
+#include "trace.h"
+#include "log.h"
 
 static int is_daemon = 0;
 static enum silly_log_level log_level = SILLY_LOG_INFO;

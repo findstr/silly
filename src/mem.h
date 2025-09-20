@@ -1,5 +1,5 @@
-#ifndef _SILLY_MALLOC_H
-#define _SILLY_MALLOC_H
+#ifndef _MEM_H
+#define _MEM_H
 
 #include <stdlib.h>
 

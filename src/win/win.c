@@ -6,7 +6,7 @@
 #include <io.h>
 #include <afunix.h>
 
-#include "silly_log.h"
+#include "log.h"
 #include "win.h"
 
 void nonblock(fd_t fd)

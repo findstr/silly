@@ -1,5 +1,5 @@
-#ifndef _SILLY_DAEMON_H
-#define _SILLY_DAEMON_H
+#ifndef _DAEMON_H
+#define _DAEMON_H
 
 #include "args.h"
 

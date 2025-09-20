@@ -1,5 +1,5 @@
-#ifndef _SILLY_SOCKET_H
-#define _SILLY_SOCKET_H
+#ifndef _SOCKET_H
+#define _SOCKET_H
 
 #include <stdint.h>
 #include <stdatomic.h>

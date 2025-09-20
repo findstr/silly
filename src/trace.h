@@ -1,5 +1,5 @@
-#ifndef _SILLY_TRACE_H
-#define _SILLY_TRACE_H
+#ifndef _TRACE_H
+#define _TRACE_H
 
 #include "silly.h"
 

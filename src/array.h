@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdatomic.h>
 
-#include "silly_malloc.h"
+#include "mem.h"
 
 struct array {
 	int32_t cap;

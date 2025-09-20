@@ -2,14 +2,14 @@
 #include "silly.h"
 #include "platform.h"
 #include "message.h"
-#include "silly_malloc.h"
-#include "silly_socket.h"
-#include "silly_log.h"
-#include "silly_signal.h"
-#include "silly_worker.h"
-#include "silly_timer.h"
-#include "silly_trace.h"
-#include "silly_run.h"
+#include "mem.h"
+#include "socket.h"
+#include "log.h"
+#include "sig.h"
+#include "worker.h"
+#include "timer.h"
+#include "trace.h"
+#include "run.h"
 
 SILLY_API void *silly_malloc(size_t sz)
 {
@@ -67,11 +67,11 @@ SILLY_API void silly_log_append(const char *str, size_t sz)
 }
 SILLY_API int silly_signal_msgtype()
 {
-	return signal_msg_type();
+	return sig_msg_type();
 }
 SILLY_API int silly_signal_watch(int signum)
 {
-	return signal_watch(signum);
+	return sig_watch(signum);
 }
 SILLY_API const struct silly_socket_msgtype *silly_socket_msgtypes()
 {

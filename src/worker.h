@@ -1,5 +1,5 @@
-#ifndef _SILLY_WORKER_H
-#define _SILLY_WORKER_H
+#ifndef _WORKER_H
+#define _WORKER_H
 #include <lua.h>
 #include "silly.h"
 #include "args.h"

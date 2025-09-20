@@ -9,7 +9,7 @@
 #include <assert.h>
 
 #include "platform.h"
-#include "silly_log.h"
+#include "log.h"
 
 struct trigger {
 	fd_t sendfd;

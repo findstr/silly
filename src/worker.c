@@ -11,11 +11,11 @@
 #include "repl.h"
 #include "errnoex.h"
 #include "message.h"
-#include "silly_log.h"
-#include "silly_malloc.h"
-#include "silly_queue.h"
-#include "silly_monitor.h"
-#include "silly_worker.h"
+#include "log.h"
+#include "mem.h"
+#include "queue.h"
+#include "monitor.h"
+#include "worker.h"
 
 #ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))

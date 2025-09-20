@@ -9,12 +9,12 @@
 #include <string.h>
 #include "silly.h"
 #include "args.h"
-#include "silly_malloc.h"
-#include "silly_daemon.h"
-#include "silly_trace.h"
-#include "silly_log.h"
-#include "silly_timer.h"
-#include "silly_run.h"
+#include "mem.h"
+#include "daemon.h"
+#include "trace.h"
+#include "log.h"
+#include "timer.h"
+#include "run.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 

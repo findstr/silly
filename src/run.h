@@ -1,5 +1,5 @@
-#ifndef _SILLY_RUN_H
-#define _SILLY_RUN_H
+#ifndef _RUN_H
+#define _RUN_H
 
 struct silly_config;
 int silly_run(const struct boot_args *config);

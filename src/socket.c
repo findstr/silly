@@ -13,14 +13,14 @@
 #include "message.h"
 #include "compiler.h"
 #include "errnoex.h"
-#include "silly_log.h"
+#include "log.h"
 #include "platform.h"
 #include "spinlock.h"
 #include "trigger.h"
 #include "flipbuf.h"
-#include "silly_worker.h"
-#include "silly_malloc.h"
-#include "silly_socket.h"
+#include "worker.h"
+#include "mem.h"
+#include "socket.h"
 
 /*
  * === Socket Field Concurrency Rules ===

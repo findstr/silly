@@ -16,10 +16,10 @@
 #include "compiler.h"
 #include "message.h"
 #include "silly_conf.h"
-#include "silly_log.h"
-#include "silly_worker.h"
-#include "silly_malloc.h"
-#include "silly_timer.h"
+#include "log.h"
+#include "worker.h"
+#include "mem.h"
+#include "timer.h"
 
 #define SR_BITS (8) //root slot
 #define SL_BITS (6) //level slot
