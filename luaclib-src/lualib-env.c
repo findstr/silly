@@ -97,7 +97,7 @@ static void load_args(lua_State *L)
 {
 	int i, argc;
 	char **argv;
-	argv = silly_worker_args(&argc);
+	argv = silly_args(&argc);
 	for (i = 0; i < argc; i++) {
 		const char *k, *v;
 		char *str = argv[i];

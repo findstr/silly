@@ -6,9 +6,8 @@
 
 void timer_init();
 void timer_exit();
-int timer_msg_type();
 void timer_update();
-uint64_t timer_timeout(uint32_t expire, uint32_t ud);
+uint64_t timer_after(uint32_t expire, uint32_t ud);
 int timer_cancel(uint64_t session, uint32_t *ud);
 uint64_t timer_now();
 uint64_t timer_monotonic();

@@ -13,7 +13,6 @@
 
 #include "silly.h"
 #include "spinlock.h"
-#include "compiler.h"
 #include "message.h"
 #include "silly_conf.h"
 #include "log.h"
@@ -83,7 +82,6 @@ struct message_expire { //timer expire
 	uint64_t userdata;
 };
 
-static int MSG_TYPE_EXPIRE = 0;
 static struct silly_timer *T;
 
 static inline void lock(struct silly_timer *timer)
@@ -261,7 +259,7 @@ static inline uint32_t cookie_of(uint64_t session)
 	return (uint32_t)session;
 }
 
-uint64_t timer_timeout(uint32_t expire, uint32_t userdata)
+uint64_t timer_after(uint32_t expire, uint32_t userdata)
 {
 	uint64_t session;
 	struct node *n;
@@ -316,7 +314,7 @@ static void timeout(struct silly_timer *t, struct node *n)
 	uint64_t session = session_of(n);
 	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
 	te = mem_alloc(sizeof(*te));
-	te->hdr.type = MSG_TYPE_EXPIRE;
+	te->hdr.type = MESSAGE_TIMER_EXPIRE;
 	te->hdr.unpack = expire_unpack;
 	te->hdr.free = mem_free;
 	te->session = session;
@@ -455,12 +453,6 @@ void timer_update()
 	return;
 }
 
-int timer_msg_type()
-{
-	assert(MSG_TYPE_EXPIRE != 0); // ensure silly_timer_init has been called
-	return MSG_TYPE_EXPIRE;
-}
-
 void timer_init()
 {
 	T = mem_alloc(sizeof(*T));
@@ -475,7 +467,6 @@ void timer_init()
 	atomic_init(&T->active_count, 0);
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
-	MSG_TYPE_EXPIRE = message_new_type();
 	return;
 }
 

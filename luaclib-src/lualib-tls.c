@@ -45,7 +45,7 @@ struct ctx {
 };
 
 struct tls {
-	socket_id_t fd;
+	silly_socket_id_t fd;
 	SSL *ssl;
 	BIO *in_bio;
 	BIO *out_bio;
@@ -515,7 +515,7 @@ static int flushwrite(struct tls *tls)
 		return -1;
 	dat = ssl_malloc(sz);
 	BIO_read(tls->out_bio, dat, sz);
-	return silly_socket_send(tls->fd, dat, sz, NULL);
+	return silly_tcp_send(tls->fd, dat, sz, NULL);
 }
 
 static int ltls_write(lua_State *L)

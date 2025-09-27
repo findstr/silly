@@ -85,6 +85,8 @@
 #define PATH_MAX 256
 #endif
 
+#include <stdint.h>
+
 #ifdef __WIN32
 #define random() rand()
 #define localtime_r(t, tm) localtime_s(tm, t)
@@ -98,5 +100,7 @@
 #error "Unsupported platform"
 #endif
 #define SILLY_SOCKET_NAMELEN (INET6_ADDRSTRLEN + 8 + 1) //[ipv6]:port
+
+typedef int64_t silly_socket_id_t;
 
 #endif

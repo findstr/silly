@@ -84,6 +84,7 @@ int mem_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp,
 	(void)oldp;
 	(void)oldlenp;
 	(void)newp;
+	(void)newlen;
 #ifdef DISABLE_JEMALLOC
 	memset(oldp, 0, *oldlenp);
 	return 0;

@@ -10,6 +10,7 @@ void log_open_file(const char *path);
 void log_set_level(enum silly_log_level level);
 enum silly_log_level log_get_level();
 void log_head(enum silly_log_level level);
+void log_vfmt(const char *fmt, va_list ap);
 void log_fmt(const char *fmt, ...);
 void log_append(const char *str, size_t sz);
 void log_flush();

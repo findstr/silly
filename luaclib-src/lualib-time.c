@@ -18,7 +18,7 @@ static int ltimeout(lua_State *L)
 	uint64_t session;
 	expire = luaL_checkinteger(L, 1);
 	userdata = luaL_optinteger(L, 2, 0);
-	session = silly_timer_timeout(expire, userdata);
+	session = silly_timer_after(expire, userdata);
 	lua_pushinteger(L, (lua_Integer)session);
 	return 1;
 }
@@ -38,14 +38,14 @@ static int ltimercancel(lua_State *L)
 
 static int ltimenow(lua_State *L)
 {
-	uint64_t now = silly_timer_now();
+	uint64_t now = silly_now();
 	lua_pushinteger(L, now);
 	return 1;
 }
 
 static int ltimemonotonic(lua_State *L)
 {
-	uint64_t monotonic = silly_timer_monotonic();
+	uint64_t monotonic = silly_monotonic();
 	lua_pushinteger(L, monotonic);
 	return 1;
 }
@@ -62,7 +62,7 @@ SILLY_MOD_API int luaopen_core_time_c(lua_State *L)
 
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
-	lua_pushinteger(L, silly_timer_msgtype());
+	lua_pushinteger(L, silly_messages()->timer_expire);
 	lua_setfield(L, -2, "EXPIRE");
 	return 1;
 }

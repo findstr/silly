@@ -171,7 +171,7 @@ struct wlist {
 };
 
 struct socket {
-	_Atomic(socket_id_t) sid; //socket descriptor
+	_Atomic(silly_socket_id_t) sid; //socket descriptor
 	fd_t fd;
 	uint32_t version;
 	uint8_t type;
@@ -206,7 +206,7 @@ struct silly_socket {
 	struct trigger ctrl;
 	struct flipbuf opbuf;
 	//reserve id(for socket fd remap)
-	socket_id_t reserveid;
+	silly_socket_id_t reserveid;
 	//netstat
 	struct silly_netstat netstat;
 	//temp buffer
@@ -226,7 +226,7 @@ enum op_type {
 };
 
 struct op_hdr {
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	uint8_t op;
 	uint16_t size;
 };
@@ -283,33 +283,33 @@ struct op_pkt {
 
 struct message_connect {
 	struct silly_message hdr;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	int err;
 };
 
 struct message_listen {
 	struct silly_message hdr;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	int err;
 };
 
 struct message_accept {
 	struct silly_message hdr;
-	socket_id_t sid;
-	socket_id_t listenid;
+	silly_socket_id_t sid;
+	silly_socket_id_t listenid;
 	uint8_t *addr;
 };
 
 struct message_tcpdata {
 	struct silly_message hdr;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	size_t size;
 	uint8_t *ptr;
 };
 
 struct message_udpdata {
 	struct silly_message hdr;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	size_t size;
 	uint8_t *ptr;
 	union sockaddr_full addr;
@@ -317,11 +317,10 @@ struct message_udpdata {
 
 struct message_close {
 	struct silly_message hdr;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	int err;
 };
 
-struct silly_socket_msgtype MSG_TYPE = { 0 };
 static struct silly_socket *SSOCKET;
 
 static inline void wlist_append(struct socket *s, uint8_t *buf, size_t size,
@@ -423,7 +422,7 @@ static void pool_init(struct socket_pool *p)
 
 static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 {
-	socket_id_t id;
+	silly_socket_id_t id;
 	spinlock_lock(&p->lock);
 	if (p->free_head == NULL) {
 		spinlock_unlock(&p->lock);
@@ -438,7 +437,8 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 	spinlock_unlock(&p->lock);
 	s->fd = fd;
 	s->type = type;
-	id = ((socket_id_t)s->version << SOCKET_POOL_EXP) | (s - &p->slots[0]);
+	id = ((silly_socket_id_t)s->version << SOCKET_POOL_EXP) |
+	     (s - &p->slots[0]);
 	atomic_store_explicit(&s->sid, id, memory_order_release);
 	return s;
 }
@@ -454,7 +454,8 @@ static void pool_free(struct socket_pool *p, struct socket *s)
 	spinlock_unlock(&p->lock);
 }
 
-static inline struct socket *pool_get(struct socket_pool *p, socket_id_t id)
+static inline struct socket *pool_get(struct socket_pool *p,
+				      silly_socket_id_t id)
 {
 	struct socket *s = &p->slots[HASH(id)];
 	if (unlikely(sid(s) != id))
@@ -476,8 +477,12 @@ static int ntop(const union sockaddr_full *addr,
 	} else {
 		assert(family == AF_INET6);
 		port = addr->v6.sin6_port;
-		inet_ntop(family, &addr->v6.sin6_addr, buf, INET6_ADDRSTRLEN);
+		buf[0] = '[';
+		inet_ntop(family, &addr->v6.sin6_addr, buf + 1,
+			  SILLY_SOCKET_NAMELEN - 1);
 		namelen = strlen(buf);
+		buf[namelen] = ']';
+		namelen++;
 	}
 	port = ntohs(port);
 	namelen += snprintf(&buf[namelen], SILLY_SOCKET_NAMELEN - namelen,
@@ -572,7 +577,7 @@ static void report_accept(struct silly_socket *ss, struct socket *listen,
 	struct message_accept *ma;
 	int namelen = ntop(addr, namebuf);
 	ma = mem_alloc(sizeof(*ma) + namelen + 1);
-	ma->hdr.type = MSG_TYPE.accept;
+	ma->hdr.type = MESSAGE_TCP_ACCEPT;
 	ma->hdr.unpack = accept_unpack;
 	ma->hdr.free = mem_free;
 	ma->sid = s->sid;
@@ -588,7 +593,7 @@ static void report_listen(struct silly_socket *ss, struct socket *s, int err)
 	(void)ss;
 	struct message_listen *ml;
 	ml = mem_alloc(sizeof(*ml));
-	ml->hdr.type = MSG_TYPE.listen;
+	ml->hdr.type = MESSAGE_SOCKET_LISTEN;
 	ml->hdr.unpack = listen_unpack;
 	ml->hdr.free = mem_free;
 	ml->sid = s->sid;
@@ -606,7 +611,7 @@ static void report_close(struct silly_socket *ss, struct socket *s, int err)
 	set_muteclose(s); // Ensure the close event is emitted only once
 	assert(s->type == SOCKET_TCP_CONNECTION);
 	mc = mem_alloc(sizeof(*mc));
-	mc->hdr.type = MSG_TYPE.close;
+	mc->hdr.type = MESSAGE_SOCKET_CLOSE;
 	mc->hdr.unpack = close_unpack;
 	mc->hdr.free = mem_free;
 	mc->sid = s->sid;
@@ -621,7 +626,7 @@ static void report_tcpdata(struct silly_socket *ss, struct socket *s,
 	(void)ss;
 	assert(s->type == SOCKET_TCP_CONNECTION);
 	struct message_tcpdata *md = mem_alloc(sizeof(*md));
-	md->hdr.type = MSG_TYPE.tcpdata;
+	md->hdr.type = MESSAGE_TCP_DATA;
 	md->hdr.unpack = tcpdata_unpack;
 	md->hdr.free = tcpdata_free;
 	md->sid = s->sid;
@@ -639,7 +644,7 @@ static void report_udpdata(struct silly_socket *ss, struct socket *s,
 	assert(s->type == SOCKET_UDP_CONNECTION ||
 	       s->type == SOCKET_UDP_LISTEN);
 	struct message_udpdata *md = mem_alloc(sizeof(*md));
-	md->hdr.type = MSG_TYPE.udpdata;
+	md->hdr.type = MESSAGE_UDP_DATA;
 	md->hdr.unpack = udpdata_unpack;
 	md->hdr.free = udpdata_free;
 	md->sid = s->sid;
@@ -654,7 +659,7 @@ static void report_connect(struct silly_socket *ss, struct socket *s, int err)
 {
 	(void)ss;
 	struct message_connect *mc = mem_alloc(sizeof(*mc));
-	mc->hdr.type = MSG_TYPE.connect;
+	mc->hdr.type = MESSAGE_SOCKET_CONNECT;
 	mc->hdr.unpack = connect_unpack;
 	mc->hdr.free = mem_free;
 	mc->sid = s->sid;
@@ -979,7 +984,7 @@ static inline void op_push(struct silly_socket *ss, struct op_hdr *hdr)
 				  memory_order_relaxed);
 }
 
-void socket_read_enable(socket_id_t sid, int flag)
+void socket_read_enable(silly_socket_id_t sid, int flag)
 {
 	struct socket *s;
 	struct op_readenable op = { 0 };
@@ -1001,7 +1006,7 @@ static void op_read_enable(struct silly_socket *ss, struct op_readenable *op,
 	read_enable(ss, s, enable);
 }
 
-int socket_send_size(socket_id_t sid)
+int socket_send_size(silly_socket_id_t sid)
 {
 	struct socket *s;
 	s = pool_get(&SSOCKET->pool, sid);
@@ -1153,7 +1158,8 @@ end:
 	return err;
 }
 
-socket_id_t socket_tcp_listen(const char *ip, const char *port, int backlog)
+silly_socket_id_t socket_tcp_listen(const char *ip, const char *port,
+				    int backlog)
 {
 	fd_t fd;
 	struct socket *s;
@@ -1195,7 +1201,7 @@ static int op_tcp_listen(struct silly_socket *ss, struct op_listen *op,
 	return err;
 }
 
-socket_id_t socket_udp_bind(const char *ip, const char *port)
+silly_socket_id_t socket_udp_bind(const char *ip, const char *port)
 {
 	int err;
 	fd_t fd = -1;
@@ -1256,8 +1262,8 @@ static int op_udp_listen(struct silly_socket *ss, struct op_listen *op,
 	return err;
 }
 
-socket_id_t socket_tcp_connect(const char *ip, const char *port,
-			       const char *bindip, const char *bindport)
+silly_socket_id_t socket_tcp_connect(const char *ip, const char *port,
+				     const char *bindip, const char *bindport)
 {
 	int err, fd = -1;
 	struct op_connect op = { 0 };
@@ -1339,8 +1345,8 @@ static void op_tcp_connect(struct silly_socket *ss, struct op_connect *op,
 	}
 }
 
-socket_id_t socket_udp_connect(const char *ip, const char *port,
-			       const char *bindip, const char *bindport)
+silly_socket_id_t socket_udp_connect(const char *ip, const char *port,
+				     const char *bindip, const char *bindport)
 {
 	int err;
 	fd_t fd = -1;
@@ -1405,7 +1411,7 @@ static void op_udp_connect(struct silly_socket *ss, struct op_connect *op,
 	return;
 }
 
-int socket_close(socket_id_t sid)
+int socket_close(silly_socket_id_t sid)
 {
 	struct op_close op = { 0 };
 	struct socket *s = pool_get(&SSOCKET->pool, sid);
@@ -1456,7 +1462,7 @@ static int op_tcp_close(struct silly_socket *ss, struct op_close *op,
 	}
 }
 
-int socket_tcp_send(socket_id_t sid, uint8_t *buf, size_t sz,
+int socket_tcp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 		    void (*freex)(void *))
 {
 	struct op_tcpsend op = { 0 };
@@ -1522,7 +1528,7 @@ static void op_tcp_send(struct silly_socket *ss, struct op_tcpsend *op,
 	}
 }
 
-int socket_udp_send(socket_id_t sid, uint8_t *buf, size_t sz,
+int socket_udp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 		    const uint8_t *addr, size_t addrlen, void (*freex)(void *))
 {
 	struct op_udpsend op = { 0 };
@@ -1788,12 +1794,6 @@ static void resize_eventbuf(struct silly_socket *ss, size_t sz)
 	return;
 }
 
-const struct silly_socket_msgtype *socket_msg_types()
-{
-	assert(MSG_TYPE.accept != 0); // ensure socket_init has been called
-	return &MSG_TYPE;
-}
-
 int socket_init()
 {
 	int err;
@@ -1826,12 +1826,6 @@ int socket_init()
 	ss->eventcount = 0;
 	resize_eventbuf(ss, EVENT_SIZE);
 	SSOCKET = ss;
-	MSG_TYPE.accept = message_new_type();
-	MSG_TYPE.connect = message_new_type();
-	MSG_TYPE.listen = message_new_type();
-	MSG_TYPE.tcpdata = message_new_type();
-	MSG_TYPE.udpdata = message_new_type();
-	MSG_TYPE.close = message_new_type();
 	return 0;
 end:
 	if (s != NULL)
@@ -1891,7 +1885,7 @@ void socket_netstat(struct silly_netstat *stat)
 	return;
 }
 
-void socket_stat(socket_id_t sid, struct silly_socketstat *info)
+void socket_stat(silly_socket_id_t sid, struct silly_sockstat *info)
 {
 	struct socket *s;
 	memset(info, 0, sizeof(*info));

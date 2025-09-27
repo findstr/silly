@@ -17,21 +17,20 @@
 
 static inline void push_error(lua_State *L, int code)
 {
-	silly_worker_pusherror(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
+	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
 }
 
 static int lexit(lua_State *L)
 {
 	int status;
 	status = luaL_optinteger(L, 1, 0);
-	silly_worker_reset();
 	silly_exit(status);
 	return 0;
 }
 
 static int lgenid(lua_State *L)
 {
-	uint32_t id = silly_worker_genid();
+	uint32_t id = silly_genid();
 	lua_pushinteger(L, id);
 	return 1;
 }
@@ -75,7 +74,7 @@ static int lversion(lua_State *L)
 
 static int lregister(lua_State *L)
 {
-	silly_worker_callbacktable(L);
+	silly_callback_table(L);
 	lua_pushvalue(L, 1);
 	lua_pushvalue(L, 2);
 	lua_settable(L, -3);
@@ -148,7 +147,7 @@ static int ltraceset(lua_State *L)
 {
 	silly_traceid_t traceid;
 	lua_State *co = lua_tothread(L, 1);
-	silly_worker_resume(co);
+	silly_resume(co);
 	if lua_isnoneornil (L, 2) {
 		traceid = TRACE_WORKER_ID;
 	} else {
@@ -192,7 +191,7 @@ SILLY_MOD_API int luaopen_core_c(lua_State *L)
 
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
-	silly_worker_errortable(L);
+	silly_error_table(L);
 	luaL_setfuncs(L, tbl, 1);
 	return 1;
 }

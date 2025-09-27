@@ -29,24 +29,22 @@ struct silly_message {
 	void (*free)(void *ptr);
 };
 
+struct silly_message_id {
+	int timer_expire;
+	int signal_fire;
+	int tcp_accept;
+	int tcp_data;
+	int udp_data;
+	int socket_listen;
+	int socket_connect;
+	int socket_close;
+};
+
 enum silly_log_level {
 	SILLY_LOG_DEBUG = 0,
 	SILLY_LOG_INFO = 1,
 	SILLY_LOG_WARN = 2,
 	SILLY_LOG_ERROR = 3,
-};
-
-// from silly_socket.h
-typedef int64_t socket_id_t;
-//sid == socket number, it will be remap in silly_socket, not a real socket fd
-
-struct silly_socket_msgtype {
-	int listen;
-	int connect;
-	int accept;
-	int tcpdata;
-	int udpdata;
-	int close;
 };
 
 struct silly_netstat {
@@ -58,8 +56,8 @@ struct silly_netstat {
 	atomic_uint_least32_t opprocessed;
 };
 
-struct silly_socketstat {
-	socket_id_t sid;
+struct silly_sockstat {
+	silly_socket_id_t sid;
 	int fd;
 	const char *type;
 	const char *protocol;
@@ -77,18 +75,18 @@ SILLY_API void *silly_malloc(size_t sz);
 SILLY_API void *silly_realloc(void *ptr, size_t sz);
 SILLY_API void silly_free(void *ptr);
 SILLY_API const char *silly_allocator();
-SILLY_API size_t silly_memused();
-SILLY_API size_t silly_memrss();
+SILLY_API size_t silly_allocated_bytes();
+SILLY_API size_t silly_rss_bytes();
 SILLY_API int silly_mallctl(const char *name, void *oldp, size_t *oldlenp,
 			    void *newp, size_t newlen);
 
-SILLY_API void silly_log_openfile(const char *path);
-SILLY_API void silly_log_setlevel(enum silly_log_level level);
-SILLY_API enum silly_log_level silly_log_getlevel();
+SILLY_API void silly_log_open_file(const char *path);
+SILLY_API void silly_log_set_level(enum silly_log_level level);
+SILLY_API enum silly_log_level silly_log_get_level();
 SILLY_API void silly_log_head(enum silly_log_level level);
 SILLY_API void silly_log_fmt(const char *fmt, ...);
 SILLY_API void silly_log_append(const char *str, size_t sz);
-#define silly_log_visible(level) (level >= silly_log_getlevel())
+#define silly_log_visible(level) (level >= silly_log_get_level())
 #define silly_log_(level, ...)                   \
 	do {                                     \
 		if (!silly_log_visible(level)) { \
@@ -103,39 +101,34 @@ SILLY_API void silly_log_append(const char *str, size_t sz);
 #define silly_log_warn(...) silly_log_(SILLY_LOG_WARN, __VA_ARGS__)
 #define silly_log_error(...) silly_log_(SILLY_LOG_ERROR, __VA_ARGS__)
 
-SILLY_API int silly_signal_msgtype();
 SILLY_API int silly_signal_watch(int signum);
-
-SILLY_API const struct silly_socket_msgtype *silly_socket_msgtypes();
-SILLY_API socket_id_t silly_socket_listen(const char *ip, const char *port,
-					  int backlog);
-SILLY_API socket_id_t silly_socket_udpbind(const char *ip, const char *port);
-SILLY_API socket_id_t silly_socket_connect(const char *ip, const char *port,
-					   const char *bindip,
-					   const char *bindport);
-SILLY_API socket_id_t silly_socket_udpconnect(const char *ip, const char *port,
+SILLY_API silly_socket_id_t silly_tcp_listen(const char *ip, const char *port,
+					     int backlog);
+SILLY_API silly_socket_id_t silly_udp_bind(const char *ip, const char *port);
+SILLY_API silly_socket_id_t silly_tcp_connect(const char *ip, const char *port,
 					      const char *bindip,
 					      const char *bindport);
-SILLY_API int silly_socket_ntop(const void *data,
-				char name[SILLY_SOCKET_NAMELEN]);
-SILLY_API void silly_socket_readenable(socket_id_t sid, int enable);
-SILLY_API int silly_socket_sendsize(socket_id_t sid);
-SILLY_API int silly_socket_send(socket_id_t sid, uint8_t *buff, size_t sz,
-				void (*freex)(void *));
-SILLY_API int silly_socket_udpsend(socket_id_t sid, uint8_t *buff, size_t sz,
-				   const uint8_t *addr, size_t addrlen,
-				   void (*freex)(void *));
-SILLY_API int silly_socket_close(socket_id_t sid);
+SILLY_API silly_socket_id_t silly_udp_connect(const char *ip, const char *port,
+					      const char *bindip,
+					      const char *bindport);
+SILLY_API int silly_ntop(const void *data, char name[SILLY_SOCKET_NAMELEN]);
+SILLY_API int silly_tcp_send(silly_socket_id_t sid, uint8_t *buff, size_t sz,
+			     void (*freex)(void *));
+SILLY_API int silly_udp_send(silly_socket_id_t sid, uint8_t *buff, size_t sz,
+			     const uint8_t *addr, size_t addrlen,
+			     void (*freex)(void *));
+SILLY_API void silly_socket_readenable(silly_socket_id_t sid, int enable);
+SILLY_API int silly_socket_sendsize(silly_socket_id_t sid);
+SILLY_API int silly_socket_close(silly_socket_id_t sid);
 SILLY_API const char *silly_socket_pollapi();
-SILLY_API void silly_socket_netstat(struct silly_netstat *stat);
-SILLY_API void silly_socket_socketstat(socket_id_t sid,
-				       struct silly_socketstat *info);
+SILLY_API void silly_netstat(struct silly_netstat *stat);
+SILLY_API void silly_sockstat(silly_socket_id_t sid,
+			      struct silly_sockstat *info);
 
-SILLY_API int silly_timer_msgtype();
-SILLY_API uint64_t silly_timer_timeout(uint32_t expire, uint32_t ud);
+SILLY_API uint64_t silly_now();
+SILLY_API uint64_t silly_monotonic();
+SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud);
 SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud);
-SILLY_API uint64_t silly_timer_now();
-SILLY_API uint64_t silly_timer_monotonic();
 SILLY_API uint32_t silly_timer_info(uint32_t *expired);
 
 SILLY_API void silly_trace_span(silly_tracespan_t id);
@@ -143,17 +136,17 @@ SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id);
 SILLY_API silly_traceid_t silly_trace_get();
 SILLY_API silly_traceid_t silly_trace_new();
 
-SILLY_API void silly_worker_push(struct silly_message *msg);
-SILLY_API uint32_t silly_worker_genid();
-SILLY_API size_t silly_worker_msgsize();
-SILLY_API void silly_worker_resume(lua_State *L);
-SILLY_API char **silly_worker_args(int *argc);
-SILLY_API void silly_worker_callbacktable(lua_State *L);
-SILLY_API void silly_worker_errortable(lua_State *L);
-SILLY_API void silly_worker_pusherror(lua_State *L, int stk, int code);
-SILLY_API void silly_worker_reset();
+SILLY_API void silly_push(struct silly_message *msg);
+SILLY_API uint32_t silly_genid();
+SILLY_API size_t silly_msg_size();
+SILLY_API void silly_resume(lua_State *L);
+SILLY_API char **silly_args(int *argc);
+SILLY_API void silly_callback_table(lua_State *L);
+SILLY_API void silly_error_table(lua_State *L);
+SILLY_API void silly_push_error(lua_State *L, int stk, int code);
 
-SILLY_API int silly_new_message_type();
+SILLY_API int silly_register_message(const char *name);
+SILLY_API const struct silly_message_id *silly_messages();
 SILLY_API void silly_cpu_usage(float *stime, float *utime);
 SILLY_API void silly_fd_open_limit(int *soft, int *hard);
 SILLY_API int silly_open_fd_count(void);

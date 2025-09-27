@@ -69,7 +69,7 @@ SILLY_MOD_API int luaopen_core_signal_c(lua_State *L)
 
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);
-	lua_pushinteger(L, silly_signal_msgtype());
+	lua_pushinteger(L, silly_messages()->signal_fire);
 	lua_setfield(L, -2, "FIRE");
 	return 1;
 }

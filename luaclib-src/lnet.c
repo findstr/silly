@@ -24,7 +24,7 @@ struct multicasthdr {
 
 static inline void push_error(lua_State *L, int code)
 {
-	silly_worker_pusherror(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
+	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
 }
 
 //NOTE:this function may cocurrent
@@ -117,12 +117,12 @@ static inline void *tablebuffer(lua_State *L, int idx, size_t *size)
 	return p;
 }
 
-typedef socket_id_t(connect_t)(const char *ip, const char *port,
-			       const char *bip, const char *bport);
+typedef silly_socket_id_t(connect_t)(const char *ip, const char *port,
+				     const char *bip, const char *bport);
 
 static int socketconnect(lua_State *L, connect_t *connect)
 {
-	socket_id_t fd;
+	silly_socket_id_t fd;
 	const char *ip;
 	const char *port;
 	const char *bip;
@@ -144,7 +144,7 @@ static int socketconnect(lua_State *L, connect_t *connect)
 
 static int ltcpconnect(lua_State *L)
 {
-	return socketconnect(L, silly_socket_connect);
+	return socketconnect(L, silly_tcp_connect);
 }
 
 static int ltcplisten(lua_State *L)
@@ -152,7 +152,7 @@ static int ltcplisten(lua_State *L)
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
 	int backlog = (int)luaL_checkinteger(L, 3);
-	socket_id_t fd = silly_socket_listen(ip, port, backlog);
+	silly_socket_id_t fd = silly_tcp_listen(ip, port, backlog);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
 		push_error(L, -fd);
@@ -166,7 +166,7 @@ static int ltcplisten(lua_State *L)
 static int ltcpsend(lua_State *L)
 {
 	int err;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	size_t size;
 	uint8_t *buff;
 	sid = luaL_checkinteger(L, 1);
@@ -185,7 +185,7 @@ static int ltcpsend(lua_State *L)
 		return luaL_error(L, "netstream.pack unsupport:%s",
 				  lua_typename(L, 2));
 	}
-	err = silly_socket_send(sid, buff, size, NULL);
+	err = silly_tcp_send(sid, buff, size, NULL);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
 		push_error(L, -err);
@@ -199,13 +199,13 @@ static int ltcpsend(lua_State *L)
 static int ltcpmulticast(lua_State *L)
 {
 	int err;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	uint8_t *buff;
 	int size;
 	sid = luaL_checkinteger(L, 1);
 	buff = lua_touserdata(L, 2);
 	size = luaL_checkinteger(L, 3);
-	err = silly_socket_send(sid, buff, size, multifinalizer);
+	err = silly_tcp_send(sid, buff, size, multifinalizer);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
 		push_error(L, -err);
@@ -218,14 +218,14 @@ static int ltcpmulticast(lua_State *L)
 
 static int ludpconnect(lua_State *L)
 {
-	return socketconnect(L, silly_socket_udpconnect);
+	return socketconnect(L, silly_udp_connect);
 }
 
 static int ludpbind(lua_State *L)
 {
 	const char *ip = luaL_checkstring(L, 1);
 	const char *port = luaL_checkstring(L, 2);
-	socket_id_t fd = silly_socket_udpbind(ip, port);
+	silly_socket_id_t fd = silly_udp_bind(ip, port);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
 		push_error(L, -fd);
@@ -240,7 +240,7 @@ static int ludpsend(lua_State *L)
 {
 	int idx;
 	int err;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	size_t size;
 	uint8_t *buff;
 	const uint8_t *addr = NULL;
@@ -266,7 +266,7 @@ static int ludpsend(lua_State *L)
 	}
 	if (!lua_isnoneornil(L, idx))
 		addr = (const uint8_t *)luaL_checklstring(L, idx, &addrlen);
-	err = silly_socket_udpsend(sid, buff, size, addr, addrlen, NULL);
+	err = silly_udp_send(sid, buff, size, addr, addrlen, NULL);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
 		push_error(L, -err);
@@ -283,7 +283,7 @@ static int lntop(lua_State *L)
 	const char *addr;
 	char name[SILLY_SOCKET_NAMELEN];
 	addr = luaL_checkstring(L, 1);
-	size = silly_socket_ntop((uint8_t *)addr, name);
+	size = silly_ntop((void *)addr, name);
 	lua_pushlstring(L, name, size);
 	return 1;
 }
@@ -291,7 +291,7 @@ static int lntop(lua_State *L)
 static int lclose(lua_State *L)
 {
 	int err;
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	sid = luaL_checkinteger(L, 1);
 	err = silly_socket_close(sid);
 	if (err < 0) {
@@ -306,7 +306,7 @@ static int lclose(lua_State *L)
 
 static int lreadenable(lua_State *L)
 {
-	socket_id_t sid = luaL_checkinteger(L, 1);
+	silly_socket_id_t sid = luaL_checkinteger(L, 1);
 	int enable = lua_toboolean(L, 2);
 	silly_socket_readenable(sid, enable);
 	return 0;
@@ -314,7 +314,7 @@ static int lreadenable(lua_State *L)
 
 static int lsendsize(lua_State *L)
 {
-	socket_id_t sid = luaL_checkinteger(L, 1);
+	silly_socket_id_t sid = luaL_checkinteger(L, 1);
 	int size = silly_socket_sendsize(sid);
 	lua_pushinteger(L, size);
 	return 1;
@@ -322,17 +322,16 @@ static int lsendsize(lua_State *L)
 
 static void set_message_type(lua_State *L, int tbl)
 {
-	const struct silly_socket_msgtype *msgtype;
-	msgtype = silly_socket_msgtypes();
+	const struct silly_message_id *msg_id = silly_messages();
 #define SET(name, n)           \
 	lua_pushinteger(L, n); \
-	lua_setfield(L, tbl, name);
-	SET("ACCEPT", msgtype->accept);
-	SET("CONNECT", msgtype->connect);
-	SET("LISTEN", msgtype->listen);
-	SET("TCPDATA", msgtype->tcpdata);
-	SET("UDPDATA", msgtype->udpdata);
-	SET("CLOSE", msgtype->close);
+	lua_setfield(L, tbl, name)
+	SET("ACCEPT", msg_id->tcp_accept);
+	SET("CONNECT", msg_id->socket_connect);
+	SET("LISTEN", msg_id->socket_listen);
+	SET("TCPDATA", msg_id->tcp_data);
+	SET("UDPDATA", msg_id->udp_data);
+	SET("CLOSE", msg_id->socket_close);
 #undef SET
 }
 
@@ -356,7 +355,7 @@ SILLY_MOD_API int luaopen_core_net_c(lua_State *L)
 	};
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
-	silly_worker_errortable(L);
+	silly_error_table(L);
 	luaL_setfuncs(L, tbl, 1);
 	set_message_type(L, lua_absindex(L, -1));
 	return 1;

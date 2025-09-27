@@ -52,8 +52,8 @@ static int lopenfds(lua_State *L)
 
 static int lmemstat(lua_State *L)
 {
-	lua_pushinteger(L, silly_memrss());
-	lua_pushinteger(L, silly_memused());
+	lua_pushinteger(L, silly_rss_bytes());
+	lua_pushinteger(L, silly_allocated_bytes());
 	return 2;
 }
 
@@ -78,7 +78,7 @@ static int ljestat(lua_State *L)
 static int lworkerstat(lua_State *L)
 {
 	size_t sz;
-	sz = silly_worker_msgsize();
+	sz = silly_msg_size();
 	lua_pushinteger(L, sz);
 	return 1;
 }
@@ -107,7 +107,7 @@ static inline void table_set_str(lua_State *L, int table, const char *k,
 static int lnetstat(lua_State *L)
 {
 	struct silly_netstat stat;
-	silly_socket_netstat(&stat);
+	silly_netstat(&stat);
 	lua_pushinteger(L, stat.connecting);
 	lua_pushinteger(L, stat.tcpclient);
 	lua_pushinteger(L, stat.oprequest - stat.opprocessed);
@@ -127,10 +127,10 @@ static int ltimerstat(lua_State *L)
 
 static int lsocketstat(lua_State *L)
 {
-	socket_id_t sid;
-	struct silly_socketstat info;
+	silly_socket_id_t sid;
+	struct silly_sockstat info;
 	sid = luaL_checkinteger(L, 1);
-	silly_socket_socketstat(sid, &info);
+	silly_sockstat(sid, &info);
 	lua_newtable(L);
 	table_set_int(L, -1, "fd", info.sid);
 	table_set_int(L, -1, "os_fd", info.fd);

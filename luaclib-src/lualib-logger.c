@@ -283,13 +283,13 @@ static int llogf(lua_State *L, enum silly_log_level log_level)
 static int lopenfile(lua_State *L)
 {
 	const char *path = luaL_checkstring(L, 1);
-	silly_log_openfile(path);
+	silly_log_open_file(path);
 	return 0;
 }
 
 static int lgetlevel(lua_State *L)
 {
-	enum silly_log_level level = silly_log_getlevel();
+	enum silly_log_level level = silly_log_get_level();
 	lua_pushinteger(L, level);
 	return 1;
 }
@@ -297,7 +297,7 @@ static int lgetlevel(lua_State *L)
 static int lsetlevel(lua_State *L)
 {
 	int level = luaL_optinteger(L, 1, (lua_Integer)SILLY_LOG_INFO);
-	silly_log_setlevel(level);
+	silly_log_set_level(level);
 	return 0;
 }
 

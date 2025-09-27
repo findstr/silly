@@ -13,7 +13,6 @@
 #include "sig.h"
 
 static int sigbits = 0;
-static int MSG_TYPE_SIGNAL = 0;
 
 struct message_signal {
 	struct silly_message hdr;
@@ -31,17 +30,11 @@ static void signal_handler(int sig)
 {
 	struct message_signal *ms;
 	ms = mem_alloc(sizeof(*ms));
-	ms->hdr.type = MSG_TYPE_SIGNAL;
+	ms->hdr.type = MESSAGE_SIGNAL_FIRE;
 	ms->hdr.unpack = signal_unpack;
 	ms->hdr.free = mem_free;
 	ms->signum = sig;
 	worker_push(&ms->hdr);
-}
-
-int sig_msg_type()
-{
-	assert(MSG_TYPE_SIGNAL != 0); // ensure signal_init has been called
-	return MSG_TYPE_SIGNAL;
 }
 
 int sig_init()
@@ -49,7 +42,6 @@ int sig_init()
 #ifndef __WIN32
 	signal(SIGPIPE, SIG_IGN);
 #endif
-	MSG_TYPE_SIGNAL = message_new_type();
 	return 0;
 }
 

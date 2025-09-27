@@ -131,6 +131,11 @@ void log_head(enum silly_log_level level)
 	       head_cache.term + 2 - head_cache.buf, stdout);
 }
 
+void log_vfmt(const char *fmt, va_list ap)
+{
+	vfprintf(stdout, fmt, ap);
+}
+
 void log_fmt(const char *fmt, ...)
 {
 	va_list ap;

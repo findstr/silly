@@ -43,7 +43,7 @@ struct node_buffer {
 };
 
 struct socket_buffer {
-	socket_id_t sid;
+	silly_socket_id_t sid;
 	int limit;
 	int pause;
 	struct node_buffer *nb;

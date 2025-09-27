@@ -294,7 +294,7 @@ static void *thread_func(void *arg)
 		msg->hdr.unpack = msg_unpack;
 		msg->hdr.free = silly_free;
 		msg->w = w;
-		silly_worker_push(&msg->hdr);
+		silly_push(&msg->hdr);
 	}
 	return NULL;
 }
@@ -487,7 +487,7 @@ SILLY_MOD_API int luaopen_core_hive_c(lua_State *L)
 		{ "threads", lthreads },
                 { NULL,      NULL     }
 	};
-	MSG_TYPE_HIVE_DONE = silly_new_message_type();
+	MSG_TYPE_HIVE_DONE = silly_register_message("core.hive.done");
 	luaL_newlibtable(L, tbl);
 	new_hive(L);
 	luaL_setfuncs(L, tbl, 1);

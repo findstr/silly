@@ -20,13 +20,13 @@ typedef uint32_t cmd_t;
 typedef uint32_t session_t;
 
 struct packet {
-	socket_id_t fd;
+	silly_socket_id_t fd;
 	int size;
 	char *buff;
 };
 
 struct incomplete {
-	socket_id_t fd;
+	silly_socket_id_t fd;
 	int rsize;
 	int psize;
 	uint8_t *buff;
@@ -59,7 +59,8 @@ static inline struct netpacket *get_netpacket(lua_State *L)
 	return luaL_checkudata(L, 1, "netpacket");
 }
 
-static struct incomplete *get_incomplete(struct netpacket *p, socket_id_t fd)
+static struct incomplete *get_incomplete(struct netpacket *p,
+					 silly_socket_id_t fd)
 {
 	int idx = HASH(fd);
 	struct incomplete *i;
@@ -132,7 +133,7 @@ static void push_complete(lua_State *L, struct netpacket *p,
 	return;
 }
 
-static int push_once(lua_State *L, socket_id_t fd, int size,
+static int push_once(lua_State *L, silly_socket_id_t fd, int size,
 		     const uint8_t *buff)
 {
 	int eat;
@@ -190,7 +191,8 @@ static int push_once(lua_State *L, socket_id_t fd, int size,
 	return eat;
 }
 
-static void push(lua_State *L, socket_id_t sid, uint8_t *data, int data_size)
+static void push(lua_State *L, silly_socket_id_t sid, uint8_t *data,
+		 int data_size)
 {
 	int n;
 	int left;
@@ -206,7 +208,7 @@ static void push(lua_State *L, socket_id_t sid, uint8_t *data, int data_size)
 	return;
 }
 
-static void clear_incomplete(lua_State *L, socket_id_t sid)
+static void clear_incomplete(lua_State *L, silly_socket_id_t sid)
 {
 	struct netpacket *p = get_netpacket(L);
 	struct incomplete *ic = get_incomplete(p, sid);
@@ -355,7 +357,7 @@ static int lresponse(lua_State *L)
 
 static int lclear(lua_State *L)
 {
-	socket_id_t sid = luaL_checkinteger(L, 2);
+	silly_socket_id_t sid = luaL_checkinteger(L, 2);
 	clear_incomplete(L, sid);
 	return 0;
 }
@@ -388,7 +390,7 @@ static int ldrop(lua_State *L)
 //	fd
 static int lpush(lua_State *L)
 {
-	socket_id_t fd = luaL_checkinteger(L, 2);
+	silly_socket_id_t fd = luaL_checkinteger(L, 2);
 	uint8_t *ptr = lua_touserdata(L, 3);
 	int size = luaL_checkinteger(L, 4);
 	push(L, fd, ptr, size);
