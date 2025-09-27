@@ -5,27 +5,27 @@
 #include "mem.h"
 #include "queue.h"
 
-struct silly_queue {
+struct queue {
 	size_t size;
 	struct silly_message **tail;
 	struct silly_message *head;
 	spinlock_t lock;
 };
 
-static inline void lock(struct silly_queue *q)
+static inline void lock(struct queue *q)
 {
 	spinlock_lock(&q->lock);
 }
 
-static inline void unlock(struct silly_queue *q)
+static inline void unlock(struct queue *q)
 {
 	spinlock_unlock(&q->lock);
 	return;
 }
 
-struct silly_queue *silly_queue_create()
+struct queue *queue_create()
 {
-	struct silly_queue *q = (struct silly_queue *)mem_alloc(sizeof(*q));
+	struct queue *q = (struct queue *)mem_alloc(sizeof(*q));
 	q->size = 0;
 	q->head = NULL;
 	q->tail = &q->head;
@@ -33,7 +33,7 @@ struct silly_queue *silly_queue_create()
 	return q;
 }
 
-void silly_queue_free(struct silly_queue *q)
+void queue_free(struct queue *q)
 {
 	struct silly_message *next, *tmp;
 	lock(q);
@@ -49,7 +49,7 @@ void silly_queue_free(struct silly_queue *q)
 	return;
 }
 
-int silly_queue_push(struct silly_queue *q, struct silly_message *msg)
+int queue_push(struct queue *q, struct silly_message *msg)
 {
 	int n;
 	msg->next = NULL;
@@ -61,7 +61,7 @@ int silly_queue_push(struct silly_queue *q, struct silly_message *msg)
 	return n;
 }
 
-struct silly_message *silly_queue_pop(struct silly_queue *q)
+struct silly_message *queue_pop(struct queue *q)
 {
 	struct silly_message *msg;
 	if (q->head == NULL)
@@ -80,7 +80,7 @@ struct silly_message *silly_queue_pop(struct silly_queue *q)
 	return msg;
 }
 
-size_t silly_queue_size(struct silly_queue *q)
+size_t queue_size(struct queue *q)
 {
 	return q->size;
 }

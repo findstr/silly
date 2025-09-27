@@ -27,7 +27,7 @@
 #define STK_CALLBACK_TABLE (3)
 #define STK_DISPATCH_WAKEUP (4)
 
-struct silly_worker {
+struct worker {
 	int argc;
 	char **argv;
 	lua_State *L;
@@ -39,11 +39,11 @@ struct silly_worker {
 	int openhook;
 	int oldmask;
 	int oldcount;
-	struct silly_queue *queue;
+	struct queue *queue;
 	void (*callback)(lua_State *L, struct silly_message *msg);
 };
 
-struct silly_worker *W;
+struct worker *W;
 
 static inline void callback(struct silly_message *sm)
 {
@@ -73,7 +73,7 @@ static inline void callback(struct silly_message *sm)
 void worker_push(struct silly_message *msg)
 {
 	size_t sz;
-	sz = silly_queue_push(W->queue, msg);
+	sz = queue_push(W->queue, msg);
 	if (unlikely(sz > W->maxmsg)) {
 		W->maxmsg *= 2;
 		log_warn("[worker] may overload, "
@@ -86,7 +86,7 @@ void worker_dispatch()
 {
 	struct silly_message *msg;
 	struct silly_message *tmp;
-	msg = silly_queue_pop(W->queue);
+	msg = queue_pop(W->queue);
 	atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
 	if (msg == NULL) {
 #ifdef LUA_GC_STEP
@@ -102,7 +102,7 @@ void worker_dispatch()
 			callback(msg);
 			msg = tmp;
 		} while (msg);
-		msg = silly_queue_pop(W->queue);
+		msg = queue_pop(W->queue);
 	} while (msg);
 	W->maxmsg = WARNING_THRESHOLD;
 	return;
@@ -118,7 +118,7 @@ uint32_t worker_alloc_id()
 
 size_t worker_msg_size()
 {
-	return silly_queue_size(W->queue);
+	return queue_size(W->queue);
 }
 
 static inline void new_error_table(lua_State *L)
@@ -308,10 +308,10 @@ void worker_start(const struct boot_args *config)
 
 void worker_init()
 {
-	W = (struct silly_worker *)mem_alloc(sizeof(*W));
+	W = (struct worker *)mem_alloc(sizeof(*W));
 	memset(W, 0, sizeof(*W));
 	W->maxmsg = WARNING_THRESHOLD;
-	W->queue = silly_queue_create();
+	W->queue = queue_create();
 	atomic_init(&W->process_id, 0);
 	return;
 }
@@ -359,7 +359,7 @@ void worker_warn_endless()
 
 void worker_exit()
 {
-	silly_queue_free(W->queue);
+	queue_free(W->queue);
 	lua_close(W->L);
 	mem_free(W);
 }

@@ -14,7 +14,7 @@
 #include "trace.h"
 #include "log.h"
 #include "timer.h"
-#include "run.h"
+#include "engine.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
 	daemon_start(&args);
 	log_init(&args);
 	timer_init();
-	status = silly_run(&args);
+	status = engine_run(&args);
 	daemon_stop(&args);
 	if (log_visible(SILLY_LOG_INFO)) {
 		log_head(SILLY_LOG_INFO);

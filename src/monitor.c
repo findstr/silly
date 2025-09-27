@@ -8,12 +8,12 @@ struct monitor {
 	uint32_t check_id;
 } M;
 
-void silly_monitor_init()
+void monitor_init()
 {
 	M.check_id = 0;
 }
 
-void silly_monitor_check()
+void monitor_check()
 {
 	uint32_t check_id = worker_process_id();
 	if (unlikely(M.check_id == check_id)) {

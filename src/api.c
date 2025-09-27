@@ -9,7 +9,7 @@
 #include "worker.h"
 #include "timer.h"
 #include "trace.h"
-#include "run.h"
+#include "engine.h"
 
 SILLY_API void *silly_malloc(size_t sz)
 {
@@ -234,7 +234,7 @@ SILLY_API int silly_cpu_count(void)
 SILLY_API void silly_exit(int status)
 {
 	worker_reset();
-	return silly_shutdown(status);
+	return engine_shutdown(status);
 }
 
 SILLY_API const struct silly_message_id *silly_messages()

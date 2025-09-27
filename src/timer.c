@@ -63,7 +63,7 @@ struct slot_level {
 	struct node *slot[SL_SIZE];
 };
 
-struct silly_timer {
+struct timer {
 	spinlock_t lock;
 	struct pool pool;
 	uint32_t expire;
@@ -82,14 +82,14 @@ struct message_expire { //timer expire
 	uint64_t userdata;
 };
 
-static struct silly_timer *T;
+static struct timer *T;
 
-static inline void lock(struct silly_timer *timer)
+static inline void lock(struct timer *timer)
 {
 	spinlock_lock(&timer->lock);
 }
 
-static inline void unlock(struct silly_timer *timer)
+static inline void unlock(struct timer *timer)
 {
 	spinlock_unlock(&timer->lock);
 }
@@ -146,8 +146,7 @@ static void pool_free(struct pool *p)
 	mem_free(p->buf);
 }
 
-static inline struct node *pool_newnode(struct silly_timer *t,
-					struct pool *pool)
+static inline struct node *pool_newnode(struct timer *t, struct pool *pool)
 {
 	struct node *n;
 	if (pool->free == NULL) {
@@ -216,7 +215,7 @@ static inline void unlinklist(struct node *n)
 	n->next = NULL;
 }
 
-static void add_node(struct silly_timer *timer, struct node *n)
+static void add_node(struct timer *timer, struct node *n)
 {
 	int i;
 	int32_t idx = n->expire - timer->expire;
@@ -307,7 +306,7 @@ static int expire_unpack(lua_State *L, struct silly_message *msg)
 	return 2;
 }
 
-static void timeout(struct silly_timer *t, struct node *n)
+static void timeout(struct timer *t, struct node *n)
 {
 	(void)t;
 	struct message_expire *te;
@@ -353,7 +352,7 @@ static uint64_t clocktime()
 	return ms;
 }
 
-static void expire_timer(struct silly_timer *timer, struct node **tail)
+static void expire_timer(struct timer *timer, struct node **tail)
 {
 	int idx = timer->expire & SR_MASK;
 	while (timer->root.slot[idx]) {
@@ -373,7 +372,7 @@ static void expire_timer(struct silly_timer *timer, struct node **tail)
 	return;
 }
 
-static int cascade_timer(struct silly_timer *timer, int level)
+static int cascade_timer(struct timer *timer, int level)
 {
 	struct node *n;
 	int idx = timer->expire >> (level * SL_BITS + SR_BITS);
@@ -391,7 +390,7 @@ static int cascade_timer(struct silly_timer *timer, int level)
 	return idx;
 }
 
-static void update_timer(struct silly_timer *timer, struct node **tail)
+static void update_timer(struct timer *timer, struct node **tail)
 {
 	uint32_t idx;
 	lock(T);

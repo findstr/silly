@@ -17,7 +17,7 @@
 #include "monitor.h"
 #include "sig.h"
 
-#include "run.h"
+#include "engine.h"
 
 struct {
 	volatile int running;
@@ -88,7 +88,7 @@ static void *thread_worker(void *arg)
 	return NULL;
 }
 
-static void monitor_check()
+static void thread_monitor()
 {
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
@@ -99,7 +99,7 @@ static void monitor_check()
 		if (R.workerstatus == -1)
 			break;
 		nanosleep(&req, NULL);
-		silly_monitor_check();
+		monitor_check();
 	}
 	log_info("[monitor] stop\n");
 	return;
@@ -127,7 +127,7 @@ static void thread_create(pthread_t *tid, void *(*start)(void *), void *arg,
 	return;
 }
 
-int silly_run(const struct boot_args *config)
+int engine_run(const struct boot_args *config)
 {
 	int i;
 	int err;
@@ -144,7 +144,7 @@ int silly_run(const struct boot_args *config)
 		return -err;
 	}
 	worker_init();
-	silly_monitor_init();
+	monitor_init();
 	srand(time(NULL));
 	log_info("%s %s is running ...\n", config->selfname, SILLY_RELEASE);
 	log_info("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
@@ -154,7 +154,7 @@ int silly_run(const struct boot_args *config)
 	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
 	thread_create(&pid[2], thread_worker, (void *)config,
 		      config->workeraffinity);
-	monitor_check();
+	thread_monitor();
 	for (i = 0; i < 3; i++)
 		pthread_join(pid[i], NULL);
 	log_flush();
@@ -166,7 +166,7 @@ int silly_run(const struct boot_args *config)
 	return R.exitstatus;
 }
 
-void silly_shutdown(int status)
+void engine_shutdown(int status)
 {
 	R.running = 0;
 	R.exitstatus = status;
