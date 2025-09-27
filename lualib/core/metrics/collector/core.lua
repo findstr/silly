@@ -1,89 +1,121 @@
 local core = require "core"
 local c = require "core.metrics.c"
 local gauge = require "core.metrics.gauge"
+local counter = require "core.metrics.counter"
 
 local M = {}
 M.__index = M
 
 ---@return core.metrics.collector
 function M:new()
-	local worker_queue = gauge(
-		"core_worker_queue",
-		"Total number of pending message size in worker queue."
+	local silly_worker_backlog = gauge(
+		"silly_worker_backlog",
+		"Number of pending messages in worker queue."
 	)
-	local timer_active = gauge(
-		"core_timer_active",
-		"Total number of pending timer event."
+	local silly_timer_pending = gauge(
+		"silly_timer_pending",
+		"Number of pending timer events."
 	)
-	local timer_expired = gauge(
-		"core_timer_expired",
-		"Total number of timer event issued."
+	local silly_timer_scheduled_total = counter(
+		"silly_timer_scheduled_total",
+		"Total number of scheduled timer events."
 	)
-	local task_pool = gauge(
-		"core_task_pool",
-		"Total number of task pool size."
+	local silly_timer_fired_total = counter(
+		"silly_timer_fired_total",
+		"Total number of timer events fired."
 	)
-	local task_ready = gauge(
-		"core_task_runnable",
-		"Total number of task in runnable stat."
+	local silly_timer_canceled_total = counter(
+		"silly_timer_canceled_total",
+		"Total number of canceled timer events."
 	)
-	local tcp_connecting = gauge(
-		"core_tcp_connecting",
-		"Total number of tcp connecting socket."
+	local silly_tasks_runnable = gauge(
+		"silly_tasks_runnable",
+		"Number of tasks in runnable state."
 	)
-	local tcp_client = gauge(
-		"core_tcp_client",
-		"Total number of tcp client."
+	local silly_tcp_connections = gauge(
+		"silly_tcp_connections",
+		"Number of active TCP connections."
 	)
-	local socket_queue = gauge(
-		"core_socket_queue",
-		"Total number of pending message size in socket queue."
+	local silly_socket_requests_total = counter(
+		"silly_socket_requests_total",
+		"Total number of socket operation requests."
 	)
-	local socket_send = gauge(
-		"core_socket_send",
-		"Total number of bytes sended via socket."
+	local silly_socket_processed_total = counter(
+		"silly_socket_processed_total",
+		"Total number of socket operations processed."
 	)
-	local socket_recv = gauge(
-		"core_socket_recv",
-		"Total number of byted received via socket."
+	local silly_network_sent_bytes_total = counter(
+		"silly_network_sent_bytes_total",
+		"Total number of bytes sent via network."
 	)
+	local silly_network_received_bytes_total = counter(
+		"silly_network_received_bytes_total",
+		"Total number of bytes received via network."
+	)
+	local last_timer_scheduled = 0
+	local last_timer_fired = 0
+	local last_timer_canceled = 0
+	local last_socket_request = 0
+	local last_socket_processed = 0
+	local last_sent_bytes = 0
+	local last_received_bytes = 0
 
 	---@param buf core.metrics.metric[]
 	local collect = function(_, buf)
-		local worker_queue_size = c.workerstat()
-		local timer_active_size, timer_expired_size = c.timerstat()
-		local task_pool_size, task_ready_size = core.taskstat()
-		local tcp_connecting_count,
-			tcp_client_count,
-			socket_queue_size,
-			socket_send_size,
-			socket_recv_size = c.netstat()
+		local worker_backlog = c.workerstat()
+		local timer_pending, timer_scheduled, timer_fired, timer_canceled = c.timerstat()
+		local task_runnable_size = core.taskstat()
+		local tcp_connections, sent_bytes, received_bytes,
+			socket_operate_request, socket_operate_processed = c.netstat()
 
-		worker_queue:set(worker_queue_size)
-		timer_active:set(timer_active_size)
-		timer_expired:set(timer_expired_size)
-		task_pool:set(task_pool_size)
-		task_ready:set(task_ready_size)
-		tcp_connecting:set(tcp_connecting_count)
-		tcp_client:set(tcp_client_count)
-		socket_queue:set(socket_queue_size)
-		socket_send:set(socket_send_size)
-		socket_recv:set(socket_recv_size)
+		silly_worker_backlog:set(worker_backlog)
+		silly_timer_pending:set(timer_pending)
+		silly_tasks_runnable:set(task_runnable_size)
+		silly_tcp_connections:set(tcp_connections)
+		if timer_scheduled > last_timer_scheduled then
+			silly_timer_scheduled_total:add(timer_scheduled - last_timer_scheduled)
+		end
+		if timer_fired > last_timer_fired then
+			silly_timer_fired_total:add(timer_fired - last_timer_fired)
+		end
+		if timer_canceled > last_timer_canceled then
+			silly_timer_canceled_total:add(timer_canceled - last_timer_canceled)
+		end
+		if socket_operate_request > last_socket_request then
+			silly_socket_requests_total:add(socket_operate_request - last_socket_request)
+		end
+		if socket_operate_processed > last_socket_processed then
+			silly_socket_processed_total:add(socket_operate_processed - last_socket_processed)
+		end
+		if sent_bytes > last_sent_bytes then
+			silly_network_sent_bytes_total:add(sent_bytes - last_sent_bytes)
+		end
+		if received_bytes > last_received_bytes then
+			silly_network_received_bytes_total:add(received_bytes - last_received_bytes)
+		end
+		last_timer_scheduled = timer_scheduled
+		last_timer_fired = timer_fired
+		last_timer_canceled = timer_canceled
+		last_socket_request = socket_operate_request
+		last_socket_processed = socket_operate_processed
+		last_sent_bytes = sent_bytes
+		last_received_bytes = received_bytes
 
 		local len = #buf
-		buf[len+1] = worker_queue
-		buf[len+2] = timer_active
-		buf[len+3] = timer_expired
-		buf[len+4] = task_pool
-		buf[len+5] = task_ready
-		buf[len+6] = tcp_connecting
-		buf[len+7] = tcp_client
-		buf[len+8] = socket_queue
-		buf[len+9] = socket_send
-		buf[len+10] = socket_recv
+		buf[len+1] = silly_worker_backlog
+		buf[len+2] = silly_timer_pending
+		buf[len+3] = silly_timer_scheduled_total
+		buf[len+4] = silly_timer_fired_total
+		buf[len+5] = silly_timer_canceled_total
+		buf[len+6] = silly_tasks_runnable
+		buf[len+7] = silly_tcp_connections
+		buf[len+8] = silly_socket_requests_total
+		buf[len+9] = silly_socket_processed_total
+		buf[len+10] = silly_network_sent_bytes_total
+		buf[len+11] = silly_network_received_bytes_total
 	end
 	local c = {
-		name = "Core",
+		name = "Silly",
 		new = M.new,
 		collect = collect,
 	}

@@ -31,6 +31,18 @@
 #undef PAGE_SIZE
 #endif
 
+#define atomic_load_relax(a)                                          \
+	atomic_load_explicit(&(a), memory_order_relaxed)
+
+#define atomic_store_relax(a, v)                                      \
+	atomic_store_explicit(&(a), (v), memory_order_relaxed)
+
+#define atomic_sub_relax(a, v)                                        \
+	atomic_fetch_sub_explicit(&(a), (v), memory_order_relaxed)
+
+#define atomic_add_relax(a, v)                                        \
+	atomic_fetch_add_explicit(&(a), (v), memory_order_relaxed)
+
 struct page;
 
 struct node {
@@ -72,8 +84,7 @@ struct timer {
 	atomic_uint_least64_t monotonic;
 	struct slot_root root;
 	struct slot_level level[4];
-	atomic_int_least32_t expired_count;
-	atomic_int_least32_t active_count;
+	struct silly_timerstat stat;
 };
 
 struct message_expire { //timer expire
@@ -178,22 +189,20 @@ static inline void pool_freelist(struct pool *pool, struct node *head,
 
 uint64_t timer_now()
 {
-	return atomic_load_explicit(&T->clocktime, memory_order_relaxed) *
-	       TIMER_RESOLUTION;
+	return atomic_load_relax(T->clocktime) * TIMER_RESOLUTION;
 }
 
 uint64_t timer_monotonic()
 {
-	return atomic_load_explicit(&T->monotonic, memory_order_relaxed) *
-	       TIMER_RESOLUTION;
+	return atomic_load_relax(T->monotonic) * TIMER_RESOLUTION;
 }
 
-uint32_t timer_info(uint32_t *expired)
+void timer_stat(struct silly_timerstat *stat)
 {
-	if (expired != NULL)
-		*expired = atomic_load_explicit(&T->expired_count,
-						memory_order_relaxed);
-	return atomic_load_explicit(&T->active_count, memory_order_relaxed);
+	stat->pending = atomic_load_relax(T->stat.pending);
+	stat->scheduled = atomic_load_relax(T->stat.scheduled);
+	stat->fired = atomic_load_relax(T->stat.fired);
+	stat->canceled = atomic_load_relax(T->stat.canceled);
 }
 
 static inline void linklist(struct node **list, struct node *n)
@@ -262,8 +271,8 @@ uint64_t timer_after(uint32_t expire, uint32_t userdata)
 {
 	uint64_t session;
 	struct node *n;
-	atomic_fetch_add_explicit(&T->active_count, 1, memory_order_relaxed);
-	atomic_fetch_add_explicit(&T->expired_count, 1, memory_order_relaxed);
+	atomic_add_relax(T->stat.scheduled, 1);
+	atomic_add_relax(T->stat.pending, 1);
 	lock(T);
 	n = pool_newnode(T, &T->pool);
 	n->userdata = userdata;
@@ -280,7 +289,8 @@ int timer_cancel(uint64_t session, uint32_t *ud)
 	struct node *n;
 	uint32_t version = version_of(session);
 	uint32_t cookie = cookie_of(session);
-	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
+	atomic_sub_relax(T->stat.pending, 1);
+	atomic_add_relax(T->stat.canceled, 1);
 	lock(T);
 	n = pool_locate(&T->pool, cookie);
 	if (n->version != version) {
@@ -311,7 +321,8 @@ static void timeout(struct timer *t, struct node *n)
 	(void)t;
 	struct message_expire *te;
 	uint64_t session = session_of(n);
-	atomic_fetch_sub_explicit(&T->active_count, 1, memory_order_relaxed);
+	atomic_sub_relax(T->stat.pending, 1);
+	atomic_add_relax(T->stat.fired, 1);
 	te = mem_alloc(sizeof(*te));
 	te->hdr.type = MESSAGE_TIMER_EXPIRE;
 	te->hdr.unpack = expire_unpack;
@@ -462,8 +473,10 @@ void timer_init()
 	atomic_init(&T->ticktime, cur_ticktime);
 	T->expire = cur_ticktime;
 	atomic_init(&T->monotonic, 0);
-	atomic_init(&T->expired_count, 0);
-	atomic_init(&T->active_count, 0);
+	atomic_init(&T->stat.pending, 0);
+	atomic_init(&T->stat.scheduled, 0);
+	atomic_init(&T->stat.fired, 0);
+	atomic_init(&T->stat.canceled, 0);
 	spinlock_init(&T->lock);
 	pool_init(&T->pool);
 	return;

@@ -12,7 +12,7 @@ void worker_push(struct silly_message *msg);
 void worker_dispatch();
 
 uint32_t worker_alloc_id();
-size_t worker_msg_size();
+size_t worker_backlog();
 
 uint32_t worker_process_id();
 void worker_resume(lua_State *L);

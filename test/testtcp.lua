@@ -42,14 +42,7 @@ local function wait_done()
 	time.sleep(1000)
 end
 
-local function netstat()
-	local connecting, tcpclient, ctrlcount = metrics.netstat()
-	return {
-		connecting = connecting,
-		tcpclient = tcpclient,
-		ctrlcount = ctrlcount,
-	}
-end
+local netstat = testaux.netstat
 local function test_limit(port)
 	local dat1 = crypto.randomkey(511) .. "\n" .. crypto.randomkey(512)
 	local dat2 = crypto.randomkey(1024)

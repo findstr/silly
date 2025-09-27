@@ -133,6 +133,10 @@ SILLY_API void silly_sockstat(silly_socket_id_t sid,
 {
 	socket_stat(sid, info);
 }
+SILLY_API void silly_timerstat(struct silly_timerstat *stat)
+{
+	timer_stat(stat);
+}
 SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud)
 {
 	return timer_after(expire, ud);
@@ -148,10 +152,6 @@ SILLY_API uint64_t silly_now()
 SILLY_API uint64_t silly_monotonic()
 {
 	return timer_monotonic();
-}
-SILLY_API uint32_t silly_timer_info(uint32_t *expired)
-{
-	return timer_info(expired);
 }
 SILLY_API void silly_trace_span(silly_tracespan_t id)
 {
@@ -177,9 +177,9 @@ SILLY_API uint32_t silly_genid()
 {
 	return worker_alloc_id();
 }
-SILLY_API size_t silly_msg_size()
+SILLY_API size_t silly_worker_backlog()
 {
-	return worker_msg_size();
+	return worker_backlog();
 }
 SILLY_API void silly_resume(lua_State *L)
 {

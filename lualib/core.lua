@@ -230,9 +230,9 @@ function core.start(func)
 	task_resume(t)
 end
 
----@return integer, integer
+---@return integer
 function core.taskstat()
-	return #copool, #wakeup_task_queue
+	return #wakeup_task_queue
 end
 
 ---@return { [thread]: { traceback: string, status: string } }

@@ -2,6 +2,7 @@ local core = require "core"
 local hive = require "core.hive"
 local time = require "core.time"
 local json = require "core.encoding.json"
+local metrics = require "core.metrics.c"
 local c = require "test.aux.c"
 local type = type
 local pairs = pairs
@@ -201,6 +202,14 @@ end
 
 function testaux.hexdump(s)
 	return (s:gsub('.', function(c) return string.format('%02X', string.byte(c)) end))
+end
+
+function testaux.netstat()
+	local tcpclient, sent_bytes, received_bytes, operate_request, operate_processed = metrics.netstat()
+	return {
+		tcpclient = tcpclient,
+		ctrlcount = operate_processed - operate_request,
+	}
 end
 
 return testaux

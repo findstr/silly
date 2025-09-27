@@ -5,14 +5,7 @@ local logger = require "core.logger"
 local metrics = require "core.metrics.c"
 local testaux = require "test.testaux"
 
-local function netstat()
-	local connecting, tcpclient, ctrlcount = metrics.netstat()
-	return {
-		connecting = connecting,
-		tcpclient = tcpclient,
-		ctrlcount = ctrlcount,
-	}
-end
+local netstat = testaux.netstat
 
 local modules = {
 	"testhive",
