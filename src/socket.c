@@ -181,6 +181,8 @@ struct socket {
 	struct wlist *wlhead;
 	struct wlist **wltail;
 	struct socket *next;
+	atomic_uint_least64_t sent_bytes;
+	atomic_uint_least64_t received_bytes;
 };
 
 struct socket_pool {
@@ -395,6 +397,8 @@ static void socket_default(struct socket *s)
 	s->next = NULL;
 	atomic_store_explicit(&s->wlbytes, 0, memory_order_relaxed);
 	atomic_store_explicit(&s->sid, -1, memory_order_relaxed);
+	atomic_store_explicit(&s->sent_bytes, 0, memory_order_relaxed);
+	atomic_store_explicit(&s->received_bytes, 0, memory_order_relaxed);
 }
 
 static void pool_init(struct socket_pool *p)
@@ -701,7 +705,7 @@ static inline void zombine_socket(struct socket *s)
 {
 	if (is_closing(s)) {
 		if (s->type == SOCKET_TCP_CONNECTION) {
-			atomic_sub(&SM->netstat.tcpclient, 1);
+			atomic_sub(&SM->netstat.tcp_connections, 1);
 		}
 		free_socket(SM, s);
 		return;
@@ -770,7 +774,7 @@ static void exec_accept(struct socket_manager *ss, struct socket *listen)
 		return;
 	}
 	report_accept(ss, listen, s, &addr);
-	atomic_add(&ss->netstat.tcpclient, 1);
+	atomic_add(&ss->netstat.tcp_connections, 1);
 	return;
 }
 
@@ -829,7 +833,7 @@ static inline int checkconnected(struct socket_manager *ss, struct socket *s)
 	}
 	if (wlist_empty(s))
 		write_enable(ss, s, 0);
-	atomic_add(&ss->netstat.tcpclient, 1);
+	atomic_add(&ss->netstat.tcp_connections, 1);
 	report_connect(ss, s, 0);
 	return 0;
 err:
@@ -925,7 +929,8 @@ static enum read_result forward_msg_tcp(struct socket_manager *ss,
 		uint8_t *buf = (uint8_t *)mem_alloc(len);
 		memcpy(buf, ss->readbuf, len);
 		report_tcpdata(ss, s, buf, len);
-		atomic_add(&ss->netstat.recvsize, len);
+		atomic_add(&ss->netstat.received_bytes, len);
+		atomic_add(&s->received_bytes, len);
 		return len >= (ssize_t)sizeof(ss->readbuf) ? READ_SOME :
 							     READ_ALL;
 	}
@@ -958,7 +963,8 @@ static enum read_result forward_msg_udp(struct socket_manager *ss,
 		data = (uint8_t *)mem_alloc(n);
 		memcpy(data, udpbuf, n);
 		report_udpdata(ss, s, data, n, &addr);
-		atomic_add(&ss->netstat.recvsize, n);
+		atomic_add(&ss->netstat.received_bytes, n);
+		atomic_add(&s->received_bytes, n);
 		return READ_SOME;
 	}
 }
@@ -980,7 +986,7 @@ static inline void op_push(struct socket_manager *ss, struct op_hdr *hdr)
 	if (flipbuf_write(&ss->opbuf, (uint8_t *)hdr, hdr->size)) {
 		trigger_fire(&ss->ctrl);
 	}
-	atomic_fetch_add_explicit(&ss->netstat.oprequest, 1,
+	atomic_fetch_add_explicit(&ss->netstat.operate_request, 1,
 				  memory_order_relaxed);
 }
 
@@ -1040,7 +1046,7 @@ static int send_msg_tcp(struct socket_manager *ss, struct socket *s)
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
 			if (is_closing(s)) {
-				atomic_sub(&ss->netstat.tcpclient, 1);
+				atomic_sub(&ss->netstat.tcp_connections, 1);
 				free_socket(ss, s);
 				return 0;
 			}
@@ -1334,14 +1340,13 @@ static void op_tcp_connect(struct socket_manager *ss, struct op_connect *op,
 	}
 	if (cret == 0) { //connect
 		clr_connecting(s);
-		atomic_add(&ss->netstat.tcpclient, 1);
+		atomic_add(&ss->netstat.tcp_connections, 1);
 		report_connect(ss, s, 0);
 		if (!wlist_empty(s))
 			write_enable(ss, s, 1);
 	} else { //block
 		set_connecting(s);
 		write_enable(ss, s, 1);
-		atomic_add(&ss->netstat.connecting, 1);
 	}
 }
 
@@ -1427,7 +1432,7 @@ int socket_close(silly_socket_id_t sid)
 	}
 	if (is_zombine(s)) {
 		if (s->type == SOCKET_TCP_CONNECTION) {
-			atomic_sub(&SM->netstat.tcpclient, 1);
+			atomic_sub(&SM->netstat.tcp_connections, 1);
 		}
 		free_socket(SM, s);
 		return 0;
@@ -1452,7 +1457,7 @@ static int op_tcp_close(struct socket_manager *ss, struct op_close *op,
 	}
 	if (wlist_empty(s)) { //already send all the data, directly close it
 		if (s->type == SOCKET_TCP_CONNECTION) {
-			atomic_sub(&SM->netstat.tcpclient, 1);
+			atomic_sub(&SM->netstat.tcp_connections, 1);
 		}
 		free_socket(ss, s);
 		return 0;
@@ -1504,7 +1509,8 @@ static void op_tcp_send(struct socket_manager *ss, struct op_tcpsend *op,
 			  s->sid, s->type, is_zombine(s));
 		return;
 	}
-	atomic_add(&ss->netstat.sendsize, sz);
+	atomic_add(&ss->netstat.sent_bytes, sz);
+	atomic_add(&s->sent_bytes, sz);
 	if (wlist_empty(s) && !is_connecting(s)) { //try send
 		ssize_t n = sendn(s->fd, data, sz);
 		if (n < 0) {
@@ -1571,7 +1577,8 @@ static int op_udp_send(struct socket_manager *ss, struct op_udpsend *op,
 		return 0;
 	}
 	size = op->size;
-	atomic_add(&ss->netstat.sendsize, size);
+	atomic_add(&ss->netstat.sent_bytes, size);
+	atomic_add(&s->sent_bytes, size);
 	if (s->type == SOCKET_UDP_LISTEN) {
 		//only udp server need address
 		addr = &op->addr;
@@ -1616,7 +1623,7 @@ static int op_process(struct socket_manager *ss)
 	while (ptr < end) {
 		struct socket *s;
 		struct op_pkt *op = (struct op_pkt *)ptr;
-		atomic_fetch_add_explicit(&ss->netstat.opprocessed, 1,
+		atomic_fetch_add_explicit(&ss->netstat.operate_processed, 1,
 					  memory_order_relaxed);
 		if (op->hdr.op == OP_EXIT)
 			return -1;
@@ -1735,7 +1742,6 @@ int socket_poll()
 		case SOCKET_TCP_CONNECTION:
 			if (is_connecting(s)) {
 				clr_connecting(s);
-				atomic_sub(&ss->netstat.connecting, 1);
 				checkconnected(ss, s);
 				continue;
 			}
@@ -1816,12 +1822,11 @@ int socket_init()
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0))
 		goto end;
-	atomic_init(&ss->netstat.connecting, 0);
-	atomic_init(&ss->netstat.tcpclient, 0);
-	atomic_init(&ss->netstat.recvsize, 0);
-	atomic_init(&ss->netstat.sendsize, 0);
-	atomic_init(&ss->netstat.oprequest, 0);
-	atomic_init(&ss->netstat.opprocessed, 0);
+	atomic_init(&ss->netstat.tcp_connections, 0);
+	atomic_init(&ss->netstat.received_bytes, 0);
+	atomic_init(&ss->netstat.sent_bytes, 0);
+	atomic_init(&ss->netstat.operate_request, 0);
+	atomic_init(&ss->netstat.operate_processed, 0);
 	ss->eventindex = 0;
 	ss->eventcount = 0;
 	resize_eventbuf(ss, EVENT_SIZE);
@@ -1870,17 +1875,15 @@ const char *socket_pollapi()
 
 void socket_netstat(struct silly_netstat *stat)
 {
-	stat->connecting = atomic_load_explicit(&SM->netstat.connecting,
-						memory_order_relaxed);
-	stat->tcpclient = atomic_load_explicit(&SM->netstat.tcpclient,
+	stat->tcp_connections = atomic_load_explicit(&SM->netstat.tcp_connections,
 					       memory_order_relaxed);
-	stat->recvsize = atomic_load_explicit(&SM->netstat.recvsize,
+	stat->received_bytes = atomic_load_explicit(&SM->netstat.received_bytes,
 					      memory_order_relaxed);
-	stat->sendsize = atomic_load_explicit(&SM->netstat.sendsize,
+	stat->sent_bytes = atomic_load_explicit(&SM->netstat.sent_bytes,
 					      memory_order_relaxed);
-	stat->oprequest = atomic_load_explicit(&SM->netstat.oprequest,
+	stat->operate_request = atomic_load_explicit(&SM->netstat.operate_request,
 					       memory_order_relaxed);
-	stat->opprocessed = atomic_load_explicit(&SM->netstat.opprocessed,
+	stat->operate_processed = atomic_load_explicit(&SM->netstat.operate_processed,
 						 memory_order_relaxed);
 	return;
 }
@@ -1897,6 +1900,8 @@ void socket_stat(silly_socket_id_t sid, struct silly_sockstat *info)
 	int fd = s->fd;
 	int protocol = socket_protocol(s);
 	int type = socket_type(s);
+	info->sent_bytes = atomic_load_explicit(&s->sent_bytes, memory_order_relaxed);
+	info->received_bytes = atomic_load_explicit(&s->received_bytes, memory_order_relaxed);
 	s = pool_get(&SM->pool, sid);
 	if (s == NULL || is_zombine(s)) {
 		log_error("[socket] socket_stat sid:%llu invalid\n", sid);

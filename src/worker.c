@@ -116,7 +116,7 @@ uint32_t worker_alloc_id()
 	return id;
 }
 
-size_t worker_msg_size()
+size_t worker_backlog()
 {
 	return queue_size(W->queue);
 }

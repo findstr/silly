@@ -47,13 +47,19 @@ enum silly_log_level {
 	SILLY_LOG_ERROR = 3,
 };
 
+struct silly_timerstat {
+	atomic_uint_least64_t pending;
+	atomic_uint_least64_t scheduled;
+	atomic_uint_least64_t fired;
+	atomic_uint_least64_t canceled;
+};
+
 struct silly_netstat {
-	atomic_uint_least16_t connecting;
-	atomic_uint_least16_t tcpclient;
-	atomic_uint_least32_t recvsize;
-	atomic_uint_least32_t sendsize;
-	atomic_uint_least32_t oprequest;
-	atomic_uint_least32_t opprocessed;
+	atomic_uint_least16_t tcp_connections;
+	atomic_uint_least64_t received_bytes;
+	atomic_uint_least64_t sent_bytes;
+	atomic_uint_least64_t operate_request;
+	atomic_uint_least64_t operate_processed;
 };
 
 struct silly_sockstat {
@@ -61,7 +67,8 @@ struct silly_sockstat {
 	int fd;
 	const char *type;
 	const char *protocol;
-	size_t sendsize;
+	uint64_t sent_bytes;
+	uint64_t received_bytes;
 	char localaddr[SILLY_SOCKET_NAMELEN];
 	char remoteaddr[SILLY_SOCKET_NAMELEN];
 };
@@ -129,7 +136,7 @@ SILLY_API uint64_t silly_now();
 SILLY_API uint64_t silly_monotonic();
 SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud);
 SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud);
-SILLY_API uint32_t silly_timer_info(uint32_t *expired);
+SILLY_API void silly_timerstat(struct silly_timerstat *stat);
 
 SILLY_API void silly_trace_span(silly_tracespan_t id);
 SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id);
@@ -138,7 +145,7 @@ SILLY_API silly_traceid_t silly_trace_new();
 
 SILLY_API void silly_push(struct silly_message *msg);
 SILLY_API uint32_t silly_genid();
-SILLY_API size_t silly_msg_size();
+SILLY_API size_t silly_worker_backlog();
 SILLY_API void silly_resume(lua_State *L);
 SILLY_API char **silly_args(int *argc);
 SILLY_API void silly_callback_table(lua_State *L);

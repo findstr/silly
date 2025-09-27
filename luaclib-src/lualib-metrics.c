@@ -78,7 +78,7 @@ static int ljestat(lua_State *L)
 static int lworkerstat(lua_State *L)
 {
 	size_t sz;
-	sz = silly_msg_size();
+	sz = silly_worker_backlog();
 	lua_pushinteger(L, sz);
 	return 1;
 }
@@ -108,21 +108,23 @@ static int lnetstat(lua_State *L)
 {
 	struct silly_netstat stat;
 	silly_netstat(&stat);
-	lua_pushinteger(L, stat.connecting);
-	lua_pushinteger(L, stat.tcpclient);
-	lua_pushinteger(L, stat.oprequest - stat.opprocessed);
-	lua_pushinteger(L, stat.sendsize);
-	lua_pushinteger(L, stat.recvsize);
+	lua_pushinteger(L, stat.tcp_connections);
+	lua_pushinteger(L, stat.sent_bytes);
+	lua_pushinteger(L, stat.received_bytes);
+	lua_pushinteger(L, stat.operate_request);
+	lua_pushinteger(L, stat.operate_processed);
 	return 5;
 }
 
 static int ltimerstat(lua_State *L)
 {
-	uint32_t active, expired;
-	active = silly_timer_info(&expired);
-	lua_pushinteger(L, active);
-	lua_pushinteger(L, expired);
-	return 2;
+	struct silly_timerstat stat;
+	silly_timerstat(&stat);
+	lua_pushinteger(L, stat.pending);
+	lua_pushinteger(L, stat.scheduled);
+	lua_pushinteger(L, stat.fired);
+	lua_pushinteger(L, stat.canceled);
+	return 4;
 }
 
 static int lsocketstat(lua_State *L)
@@ -134,7 +136,7 @@ static int lsocketstat(lua_State *L)
 	lua_newtable(L);
 	table_set_int(L, -1, "fd", info.sid);
 	table_set_int(L, -1, "os_fd", info.fd);
-	table_set_int(L, -1, "sendsize", info.sendsize);
+	table_set_int(L, -1, "sent_bytes", info.sent_bytes);
 	table_set_str(L, -1, "type", info.type);
 	table_set_str(L, -1, "protocol", info.protocol);
 	table_set_str(L, -1, "localaddr", info.localaddr);
