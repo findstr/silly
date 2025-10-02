@@ -225,7 +225,7 @@ function silly.wakeup(t, res)
 end
 
 ---@param func async fun()
-function silly.start(func)
+function silly._start(func)
 	local t = task_create(func)
 	task_resume(t)
 end

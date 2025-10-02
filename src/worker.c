@@ -280,9 +280,9 @@ void worker_start(const struct boot_args *config)
 	new_error_table(L);
 	new_callback_table(L);
 	fetch_silly(L, "_dispatch_wakeup");
-	// exec silly.start()
+	// exec silly._start()
 	require_silly_autoload(L);
-	fetch_silly(L, "start");
+	fetch_silly(L, "_start");
 	if (config->bootstrap[0] != '\0') {
 		err = luaL_loadfile(L, config->bootstrap);
 		if (unlikely(err)) {
