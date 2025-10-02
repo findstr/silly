@@ -1,4 +1,4 @@
-local ec = require "silly.crypto.ec"
+local pkey = require "silly.crypto.pkey"
 local testaux = require "test.testaux"
 
 -- Generated EC keys (secp256k1 curve)
@@ -35,8 +35,8 @@ local test_vectors = {
 
 -- Test 1: Basic sign/verify workflow
 do
-	local priv = ec.new(privkey)
-	local pub = ec.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	for _, vec in ipairs(test_vectors) do
 		local sig = priv:sign(vec.message, vec.alg)
@@ -47,8 +47,8 @@ end
 
 -- Test 2: Signature tampering detection
 do
-	local priv = ec.new(privkey)
-	local pub = ec.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 	local sig = priv:sign("original message", "sha256")
 
 	-- Tamper with signature
@@ -64,23 +64,23 @@ end
 -- Test 3: Error handling
 do
 	-- Invalid key format
-	local status = pcall(ec.new, "invalid key")
+	local status = pcall(pkey.new, "invalid key")
 	testaux.asserteq(status, false, "Case3: Detect invalid key format")
 
 	-- Unsupported algorithm
-	local priv = ec.new(privkey)
+	local priv = pkey.new(privkey)
 	local status = pcall(priv.sign, priv, "invalid_alg", "data")
 	testaux.asserteq(status, false, "Case3: Detect unsupported algorithm")
 
 	-- Non-EC key
-	local status = pcall(ec.new, [[-----BEGIN RSA PRIVATE KEY-----...]])
+	local status, err = pcall(pkey.new, [[-----BEGIN RSA PRIVATE KEY-----...]])
 	testaux.asserteq(status, false, "Case3: Detect non-EC key")
 end
 
 -- Test 4: Object reuse
 do
-	local priv = ec.new(privkey)
-	local pub = ec.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	-- First use
 	local sig1 = priv:sign("message1", "sha256")
@@ -95,8 +95,8 @@ end
 
 -- Test 5: Boundary conditions
 do
-	local priv = ec.new(privkey)
-	local pub = ec.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	-- Very long message (1MB)
 	local long_msg = string.rep("A", 1024*1024)

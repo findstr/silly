@@ -1,4 +1,4 @@
-local rsa = require "silly.crypto.rsa"
+local pkey = require "silly.crypto.pkey"
 local testaux = require "test.testaux"
 
 -- Generated RSA keys (replace with actual generated keys)
@@ -108,8 +108,8 @@ local test_vectors = {
 
 -- Test 1: Basic sign/verify workflow
 do
-	local priv = rsa.new(privkey)
-	local pub = rsa.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	for _, vec in ipairs(test_vectors) do
 		local sig = priv:sign(vec.message, vec.alg)
@@ -120,8 +120,8 @@ end
 
 -- Test 2: Signature tampering detection
 do
-	local priv = rsa.new(privkey)
-	local pub = rsa.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 	local sig = priv:sign("original message", "sha256")
 
 	-- Tamper with signature
@@ -137,8 +137,8 @@ end
 -- Test 3: Encrypted private key handling
 do
 	-- Load encrypted key with correct password
-	local priv = rsa.new(encrypted_privkey, "123456")
-	local pub = rsa.new(encrypted_pubkey)
+	local priv = pkey.new(encrypted_privkey, "123456")
+	local pub = pkey.new(encrypted_pubkey)
 
 	-- Test signing with encrypted key
 	local sig = priv:sign("test message", "sha256")
@@ -146,30 +146,30 @@ do
 		"Case3: Encrypted key with correct password")
 
 	-- Test wrong password
-	local status = pcall(rsa.new, encrypted_privkey, "wrongpass")
+	local status = pcall(pkey.new, encrypted_privkey, "wrongpass")
 	testaux.asserteq(status, false, "Case3: Detect wrong password")
 end
 
 -- Test 4: Error handling
 do
 	-- Invalid key format
-	local status = pcall(rsa.new, "invalid key")
+	local status = pcall(pkey.new, "invalid key")
 	testaux.asserteq(status, false, "Case4: Detect invalid key format")
 
 	-- Unsupported algorithm
-	local priv = rsa.new(privkey)
+	local priv = pkey.new(privkey)
 	local status = pcall(priv.sign, priv, "invalid_alg", "data")
 	testaux.asserteq(status, false, "Case4: Detect unsupported algorithm")
 
 	-- Non-RSA key
-	local status = pcall(rsa.new, [[-----BEGIN EC PRIVATE KEY-----...]])
+	local status = pcall(pkey.new, [[-----BEGIN EC PRIVATE KEY-----...]])
 	testaux.asserteq(status, false, "Case4: Detect non-RSA key")
 end
 
 -- Test 5: Object reuse
 do
-	local priv = rsa.new(privkey)
-	local pub = rsa.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	-- First use
 	local sig1 = priv:sign("message1", "sha256")
@@ -184,8 +184,8 @@ end
 
 -- Test 6: Boundary conditions
 do
-	local priv = rsa.new(privkey)
-	local pub = rsa.new(pubkey)
+	local priv = pkey.new(privkey)
+	local pub = pkey.new(pubkey)
 
 	-- Maximum message length (for 2048-bit RSA)
 	local max_len = 2048//8 - 11

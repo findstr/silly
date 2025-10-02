@@ -8,7 +8,7 @@
 
 
 static inline void md_cache_new(lua_State *L) {
-	const char *k = "crypto.hash.mds";
+	const char *k = "silly.crypto.hash.mds";
 	lua_getfield(L, LUA_REGISTRYINDEX, k);
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);

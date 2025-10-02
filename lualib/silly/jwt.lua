@@ -1,5 +1,4 @@
-local ec = require 'silly.crypto.ec'
-local rsa = require 'silly.crypto.rsa'
+local pkey = require 'silly.crypto.pkey'
 local hmac = require 'silly.crypto.hmac'
 local base64 = require 'silly.encoding.base64'
 local json = require 'silly.encoding.json'
@@ -17,33 +16,33 @@ end
 
 local alg_map = {
 	['ES256'] = {
-		sign = ec.sign,
-		verify = ec.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha256"
 	},
 	['ES384'] = {
-		sign = ec.sign,
-		verify = ec.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha384"
 	},
 	['ES512'] = {
-		sign = ec.sign,
-		verify = ec.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha512"
 	},
 	['RS256'] = {
-		sign = rsa.sign,
-		verify = rsa.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha256"
 	},
 	['RS384'] = {
-		sign = rsa.sign,
-		verify = rsa.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha384"
 	},
 	['RS512'] = {
-		sign = rsa.sign,
-		verify = rsa.verify,
+		sign = pkey.sign,
+		verify = pkey.verify,
 		hash = "sha512"
 	},
 	['HS256'] = {

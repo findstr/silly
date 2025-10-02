@@ -13,16 +13,16 @@
 #include "luastr.h"
 #include "pkey.h"
 
-#define METATABLE "silly.crypto.rsa"
+#define METATABLE "silly.crypto.pkey"
 
-struct rsa {
+struct pkey {
 	EVP_PKEY *key;
 };
 
 static int lnew(lua_State *L)
 {
-	EVP_PKEY *pkey;
-	struct rsa *rsa;
+	EVP_PKEY *evp_pkey;
+	struct pkey *pkey_obj;
 	struct luastr key;
 	struct luastr passwd;
 	luastr_check(L, 1, &key);
@@ -32,46 +32,42 @@ static int lnew(lua_State *L)
 		passwd.str = NULL;
 		passwd.len = 0;
 	}
-	pkey = pkey_load(&key, &passwd);
-	if (pkey == NULL) {
+	evp_pkey = pkey_load(&key, &passwd);
+	if (evp_pkey == NULL) {
 		const char *err = ERR_lib_error_string(ERR_get_error());
 		return luaL_error(L, "load key error: %s", err);
 	}
-	if (EVP_PKEY_base_id(pkey) != EVP_PKEY_RSA) {
-		EVP_PKEY_free(pkey);
-		return luaL_error(L, "not rsa key");
-	}
-	rsa = (struct rsa *)lua_newuserdata(L, sizeof(struct rsa));
-	rsa->key = pkey;
+	pkey_obj = (struct pkey *)lua_newuserdata(L, sizeof(struct pkey));
+	pkey_obj->key = evp_pkey;
 	luaL_setmetatable(L, METATABLE);
 	return 1;
 }
 
-/// gc(rsa)
+/// gc(pkey)
 static int lxgc(lua_State *L)
 {
-	struct rsa *rsa;
-	rsa = (struct rsa *)luaL_checkudata(L, 1, METATABLE);
-	if (rsa->key) {
-		EVP_PKEY_free(rsa->key);
-		rsa->key = NULL;
+	struct pkey *pkey;
+	pkey = (struct pkey *)luaL_checkudata(L, 1, METATABLE);
+	if (pkey->key) {
+		EVP_PKEY_free(pkey->key);
+		pkey->key = NULL;
 	}
 	return 0;
 }
 
-/// sign(rsa, message, alg)
+/// sign(pkey, message, alg)
 static int lxsign(lua_State *L)
 {
 	int ret;
 	EVP_MD_CTX *ctx;
 	const EVP_MD *md;
-	struct rsa *rsa;
+	struct pkey *pkey;
 	struct luastr message;
 	uint8_t *ptr;
 	size_t sig_len = 0;
 	luaL_Buffer buf;
 
-	rsa = (struct rsa *)luaL_checkudata(L, 1, METATABLE);
+	pkey = (struct pkey *)luaL_checkudata(L, 1, METATABLE);
 	luastr_check(L, 2, &message);
 	md = md_cache_get(L, 3);
 	ctx = EVP_MD_CTX_new();
@@ -79,7 +75,7 @@ static int lxsign(lua_State *L)
 		const char *err = ERR_lib_error_string(ERR_get_error());
 		return luaL_error(L, "EVP_MD_CTX_new error:%s", err);
 	}
-	ret = EVP_DigestSignInit(ctx, NULL, md, NULL, rsa->key) == 1 &&
+	ret = EVP_DigestSignInit(ctx, NULL, md, NULL, pkey->key) == 1 &&
 	      EVP_DigestSignUpdate(ctx, message.str, message.len) == 1 &&
 	      EVP_DigestSignFinal(ctx, NULL, &sig_len) == 1;
 	if (!ret) {
@@ -94,17 +90,17 @@ static int lxsign(lua_State *L)
 	return 1;
 }
 
-/// verify(rsa, message, signature, alg)
+/// verify(pkey, message, signature, alg)
 static int lxverify(lua_State *L)
 {
 	int ret, verify;
 	const EVP_MD *md;
 	EVP_MD_CTX *ctx;
-	struct rsa *rsa;
+	struct pkey *pkey;
 	struct luastr message;
 	struct luastr signature;
 
-	rsa = (struct rsa *)luaL_checkudata(L, 1, METATABLE);
+	pkey = (struct pkey *)luaL_checkudata(L, 1, METATABLE);
 	luastr_check(L, 2, &message);
 	luastr_check(L, 3, &signature);
 	md = md_cache_get(L, 4);
@@ -113,7 +109,7 @@ static int lxverify(lua_State *L)
 		const char *err = ERR_lib_error_string(ERR_get_error());
 		return luaL_error(L, "EVP_MD_CTX_new error:%s", err);
 	}
-	ret = EVP_DigestVerifyInit(ctx, NULL, md, NULL, rsa->key) == 1 &&
+	ret = EVP_DigestVerifyInit(ctx, NULL, md, NULL, pkey->key) == 1 &&
 	      EVP_DigestVerifyUpdate(ctx, message.str, message.len) == 1;
 	verify = EVP_DigestVerifyFinal(ctx, signature.str, signature.len) == 1;
 	EVP_MD_CTX_free(ctx);
@@ -125,7 +121,7 @@ static int lxverify(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_silly_crypto_rsa(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_pkey(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",    lnew     },

@@ -1,8 +1,7 @@
 local P = require "test.print"
 local jwt = require "silly.jwt"
 local json = require "silly.encoding.json"
-local rsa = require "silly.crypto.rsa"
-local ec = require "silly.crypto.ec"
+local pkey = require "silly.crypto.pkey"
 local testaux = require "test.testaux"
 local base64 = require "silly.encoding.base64"
 
@@ -120,7 +119,7 @@ do
 	testaux.asserteq(token1:match("^[^.]+"), token2:match("^[^.]+"), "Case 9: Header should be cached")
 end
 
-	local rsa_privkey = rsa.new([[
+	local rsa_privkey = pkey.new([[
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
 lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
@@ -151,7 +150,7 @@ BHo1sC5Ix5jbkO/TaUMKGmNb
 -----END PRIVATE KEY-----
 ]])
 
-	local rsa_pubkey = rsa.new([[
+	local rsa_pubkey = pkey.new([[
 -----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
 YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
@@ -163,7 +162,7 @@ KQIDAQAB
 -----END PUBLIC KEY-----
 ]])
 
-	local ec_privkey = ec.new([[
+	local ec_privkey = pkey.new([[
 -----BEGIN EC PRIVATE KEY-----
 MHQCAQEEICaCaDvEFIgrZXksCEe/FG1803c71gyUBI362hd8vuNyoAcGBSuBBAAK
 oUQDQgAEe26lcpv6zAw3sO0gMwAGQ3QzXwE5IZCf/c+hOGwHalqi6V1wAiC1Hcx/
@@ -171,7 +170,7 @@ T7XZiStZF9amqLQOkXul6MZgsascsg==
 -----END EC PRIVATE KEY-----
 ]])
 
-	local ec_pubkey = ec.new([[
+	local ec_pubkey = pkey.new([[
 -----BEGIN PUBLIC KEY-----
 MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEe26lcpv6zAw3sO0gMwAGQ3QzXwE5IZCf
 /c+hOGwHalqi6V1wAiC1Hcx/T7XZiStZF9amqLQOkXul6MZgsascsg==
@@ -194,7 +193,6 @@ do
 	local token = jwt.encode(test_payload, rsa_privkey, "RS256")
 	local wrong_pub = ec_pubkey
 	local decoded, err = jwt.decode(token, wrong_pub)
-	print("Test11", decoded, err)
 	testaux.asserteq(decoded, nil, "Case11.4: Detect wrong key type")
 	testaux.asserteq(err, "signature verification failed", "Case11.4: Detect wrong key type")
 end
