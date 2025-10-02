@@ -4,7 +4,7 @@ local testaux = require "test.testaux"
 local waitgroup = require "core.sync.waitgroup"
 local mutex = require "core.sync.mutex"
 
-local mutex = mutex:new()
+local mutex = mutex.new()
 
 local function testcase1()
 	print("===:case1")

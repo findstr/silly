@@ -38,7 +38,7 @@ local mt = {
 --the function of process response insert into d.funcqueue
 ---@param config {addr:string, auth:function}
 ---@return core.socketq
-function dispatch:create(config)
+function dispatch.new(config)
 	local d = {
 		sock = nil,
 		status = CLOSE,

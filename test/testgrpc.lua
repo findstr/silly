@@ -4,7 +4,7 @@ local protoc = require "protoc"
 local grpc = require "core.grpc"
 local crypto = require "core.crypto.utils"
 local waitgroup = require "core.sync.waitgroup"
-local registrar = require "core.grpc.registrar":new()
+local registrar = require "core.grpc.registrar".new()
 local transport = require "core.http.transport"
 local testaux = require "test.testaux"
 

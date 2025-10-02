@@ -2,7 +2,7 @@ local patch = require "core.patch"
 local run = require "examples.patch.run"
 local ENV = setmetatable({}, {__index = _ENV})
 local fix = loadfile("examples/patch/fix.lua", "bt", ENV)()
-local P = patch:create()
+local P = patch.new()
 local up1 = P:collectupval(run)
 local up2 = P:collectupval(fix)
 local absent = P:join(up2, up1)

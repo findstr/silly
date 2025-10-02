@@ -7,7 +7,7 @@ local remove = table.remove
 local setmetatable = setmetatable
 
 ---@return core.metrics.registry
-function M:new()
+function M.new()
 	return setmetatable({}, mt)
 end
 

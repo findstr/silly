@@ -44,7 +44,7 @@ local function collectfn(fn, upvals, unique)
 	end
 end
 
-function M.create()
+function M.new()
 	return setmetatable({
 		collected = {},
 		valjoined = {},

@@ -9,7 +9,7 @@ local concat = table.concat
 
 local M ={}
 
-local R = registry:new()
+local R = registry.new()
 
 function M.counter(name, help, labels)
 	local ct = counter(name, help, labels)
@@ -147,13 +147,13 @@ end
 
 --register default collector
 local core_collector = require "core.metrics.collector.core"
-R:register(core_collector:new())
+R:register(core_collector.new())
 
 local process_collector = require "core.metrics.collector.process"
-R:register(process_collector:new())
+R:register(process_collector.new())
 if c.jestat then
 	local je_collector = require "core.metrics.collector.jemalloc"
-	R:register(je_collector:new())
+	R:register(je_collector.new())
 end
 
 return M

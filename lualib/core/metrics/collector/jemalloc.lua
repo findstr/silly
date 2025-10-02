@@ -5,7 +5,7 @@ local M = {}
 M.__index = M
 
 ---@return core.metrics.collector
-function M:new()
+function M.new()
 	local je_resident = gauge(
 		"jemalloc_resident",
 		"Maximum number of bytes in physically resident data pages mapped by the allocator."

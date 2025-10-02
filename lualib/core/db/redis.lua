@@ -142,7 +142,7 @@ end
 ---@return core.db.redis
 function redis.new(config)
 	local obj = {
-		sock = dispatch:create {
+		sock = dispatch.new {
 			addr = config.addr,
 			auth = redis_login(config.auth, config.db)
 		},

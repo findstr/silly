@@ -276,7 +276,7 @@ local function case5(P)
 	testaux.asserteq(_ENV.bar, 4, "global variable")
 end
 
-local P = patch:create()
+local P = patch.new()
 case1(P)
 case2(P)
 case3(P)

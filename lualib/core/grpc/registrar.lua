@@ -11,7 +11,7 @@ local setmetatable = setmetatable
 M.__index = M
 
 ---@return core.grpc.registrar
-function M:new()
+function M.new()
 	return setmetatable({
 		input_name = {},
 		output_name = {},

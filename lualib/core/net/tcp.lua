@@ -116,7 +116,7 @@ end
 function socket.listen(addr, disp, backlog)
 	assert(addr)
 	assert(disp)
-	local listenid, err = net.tcp_listen(addr, EVENT, backlog)
+	local listenid, err = net.tcplisten(addr, EVENT, backlog)
 	if listenid then
 		socket_pool[listenid] = {
 			fd = listenid,
@@ -134,7 +134,7 @@ end
 ---@param bind string|nil
 ---@return integer|nil, string? error
 function socket.connect(ip, bind)
-	local fd, err = net.tcp_connect(ip, EVENT, bind)
+	local fd, err = net.tcpconnect(ip, EVENT, bind)
 	if fd then
 		assert(fd >= 0)
 		new_socket(fd)
@@ -165,7 +165,7 @@ function socket.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	net.socket_close(fd)
+	net.close(fd)
 	return true, nil
 end
 
@@ -236,7 +236,7 @@ function socket.recvsize(fd)
 	return ns.size(s.sbuffer)
 end
 
-socket.write = net.tcp_send
+socket.write = net.tcpsend
 socket.sendsize = net.sendsize
 
 ---@param fd integer

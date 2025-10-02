@@ -173,7 +173,7 @@ end
 ---@param alpnprotos core.net.tls.alpn_proto[]|nil
 ---@return integer?, string? error
 local function connect_normal(ip, bind, hostname, alpnprotos)
-	local fd, err = net.tcp_connect(ip, EVENT, bind)
+	local fd, err = net.tcpconnect(ip, EVENT, bind)
 	if not fd then
 		return nil, err
 	end
@@ -218,7 +218,7 @@ function M.listen(conf)
 	assert(conf.addr)
 	assert(conf.disp)
 	assert(#conf.certs > 0)
-	local portid, err = net.tcp_listen(conf.addr, EVENT, conf.backlog)
+	local portid, err = net.tcplisten(conf.addr, EVENT, conf.backlog)
 	if not portid then
 		return nil, err
 	end
@@ -266,7 +266,7 @@ function M.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	return net.socket_close(fd)
+	return net.close(fd)
 end
 
 ---@async

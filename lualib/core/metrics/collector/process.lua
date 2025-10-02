@@ -6,7 +6,7 @@ local M = {}
 M.__index = M
 
 ---@return core.metrics.collector
-function M:new()
+function M.new()
 	local cpu_seconds_usr = counter(
 		"process_cpu_seconds_user",
 		"Total user CPU time spent in seconds."

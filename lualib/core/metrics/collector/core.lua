@@ -7,7 +7,7 @@ local M = {}
 M.__index = M
 
 ---@return core.metrics.collector
-function M:new()
+function M.new()
 	local silly_worker_backlog = gauge(
 		"silly_worker_backlog",
 		"Number of pending messages in worker queue."

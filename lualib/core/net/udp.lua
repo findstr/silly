@@ -91,7 +91,7 @@ local EVENT = {
 ---@param addr string
 ---@return integer|nil, string? error
 function udp.bind(addr)
-	local fd, err = net.udp_bind(addr, EVENT)
+	local fd, err = net.udpbind(addr, EVENT)
 	if fd then
 		new_socket(fd)
 	end
@@ -102,7 +102,7 @@ end
 ---@param bindip string|nil
 ---@return integer|nil, string? error
 function udp.connect(addr, bindip)
-	local fd, err = net.udp_connect(addr, EVENT, bindip)
+	local fd, err = net.udpconnect(addr, EVENT, bindip)
 	if fd then
 		new_socket(fd)
 	end
@@ -141,7 +141,7 @@ function udp.close(fd)
 		wakeup(s, nil)
 	end
 	del_socket(s)
-	net.socket_close(fd)
+	net.close(fd)
 	return true, nil
 end
 
@@ -152,7 +152,7 @@ function udp.isalive(fd)
 	return s and not s.err
 end
 
-udp.sendto = net.udp_send
+udp.sendto = net.udpsend
 udp.sendsize = net.sendsize
 
 return udp

@@ -37,11 +37,11 @@ local udp_connect = assert(c.udp_connect)
 ---@type fun(fd:integer):boolean, string? error
 local socket_close = assert(c.close)
 ---@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil):boolean, string? error
-M.tcp_send = assert(c.tcp_send)
+M.tcpsend = assert(c.tcp_send)
 ---@type fun(fd:integer, data:string|lightuserdata|table, size_or_addr:integer|string|nil, addr:string|nil):boolean, string? error
-M.udp_send = assert(c.udp_send)
+M.udpsend = assert(c.udp_send)
 ---@type fun(fd:integer, data:lightuserdata, size:integer?, addr:string?): boolean, string? error
-M.tcp_multicast = assert(c.tcp_multicast)
+M.tcpmulticast = assert(c.tcp_multicast)
 
 M.multipack = assert(c.multipack)
 ---@type fun(fd:integer):integer
@@ -114,15 +114,15 @@ local function connect_wrap(connect)
 	end
 end
 
-M.tcp_listen = listen_wrap(tcp_listen)
-M.udp_bind = listen_wrap(udp_bind)
+M.tcplisten = listen_wrap(tcp_listen)
+M.udpbind = listen_wrap(udp_bind)
 
-M.tcp_connect = connect_wrap(tcp_connect)
-M.udp_connect = connect_wrap(udp_connect)
+M.tcpconnect = connect_wrap(tcp_connect)
+M.udpconnect = connect_wrap(udp_connect)
 
 ---@param fd integer
 ---@return boolean, string? error
-function M.socket_close(fd)
+function M.close(fd)
 	local sc = close_callback[fd]
 	if sc == nil then
 		return false, "socket closed"
