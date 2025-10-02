@@ -2,10 +2,21 @@ local core = require "core"
 local net = require "core.net"
 local logger = require "core.logger"
 local type = type
-local concat = table.concat
+local pairs = pairs
 local assert = assert
+local concat = table.concat
 
 local socket_pool = {}
+
+---@class core.net.tls.context_conf
+---@field ciphers string|nil
+---@field certs {cert:string, key:string}[]|nil
+---@field alpnprotos core.net.tls.alpn_proto[]|nil
+
+---@class core.net.tls.listen_conf : core.net.tls.context_conf
+---@field addr string
+---@field backlog integer|nil
+---@field disp fun(fd:integer, addr:string)
 
 ---@class core.net.tls
 ---@field fd integer
@@ -16,6 +27,7 @@ local socket_pool = {}
 ---@field ctx any?
 ---@field ssl any?
 ---@field disp fun(fd:integer, addr:string)?
+---@field conf core.net.tls.context_conf?
 local M = {}
 
 local ctx
@@ -187,13 +199,20 @@ function M.connect(ip, bind, hostname, alpn)
 	return connect_normal(ip, bind, hostname, alpn)
 end
 
----@param conf {
----	addr:string,
----	disp:fun(fd:integer, addr:string),
----	ciphers:string,
----	certs:{cert:string, cert_key:string}[],
----	alpnprotos:core.net.tls.alpn_proto[]|nil, backlog:integer|nil,
----}
+---@param conf core.net.tls.context_conf
+local function new_server_ctx(conf)
+	ctx = ctx or require "core.tls.ctx"
+	local alpns = conf.alpnprotos
+	local alpnstr
+	if alpns then
+		alpnstr = wire_alpn_protos(alpns)
+	end
+	local c, err = ctx.server(conf.certs, conf.ciphers, alpnstr)
+	assert(c, err)
+	return c
+end
+
+---@param conf core.net.tls.listen_conf
 ---@return integer?, string? error
 function M.listen(conf)
 	assert(conf.addr)
@@ -204,18 +223,36 @@ function M.listen(conf)
 		return nil, err
 	end
 	tls = require "core.tls.tls"
-	ctx = ctx or require "core.tls.ctx"
-	local alpns = conf.alpnprotos
-	local alpnstr
-	if alpns then
-		alpnstr = wire_alpn_protos(alpns)
-	end
-	local c, err = ctx.server(conf.certs, conf.ciphers, alpnstr)
-	assert(c, err)
-	local s = new_socket(portid, c, nil, nil)
-	s.ctx = c
+	local tls_ctx = new_server_ctx(conf)
+	local s = new_socket(portid, tls_ctx, nil, nil)
+	s.ctx = tls_ctx
+	s.conf = {
+		certs = conf.certs,
+		ciphers = conf.ciphers,
+		alpnprotos = conf.alpnprotos,
+	}
 	s.disp = conf.disp
 	return portid, nil
+end
+
+---@param conf core.net.tls.context_conf?
+---@return boolean, string? error
+function M.reload(fd, conf)
+	local s = socket_pool[fd]
+	if not s then
+		return false, "socket closed"
+	end
+	local old_conf = s.conf
+	if not old_conf then
+		return false, "not listen socket"
+	end
+	if conf then
+		for k, v in pairs(conf) do
+			old_conf[k] = v
+		end
+	end
+	s.ctx = new_server_ctx(old_conf)
+	return true, nil
 end
 
 ---@param fd integer

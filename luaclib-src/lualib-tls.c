@@ -254,59 +254,108 @@ int alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
 static const char *fill_entry(lua_State *L, struct ctx_entry *entry, int stk)
 {
 	int ret;
-	FILE *fp = NULL;
+	BIO *cert_bio = NULL;
+	BIO *key_bio = NULL;
 	X509 *cert = NULL;
+	EVP_PKEY *pkey = NULL;
 	SSL_CTX *ptr = NULL;
 	const char *err = NULL;
-	const char *certpath, *keypath;
+	const char *cert_pem, *key_pem;
+	size_t cert_len, key_len;
 	int top = lua_gettop(L);
+
 	ptr = SSL_CTX_new(TLS_method());
 	if (ptr == NULL) {
 		err = "SSL_CTX_new fail";
 		goto fail;
 	}
 	SSL_CTX_set_min_proto_version(ptr, TLS1_1_VERSION);
+
+	/* Get certificate PEM content */
 	lua_getfield(L, stk, "cert");
-	certpath = luaL_checkstring(L, -1);
-	lua_getfield(L, stk, "cert_key");
-	keypath = luaL_checkstring(L, -1);
-	fp = fopen(certpath, "r");
-	if (fp == NULL) {
-		err = "open certificate file fail";
+	cert_pem = luaL_checklstring(L, -1, &cert_len);
+	lua_getfield(L, stk, "key");
+	key_pem = luaL_checklstring(L, -1, &key_len);
+
+	/* Load certificate from memory */
+	cert_bio = BIO_new_mem_buf(cert_pem, cert_len);
+	if (cert_bio == NULL) {
+		err = "BIO_new_mem_buf for certificate fail";
 		goto fail;
 	}
-	cert = PEM_read_X509(fp, NULL, NULL, NULL);
-	fclose(fp);
-	fp = NULL;
+
+	/* Read the first certificate */
+	cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
 	if (cert == NULL) {
-		err = "read certificate file fail";
+		err = "PEM_read_bio_X509 fail";
 		goto fail;
 	}
-	ret = SSL_CTX_use_certificate_chain_file(ptr, certpath);
+
+	/* Use the first certificate */
+	ret = SSL_CTX_use_certificate(ptr, cert);
 	if (ret != 1) {
-		err = "SSL_CTX_use_certificate_file";
+		err = "SSL_CTX_use_certificate fail";
 		goto fail;
 	}
-	ret = SSL_CTX_use_PrivateKey_file(ptr, keypath, SSL_FILETYPE_PEM);
+
+	/* Load the rest of the certificate chain */
+	X509 *chain_cert;
+	while ((chain_cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL)) != NULL) {
+		ret = SSL_CTX_add_extra_chain_cert(ptr, chain_cert);
+		if (ret != 1) {
+			X509_free(chain_cert);
+			err = "SSL_CTX_add_extra_chain_cert fail";
+			goto fail;
+		}
+		/* chain_cert is now owned by SSL_CTX, don't free it */
+	}
+	BIO_free(cert_bio);
+	cert_bio = NULL;
+
+	/* Load private key from memory */
+	key_bio = BIO_new_mem_buf(key_pem, key_len);
+	if (key_bio == NULL) {
+		err = "BIO_new_mem_buf for private key fail";
+		goto fail;
+	}
+
+	pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
+	if (pkey == NULL) {
+		err = "PEM_read_bio_PrivateKey fail";
+		goto fail;
+	}
+
+	ret = SSL_CTX_use_PrivateKey(ptr, pkey);
+	EVP_PKEY_free(pkey);
+	pkey = NULL;
+	BIO_free(key_bio);
+	key_bio = NULL;
+
 	if (ret != 1) {
-		printf("SSL_CTX_use_PrivateKey_file fail:%s\n",
-		       ERR_error_string(ERR_get_error(), NULL));
-		err = "SSL_CTX_use_PrivateKey_file";
+		err = "SSL_CTX_use_PrivateKey fail";
 		goto fail;
 	}
+
+	/* Verify private key matches certificate */
 	ret = SSL_CTX_check_private_key(ptr);
 	if (ret != 1) {
-		err = "SSL_CTX_check_private_key";
+		err = "SSL_CTX_check_private_key fail";
 		goto fail;
 	}
+
 	lua_settop(L, top);
 	entry->ptr = ptr;
 	entry->cert = cert;
 	return NULL;
+
 fail:
 	lua_settop(L, top);
-	if (fp != NULL)
-		fclose(fp);
+	if (cert_bio != NULL)
+		BIO_free(cert_bio);
+	if (key_bio != NULL)
+		BIO_free(key_bio);
+	if (pkey != NULL)
+		EVP_PKEY_free(pkey);
 	if (ptr != NULL)
 		SSL_CTX_free(ptr);
 	if (cert != NULL)

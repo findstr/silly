@@ -15,13 +15,14 @@ websocket.listen {
 	handler = handler
 }
 
+local testaux = require "test.testaux"
 websocket.listen {
 	tls = true,
 	addr = "127.0.0.1:8888",
 	certs = {
 		{
-			cert = "test/cert.pem",
-			cert_key = "test/key.pem",
+			cert = testaux.CERT_DEFAULT,
+			key = testaux.KEY_DEFAULT,
 		}
 	},
 	handler = handler,

@@ -30,7 +30,7 @@ local tls_server, err = websocket.listen {
 	tls = true,
 	addr = TEST_HOST .. ":" .. TLS_PORT,
 	certs = {
-		{cert = "test/cert.pem", cert_key = "test/key.pem"}
+		{cert = testaux.CERT_DEFAULT, key = testaux.KEY_DEFAULT}
 	},
 	handler = function(sock)
 		tls_server_handler(sock)

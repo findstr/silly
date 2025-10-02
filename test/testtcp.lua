@@ -21,8 +21,8 @@ local tlsfd = tls.listen {
 	addr = "127.0.0.1:10002",
 	certs = {
 		{
-			cert= "test/cert.pem",
-			cert_key = "test/key.pem",
+			cert = testaux.CERT_DEFAULT,
+			key = testaux.KEY_DEFAULT,
 		},
 	},
 	disp = function(fd, addr)

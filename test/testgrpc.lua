@@ -140,8 +140,8 @@ server = grpc.listen {
 	},
 	certs = {
 		{
-			cert = "test/cert.pem",
-			cert_key = "test/key.pem",
+			cert = testaux.CERT_DEFAULT,
+			key = testaux.KEY_DEFAULT,
 		}
 	},
 }
