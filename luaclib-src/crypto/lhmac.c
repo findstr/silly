@@ -51,7 +51,7 @@ static int ldigest(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_crypto_hmac(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_hmac(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "digest", ldigest },

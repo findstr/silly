@@ -1,5 +1,5 @@
-local crypto = require "core.crypto.utils"
-local hpack = require "core.http2.hpack"
+local crypto = require "silly.crypto.utils"
+local hpack = require "silly.http2.hpack"
 local testaux = require "test.testaux"
 local send_hpack = hpack.new(4096)
 local prefix = crypto.randomkey(200)
@@ -164,7 +164,7 @@ do
 	})
 
 	local decoded = hpack.unpack(decoder, {buffer1, buffer2})
-	print(require "core.encoding.json".encode(decoded))
+	print(require "silly.encoding.json".encode(decoded))
 	-- Check if multiple headers with same name are handled correctly
 	local set_cookies = decoded["set-cookie"]
 	local cookies = decoded["cookie"]

@@ -1,16 +1,16 @@
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 
-core.fork(function()
+silly.fork(function()
 	print("-------1")
-	core.exit(0)
+	silly.exit(0)
 	print("exit")
 end)
-core.fork(function()
+silly.fork(function()
 	print("-------2")
-	core.exit(1)
+	silly.exit(1)
 end)
 time.after(0, function()
 	print("-------3")
-	core.exit(1)
+	silly.exit(1)
 end)

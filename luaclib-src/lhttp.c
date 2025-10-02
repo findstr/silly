@@ -824,7 +824,7 @@ static int dbg_stringid(lua_State *L)
 
 #endif
 
-SILLY_MOD_API int luaopen_core_http2_hpack(lua_State *L)
+SILLY_MOD_API int luaopen_silly_http2_hpack(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",            lhpack_new       },
@@ -1014,7 +1014,7 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_http2_framebuilder(lua_State *L)
+SILLY_MOD_API int luaopen_silly_http2_framebuilder(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "header",    lframe_build_header    },

@@ -114,7 +114,7 @@ static void load_args(lua_State *L)
 	}
 }
 
-SILLY_MOD_API int luaopen_core_env(lua_State *L)
+SILLY_MOD_API int luaopen_silly_env(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "load", lload },

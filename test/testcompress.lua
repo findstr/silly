@@ -1,4 +1,4 @@
-local gzip = require "core.compress.gzip"
+local gzip = require "silly.compress.gzip"
 local testaux = require "test.testaux"
 
 -- Test 1: Basic functionality - compress and decompress

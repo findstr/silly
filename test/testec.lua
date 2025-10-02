@@ -1,4 +1,4 @@
-local ec = require "core.crypto.ec"
+local ec = require "silly.crypto.ec"
 local testaux = require "test.testaux"
 
 -- Generated EC keys (secp256k1 curve)

@@ -1,9 +1,9 @@
-local wg = require "core.sync.waitgroup"
-local mysql = require "core.db.mysql"
-local mysqlc = require "core.db.mysql.c"
+local wg = require "silly.sync.waitgroup"
+local mysql = require "silly.db.mysql"
+local mysqlc = require "silly.db.mysql.c"
 local testaux = require "test.testaux"
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 
 --------mysql.c test
 -- Test 1: Length-encoded integer boundary values
@@ -419,7 +419,7 @@ do
 	testaux.asserteq(stmt, expected, "Test 7: compose_stmt_execute")
 end
 
--------- core.db.mysql test
+-------- silly.db.mysql test
 
 -- Test 8: create `test` database
 do

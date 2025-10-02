@@ -219,25 +219,25 @@ static int ltraceback(lua_State *L)
 	return 1;
 }
 
-static void require_core_autoload(lua_State *L)
+static void require_silly_autoload(lua_State *L)
 {
 	lua_pushcfunction(L, ltraceback);
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "core.autoload");
+	lua_pushstring(L, "silly.autoload");
 	if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
-		log_error("[worker] require core.autoload fail,%s\n",
+		log_error("[worker] require silly.autoload fail,%s\n",
 			  lua_tostring(L, -1));
 		exit(-1);
 	}
 	lua_pop(L, 1);
 }
 
-static void fetch_core(lua_State *L, const char *func)
+static void fetch_silly(lua_State *L, const char *func)
 {
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "core");
+	lua_pushstring(L, "silly");
 	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-		log_error("[worker] require core fail,%s\n",
+		log_error("[worker] require silly fail,%s\n",
 			  lua_tostring(L, -1));
 		exit(-1);
 	}
@@ -279,10 +279,10 @@ void worker_start(const struct boot_args *config)
 	lua_pushcfunction(L, ltraceback);
 	new_error_table(L);
 	new_callback_table(L);
-	fetch_core(L, "_dispatch_wakeup");
-	// exec core.start()
-	require_core_autoload(L);
-	fetch_core(L, "start");
+	fetch_silly(L, "_dispatch_wakeup");
+	// exec silly.start()
+	require_silly_autoload(L);
+	fetch_silly(L, "start");
 	if (config->bootstrap[0] != '\0') {
 		err = luaL_loadfile(L, config->bootstrap);
 		if (unlikely(err)) {

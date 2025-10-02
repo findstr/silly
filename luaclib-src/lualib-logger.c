@@ -341,7 +341,7 @@ static int lerrorf(lua_State *L)
 	return llogf(L, SILLY_LOG_ERROR);
 }
 
-SILLY_MOD_API int luaopen_core_logger_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_logger_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "openfile", lopenfile },

@@ -1,8 +1,8 @@
-local core = require "core"
-local time = require "core.time"
-local udp = require "core.net.udp"
-local waitgroup = require "core.sync.waitgroup"
-local crypto = require "core.crypto.utils"
+local silly = require "silly"
+local time = require "silly.time"
+local udp = require "silly.net.udp"
+local waitgroup = require "silly.sync.waitgroup"
+local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 
 local server_fd

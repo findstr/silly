@@ -1,10 +1,10 @@
-local core = require "core"
-local time = require "core.time"
-local metrics = require "core.metrics.c"
-local json = require "core.encoding.json"
-local tcp = require "core.net.tcp"
-local tls = require "core.net.tls"
-local crypto = require "core.crypto.utils"
+local silly = require "silly"
+local time = require "silly.time"
+local metrics = require "silly.metrics.c"
+local json = require "silly.encoding.json"
+local tcp = require "silly.net.tcp"
+local tls = require "silly.net.tls"
+local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 local IO
 local listen_cb
@@ -174,7 +174,7 @@ local function test_read(port)
 			recv_sum = testaux.checksum(recv_sum, n)
 			if recv_nr == send_nr then
 				if WAIT then
-					core.wakeup(WAIT)
+					silly.wakeup(WAIT)
 					break
 				end
 			end
@@ -207,8 +207,8 @@ local function test_read(port)
 			time.sleep(0)
 		end
 	end
-	WAIT = core.running()
-	core.wait()
+	WAIT = silly.running()
+	silly.wait()
 	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
 	testaux.asserteq(recv_sum, send_sum, "tcp send checksum")
 	IO.close(fd)
@@ -425,7 +425,7 @@ local function test_close(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	core.fork(function()
+	silly.fork(function()
 		print("fork close")
 		IO.close(fd)
 	end)
@@ -452,7 +452,7 @@ local function test_close(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	core.fork(function()
+	silly.fork(function()
 		time.sleep(1)
 		IO.close(fd)
 		print("fork close")

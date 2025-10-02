@@ -1,4 +1,4 @@
-local base64 = require "core.encoding.base64"
+local base64 = require "silly.encoding.base64"
 local testaux = require "test.testaux"
 
 -- Test 1: Basic encoding

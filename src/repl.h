@@ -2,7 +2,7 @@
 #define _REPL_H_
 
 static const char *REPL =
-	"local core = require 'core'\n"
+	"local silly = require 'silly'\n"
 	"local assert = assert\n"
 	"local function execute_line(code, buffer)\n"
 	"	if buffer ~= '' then\n"
@@ -31,7 +31,7 @@ static const char *REPL =
 	"	end\n"
 	"end\n"
 	"print(string.format('Welcome to Silly %s, built on %s',\n"
-	"	core.version, _VERSION))\n"
+	"	silly.version, _VERSION))\n"
 	"local buffer = ''\n"
 	"local prompt = function()\n"
 	"	if buffer == '' then\n"
@@ -50,6 +50,6 @@ static const char *REPL =
 	"	io.write(prompt())\n"
 	"	io.flush()\n"
 	"end\n"
-	"core.exit(0)";
+	"silly.exit(0)";
 
 #endif

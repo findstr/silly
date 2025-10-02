@@ -1,4 +1,4 @@
-local patch = require "core.patch"
+local patch = require "silly.patch"
 local run = require "examples.patch.run"
 local ENV = setmetatable({}, {__index = _ENV})
 local fix = loadfile("examples/patch/fix.lua", "bt", ENV)()

@@ -1,5 +1,5 @@
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 local testaux = require "test.testaux"
 local fork_queue = {}
 local nxt = 1
@@ -7,7 +7,7 @@ local nxt = 1
 local function wrap(str, i)
 	return function(x)
 		assert(x == nil)
-		local x = core.wait()
+		local x = silly.wait()
 		assert(x == i)
 		testaux.asserteq(nxt, i, "wakeup validate sequence")
 		nxt = i + 1
@@ -15,10 +15,10 @@ local function wrap(str, i)
 end
 
 for i = 1, 50 do
-	fork_queue[i] = core.fork(wrap("test" .. i, i))
+	fork_queue[i] = silly.fork(wrap("test" .. i, i))
 end
 time.sleep(0)
-local wakeup = core.wakeup
+local wakeup = silly.wakeup
 for i = 1, 50 do
 	wakeup(fork_queue[i], i)
 	local ok, err = pcall(wakeup, fork_queue[i], i)
@@ -26,10 +26,10 @@ for i = 1, 50 do
 end
 time.sleep(100)
 for i = 51, 100 do
-	fork_queue[i] = core.fork(wrap("test" .. i, i))
+	fork_queue[i] = silly.fork(wrap("test" .. i, i))
 end
 time.sleep(0)
-local wakeup = core.wakeup
+local wakeup = silly.wakeup
 for i = 51, 100 do
 	wakeup(fork_queue[i], i)
 end

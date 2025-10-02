@@ -1,7 +1,7 @@
-local time = require "core.time"
-local core = require "core"
-local crypto = require "core.crypto"
-local socket = require "core.net.tcp"
+local time = require "silly.time"
+local silly = require "silly"
+local crypto = require "silly.crypto.utils"
+local socket = require "silly.net.tcp"
 
 socket.listen("127.0.0.1:9999", function(fd, addr)
 	print("accept", fd, addr)
@@ -21,9 +21,9 @@ socket.listen("127.0.0.1:9999", function(fd, addr)
 	socket.close(fd)
 end)
 
-core.start(function()
+silly.start(function()
 	for i = 1, 3 do
-		core.fork(function()
+		silly.fork(function()
 			local fd, err = socket.connect("127.0.0.1:9999")
 			if not fd then
 				print("connect error:", err)

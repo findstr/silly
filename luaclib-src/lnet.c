@@ -335,7 +335,7 @@ static void set_message_type(lua_State *L, int tbl)
 #undef SET
 }
 
-SILLY_MOD_API int luaopen_core_net_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_net_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "tcp_connect",   ltcpconnect   },

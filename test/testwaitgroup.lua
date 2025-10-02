@@ -1,7 +1,7 @@
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 local testaux = require "test.testaux"
-local waitgroup = require "core.sync.waitgroup"
+local waitgroup = require "silly.sync.waitgroup"
 
 local wg = waitgroup.new()
 local count = 0

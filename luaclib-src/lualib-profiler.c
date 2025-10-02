@@ -258,7 +258,7 @@ static inline void newmetatable(lua_State *L)
 	return;
 }
 
-SILLY_MOD_API int luaopen_core_profiler(lua_State *L)
+SILLY_MOD_API int luaopen_silly_profiler(lua_State *L)
 {
 	int mi;
 	luaL_Reg tbl[] = {

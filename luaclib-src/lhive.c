@@ -13,8 +13,8 @@
 
 #include "silly.h"
 
-#define MT_HIVE "core.hive"
-#define MT_WORKER "core.hive.worker"
+#define MT_HIVE "silly.hive"
+#define MT_WORKER "silly.hive.worker"
 
 #define UPVAL_HIVE (1)
 
@@ -477,7 +477,7 @@ static int lthreads(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_hive_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_hive_c(lua_State *L)
 {
 	const struct luaL_Reg tbl[] = {
 		{ "limit",   llimit   },
@@ -487,7 +487,7 @@ SILLY_MOD_API int luaopen_core_hive_c(lua_State *L)
 		{ "threads", lthreads },
                 { NULL,      NULL     }
 	};
-	MSG_TYPE_HIVE_DONE = silly_register_message("core.hive.done");
+	MSG_TYPE_HIVE_DONE = silly_register_message("silly.hive.done");
 	luaL_newlibtable(L, tbl);
 	new_hive(L);
 	luaL_setfuncs(L, tbl, 1);

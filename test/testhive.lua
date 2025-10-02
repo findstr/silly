@@ -1,7 +1,7 @@
-local time = require "core.time"
-local hc = require "core.hive.c"
-local hive = require "core.hive"
-local waitgroup = require "core.sync.waitgroup"
+local time = require "silly.time"
+local hc = require "silly.hive.c"
+local hive = require "silly.hive"
+local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
 
 local prune = hc.prune

@@ -1,6 +1,6 @@
-local core = require "core"
-local time = require "core.time"
-local redis = require "core.db.redis"
+local silly = require "silly"
+local time = require "silly.time"
+local redis = require "silly.db.redis"
 local testaux = require "test.testaux"
 
 local function asserteq(cmd, expect_success, expect_value, success, value)
@@ -51,7 +51,7 @@ testbasic()
 print("-----test cocurrent:", testcount)
 db:del("foo")
 for i = 1, testcount do
-	core.fork(function()
+	silly.fork(function()
 		idx = idx + 1
 		local id = idx
 		local ok, get = db:incr("foo")

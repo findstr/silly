@@ -1,21 +1,21 @@
-local core = require "core"
-local waitgroup = require "core.sync.waitgroup"
-local channel = require "core.sync.channel"
+local silly = require "silly"
+local waitgroup = require "silly.sync.waitgroup"
+local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
 
 -- Helper function to create a coroutine that pushes a value and returns result
----@param ch core.sync.channel
+---@param ch silly.sync.channel
 local function push_coroutine(prompt, ch, value, expect_result)
-	core.fork(function()
+	silly.fork(function()
 		local success, err = ch:push(value)
 		testaux.asserteq(success, expect_result, prompt)
 	end)
 end
 
 -- Helper function to create a coroutine that pops a value
----@param ch core.sync.channel
+---@param ch silly.sync.channel
 local function pop_coroutine(prompt, ch, expect_result, expect_err)
-	local co = core.fork(function()
+	local co = silly.fork(function()
 		local value, err = ch:pop()
 		testaux.asserteq(value, expect_result, prompt)
 		testaux.asserteq(err, expect_err, prompt)
@@ -128,7 +128,7 @@ do
 
 	-- Test closing a channel with waiting coroutine
 	ch = channel.new()
-	core.fork(function()
+	silly.fork(function()
 		ch:close()
 	end)
 
@@ -191,7 +191,7 @@ do
 
 	-- Push a value to wake up the coroutine
 	ch:push("reset test")
-	core.fork(function()
+	silly.fork(function()
 		local value, err = ch:pop()
 		testaux.asserteq(value, "reset test", "Case6: popi reset after queue emptied")
 		testaux.asserteq(err, nil, "Case6: popi reset after queue emptied")
@@ -251,13 +251,13 @@ do
 	wg:wait()
 
 	-- All consumers should receive a value
-	local status = core.status(consumer)
+	local status = silly.status(consumer)
 	local success = not (status and status ~= "EXIT")
 	testaux.asserteq(success, true, "Case7: All consumers received values")
 
 	-- All producers should succeed
 	for i = 1, 10 do
-		local status = core.status(producers[i])
+		local status = silly.status(producers[i])
 		if status and status ~= "EXIT" then
 			success = false
 			break
@@ -269,7 +269,7 @@ end
 -- Test 8: Channel close
 do
 	local ch = channel.new()
-	core.fork(function()
+	silly.fork(function()
 		ch:push("test1")
 		ch:push("test2")
 		ch:close()
@@ -285,7 +285,7 @@ do
 	testaux.asserteq(err, "channel closed", "Case8: Pop from closed channel returns error")
 
 	local ch2 = channel.new()
-	core.fork(function()
+	silly.fork(function()
 		ch2:push("test1")
 		ch2:push("test2")
 		ch2:clear()
@@ -300,7 +300,7 @@ do
 	testaux.asserteq(err, "channel closed", "Case8: Pop from closed channel returns error")
 
 	local ch3 = channel.new()
-	core.fork(function()
+	silly.fork(function()
 		ch3:push("test1")
 		ch3:clear()
 	end)

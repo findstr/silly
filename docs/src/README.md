@@ -37,87 +37,87 @@ highlights:
       background-repeat: repeat
       background-size: initial
     features:
-      - title: core
+      - title: silly
         icon: fa6-solid:circle-nodes
         details: 提供coroutine调度操作
         link: ./guide/foo/
 
-      - title: core.net
+      - title: silly.net
         icon: fa6-solid:network-wired
         details: 提供tcp/udp/tls等网络操作
         link: ./guide/foo/
 
-      - title: core.cluster
+      - title: silly.cluster
         icon: fa6-solid:network-wired
         details: 提供自定义RPC支持, 用于高性能场合
         link: ./guide/foo/
 
-      - title: core.grpc
+      - title: silly.grpc
         icon: fa6-solid:network-wired
         details: 提供grpc服务端/客户端支持
         link: ./guide/foo/
 
-      - title: core.db
+      - title: silly.db
         icon: fa6-solid:database
         details: 提供redis/mysql数据库操作
         link: ./guide/foo/
 
-      - title: core.sync
+      - title: silly.sync
         icon: fa6-solid:sync
         details: 提供锁、队列、协程间通信等同步操作
         link: ./guide/foo/
 
-      - title: core.etcd
+      - title: silly.etcd
         icon: fa6-solid:database
         details: 提供etcd v3操作
         link: ./guide/foo/
 
-      - title: core.http
+      - title: silly.http
         icon: fa6-solid:network-wired
         details: 提供http/https/http2协议支持
         link: ./guide/foo/
 
-      - title: core.websocket
+      - title: silly.websocket
         icon: fa6-solid:code
         details: 提供websocket支持
         link: ./guide/foo/
 
-      - title: core.metrics
+      - title: silly.metrics
         icon: fa6-solid:chart-line
         details: 提供prometheus监控支持
         link: ./guide/foo/
 
-      - title: core.crypto
+      - title: silly.crypto
         icon: fa6-solid:lock
         details: 提供常用的密码学算法
         link: ./guide/foo/
 
-      - title: core.console
+      - title: silly.console
         icon: fa6-solid:terminal
         details: 提供控制台命令行支持
         link: ./guide/foo/
 
-      - title: core.debugger
+      - title: silly.debugger
         icon: fa6-solid:bug
         details: 提供在线调试器支持
         link: ./guide/foo/
 
-      - title: core.dns
+      - title: silly.dns
         icon: fa6-solid:network-wired
         details: 提供dns解析支持
         link: ./guide/foo/
 
-      - title: core.json
+      - title: silly.json
         icon: fa6-solid:code
         details: 提供json编解码支持
         link: ./guide/foo/
 
-      - title: core.logger
+      - title: silly.logger
         icon: fa6-solid:code
         details: 提供日志记录支持
         link: ./guide/foo/
 
-      - title: core.patch
+      - title: silly.patch
         icon: fa6-solid:code
         details: 提供热更新支持
         link: ./guide/foo/

@@ -1,7 +1,7 @@
-local core = require "core"
-local time = require "core.time"
-local http = require "core.http"
-local prometheus = require "core.metrics.prometheus"
+local silly = require "silly"
+local time = require "silly.time"
+local http = require "silly.http"
+local prometheus = require "silly.metrics.prometheus"
 local testaux = require "test.testaux"
 
 -- Define metrics with the new 'xlabel'

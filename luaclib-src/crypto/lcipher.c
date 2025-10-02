@@ -11,7 +11,7 @@
 #include "silly.h"
 #include "luastr.h"
 
-#define METATABLE "core.crypto.cipher"
+#define METATABLE "silly.crypto.cipher"
 
 struct cipher {
 	EVP_CIPHER_CTX *ctx;
@@ -250,7 +250,7 @@ static int lxtag(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_crypto_cipher(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_cipher(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "encryptor",  lnewenc      },

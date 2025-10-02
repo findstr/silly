@@ -1,6 +1,6 @@
-local dns = require "core.dns"
-local hive = require "core.hive"
-local tls = require "core.net.tls"
+local dns = require "silly.dns"
+local hive = require "silly.hive"
+local tls = require "silly.net.tls"
 local testaux = require "test.testaux"
 
 -- Test 1: Connect to www.baidu.com

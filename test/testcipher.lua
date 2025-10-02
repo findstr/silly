@@ -1,4 +1,4 @@
-local cipher = require "core.crypto.cipher"
+local cipher = require "silly.crypto.cipher"
 local testaux = require "test.testaux"
 
 -- AES test vectors from NIST SP 800-38A

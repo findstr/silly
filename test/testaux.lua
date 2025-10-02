@@ -1,8 +1,8 @@
-local core = require "core"
-local hive = require "core.hive"
-local time = require "core.time"
-local json = require "core.encoding.json"
-local metrics = require "core.metrics.c"
+local silly = require "silly"
+local hive = require "silly.hive"
+local time = require "silly.time"
+local json = require "silly.encoding.json"
+local metrics = require "silly.metrics.c"
 local c = require "test.aux.c"
 local type = type
 local pairs = pairs
@@ -96,7 +96,7 @@ end
 function testaux.error(str)
 	print(format('\27[31m%sFAIL\t"%s"\27[0m', m, str))
 	print(debug.traceback(1))
-	core.exit(1)
+	silly.exit(1)
 end
 
 function testaux.success(str)
@@ -113,7 +113,7 @@ function testaux.asserteq(a, b, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 
@@ -127,7 +127,7 @@ function testaux.assertneq(a, b, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 
@@ -141,7 +141,7 @@ function testaux.assertlt(a, b, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t "%s" < "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 
@@ -155,7 +155,7 @@ function testaux.assertle(a, b, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" <= "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 
@@ -169,7 +169,7 @@ function testaux.assertgt(a, b, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" > "%s"\27[0m', m, str, a, b))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 
@@ -196,7 +196,7 @@ function testaux.assert_error(fn, str)
 	else
 		print(format('\27[31m%sFAIL\t"%s" check exception \t\27[0m', m, str))
 		print(debug.traceback(1))
-		core.exit(1)
+		silly.exit(1)
 	end
 end
 

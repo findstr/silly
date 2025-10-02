@@ -1,6 +1,6 @@
-local core = require "core"
-local crypto = require "core.crypto.utils"
-local websocket = require "core.websocket"
+local silly = require "silly"
+local crypto = require "silly.crypto.utils"
+local websocket = require "silly.websocket"
 
 local handler = function(sock)
 	local dat, typ = sock:read()
@@ -28,7 +28,7 @@ websocket.listen {
 	handler = handler,
 }
 
-core.start(function()
+silly.start(function()
 	local sock, err = websocket.connect("http://127.0.0.1:9999")
 	assert(sock, err)
 	local txt = crypto.randomkey(5)

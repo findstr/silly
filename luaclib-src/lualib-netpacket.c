@@ -416,7 +416,7 @@ static int packet_gc(lua_State *L)
 	return 0;
 }
 
-SILLY_MOD_API int luaopen_core_netpacket(lua_State *L)
+SILLY_MOD_API int luaopen_silly_netpacket(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "create",   lcreate   },

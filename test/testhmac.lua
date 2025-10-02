@@ -1,4 +1,4 @@
-local hmac = require "core.crypto.hmac"
+local hmac = require "silly.crypto.hmac"
 local testaux = require "test.testaux"
 
 -- Test 1: Normal HMAC operation with known test vectors

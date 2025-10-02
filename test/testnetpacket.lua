@@ -1,11 +1,11 @@
-local core = require "core"
-local np = require "core.netpacket"
+local silly = require "silly"
+local np = require "silly.netpacket"
 local testaux = require "test.testaux"
 
 local BUFF
 
 local function rawtostring(buff, sz)
-	local str = core.tostring(buff, sz)
+	local str = silly.tostring(buff, sz)
 	np.drop(buff)
 	return str
 end

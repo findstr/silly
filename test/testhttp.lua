@@ -1,8 +1,8 @@
-local time = require "core.time"
-local core = require "core"
-local json = require "core.encoding.json"
-local http = require "core.http"
-local tcp = require "core.net.tcp"
+local time = require "silly.time"
+local silly = require "silly"
+local json = require "silly.encoding.json"
+local http = require "silly.http"
+local tcp = require "silly.net.tcp"
 local testaux = require "test.testaux"
 
 local server

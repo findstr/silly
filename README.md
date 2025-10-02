@@ -46,7 +46,7 @@ Here is a simple example that demonstrates how to easily write an echo server wi
 这是一个简单的示例，展示了如何使用 Silly 轻松编写处理每秒 20w+ 并发请求的 echo server:
 
 ```lua
-local tcp = require "core.net.tcp"
+local tcp = require "silly.net.tcp"
 local listenfd = tcp.listen("127.0.0.1:8888", function(fd, addr)
         print("accpet", addr, fd)
         while true do
@@ -169,9 +169,9 @@ CPU Affinity Options | CPU 亲和性选项:
 
 ##### Custom Options | 自定义选项
 
-In addition to the predefined options above, you can pass custom key-value pairs using the `--key=value` format. These values can be accessed in your Lua code using `require "core.env".get(key)`.
+In addition to the predefined options above, you can pass custom key-value pairs using the `--key=value` format. These values can be accessed in your Lua code using `require "silly.env".get(key)`.
 
-除了上述预定义选项外，您可以使用 `--key=value` 格式传入自定义的键值对。这些值可以在 Lua 代码中通过 `require "core.env".get(key)` 来获取。
+除了上述预定义选项外，您可以使用 `--key=value` 格式传入自定义的键值对。这些值可以在 Lua 代码中通过 `require "silly.env".get(key)` 来获取。
 
 Example | 示例:
 ```bash
@@ -181,7 +181,7 @@ Example | 示例:
 
 In your Lua code | 在 Lua 代码中:
 ```lua
-local env = require "core.env"
+local env = require "silly.env"
 
 -- Get custom options | 获取自定义选项
 local port = env.get("port")              -- Returns "8888"

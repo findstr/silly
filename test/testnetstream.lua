@@ -1,4 +1,4 @@
-local ns = require "core.netstream"
+local ns = require "silly.netstream"
 local testaux = require "test.testaux"
 
 local function build(n)

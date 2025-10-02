@@ -134,7 +134,7 @@ int ldecode(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_encoding_base64(lua_State *L)
+SILLY_MOD_API int luaopen_silly_encoding_base64(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "encode",         lencode         },

@@ -43,7 +43,7 @@ static int lxor(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_crypto_utils(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_utils(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "xor",       lxor       },

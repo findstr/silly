@@ -1,5 +1,5 @@
-local time = require "core.time"
-local core = require "core"
+local time = require "silly.time"
+local silly = require "silly"
 
 local function timer(session)
 	print("timer even expired", session)
@@ -7,7 +7,7 @@ local function timer(session)
 	print("next timer session", s)
 end
 
-core.start(function()
+silly.start(function()
 	timer(0)
 end)
 

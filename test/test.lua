@@ -1,8 +1,8 @@
-local core = require "core"
-local time = require "core.time"
-local env = require "core.env"
-local logger = require "core.logger"
-local metrics = require "core.metrics.c"
+local silly = require "silly"
+local time = require "silly.time"
+local env = require "silly.env"
+local logger = require "silly.logger"
+local metrics = require "silly.metrics.c"
 local testaux = require "test.testaux"
 
 local netstat = testaux.netstat

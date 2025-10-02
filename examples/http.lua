@@ -1,5 +1,5 @@
-local core = require "core"
-local http = require "core.http"
+local silly = require "silly"
+local http = require "silly.http"
 
 http.listen {
 	addr = "127.0.0.1:8080",
@@ -20,7 +20,7 @@ http.listen {
 	end
 }
 
-core.start(function()
+silly.start(function()
 	local res, err = http.GET("http://127.0.0.1:8080")
 	print(res and res.body, err)
 end)

@@ -1,7 +1,7 @@
-local core = require "core"
-local env = require "core.env"
-local metrics = require "core.metrics.c"
-local time = require "core.time"
+local silly = require "silly"
+local env = require "silly.env"
+local metrics = require "silly.metrics.c"
+local time = require "silly.time"
 local testaux = require "test.testaux"
 
 local context = {}
@@ -20,7 +20,7 @@ local function gen_closure(n)
 		testaux.assertle(delta, CHECK_DELTA, "timer check delta")
 		total = total - 1
 		if total == 0 then
-			core.wakeup(WAIT)
+			silly.wakeup(WAIT)
 		end
 	end
 end
@@ -32,8 +32,8 @@ local function test_timer()
 		local s = time.after(100 + n, f)
 		context[s] = n
 	end
-	WAIT = core.running()
-	core.wait()
+	WAIT = silly.running()
+	silly.wait()
 end
 
 local function test_userdata()

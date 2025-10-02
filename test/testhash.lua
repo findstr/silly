@@ -1,5 +1,5 @@
 local P = require "test.print"
-local hash = require "core.crypto.hash"
+local hash = require "silly.crypto.hash"
 local testaux = require "test.testaux"
 
 -- Predefine test vectors

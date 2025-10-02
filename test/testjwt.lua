@@ -1,10 +1,10 @@
 local P = require "test.print"
-local jwt = require "core.jwt"
-local json = require "core.encoding.json"
-local rsa = require "core.crypto.rsa"
-local ec = require "core.crypto.ec"
+local jwt = require "silly.jwt"
+local json = require "silly.encoding.json"
+local rsa = require "silly.crypto.rsa"
+local ec = require "silly.crypto.ec"
 local testaux = require "test.testaux"
-local base64 = require "core.encoding.base64"
+local base64 = require "silly.encoding.base64"
 
 -- Predefined test materials
 local test_payload = {sub = "1234567890", name = "John Doe", iat = 1516239022}

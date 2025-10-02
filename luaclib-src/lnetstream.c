@@ -17,7 +17,7 @@
 #endif
 
 #define SB (1)
-#define METANAME "core.netstream"
+#define METANAME "silly.netstream"
 
 #define NB_INIT_EXP (6)
 
@@ -539,7 +539,7 @@ static int tcap(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_netstream(lua_State *L)
+SILLY_MOD_API int luaopen_silly_netstream(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",      lnew      },

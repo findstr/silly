@@ -1,4 +1,4 @@
-local xor = require "core.crypto.utils".xor
+local xor = require "silly.crypto.utils".xor
 local testaux = require "test.testaux"
 
 -- Test 1: Basic functionality

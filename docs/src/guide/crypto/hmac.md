@@ -7,7 +7,7 @@ icon: fa6-solid:lock
 ### 导入模块
 
 ```lua validate
-local hmac = require "core.crypto.hmac"
+local hmac = require "silly.crypto.hmac"
 ```
 
 ### 计算HMAC值
@@ -29,7 +29,7 @@ local hmac = require "core.crypto.hmac"
 ### 基本使用
 
 ```lua validate
-local hmac = require "core.crypto.hmac"
+local hmac = require "silly.crypto.hmac"
 
 local key = "secret key"
 local message = "Hello World"
@@ -45,7 +45,7 @@ print(str)
 ### 验证HMAC
 
 ```lua validate
-local hmac = require "core.crypto.hmac"
+local hmac = require "silly.crypto.hmac"
 
 local function verify_hmac(key, message, received_mac)
     local computed_mac = hmac.digest(key, message, "sha256")
@@ -70,7 +70,7 @@ print(is_valid) -- 输出: false
 ### 使用不同的哈希算法
 
 ```lua validate
-local hmac = require "core.crypto.hmac"
+local hmac = require "silly.crypto.hmac"
 
 local key = "secret key"
 local message = "Hello World"

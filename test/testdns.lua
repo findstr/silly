@@ -1,4 +1,4 @@
-local dns = require "core.dns"
+local dns = require "silly.dns"
 local testaux = require "test.testaux"
 
 print("testA")

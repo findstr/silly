@@ -1,11 +1,11 @@
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 local protoc = require "protoc"
-local grpc = require "core.grpc"
-local crypto = require "core.crypto.utils"
-local waitgroup = require "core.sync.waitgroup"
-local registrar = require "core.grpc.registrar".new()
-local transport = require "core.http.transport"
+local grpc = require "silly.grpc"
+local crypto = require "silly.crypto.utils"
+local waitgroup = require "silly.sync.waitgroup"
+local registrar = require "silly.grpc.registrar".new()
+local transport = require "silly.http.transport"
 local testaux = require "test.testaux"
 
 local p = protoc:new()

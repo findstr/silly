@@ -1,6 +1,6 @@
-local core = require "core"
-local time = require "core.time"
-local tcp = require "core.net.tcp"
+local silly = require "silly"
+local time = require "silly.time"
+local tcp = require "silly.net.tcp"
 local testaux = require "test.testaux"
 local listen_cb
 local ip = "127.0.0.1"
@@ -241,7 +241,7 @@ do
 	local invalid_addr = string.format("%s:%d", ip, invalid_port)
 
 	-- This test checks the async tcp.connect API, so it must be run in a coroutine.
-	core.fork(function()
+	silly.fork(function()
 		print("Case 11: Trying to connect to an invalid port", invalid_port)
 		local fd, err = tcp.connect(invalid_addr)
 

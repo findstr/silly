@@ -99,7 +99,7 @@ static int lhook(lua_State *L)
 	return 0;
 }
 
-SILLY_MOD_API int luaopen_core_debugger_helper(lua_State *L)
+SILLY_MOD_API int luaopen_silly_debugger_helper(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "hook", lhook },

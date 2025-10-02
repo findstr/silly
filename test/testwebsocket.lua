@@ -1,8 +1,8 @@
-local core = require "core"
-local time = require "core.time"
-local tcp = require "core.net.tcp"
-local websocket = require "core.websocket"
-local waitgroup = require "core.sync.waitgroup"
+local silly = require "silly"
+local time = require "silly.time"
+local tcp = require "silly.net.tcp"
+local websocket = require "silly.websocket"
+local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
 
 -- Global test configuration
@@ -85,7 +85,7 @@ do
 	local case_num = 0
 	for _, vec in ipairs(test_vectors) do
 		case_num = case_num + 1
-		---@param sock core.websocket.socket
+		---@param sock silly.websocket.socket
 		server_handler = function(sock)
 			local received = {}
 			local total_len = 0

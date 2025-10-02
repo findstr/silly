@@ -1,4 +1,4 @@
-local rsa = require "core.crypto.rsa"
+local rsa = require "silly.crypto.rsa"
 local testaux = require "test.testaux"
 
 -- Generated RSA keys (replace with actual generated keys)

@@ -1,7 +1,7 @@
-local time = require "core.time"
-local core = require "core"
-local crypto = require "core.crypto"
-local cluster = require "core.cluster"
+local time = require "silly.time"
+local silly = require "silly"
+local crypto = require "silly.crypto.utils"
+local cluster = require "silly.cluster"
 local zproto = require "zproto"
 
 local proto = zproto:parse [[
@@ -77,9 +77,9 @@ local client = cluster.new {
 	end,
 }
 
-core.start(function()
+silly.start(function()
 	for i = 1, 3 do
-		core.fork(function()
+		silly.fork(function()
 			local fd, err = client.connect("127.0.0.1:9999")
 			print("connect", fd, err)
 			for j = 1, 10000 do

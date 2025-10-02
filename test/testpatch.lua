@@ -1,6 +1,6 @@
-local core = require "core"
-local time = require "core.time"
-local patch = require "core.patch"
+local silly = require "silly"
+local time = require "silly.time"
+local patch = require "silly.patch"
 local testaux = require "test.testaux"
 local function fix(P, ENV, M1, M2, skip)
 	local up1 = P:collectupval(M1)
@@ -133,8 +133,8 @@ end
 
 local function case3(P)
 	local M1 = load([[
-	local core = require "core"
-	local time = require "core.time"
+	local silly = require "silly"
+	local time = require "silly.time"
 	local M = {}
 	local foo
 	local timer_foo
@@ -155,8 +155,8 @@ local function case3(P)
 
 	local ENV = setmetatable({}, {__index = _ENV})
 	local M2 = load([[
-	local core = require "core"
-	local time = require "core.time"
+	local silly = require "silly"
+	local time = require "silly.time"
 	local M = {}
 	local foo
 	local timer_foo

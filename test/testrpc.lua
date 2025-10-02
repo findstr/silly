@@ -1,8 +1,8 @@
-local core = require "core"
-local time = require "core.time"
-local waitgroup = require "core.sync.waitgroup"
-local cluster = require "core.cluster"
-local crypto = require "core.crypto.utils"
+local silly = require "silly"
+local time = require "silly.time"
+local waitgroup = require "silly.sync.waitgroup"
+local cluster = require "silly.cluster"
+local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 local zproto = require "zproto"
 

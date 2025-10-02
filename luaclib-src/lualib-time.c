@@ -50,7 +50,7 @@ static int ltimemonotonic(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_time_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_time_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "timeout",     ltimeout       },

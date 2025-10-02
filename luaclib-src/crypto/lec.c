@@ -13,7 +13,7 @@
 #include "luastr.h"
 #include "pkey.h"
 
-#define METATABLE "core.crypto.rsa"
+#define METATABLE "silly.crypto.rsa"
 
 struct ec {
 	EVP_PKEY *key;
@@ -126,7 +126,7 @@ static int lxverify(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_crypto_ec(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_ec(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",    lnew     },

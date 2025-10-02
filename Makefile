@@ -3,7 +3,7 @@
 INCLUDE :=
 #---------
 
-TARGET ?= silly
+TARGET = silly
 OPENSSL ?= ON
 TEST ?= OFF
 MALLOC ?= jemalloc
@@ -94,7 +94,7 @@ PLAT_SRC = $(wildcard $(SRC_PATH)/$(PLAT_DIR)/*.c)
 SRC = $(COMMON_SRC) $(PLAT_SRC)
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
-LIB_SRC = lualib-core.c \
+LIB_SRC = lualib-silly.c \
 	lualib-env.c \
 	lualib-time.c \
 	lualib-metrics.c \
@@ -119,7 +119,7 @@ endif
 all: \
 	fmt \
 	$(TARGET) \
-	$(LUACLIB_PATH)/core.$(SO) \
+	$(LUACLIB_PATH)/silly.$(SO) \
 	$(LUACLIB_PATH)/zproto.$(SO) \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
@@ -130,7 +130,7 @@ $(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB)
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
-$(LUACLIB_PATH)/core.$(SO): $(addprefix $(LUACLIB_SRC_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/silly.$(SO): $(addprefix $(LUACLIB_SRC_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) $(OPENSSLFLAG) -fvisibility=hidden
 $(LUACLIB_PATH)/zproto.$(SO): $(LUACLIB_SRC_PATH)/zproto/lzproto.c $(LUACLIB_SRC_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)

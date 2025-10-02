@@ -1,4 +1,4 @@
-local console = require "core.console"
+local console = require "silly.console"
 local run = require "examples.patch.run"
 
 console {

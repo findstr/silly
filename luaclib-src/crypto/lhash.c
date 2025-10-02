@@ -12,7 +12,7 @@
 #include "md_cache.h"
 #include "luastr.h"
 
-#define METATABLE "core.crypto.digest"
+#define METATABLE "silly.crypto.digest"
 
 struct hash {
 	const EVP_MD *md;
@@ -143,7 +143,7 @@ static int lxdigest(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_crypto_hash(lua_State *L)
+SILLY_MOD_API int luaopen_silly_crypto_hash(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "new",    lnew     },

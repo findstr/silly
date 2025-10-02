@@ -19,7 +19,7 @@ icon: fa6-solid:lock
 ### 导入模块
 
 ```lua validate
-local hash = require "core.crypto.hash"
+local hash = require "silly.crypto.hash"
 ```
 
 ### 一次性计算哈希
@@ -79,7 +79,7 @@ local hash = require "core.crypto.hash"
 ### 一次性计算哈希
 
 ```lua validate
-local hash = require "core.crypto.hash"
+local hash = require "silly.crypto.hash"
 
 local data = "Hello World"
 local digest = hash.hash("sha256", data)
@@ -92,7 +92,7 @@ print(str)
 ### 分块计算哈希
 
 ```lua validate
-local hash = require "core.crypto.hash"
+local hash = require "silly.crypto.hash"
 
 -- 创建SHA-256哈希对象
 local hasher = hash.new("sha256")

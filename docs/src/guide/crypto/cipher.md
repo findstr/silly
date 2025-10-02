@@ -6,7 +6,7 @@ icon: fa6-solid:lock
 
 ### 导入模块
 ```lua validate
-local cipher = require "core.crypto.cipher"
+local cipher = require "silly.crypto.cipher"
 ```
 
 ### 创建加密器
@@ -94,7 +94,7 @@ local decryptor = cipher.decryptor(algorithm, key [, iv])
 ### 基本加解密
 
 ```lua validate
-local cipher = require "core.crypto.cipher"
+local cipher = require "silly.crypto.cipher"
 
 -- 创建AES-128-CBC加密器
 local key = "1234567890123456" -- 16字节密钥
@@ -116,7 +116,7 @@ print(plaintext) -- 输出: Hello World
 ### AEAD模式(GCM)示例
 
 ```lua validate
-local cipher = require "core.crypto.cipher"
+local cipher = require "silly.crypto.cipher"
 
 -- 创建AES-256-GCM加密器
 local key = string.rep("k", 32) -- 32字节密钥

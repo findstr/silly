@@ -59,7 +59,7 @@ static int lsignal(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_signal_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_signal_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "signalmap", lsignalmap },

@@ -1,8 +1,8 @@
-local core = require "core"
-local time = require "core.time"
+local silly = require "silly"
+local time = require "silly.time"
 local testaux = require "test.testaux"
-local waitgroup = require "core.sync.waitgroup"
-local mutex = require "core.sync.mutex"
+local waitgroup = require "silly.sync.waitgroup"
+local mutex = require "silly.sync.mutex"
 
 local mutex = mutex.new()
 
@@ -119,13 +119,13 @@ local function testcase5()
 		local lock = mutex:lock(key)
 		local flag = false
 		lock:unlock()
-		local parent = core.running()
-		core.fork(function()
-			core.wakeup(parent)
+		local parent = silly.running()
+		silly.fork(function()
+			silly.wakeup(parent)
 			local x = mutex:lock(key)
 			flag = true
 		end)
-		core.wait()
+		silly.wait()
 		testaux.asserteq(flag, false, "test lock reentrant")
 	end)
 	wg:wait()
@@ -142,13 +142,13 @@ local function testcase6()
 		local flag = false
 		lock:unlock()
 		lock1:unlock()
-		local parent = core.running()
-		core.fork(function()
-			core.wakeup(parent)
+		local parent = silly.running()
+		silly.fork(function()
+			silly.wakeup(parent)
 			local k = mutex:lock(key)
 			flag = true
 		end)
-		core.wait()
+		silly.wait()
 		testaux.asserteq(flag, true, "test lock reentrant")
 	end)
 	wg:wait()

@@ -150,7 +150,7 @@ static int ltimerresolution(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_metrics_c(lua_State *L)
+SILLY_MOD_API int luaopen_silly_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		//build

@@ -618,7 +618,7 @@ static int ltls_push(lua_State *L)
 
 #endif
 
-SILLY_MOD_API int luaopen_core_tls_ctx(lua_State *L)
+SILLY_MOD_API int luaopen_silly_tls_ctx(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
@@ -653,7 +653,7 @@ SILLY_MOD_API int luaopen_core_tls_ctx(lua_State *L)
 	return 1;
 }
 
-SILLY_MOD_API int luaopen_core_tls_tls(lua_State *L)
+SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
