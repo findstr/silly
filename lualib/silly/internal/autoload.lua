@@ -1,0 +1,1 @@
+require "silly.internal.stdin"

@@ -223,7 +223,7 @@ static void require_silly_autoload(lua_State *L)
 {
 	lua_pushcfunction(L, ltraceback);
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "silly.autoload");
+	lua_pushstring(L, "silly.internal.autoload");
 	if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
 		log_error("[worker] require silly.autoload fail,%s\n",
 			  lua_tostring(L, -1));
