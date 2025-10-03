@@ -1,5 +1,5 @@
-local helper = require "silly.http.helper"
-local transport = require "silly.http.transport"
+local helper = require "silly.net.http.helper"
+local transport = require "silly.net.http.transport"
 local parseurl = helper.parseurl
 local setmetatable = setmetatable
 
@@ -7,7 +7,7 @@ local alpn_protos = {"http/1.1", "h2"}
 
 local M = {}
 
----@class silly.http.server_mt
+---@class silly.net.http.server_mt
 local server = {
 	close = function(self)
 		local fd = self.fd
@@ -23,14 +23,14 @@ local server_mt = {
 }
 
 local listen = transport.listen
----@param conf silly.http.transport.listen.conf
----@return silly.http.server?, string? error
+---@param conf silly.net.http.transport.listen.conf
+---@return silly.net.http.server?, string? error
 function M.listen(conf)
 	local fd, transport = listen(conf)
 	if not fd then
 		return nil, transport
 	end
-	---@class silly.http.server:silly.http.server_mt
+	---@class silly.net.http.server:silly.net.http.server_mt
 	local server = {
 		fd = fd,
 		transport = transport,
@@ -44,7 +44,7 @@ end
 ---@param header table<string, string|number>?
 ---@param close boolean?
 ---@param alpn_protos silly.net.tls.alpn_proto[]?
----@return silly.http.h2stream|silly.http.h1stream|nil, string?
+---@return silly.net.http.h2stream|silly.net.http.h1stream|nil, string?
 function M.request(method, url, header, close, alpn_protos)
 	local scheme, host, port, path = parseurl(url)
 	local stream, err = transport.connect(scheme, host, port, alpn_protos)

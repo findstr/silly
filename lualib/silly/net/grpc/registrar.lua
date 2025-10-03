@@ -1,6 +1,6 @@
 local format = string.format
 
----@class silly.grpc.registrar
+---@class silly.net.grpc.registrar
 ---@field input_name table<string, string>
 ---@field output_name table<string, string>
 ---@field handlers table<string, function>
@@ -10,7 +10,7 @@ local setmetatable = setmetatable
 
 M.__index = M
 
----@return silly.grpc.registrar
+---@return silly.net.grpc.registrar
 function M.new()
 	return setmetatable({
 		input_name = {},

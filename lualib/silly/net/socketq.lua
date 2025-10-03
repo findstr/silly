@@ -10,7 +10,7 @@ local CONNECTED    = 2
 local CLOSE        = 5
 local FINAL        = 6
 
----@class silly.socketq
+---@class silly.net.socketq
 ---@field sock integer|nil
 ---@field status integer|nil
 ---@field authco thread|nil
@@ -37,7 +37,7 @@ local mt = {
 
 --the function of process response insert into d.funcqueue
 ---@param config {addr:string, auth:function}
----@return silly.socketq
+---@return silly.net.socketq
 function dispatch.new(config)
 	local d = {
 		sock = nil,
@@ -61,7 +61,7 @@ function dispatch.new(config)
 	return d
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 local function wakeup_all(self, ret, err)
 	local waitqueue = self.waitqueue
 	local funcqueue = self.funcqueue
@@ -82,7 +82,7 @@ local function wakeup_all(self, ret, err)
 	self.waittail = 0
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 local function doclose(self)
 	if self.status == CLOSE then
 		return
@@ -100,7 +100,7 @@ end
 
 
 --this function will be run the indepedent coroutine
----@param self silly.socketq
+---@param self silly.net.socketq
 local function dispatch_response(self)
 	return function ()
 		local pcall = silly.pcall
@@ -137,7 +137,7 @@ local function dispatch_response(self)
 	end
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 ---@param response function
 ---@return boolean, string
 local function waitfor_response(self, response)
@@ -160,7 +160,7 @@ local function waitfor_response(self, response)
 	return status, data
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 local function waitfor_connect(self)
 	local co = silly.running()
 	local connectqueue = self.connectqueue
@@ -172,7 +172,7 @@ local function waitfor_connect(self)
 	return status, data
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 ---@param success boolean
 ---@param err string
 local function wakeup_conn(self, success, err)
@@ -185,7 +185,7 @@ local function wakeup_conn(self, success, err)
 	end
 end
 
----@param self silly.socketq
+---@param self silly.net.socketq
 local function tryconnect(self)
 	local status = self.status
 	if status == CONNECTED then

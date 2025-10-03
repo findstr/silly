@@ -1,4 +1,4 @@
-local http = require "silly.http"
+local http = require "silly.net.http"
 local base64 = require "silly.encoding.base64"
 local sha1 = require "silly.crypto.hash".new("sha1")
 local utils = require "silly.crypto.utils"
@@ -14,7 +14,7 @@ local format = string.format
 local xor = utils.xor
 local randomkey = utils.randomkey
 
----@class silly.websocket
+---@class silly.net.websocket
 local M = {}
 local NIL = ""
 local guid = [[258EAFA5-E914-47DA-95CA-C5AB0DC85B11]]
@@ -214,7 +214,7 @@ local function wrap_close(c)
 	if f then
 		return f
 	end
-	---@param sock silly.websocket.socket
+	---@param sock silly.net.websocket.socket
 	f = function(sock)
 		sock:write(nil, "close")
 		return c(sock.fd)
@@ -255,9 +255,9 @@ local function handshake(stream)
 	return write(stream, 101, ack)
 end
 
----@param stream silly.http.h1stream
+---@param stream silly.net.http.h1stream
 ---@param isclient boolean
----@return silly.websocket.socket
+---@return silly.net.websocket.socket
 local function upgrade(stream, isclient)
 	local transport = stream.transport
 	local read = transport.read
@@ -265,7 +265,7 @@ local function upgrade(stream, isclient)
 	local close = transport.close
 	local rmask = isclient and 0 or 1
 	local wmask = isclient and 1 or 0
-	---@class silly.websocket.socket
+	---@class silly.net.websocket.socket
 	local sock = {
 		fd = stream.fd,
 		stream = stream,
@@ -279,7 +279,7 @@ local function upgrade(stream, isclient)
 end
 
 local function wrap_handshake(handler)
-	---@param stream silly.http.h1stream
+	---@param stream silly.net.http.h1stream
 	return function(stream)
 		if handshake(stream) then
 			local sock = upgrade(stream, false)
@@ -290,10 +290,10 @@ local function wrap_handshake(handler)
 	end
 end
 
----@class silly.websocket.listen.conf:silly.http.transport.listen.conf
----@field handler fun(sock: silly.websocket.socket)
+---@class silly.net.websocket.listen.conf:silly.net.http.transport.listen.conf
+---@field handler fun(sock: silly.net.websocket.socket)
 
----@param conf silly.websocket.listen.conf
+---@param conf silly.net.websocket.listen.conf
 function M.listen(conf)
 	conf.handler = wrap_handshake(conf.handler)
 	return http.listen(conf)
@@ -301,7 +301,7 @@ end
 
 ---@param url string
 ---@param header table|nil
----@return silly.websocket.socket|nil, string|nil
+---@return silly.net.websocket.socket|nil, string|nil
 function M.connect(url, header)
 	url = url:gsub("^ws", "http")
 	header = header or {}

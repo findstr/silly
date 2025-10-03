@@ -47,12 +47,12 @@ highlights:
         details: 提供tcp/udp/tls等网络操作
         link: ./guide/foo/
 
-      - title: silly.cluster
+      - title: silly.net.cluster
         icon: fa6-solid:network-wired
         details: 提供自定义RPC支持, 用于高性能场合
         link: ./guide/foo/
 
-      - title: silly.grpc
+      - title: silly.net.grpc
         icon: fa6-solid:network-wired
         details: 提供grpc服务端/客户端支持
         link: ./guide/foo/
@@ -72,12 +72,12 @@ highlights:
         details: 提供etcd v3操作
         link: ./guide/foo/
 
-      - title: silly.http
+      - title: silly.net.http
         icon: fa6-solid:network-wired
         details: 提供http/https/http2协议支持
         link: ./guide/foo/
 
-      - title: silly.websocket
+      - title: silly.net.websocket
         icon: fa6-solid:code
         details: 提供websocket支持
         link: ./guide/foo/
@@ -102,7 +102,7 @@ highlights:
         details: 提供在线调试器支持
         link: ./guide/foo/
 
-      - title: silly.dns
+      - title: silly.net.dns
         icon: fa6-solid:network-wired
         details: 提供dns解析支持
         link: ./guide/foo/

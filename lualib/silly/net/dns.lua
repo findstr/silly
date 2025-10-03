@@ -77,7 +77,7 @@ local function QNAME(name, n)
 	n[i] = '\0'
 end
 
----@param typ silly.dns.type
+---@param typ silly.net.dns.type
 local function question(name, typ)
 	session = session % 65535 + 1
 	local ID = session
@@ -350,7 +350,7 @@ local function query(name, typ, timeout)
 end
 
 ---@param name string
----@param qtype silly.dns.type
+---@param qtype silly.net.dns.type
 ---@return table|nil, string|nil
 local function findcache(name, qtype)
 	local now = timenow() // 1000
@@ -375,7 +375,7 @@ end
 
 ---@async
 ---@param name string
----@param qtype silly.dns.type
+---@param qtype silly.net.dns.type
 ---@param timeout integer|nil
 ---@param deep integer
 ---@return table|nil
@@ -397,21 +397,21 @@ local function resolve(name, qtype, timeout, deep)
 	return rr
 end
 
----@alias silly.dns.type `dns.A` | `dns.AAAA` | `dns.SRV`
----@class silly.dns
+---@alias silly.net.dns.type `dns.A` | `dns.AAAA` | `dns.SRV`
+---@class silly.net.dns
 local dns = {
-	---@type silly.dns.type
+	---@type silly.net.dns.type
 	A = RR_A,
-	---@type silly.dns.type
+	---@type silly.net.dns.type
 	AAAA = RR_AAAA,
-	---@type silly.dns.type
+	---@type silly.net.dns.type
 	SRV = RR_SRV,
 }
 
 
 ---@async
 ---@param name string
----@param qtype silly.dns.type
+---@param qtype silly.net.dns.type
 ---@param timeout integer|nil
 ---@return string|nil
 function dns.lookup(name, qtype, timeout)
@@ -427,7 +427,7 @@ end
 
 ---@async
 ---@param name string
----@param qtype silly.dns.type
+---@param qtype silly.net.dns.type
 ---@param timeout integer|nil
 ---@return table
 function dns.resolve(name, qtype, timeout)

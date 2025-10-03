@@ -1,11 +1,11 @@
 local silly = require "silly"
 local time = require "silly.time"
 local protoc = require "protoc"
-local grpc = require "silly.grpc"
+local grpc = require "silly.net.grpc"
 local crypto = require "silly.crypto.utils"
 local waitgroup = require "silly.sync.waitgroup"
-local registrar = require "silly.grpc.registrar".new()
-local transport = require "silly.http.transport"
+local registrar = require "silly.net.grpc.registrar".new()
+local transport = require "silly.net.http.transport"
 local testaux = require "test.testaux"
 
 local p = protoc:new()

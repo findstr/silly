@@ -1,7 +1,7 @@
 local time = require "silly.time"
 local silly = require "silly"
 local crypto = require "silly.crypto.utils"
-local cluster = require "silly.cluster"
+local cluster = require "silly.net.cluster"
 local zproto = require "zproto"
 
 local proto = zproto:parse [[

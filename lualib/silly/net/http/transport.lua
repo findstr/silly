@@ -2,10 +2,10 @@ local time = require "silly.time"
 local silly = require "silly"
 local tcp = require "silly.net.tcp"
 local tls = require "silly.net.tls"
-local dns = require "silly.dns"
+local dns = require "silly.net.dns"
 local mutex = require "silly.sync.mutex"
-local h1 = require "silly.http.h1stream"
-local h2 = require "silly.http.h2stream"
+local h1 = require "silly.net.http.h1stream"
+local h2 = require "silly.net.http.h2stream"
 local assert = assert
 local pairs = pairs
 local format = string.format
@@ -19,7 +19,7 @@ local transport_layers = {
 	["https"] = tls,
 }
 
----@type table<string, silly.http.h2stream.channel>
+---@type table<string, silly.net.http.h2stream.channel>
 local h2_pool = setmetatable({}, {__gc = function(t)
 	for k, s in pairs(t) do
 		t[k] = nil
@@ -62,7 +62,7 @@ end
 ---@param host string
 ---@param port string
 ---@param alpnprotos silly.net.tls.alpn_proto[]
----@return silly.http.h1stream|silly.http.h2stream|nil, string? error
+---@return silly.net.http.h1stream|silly.net.http.h2stream|nil, string? error
 function M.connect(scheme, host, port, alpnprotos)
 	local aln_count = alpnprotos and #alpnprotos or 0
 	if aln_count == 1 and alpnprotos[1] == "http/1.1" then -- force http1.x protocol, don't reuse connection
@@ -105,7 +105,7 @@ function M.connect(scheme, host, port, alpnprotos)
 	return h1.new(scheme, fd, transport, addr), nil
 end
 
----@class silly.http.transport.listen.conf
+---@class silly.net.http.transport.listen.conf
 ---@field handler fun(sock: any, stream: any)
 ---@field addr string
 ---@field tls boolean?
@@ -117,7 +117,7 @@ end
 ---@field forceh2 boolean?
 ---}
 
----@param conf silly.http.transport.listen.conf
+---@param conf silly.net.http.transport.listen.conf
 ---@return integer?, silly.net.tcp|silly.net.tls|string
 function M.listen(conf)
 	local handler = function(fd, addr)

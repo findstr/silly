@@ -1,7 +1,7 @@
 local silly = require "silly"
 local time = require "silly.time"
 local net = require "silly.net"
-local dns = require "silly.dns"
+local dns = require "silly.net.dns"
 local logger = require "silly.logger"
 local np = require "silly.netpacket"
 local type = type
@@ -233,9 +233,9 @@ local function send_wrapper(self, conf)
 end
 
 local M = {}
----@return silly.cluster
+---@return silly.net.cluster
 function M.new(conf)
-	---@class silly.cluster
+	---@class silly.net.cluster
 	local obj = {
 		__ctx = np.create(),
 		__fdaddr = {},

@@ -1,15 +1,15 @@
 local time = require "silly.time"
 local silly = require "silly"
 local logger = require "silly.logger"
-local grpc = require "silly.grpc"
+local grpc = require "silly.net.grpc"
 local proto = require "silly.etcd.v3.proto"
 local pb = require "pb"
 ---@class silly.etcd.client
 ---@field retry integer
 ---@field retry_sleep integer
----@field kv silly.grpc.client
----@field lease silly.grpc.client
----@field watcher silly.grpc.client
+---@field kv silly.net.grpc.client
+---@field lease silly.net.grpc.client
+---@field watcher silly.net.grpc.client
 ---@field lease_list table<integer, boolean>
 ---@field lease_timer fun(self:silly.etcd.client)
 local M = {}
@@ -410,7 +410,7 @@ end
 ---     limit:number|nil,                  -- Limits the number of events returned (optional)
 ---     progress_notify:boolean|nil,       -- If true, sends a progress notification for the watch (optional)
 --- }
---- @return silly.grpc.stream|nil, string|nil
+--- @return silly.net.grpc.stream|nil, string|nil
 function M.watch(self, req)
 	apply_options(req)
 	local filters = {}

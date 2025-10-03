@@ -1,7 +1,7 @@
 local time = require "silly.time"
 local silly = require "silly"
 local json = require "silly.encoding.json"
-local http = require "silly.http"
+local http = require "silly.net.http"
 local tcp = require "silly.net.tcp"
 local testaux = require "test.testaux"
 

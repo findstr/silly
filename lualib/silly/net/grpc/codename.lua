@@ -1,4 +1,4 @@
-local code = require "silly.grpc.code"
+local code = require "silly.net.grpc.code"
 --[gRPC documentation]: https:--github.com/grpc/grpc/blob/master/doc/statuscodes.md
 local M = {
 	OK = code.OK,

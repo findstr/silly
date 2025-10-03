@@ -1,5 +1,5 @@
 local silly = require "silly"
-local http = require "silly.http"
+local http = require "silly.net.http"
 
 http.listen {
 	addr = "127.0.0.1:8080",

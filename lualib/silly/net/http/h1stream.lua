@@ -1,7 +1,7 @@
 local silly = require "silly"
-local helper = require "silly.http.helper"
+local helper = require "silly.net.http.helper"
 local logger = require "silly.logger"
-local statusname = require "silly.http.statusname"
+local statusname = require "silly.net.http.statusname"
 local type = type
 local tonumber = tonumber
 local lower = string.lower
@@ -120,9 +120,9 @@ local function compose(fmt, arg1, arg2, header)
 	return concat(buf)
 end
 
---- @class silly.http.h1stream_mt
+--- @class silly.net.http.h1stream_mt
 local stream_mt = {
-	---@overload fun(s: silly.http.h1stream, method: string, path: string, header: table<string, string>, _:boolean): boolean, string?
+	---@overload fun(s: silly.net.http.h1stream, method: string, path: string, header: table<string, string>, _:boolean): boolean, string?
 	request = function(s, method, path, header)
 		s.method = method
 		local hdr = compose(request_line, method, path, header)
@@ -139,7 +139,7 @@ local stream_mt = {
 		end
 		return ok, err
 	end,
-	---@param s silly.http.h1stream
+	---@param s silly.net.http.h1stream
 	readheader = function(s)
 		local fd = s.fd
 		local readline = s.transport.readline
@@ -236,7 +236,7 @@ local stream_mt = {
 		end
 	end,
 	__index = nil,
-	---@param s silly.http.h1stream
+	---@param s silly.net.http.h1stream
 	__close = function(s)
 		s:close()
 	end,
@@ -244,7 +244,7 @@ local stream_mt = {
 
 stream_mt.__index = stream_mt
 
---- @class silly.http.h1stream:silly.http.h1stream_mt
+--- @class silly.net.http.h1stream:silly.net.http.h1stream_mt
 --- @field fd integer
 --- @field remoteaddr string
 --- @field transport silly.net.tcp|silly.net.tls
@@ -260,7 +260,7 @@ stream_mt.__index = stream_mt
 ---@param scheme string
 ---@param fd integer
 ---@param transport silly.net.tcp|silly.net.tls
----@return silly.http.h1stream
+---@return silly.net.http.h1stream
 function M.new(scheme, fd, transport, addr)
 	return setmetatable({
 		fd = fd,

@@ -1,6 +1,6 @@
 local silly = require "silly"
 local crypto = require "silly.crypto.utils"
-local websocket = require "silly.websocket"
+local websocket = require "silly.net.websocket"
 
 local handler = function(sock)
 	local dat, typ = sock:read()

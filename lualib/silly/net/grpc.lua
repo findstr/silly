@@ -1,7 +1,7 @@
 local logger = require "silly.logger"
-local code = require "silly.grpc.code"
-local codename = require "silly.grpc.codename"
-local transport = require "silly.http.transport"
+local code = require "silly.net.grpc.code"
+local codename = require "silly.net.grpc.codename"
+local transport = require "silly.net.http.transport"
 local pb = require "pb"
 
 local assert = assert
@@ -19,7 +19,7 @@ local HDR_SIZE<const> = 5
 local BODY_START<const> = HDR_SIZE+1
 local MAX_LEN<const> = 4*1024*1024
 
----@param h2stream silly.http.h2stream
+---@param h2stream silly.net.http.h2stream
 ---@param is_server boolean
 ---@param timeout number?
 ---@return string?, string? error
@@ -68,7 +68,7 @@ local function dispatch(registrar)
 	local output_name = registrar.output_name
 	local handlers = registrar.handlers
 	--use closure for less hash
-	---@param h2stream silly.http.h2stream
+	---@param h2stream silly.net.http.h2stream
 	return function(h2stream)
 		local status, header = h2stream:readheader()
 		if status ~= 200 then
@@ -102,7 +102,7 @@ local function dispatch(registrar)
 	end
 end
 
----@class silly.grpc.server
+---@class silly.net.grpc.server
 ---@field fd integer
 ---@field transport silly.net.tcp|silly.net.tls
 local server = {
@@ -123,11 +123,11 @@ local server_mt = {
 ---	tls:boolean?,
 ---	addr:string,
 ---	ciphers:string?,
----	registrar:silly.grpc.registrar,
+---	registrar:silly.net.grpc.registrar,
 ---	certs:{cert:string, cert_key:string}[],
 ---	alpnprotos:string[]|nil, backlog:integer|nil,
 ---}
----@return silly.grpc.server?, string? error
+---@return silly.net.grpc.server?, string? error
 function M.listen(conf)
 	local handler = dispatch(conf.registrar)
 	local fd, transport = transport.listen {
@@ -159,15 +159,15 @@ end
 
 local alpn_protos = {"h2"}
 
----@class silly.grpc.streaming
----@field h2stream silly.http.h2stream
+---@class silly.net.grpc.streaming
+---@field h2stream silly.net.http.h2stream
 ---@field need_header boolean
 ---@field input_type string
 ---@field output_type string
 local grpc_streaming = {}
 local grpc_streaming_mt = { __index = grpc_streaming }
 
----@param self silly.grpc.streaming
+---@param self silly.net.grpc.streaming
 function grpc_streaming:write(req)
 	local h2stream = self.h2stream
 	local reqdat = pb.encode(self.input_type, req)
@@ -175,7 +175,7 @@ function grpc_streaming:write(req)
 	return h2stream:write(reqdat)
 end
 
----@param self silly.grpc.streaming
+---@param self silly.net.grpc.streaming
 ---@param timeout number?
 function grpc_streaming:read(timeout)
 	local h2stream = self.h2stream
@@ -201,10 +201,10 @@ function grpc_streaming:close()
 	self.h2stream:close()
 end
 
----@return silly.grpc.stream|nil, string|nil
+---@return silly.net.grpc.stream|nil, string|nil
 local function stream_call(timeout, connect, method, fullname)
 	return function()
-		---@class silly.grpc.stream:silly.http.h2stream
+		---@class silly.net.grpc.stream:silly.net.http.h2stream
 		local h2stream, err = connect(fullname)
 		if not h2stream then
 			return nil, err
@@ -275,7 +275,7 @@ end
 ---	tls:boolean,		--use tls
 ---	timeout:number,		--timeout
 ---}
----@return silly.grpc.client|nil, string|nil
+---@return silly.net.grpc.client|nil, string|nil
 function M.newclient(conf)
 	local service_name = conf.service
 	local endpoints = {}
@@ -318,8 +318,8 @@ function M.newclient(conf)
 		end
 		return stream, nil
 	end
-	---@class silly.grpc.client
-	---@field Watch? fun():silly.grpc.stream|nil, string|nil
+	---@class silly.net.grpc.client
+	---@field Watch? fun():silly.net.grpc.stream|nil, string|nil
 	---@field [string] async fun(...):any|nil, string|nil
 	local mt = {
 		__index = function(t, k)

@@ -1,6 +1,6 @@
 local time = require "silly.time"
 local silly = require "silly"
-local helper = require "silly.http.helper"
+local helper = require "silly.net.http.helper"
 local hpack = require "silly.http2.hpack"
 local builder = require "silly.http2.framebuilder"
 
@@ -16,17 +16,17 @@ local unpack = string.unpack
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
----@class silly.http.h2stream.channel_mt
+---@class silly.net.http.h2stream.channel_mt
 local C = {}
 
----@class silly.http.h2stream.hpack
----@type fun(table_size:integer): silly.http.h2stream.hpack
+---@class silly.net.http.h2stream.hpack
+---@type fun(table_size:integer): silly.net.http.h2stream.hpack
 local hpack_new = hpack.new
----@type fun(hpack:silly.http.h2stream.hpack, ...:any): string
+---@type fun(hpack:silly.net.http.h2stream.hpack, ...:any): string
 local hpack_pack = hpack.pack
----@type fun(hpack:silly.http.h2stream.hpack, string): table<string, string>
+---@type fun(hpack:silly.net.http.h2stream.hpack, string): table<string, string>
 local hpack_unpack = hpack.unpack
----@type fun(hpack:silly.http.h2stream.hpack, integer): nil
+---@type fun(hpack:silly.net.http.h2stream.hpack, integer): nil
 local hpack_hardlimit = hpack.hardlimit
 
 local build_header = builder.header
@@ -36,7 +36,7 @@ local build_setting = builder.setting
 local build_winupdate = builder.winupdate
 
 
----@class silly.http.h2stream_mt
+---@class silly.net.http.h2stream_mt
 local S = {}
 
 local M = {}
@@ -151,7 +151,7 @@ local function read_frame(fd, read)
 	return t, f, dat, id
 end
 
----@param ch silly.http.h2stream.channel
+---@param ch silly.net.http.h2stream.channel
 local function try_wakeup_connect(ch)
 	local wait = ch.wait_for_conn
 	local n, m = #wait, ch.stream_max - ch.stream_count
@@ -387,7 +387,7 @@ local function frame_goaway(ch, _, flag, dat)
 	end
 end
 
----@param ch silly.http.h2stream.channel
+---@param ch silly.net.http.h2stream.channel
 ---@param id integer
 ---@param flag integer
 ---@param dat string
@@ -469,7 +469,7 @@ local function client_dispatch(ch)
 	end
 end
 
----@param ch silly.http.h2stream.channel
+---@param ch silly.net.http.h2stream.channel
 local function handshake_as_client(ch, transport)
 	local fd = ch.fd
 	local write = transport.write
@@ -571,8 +571,8 @@ function M.httpd(handler, fd, transport, addr)
 	end
 end
 
----@param ch silly.http.h2stream.channel
----@return silly.http.h2stream|nil, string|nil
+---@param ch silly.net.http.h2stream.channel
+---@return silly.net.http.h2stream|nil, string|nil
 function C.open_stream(ch)
 	if ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
@@ -595,7 +595,7 @@ function C.open_stream(ch)
 	end
 	ch.stream_idx = id + 2
 
-	---@class silly.http.h2stream : silly.http.h2stream_mt
+	---@class silly.net.http.h2stream : silly.net.http.h2stream_mt
 	local stream = setmetatable({
 		id = id,
 		readco = nil,
@@ -620,9 +620,9 @@ end
 ---@param fd integer
 ---@param transport silly.net.tcp | silly.net.tls
 ---@param addr string?
----@return silly.http.h2stream.channel?, string? error
+---@return silly.net.http.h2stream.channel?, string? error
 function M.newchannel(scheme, fd, transport, addr)
-	---@class silly.http.h2stream.channel:silly.http.h2stream.channel_mt
+	---@class silly.net.http.h2stream.channel:silly.net.http.h2stream.channel_mt
 	local ch = setmetatable({
 		--client and server common
 		fd = fd,
@@ -703,7 +703,7 @@ local function wait(s, expire)
 	return reason
 end
 
----@param s silly.http.h2stream
+---@param s silly.net.http.h2stream
 ---@param expire number?
 ---@return table<string, string>|nil, string?
 local function read_header(s, expire)
@@ -726,7 +726,7 @@ local function read_header(s, expire)
 	return header, "ok"
 end
 
----@param s silly.http.h2stream
+---@param s silly.net.http.h2stream
 ---@param expire number?
 function S.readheader(s, expire)
 	local header, reason = read_header(s, expire)
@@ -738,7 +738,7 @@ end
 
 S.readtrailer = read_header
 
----@param s silly.http.h2stream
+---@param s silly.net.http.h2stream
 ---@param status integer
 ---@param header table<string, string|string[]|number>
 ---@param close boolean?
@@ -765,7 +765,7 @@ function S.respond(s, status, header, close)
 end
 
 local function write_func(close)
-	---@param s silly.http.h2stream
+	---@param s silly.net.http.h2stream
 	---@param dat string|nil
 	---@return boolean, string?
 	return function(s, dat)
@@ -809,7 +809,7 @@ local function write_func(close)
 		dat = build_body(s.id, ch.frame_max_size, dat, close)
 		local win = ch.window_size
 		if win <= 0 then
-			assert(not s.writeco, "[silly.http.h2stream] write can't be called in race")
+			assert(not s.writeco, "[silly.net.http.h2stream] write can't be called in race")
 			local co = silly.running()
 			s.writeco = co
 			local wait = ch.wait_for_write
@@ -828,7 +828,7 @@ local write = write_func(false)
 local write_end = write_func(true)
 S.write = write
 
----@param s silly.http.h2stream
+---@param s silly.net.http.h2stream
 ---@param data string|nil
 ---@param trailer table<string, string|string[]|number>|nil
 function S.close(s, data, trailer)

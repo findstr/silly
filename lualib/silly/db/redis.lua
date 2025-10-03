@@ -1,5 +1,5 @@
 local logger = require "silly.logger"
-local dispatch = require "silly.socketq"
+local dispatch = require "silly.net.socketq"
 local type = type
 local assert = assert
 local tostring = tostring
@@ -9,7 +9,7 @@ local upper = string.upper
 local format = string.format
 
 ---@class silly.db.redis
----@field sock silly.socketq
+---@field sock silly.net.socketq
 ---@field new fun(config:{addr:string, auth:string, db:integer}):silly.db.redis
 ---@field select fun(self:silly.db.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil

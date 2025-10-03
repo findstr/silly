@@ -1,6 +1,6 @@
 local silly = require "silly"
 local time = require "silly.time"
-local http = require "silly.http"
+local http = require "silly.net.http"
 local prometheus = require "silly.metrics.prometheus"
 local testaux = require "test.testaux"
 

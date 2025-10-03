@@ -1,7 +1,7 @@
 local silly = require "silly"
 local time = require "silly.time"
 local tcp = require "silly.net.tcp"
-local websocket = require "silly.websocket"
+local websocket = require "silly.net.websocket"
 local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
 
@@ -85,7 +85,7 @@ do
 	local case_num = 0
 	for _, vec in ipairs(test_vectors) do
 		case_num = case_num + 1
-		---@param sock silly.websocket.socket
+		---@param sock silly.net.websocket.socket
 		server_handler = function(sock)
 			local received = {}
 			local total_len = 0

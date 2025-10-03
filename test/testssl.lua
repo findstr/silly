@@ -1,4 +1,4 @@
-local dns = require "silly.dns"
+local dns = require "silly.net.dns"
 local hive = require "silly.hive"
 local tls = require "silly.net.tls"
 local testaux = require "test.testaux"

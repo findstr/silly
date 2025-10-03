@@ -1,5 +1,5 @@
 local M = {}
-local helper = require "silly.http.helper"
+local helper = require "silly.net.http.helper"
 local tconcat = table.concat
 local tremove = table.remove
 local type, pairs = type, pairs

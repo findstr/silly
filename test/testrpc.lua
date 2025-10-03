@@ -1,7 +1,7 @@
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
-local cluster = require "silly.cluster"
+local cluster = require "silly.net.cluster"
 local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 local zproto = require "zproto"
