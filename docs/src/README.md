@@ -57,19 +57,14 @@ highlights:
         details: 提供grpc服务端/客户端支持
         link: ./guide/foo/
 
-      - title: silly.db
+      - title: silly.store
         icon: fa6-solid:database
-        details: 提供redis/mysql数据库操作
+        details: 提供redis/mysql/etcd等存储系统操作
         link: ./guide/foo/
 
       - title: silly.sync
         icon: fa6-solid:sync
         details: 提供锁、队列、协程间通信等同步操作
-        link: ./guide/foo/
-
-      - title: silly.etcd
-        icon: fa6-solid:database
-        details: 提供etcd v3操作
         link: ./guide/foo/
 
       - title: silly.net.http

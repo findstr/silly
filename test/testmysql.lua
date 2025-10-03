@@ -1,6 +1,6 @@
 local wg = require "silly.sync.waitgroup"
-local mysql = require "silly.db.mysql"
-local mysqlc = require "silly.db.mysql.c"
+local mysql = require "silly.store.mysql"
+local mysqlc = require "silly.store.mysql.c"
 local testaux = require "test.testaux"
 local silly = require "silly"
 local time = require "silly.time"
@@ -419,7 +419,7 @@ do
 	testaux.asserteq(stmt, expected, "Test 7: compose_stmt_execute")
 end
 
--------- silly.db.mysql test
+-------- silly.store.mysql test
 
 -- Test 8: create `test` database
 do

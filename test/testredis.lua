@@ -1,6 +1,6 @@
 local silly = require "silly"
 local time = require "silly.time"
-local redis = require "silly.db.redis"
+local redis = require "silly.store.redis"
 local testaux = require "test.testaux"
 
 local function asserteq(cmd, expect_success, expect_value, success, value)

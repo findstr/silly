@@ -8,12 +8,12 @@ local sub = string.sub
 local upper = string.upper
 local format = string.format
 
----@class silly.db.redis
+---@class silly.store.redis
 ---@field sock silly.net.socketq
----@field new fun(config:{addr:string, auth:string, db:integer}):silly.db.redis
----@field select fun(self:silly.db.redis,)
+---@field new fun(config:{addr:string, auth:string, db:integer}):silly.store.redis
+---@field select fun(self:silly.store.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
----@field close fun(self:silly.db.redis)
+---@field close fun(self:silly.store.redis)
 local redis = {}
 local redis_mt = { __index = redis }
 local header = "+-:*$"
@@ -139,7 +139,7 @@ local function redis_login(auth, db)
 end
 
 ---@param config table
----@return silly.db.redis
+---@return silly.store.redis
 function redis.new(config)
 	local obj = {
 		sock = dispatch.new {

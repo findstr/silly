@@ -4,7 +4,7 @@ local silly = require "silly"
 local time = require "silly.time"
 local hash = require "silly.crypto.hash"
 local tcp = require "silly.net.tcp"
-local c = require "silly.db.mysql.c"
+local c = require "silly.store.mysql.c"
 local logger = require "silly.logger"
 
 local sub = string.sub
@@ -856,7 +856,7 @@ cmt = {
 	__gc = function(conn)
 		local fd = conn.fd
 		if fd then
-			logger.error("[silly.db.mysql] connection leaked", fd)
+			logger.error("[silly.store.mysql] connection leaked", fd)
 			conn.fd = nil
 			local ok = tcp_close(fd)
 		end

@@ -2,16 +2,16 @@ local time = require "silly.time"
 local silly = require "silly"
 local logger = require "silly.logger"
 local grpc = require "silly.net.grpc"
-local proto = require "silly.etcd.v3.proto"
+local proto = require "silly.store.etcd.v3.proto"
 local pb = require "pb"
----@class silly.etcd.client
+---@class silly.store.etcd.client
 ---@field retry integer
 ---@field retry_sleep integer
 ---@field kv silly.net.grpc.client
 ---@field lease silly.net.grpc.client
 ---@field watcher silly.net.grpc.client
 ---@field lease_list table<integer, boolean>
----@field lease_timer fun(self:silly.etcd.client)
+---@field lease_timer fun(self:silly.store.etcd.client)
 local M = {}
 
 local next = next
@@ -120,7 +120,7 @@ local mt = { __index = M }
 ---	retry_sleep:integer|nil,--retry sleep time(ms)
 ---	timeout:number|nil,	--timeout
 ---}
----@return silly.etcd.client
+---@return silly.store.etcd.client
 function M.newclient(conf)
 	local c = setmetatable({
 		retry = conf.retry or 5,
@@ -161,10 +161,10 @@ function M.newclient(conf)
 			if ok then
 				local res, err = stream:read()
 				if not res then
-					logger.error("[silly.etcd] lease keepalive error:", err)
+					logger.error("[etcd] lease keepalive error:", err)
 				end
 			else
-				logger.error("[silly.etcd] lease keepalive lease:", lease_id, "error:", err)
+				logger.error("[etcd] lease keepalive lease:", lease_id, "error:", err)
 			end
 			n = n + 1
 		end
@@ -473,7 +473,7 @@ local function wait_for_lock(self, prefix, key)
 	while true do
 		local res, err = stream:read()
 		if not res then
-			logger.error("[silly.etcd] watch key:", last_key, "err:", err)
+			logger.error("[etcd] watch key:", last_key, "err:", err)
 			stream:close()
 			return false, err
 		end
