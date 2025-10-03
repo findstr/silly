@@ -1,5 +1,5 @@
 local P = require "test.print"
-local jwt = require "silly.jwt"
+local jwt = require "silly.security.jwt"
 local json = require "silly.encoding.json"
 local pkey = require "silly.crypto.pkey"
 local testaux = require "test.testaux"
