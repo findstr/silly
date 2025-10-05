@@ -35,6 +35,16 @@ for i = 1, 20 do
 	testaux.asserteq(data, buf[i], "udp data validate")
 	time.sleep(150)
 end
+
+wg:fork(function()
+	local fd = udp.connect("127.0.0.1:1998")
+	local ok = udp.sendto(fd, "Hello, UDP!")
+	print("Sent data to", ok)
+	time.sleep(1000)
+	local ok = udp.sendto(fd, "Hello, UDP!")
+	print("Sent data to", ok)
+end)
+
 udp.close(client_fd)
 udp.close(server_fd)
 wg:wait()

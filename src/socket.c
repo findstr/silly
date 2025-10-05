@@ -613,7 +613,7 @@ static void report_close(struct socket_manager *ss, struct socket *s, int err)
 	if (is_muteclose(s))
 		return;
 	set_muteclose(s); // Ensure the close event is emitted only once
-	assert(s->type == SOCKET_TCP_CONNECTION);
+	assert(socket_type(s) == SOCKET_CONNECTION);
 	mc = mem_alloc(sizeof(*mc));
 	mc->hdr.type = MESSAGE_SOCKET_CLOSE;
 	mc->hdr.unpack = close_unpack;
