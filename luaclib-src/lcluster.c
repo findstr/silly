@@ -49,14 +49,14 @@ static int lcreate(lua_State *L)
 	memset(r, 0, sizeof(*r));
 	r->cap = DEFAULT_QUEUE_SIZE;
 	r->queue = silly_malloc(r->cap * sizeof(r->queue[0]));
-	luaL_getmetatable(L, "netpacket");
+	luaL_getmetatable(L, "silly.net.cluster.c");
 	lua_setmetatable(L, -2);
 	return 1;
 }
 
 static inline struct netpacket *get_netpacket(lua_State *L)
 {
-	return luaL_checkudata(L, 1, "netpacket");
+	return luaL_checkudata(L, 1, "silly.net.cluster.c");
 }
 
 static struct incomplete *get_incomplete(struct netpacket *p,
@@ -106,7 +106,7 @@ static void expand_queue(lua_State *L, struct netpacket *np)
 		++h;
 	}
 	silly_free(queue);
-	luaL_getmetatable(L, "netpacket");
+	luaL_getmetatable(L, "silly.net.cluster.c");
 	lua_setmetatable(L, -2);
 	return;
 }
@@ -233,7 +233,7 @@ static inline const char *getbuffer(lua_State *L, int stk, size_t *sz)
 static inline struct packet *pop_packet(lua_State *L)
 {
 	struct netpacket *p;
-	p = luaL_checkudata(L, 1, "netpacket");
+	p = luaL_checkudata(L, 1, "silly.net.cluster.c");
 	assert(p->head < p->cap);
 	assert(p->tail < p->cap);
 	if (p->tail == p->head) { //empty
@@ -269,12 +269,12 @@ static int lpop(lua_State *L)
 	buf = pk->buff;
 	if (size < 0)
 		return 0;
+	pk->buff = NULL;
 	//WARN: pointer cast may not align, can't cross platform
 	session = ack_session_ref(buf + size);
 	if ((session & ACK_BIT) == ACK_BIT) { //rpc ack
 		lua_pushinteger(L, pk->fd);
-		lua_pushlightuserdata(L, buf);
-		lua_pushinteger(L, size);
+		lua_pushlstring(L, buf, size);
 		lua_pushinteger(L, (lua_Integer)(session & ~ACK_BIT));
 		lua_pushnil(L);        //cmd
 		lua_pushinteger(L, 0); //traceid
@@ -283,13 +283,13 @@ static int lpop(lua_State *L)
 		size = pk->size - req_cookie_size;
 		cookie = (void *)(buf + size);
 		lua_pushinteger(L, pk->fd);
-		lua_pushlightuserdata(L, buf);
-		lua_pushinteger(L, size);
+		lua_pushlstring(L, buf, size);
 		lua_pushinteger(L, session);
 		lua_pushinteger(L, req_cmd_ref(cookie));
 		lua_pushinteger(L, (lua_Integer)req_traceid_ref(cookie));
 	}
-	return 6;
+	silly_free(buf);
+	return 5;
 }
 
 static int lrequest(lua_State *L)
@@ -324,9 +324,9 @@ static int lrequest(lua_State *L)
 	req_session_ref(cookie) = session;
 	req_traceid_ref(cookie) = traceid;
 	lua_pushinteger(L, session);
-	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, 2 + body);
-	return 3;
+	lua_pushlstring(L, (char *)p, 2 + body);
+	silly_free(p);
+	return 2;
 }
 
 static int lresponse(lua_State *L)
@@ -350,37 +350,15 @@ static int lresponse(lua_State *L)
 	//WARN: pointer cast may not align, can't cross platform
 	cookie = (void *)&p[2 + size];
 	ack_session_ref(cookie) = session;
-	lua_pushlightuserdata(L, p);
-	lua_pushinteger(L, 2 + body);
-	return 2;
+	lua_pushlstring(L, (char *)p, 2 + body);
+	silly_free(p);
+	return 1;
 }
 
 static int lclear(lua_State *L)
 {
 	silly_socket_id_t sid = luaL_checkinteger(L, 2);
 	clear_incomplete(L, sid);
-	return 0;
-}
-
-static int ltostring(lua_State *L)
-{
-	char *buff;
-	int size;
-	buff = lua_touserdata(L, 1);
-	size = luaL_checkinteger(L, 2);
-	lua_pushlstring(L, buff, size);
-	silly_free(buff);
-	return 1;
-}
-
-static int ldrop(lua_State *L)
-{
-	int type = lua_type(L, 1);
-	if (type != LUA_TLIGHTUSERDATA)
-		return luaL_error(L,
-				  "netpacket.drop can only drop lightuserdata");
-	void *p = lua_touserdata(L, 1);
-	silly_free(p);
 	return 0;
 }
 
@@ -411,26 +389,29 @@ static int packet_gc(lua_State *L)
 			silly_free(t);
 		}
 	}
+	for (i = 0; i < pk->cap; i++) {
+		if (pk->queue[i].buff != NULL) {
+			silly_free(pk->queue[i].buff);
+		}
+	}
 	silly_free(pk->queue);
 	pk->queue = NULL;
 	return 0;
 }
 
-SILLY_MOD_API int luaopen_silly_netpacket(lua_State *L)
+SILLY_MOD_API int luaopen_silly_net_cluster_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 		{ "create",   lcreate   },
 		{ "pop",      lpop      },
+		{ "push",     lpush     },
 		{ "request",  lrequest  },
 		{ "response", lresponse },
 		{ "clear",    lclear    },
-		{ "drop",     ldrop     },
-		{ "tostring", ltostring },
-		{ "push",     lpush     },
 		{ NULL,       NULL      },
 	};
 	luaL_checkversion(L);
-	luaL_newmetatable(L, "netpacket");
+	luaL_newmetatable(L, "silly.net.cluster.c");
 	lua_pushliteral(L, "__gc");
 	lua_pushcfunction(L, packet_gc);
 	lua_settable(L, -3);

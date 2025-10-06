@@ -100,9 +100,9 @@ LIB_SRC = lualib-silly.c \
 	lualib-metrics.c \
 	lualib-logger.c \
 	lualib-profiler.c \
-	lualib-netpacket.c \
 	lualib-tls.c \
 	lualib-debugger.c \
+	lcluster.c \
 	lnetstream.c \
 	lencoding.c \
 	lhive.c \

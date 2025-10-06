@@ -16,7 +16,7 @@ local M = {}
 ---@class silly.net.event
 ---@field accept fun(fd:integer, listenid:integer, addr:string)?
 ---@field close fun(fd:integer, errno:integer)
----@field data fun(fd:integer, msg:lightuserdata, addr:string?)
+---@field data fun(fd:integer, msg:lightuserdata, size:integer)|fun(fd:integer, msg:lightuserdata, addr:string?)
 
 --socket
 local socket_pending = {}
