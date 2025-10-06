@@ -1,7 +1,7 @@
 ---
 title: MySQL 连接池管理操作指南
 icon: database
-order: 1
+order: 2
 category:
   - 操作指南
 tag:

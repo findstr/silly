@@ -1,6 +1,6 @@
 ---
 title: 操作指南
-index: true
+index: false
 icon: book
 category:
   - 指南
@@ -8,15 +8,15 @@ category:
 
 # 操作指南
 
-本部分提供解决具体问题的操作指南，比如"如何配置热更新"、"如何连接 Redis"等。
+本部分提供解决具体问题的实用指南，比如"如何配置热更新"、"如何连接 Redis"等。
 
 ## 特点
 
 - **问题导向**: 直接解决你遇到的具体问题
-- **最佳实践**: 推荐的解决方案
 - **实用代码**: 可直接复制使用的代码片段
+- **经验总结**: 推荐的解决方案
 
-## 操作指南列表
+## 指南列表
 
 ### 网络和安全
 - [TLS/HTTPS 配置](./tls-configuration.md) - 配置 HTTPS 服务器和证书管理
@@ -27,7 +27,7 @@ category:
 ### 开发运维
 - [热更新配置](./hot-reload.md) - 实现零停机代码更新
 - [日志和监控](./logging-monitoring.md) - 日志系统和 Prometheus 监控集成
-- [错误处理最佳实践](./error-handling.md) - 构建健壮的应用程序
+- [错误处理指南](./error-handling.md) - 构建健壮的应用程序
 
 ## 相关资源
 

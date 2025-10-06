@@ -467,5 +467,4 @@ net.tcpsend(fd, {
 
 - [silly.net.tcp](./net/tcp.md) - 高级 TCP API（推荐使用）
 - [silly.net.udp](./net/udp.md) - 高级 UDP API（推荐使用）
-- [silly.netstream](./netstream.md) - 流式缓冲区
-- [silly.netpacket](./netpacket.md) - 包协议解析器
+- [silly](./silly.md) - 核心调度器

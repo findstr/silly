@@ -232,4 +232,4 @@ print("Main logic continues")
 ## 参见
 
 - [silly](./silly.md) - 核心调度器
-- [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+- [silly.sync.waitgroup](./sync/waitgroup.md) - 协程等待组

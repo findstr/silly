@@ -1,6 +1,7 @@
 ---
 title: TLS/HTTPS 配置指南
 icon: lock
+order: 1
 category:
   - 操作指南
 tag:
@@ -8,7 +9,6 @@ tag:
   - HTTPS
   - 安全
   - 证书
-order: 1
 ---
 
 # TLS/HTTPS 配置指南

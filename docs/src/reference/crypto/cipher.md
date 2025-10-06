@@ -938,7 +938,6 @@ end
 
 ## 参见
 
-- [silly.crypto.random](./random.md) - 安全随机数生成（生成密钥、IV）
 - [silly.crypto.hash](./hash.md) - 哈希函数（密钥派生、数据完整性）
 - [silly.crypto.hmac](./hmac.md) - 消息认证码（CBC 模式的完整性保护）
 - [silly.crypto.pkey](./pkey.md) - 非对称加密（密钥交换、数字签名）

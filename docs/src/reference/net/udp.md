@@ -582,6 +582,6 @@ end
 ## 参见
 
 - [silly.net.tcp](./tcp.md) - TCP 网络协议
-- [silly.net.websocket](../../concepts/websocket.md) - WebSocket 协议
-- [silly.net.dns](../../concepts/dns.md) - DNS 解析
+- [silly.net.websocket](./websocket.md) - WebSocket 协议
+- [silly.net.dns](./dns.md) - DNS 解析
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组

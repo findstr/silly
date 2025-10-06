@@ -24,6 +24,7 @@ export default sidebar({
       link: "reference/",
       children: [
         { text: "silly", icon: "microchip", link: "silly" },
+        { text: "silly.env", icon: "gear", link: "env" },
         { text: "silly.time", icon: "clock", link: "time" },
         { text: "silly.signal", icon: "wave-square", link: "signal" },
         { text: "silly.logger", icon: "file-lines", link: "logger" },
@@ -50,6 +51,7 @@ export default sidebar({
           collapsible: true,
           children: [
             { text: "silly.encoding.json", icon: "file-code", link: "json" },
+            { text: "silly.encoding.base64", icon: "code", link: "base64" },
           ],
         },
         {

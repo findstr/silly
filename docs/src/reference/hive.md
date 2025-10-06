@@ -304,6 +304,6 @@ Hive的目的是处理**必须阻塞**的操作。不要用它来：
 
 ## 参见
 
-- [silly.sync.mutex](../sync/mutex.md) - 互斥锁（hive内部使用）
-- [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+- [silly.sync.mutex](./sync/mutex.md) - 互斥锁（hive内部使用）
+- [silly.sync.waitgroup](./sync/waitgroup.md) - 协程等待组
 - [silly](./silly.md) - 核心调度器

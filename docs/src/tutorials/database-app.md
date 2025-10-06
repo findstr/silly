@@ -1215,7 +1215,7 @@ local res, err = timed_query(db.query, db, "SELECT * FROM users")
 
 - **[WebSocket 聊天室](./websocket-chat.md)**：实现实时通信
 - **[集群部署](../reference/net/cluster.md)**：构建分布式系统
-- **[性能优化](../guides/performance.md)**：提升应用性能
+- **[MySQL 连接池管理](../guides/mysql-connection-pool.md)**：优化数据库性能
 
 ## 参考资料
 

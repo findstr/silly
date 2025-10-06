@@ -1,6 +1,6 @@
 ---
 title: 教程
-index: true
+index: false
 icon: graduation-cap
 category:
   - 教程

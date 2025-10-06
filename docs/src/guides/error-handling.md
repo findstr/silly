@@ -1,18 +1,18 @@
 ---
-title: 错误处理最佳实践
-icon: shield-alert
+title: 错误处理指南
+icon: triangle-exclamation
+order: 5
 category:
   - 操作指南
 tag:
   - 错误处理
   - 异常捕获
-  - 最佳实践
   - 调试
 ---
 
-# 错误处理最佳实践
+# 错误处理指南
 
-本指南介绍在 Silly 框架中进行错误处理的最佳实践，帮助你构建健壮、可靠的应用程序。
+本指南介绍在 Silly 框架中进行错误处理的实践方法，帮助你构建健壮、可靠的应用程序。
 
 ## 简介
 

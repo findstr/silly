@@ -1,6 +1,7 @@
 ---
 title: 日志与监控指南
 icon: chart-line
+order: 4
 category:
   - 操作指南
 tag:

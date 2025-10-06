@@ -1,7 +1,7 @@
 ---
 title: TCP Echo 服务器教程
-icon: network
-order: 1
+icon: server
+order: 2
 category:
   - 教程
 tag:
@@ -596,7 +596,7 @@ end
 接下来,你可以学习:
 
 - **[HTTP 服务器教程](./http-server.md)**: 构建 Web 应用
-- **[WebSocket 教程](./websocket-server.md)**: 实现实时通信
-- **[RPC 教程](./rpc-server.md)**: 构建分布式系统
+- **[WebSocket 教程](./websocket-chat.md)**: 实现实时通信
+- **[数据库应用教程](./database-app.md)**: 使用 MySQL 和 Redis
 
 继续探索 Silly 框架的强大功能!

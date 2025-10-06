@@ -1,6 +1,7 @@
 ---
 title: 热更新操作指南
 icon: fire
+order: 3
 category:
   - 操作指南
 tag:
