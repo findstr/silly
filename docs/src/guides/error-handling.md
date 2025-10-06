@@ -192,7 +192,7 @@ silly.fork(function()
     -- 设置超时
     local timeout = 5000  -- 5秒
 
-    local timer = time.timeout(timeout, function()
+    local timer = time.after(timeout, function()
         print("HTTP 请求超时")
     end)
 
@@ -1545,7 +1545,7 @@ end
 ```lua
 local time = require "silly.time"
 
-local timer = time.timeout(5000, function()
+local timer = time.after(5000, function()
     print("操作超时")
     -- 清理资源
 end)

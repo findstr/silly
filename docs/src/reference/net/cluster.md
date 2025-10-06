@@ -26,12 +26,13 @@ cluster 模块采用客户端-服务器模型，每个节点既可以作为服�
 
 ### RPC 协议
 
-cluster 内部使用 `silly.netpacket` 模块实现二进制协议：
+cluster 内部使用 `silly.net.cluster.c` 模块实现二进制协议：
 
 - **请求包**：`[2字节长度][业务数据][traceid(8字节)][cmd(4字节)][session(4字节)]`
 - **响应包**：`[2字节长度][业务数据][session(4字节)]`
 - **会话机制**：使用 session 自动匹配请求和响应
 - **超时控制**：支持为每个请求设置超时时间
+- **内存管理**：buffer 自动管理，无需手动释放
 
 ### 序列化机制
 
@@ -43,40 +44,45 @@ cluster 模块不绑定特定的序列化格式，通过配置回调函数支持
 
 ## API 参考
 
-### cluster.new(conf)
+### cluster.serve(conf)
 
-创建一个 cluster 实例，用于节点间通信。
+配置 cluster 模块的全局行为，设置编解码、超时和回调函数。
 
 **参数：**
 
 - `conf` (table) - 配置表，包含以下字段：
-  - `marshal` (function) - **必需**，编码函数：`function(type, cmd, body) -> cmd_number, data, size`
+  - `marshal` (function) - **必需**，编码函数：`function(type, cmd, body) -> cmd_number, data`
     - `type`："request" 或 "response"
     - `cmd`：命令标识（字符串或数字）
     - `body`：要编码的 Lua 数据
-    - 返回：命令数字、数据指针、数据大小
-  - `unmarshal` (function) - **必需**，解码函数：`function(type, cmd, buffer, size) -> body`
+    - 返回：命令数字、数据字符串
+  - `unmarshal` (function) - **必需**，解码函数：`function(type, cmd, data) -> body, err?`
     - `type`："request" 或 "response"
     - `cmd`：命令标识
-    - `buffer`：数据指针（lightuserdata）
-    - `size`：数据大小
-    - 返回：解码后的 Lua 数据
-  - `call` (function) - **必需**，RPC 请求处理函数：`function(body, cmd, fd) -> response`
-    - `body`：解码后的请求数据
+    - `data`：数据字符串
+    - 返回：解码后的 Lua 数据，可选错误信息
+  - `call` (function) - **必需**，RPC 请求处理函数：`function(peer, cmd, body) -> response`
+    - `peer`：连接的 peer 对象
     - `cmd`：命令标识
-    - `fd`：连接的文件描述符
+    - `body`：解码后的请求数据
     - 返回：响应数据（nil 表示不需要响应）
-  - `close` (function) - **必需**，连接关闭回调：`function(fd, errno)`
-    - `fd`：连接的文件描述符
+  - `close` (function) - 可选，连接关闭回调：`function(peer, errno)`
+    - `peer`：连接的 peer 对象
     - `errno`：错误码
-  - `accept` (function) - 可选，新连接回调：`function(fd, addr)`
-    - `fd`：新连接的文件描述符
+  - `accept` (function) - 可选，新连接回调：`function(peer, addr)`
+    - `peer`：新连接的 peer 对象
     - `addr`：客户端地址
   - `timeout` (number) - 可选，RPC 超时时间（毫秒），默认 5000
 
 **返回值：**
 
-- `cluster` (table) - cluster 实例对象
+- 无返回值
+
+**注意：**
+
+- `cluster.serve()` 必须在使用其他 cluster 函数之前调用
+- peer 对象包含 `fd` 和 `addr` 字段（accept 的 peer 无 addr）
+- 有 addr 的 peer 支持自动重连
 
 **示例：**
 
@@ -109,69 +115,62 @@ local function marshal(typ, cmd, body)
     end
 
     local dat, sz = proto:encode(cmd, body, true)
-    local buf, size = proto:pack(dat, sz, true)
-    return cmd, buf, size
+    local buf = proto:pack(dat, sz, false)
+    return cmd, buf
 end
 
 -- 解码函数
-local function unmarshal(typ, cmd, buf, size)
+local function unmarshal(typ, cmd, buf)
     if typ == "response" then
         if cmd == "ping" or cmd == 0x01 then
             cmd = "pong"
         end
     end
 
-    local dat, sz = proto:unpack(buf, size, true)
+    local dat, sz = proto:unpack(buf, #buf, true)
     local body = proto:decode(cmd, dat, sz)
     return body
 end
 
--- 创建服务器
-local server = cluster.new {
+-- 配置服务器
+cluster.serve {
     timeout = 3000,
     marshal = marshal,
     unmarshal = unmarshal,
-    accept = function(fd, addr)
-        print("新连接:", fd, addr)
+    accept = function(peer, addr)
+        print("新连接:", peer.fd, addr)
     end,
-    call = function(body, cmd, fd)
+    call = function(peer, cmd, body)
         print("收到请求:", body.msg)
         return {msg = "Hello from server"}
     end,
-    close = function(fd, errno)
-        print("连接关闭:", fd, errno)
+    close = function(peer, errno)
+        print("连接关闭:", peer.fd, errno)
     end,
 }
 
 -- 启动监听
-local listen_fd = server.listen("127.0.0.1:8888")
-print("服务器监听:", listen_fd)
+local listen_handle = cluster.listen("127.0.0.1:8888")
+print("服务器监听:", listen_handle.fd)
 
 -- 创建客户端并测试
 silly.fork(function()
-    local client = cluster.new {
-        marshal = marshal,
-        unmarshal = unmarshal,
-        call = function() end,
-        close = function() end,
-    }
-
-    local fd, err = client.connect("127.0.0.1:8888")
-    if not fd then
+    local peer, err = cluster.connect("127.0.0.1:8888")
+    if not peer then
         print("连接失败:", err)
         return
     end
 
-    local resp = client.call(fd, "ping", {msg = "Hello"})
+    local resp = cluster.call(peer, "ping", {msg = "Hello"})
     print("收到响应:", resp and resp.msg or "nil")
 
-    client.close(fd)
+    cluster.close(peer)
 end)
 ```
 
 ---
 
-### instance.listen(addr, backlog)
+### cluster.listen(addr, backlog)
 
 在指定地址上监听 TCP 连接。
 
@@ -182,13 +181,14 @@ end)
 
 **返回值：**
 
-- `fd` (number|nil) - 成功返回监听文件描述符
+- `listener` (table|nil) - 成功返回 listener 对象，包含 `fd` 字段
 - `err` (string|nil) - 失败返回错误信息
 
 **注意：**
 
 - listen 是同步操作，不需要在协程中调用
 - 监听成功后，新连接会触发 `accept` 回调
+- listener 对象可用于 `cluster.close()` 关闭监听
 
 **示例：**
 
@@ -203,40 +203,40 @@ echo 0x01 {
 }
 ]]
 
-local server = cluster.new {
+cluster.serve {
     marshal = function(typ, cmd, body)
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
-        local dat, sz = proto:unpack(buf, size, true)
+    unmarshal = function(typ, cmd, buf)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
-    accept = function(fd, addr)
-        print(string.format("接受连接 fd=%d 来自 %s", fd, addr))
+    accept = function(peer, addr)
+        print(string.format("接受连接 fd=%d 来自 %s", peer.fd, addr))
     end,
-    call = function(body, cmd, fd)
+    call = function(peer, cmd, body)
         return body
     end,
-    close = function(fd, errno)
-        print(string.format("连接 %d 关闭，错误码: %d", fd, errno))
+    close = function(peer, errno)
+        print(string.format("连接 %d 关闭，错误码: %d", peer.fd, errno))
     end,
 }
 
 -- 监听多个端口
-local fd1 = server.listen("0.0.0.0:8888")
-local fd2 = server.listen("0.0.0.0:8889", 256)
+local listener1 = cluster.listen("0.0.0.0:8888")
+local listener2 = cluster.listen("0.0.0.0:8889", 256)
 
-print("监听端口:", fd1, fd2)
+print("监听端口:", listener1.fd, listener2.fd)
 ```
 
 ---
 
-### instance.connect(addr)
+### cluster.connect(addr)
 
 连接到指定地址的服务器。这是一个**异步操作**，必须在协程中调用。
 
@@ -246,14 +246,15 @@ print("监听端口:", fd1, fd2)
 
 **返回值：**
 
-- `fd` (number|nil) - 成功返回连接文件描述符
+- `peer` (table|nil) - 成功返回 peer 对象，包含 `fd` 和 `addr` 字段
 - `err` (string) - 失败返回错误信息
 
 **注意：**
 
 - 必须在 `silly.fork()` 创建的协程中调用
 - 支持域名解析（自动调用 DNS 查询）
-- 连接成功后即可使用 `call` 或 `send` 发送请求
+- peer 对象保存了地址信息，连接断开后可自动重连
+- 连接成功后即可使用 `cluster.call()` 或 `cluster.send()` 发送请求
 
 **示例：**
 
@@ -268,17 +269,17 @@ request 0x01 {
 }
 ]]
 
-local client = cluster.new {
+cluster.serve {
     marshal = function(typ, cmd, body)
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
-        local dat, sz = proto:unpack(buf, size, true)
+    unmarshal = function(typ, cmd, buf)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
     call = function() end,
@@ -287,33 +288,33 @@ local client = cluster.new {
 
 silly.fork(function()
     -- 连接 IP 地址
-    local fd1, err1 = client.connect("127.0.0.1:8888")
-    print("连接1:", fd1, err1)
+    local peer1, err1 = cluster.connect("127.0.0.1:8888")
+    print("连接1:", peer1 and peer1.fd or nil, err1)
 
     -- 连接域名（会自动 DNS 解析）
-    local fd2, err2 = client.connect("example.com:80")
-    print("连接2:", fd2, err2)
+    local peer2, err2 = cluster.connect("example.com:80")
+    print("连接2:", peer2 and peer2.fd or nil, err2)
 
     -- 连接失败处理
-    if not fd1 then
+    if not peer1 then
         print("连接失败:", err1)
         return
     end
 
     -- 使用连接...
-    client.close(fd1)
+    cluster.close(peer1)
 end)
 ```
 
 ---
 
-### instance.call(fd, cmd, obj)
+### cluster.call(peer, cmd, obj)
 
 发送 RPC 请求并等待响应。这是一个**异步操作**，必须在协程中调用。
 
 **参数：**
 
-- `fd` (number) - 连接的文件描述符
+- `peer` (table) - peer 对象（由 `cluster.connect()` 或 accept 回调获得）
 - `cmd` (string|number) - 命令标识
 - `obj` (any) - 请求数据（会通过 marshal 编码）
 
@@ -326,7 +327,8 @@ end)
 
 - 必须在 `silly.fork()` 创建的协程中调用
 - 如果超时，返回 `nil, "timeout"`
-- 如果连接已关闭，返回 `nil, "closed"`
+- 如果连接已关闭但 peer 有 addr，会自动重连
+- 如果 peer 无 addr（accept 产生的），连接断开后返回 `nil, "peer closed"`
 - 自动处理 session 匹配和超时控制
 
 **示例：**
@@ -348,7 +350,7 @@ sum 0x02 {
 ]]
 
 -- 服务器端
-local server = cluster.new {
+cluster.serve {
     timeout = 2000,
     marshal = function(typ, cmd, body)
         if typ == "response" and cmd == "add" then
@@ -358,76 +360,52 @@ local server = cluster.new {
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
+    unmarshal = function(typ, cmd, buf)
         if typ == "response" and cmd == "add" then
             cmd = "sum"
         end
-        local dat, sz = proto:unpack(buf, size, true)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
     accept = function() end,
-    call = function(body, cmd, fd)
+    call = function(peer, cmd, body)
         -- 计算加法
         return {result = body.a + body.b}
     end,
     close = function() end,
 }
 
-server.listen("127.0.0.1:9999")
+cluster.listen("127.0.0.1:9999")
 
 -- 客户端测试
 silly.fork(function()
-    local client = cluster.new {
-        timeout = 2000,
-        marshal = server.__event.marshal or function(typ, cmd, body)
-            if typ == "response" and cmd == "add" then
-                cmd = "sum"
-            end
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = server.__event.unmarshal or function(typ, cmd, buf, size)
-            if typ == "response" and cmd == "add" then
-                cmd = "sum"
-            end
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        call = function() end,
-        close = function() end,
-    }
-
     time.sleep(100)
-    local fd = client.connect("127.0.0.1:9999")
+    local peer = cluster.connect("127.0.0.1:9999")
 
     -- 发送请求并等待响应
-    local resp, err = client.call(fd, "add", {a = 10, b = 20})
+    local resp, err = cluster.call(peer, "add", {a = 10, b = 20})
     if resp then
         print("计算结果:", resp.result)  -- 输出: 30
     else
         print("调用失败:", err)
     end
 
-    client.close(fd)
+    cluster.close(peer)
 end)
 ```
 
 ---
 
-### instance.send(fd, cmd, obj)
+### cluster.send(peer, cmd, obj)
 
 发送单向消息，不等待响应。这是一个**异步操作**，必须在协程中调用。
 
 **参数：**
 
-- `fd` (number) - 连接的文件描述符
+- `peer` (table) - peer 对象
 - `cmd` (string|number) - 命令标识
 - `obj` (any) - 消息数据
 
@@ -441,6 +419,7 @@ end)
 - 必须在 `silly.fork()` 创建的协程中调用
 - 与 `call` 不同，send 不等待响应
 - 适用于通知、日志推送等无需响应的场景
+- 如果连接断开但 peer 有 addr，会自动重连
 
 **示例：**
 
@@ -457,21 +436,21 @@ notify 0x10 {
 ]]
 
 -- 服务器接收通知
-local server = cluster.new {
+cluster.serve {
     marshal = function(typ, cmd, body)
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
-        local dat, sz = proto:unpack(buf, size, true)
+    unmarshal = function(typ, cmd, buf)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
     accept = function() end,
-    call = function(body, cmd, fd)
+    call = function(peer, cmd, body)
         print("收到通知:", body.message)
         -- 单向消息不返回响应
         return nil
@@ -479,33 +458,16 @@ local server = cluster.new {
     close = function() end,
 }
 
-server.listen("127.0.0.1:7777")
+cluster.listen("127.0.0.1:7777")
 
 -- 客户端发送通知
 silly.fork(function()
-    local client = cluster.new {
-        marshal = function(typ, cmd, body)
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = function(typ, cmd, buf, size)
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        call = function() end,
-        close = function() end,
-    }
-
     time.sleep(100)
-    local fd = client.connect("127.0.0.1:7777")
+    local peer = cluster.connect("127.0.0.1:7777")
 
     -- 发送多条通知
     for i = 1, 5 do
-        local ok, err = client.send(fd, "notify", {
+        local ok, err = cluster.send(peer, "notify", {
             message = "通知 #" .. i
         })
         if not ok then
@@ -515,29 +477,29 @@ silly.fork(function()
         time.sleep(100)
     end
 
-    client.close(fd)
+    cluster.close(peer)
 end)
 ```
 
 ---
 
-### instance.close(fd)
+### cluster.close(peer)
 
-关闭连接。
+关闭连接或监听器。
 
 **参数：**
 
-- `fd` (number|string) - 文件描述符或监听地址
+- `peer` (table) - peer 对象或 listener 对象
 
 **返回值：**
 
-- `ok` (boolean) - true 表示连接存在并已关闭
-- `status` (string) - "connected" 或 "closed"
+- 无返回值
 
 **注意：**
 
-- 可以关闭客户端连接、accept 的连接或监听 fd
-- 关闭后会触发 `close` 回调
+- 可以关闭客户端连接、accept 的连接或监听器
+- 关闭后会触发 `close` 回调（listener 除外）
+- 关闭后 peer.fd 会被设为 nil
 
 **示例：**
 
@@ -552,63 +514,105 @@ test 0x01 {
 }
 ]]
 
-local server = cluster.new {
+cluster.serve {
     marshal = function(typ, cmd, body)
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
-        local dat, sz = proto:unpack(buf, size, true)
+    unmarshal = function(typ, cmd, buf)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
     accept = function() end,
     call = function() end,
-    close = function(fd, errno)
-        print("连接已关闭:", fd, errno)
+    close = function(peer, errno)
+        print("连接已关闭:", peer.fd, errno)
     end,
 }
 
-local listen_fd = server.listen("127.0.0.1:6666")
+local listener = cluster.listen("127.0.0.1:6666")
 
 silly.fork(function()
-    local client = cluster.new {
-        marshal = function(typ, cmd, body)
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = function(typ, cmd, buf, size)
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        call = function() end,
-        close = function(fd, errno)
-            print("客户端连接关闭:", fd, errno)
-        end,
-    }
-
-    local fd = client.connect("127.0.0.1:6666")
+    local peer = cluster.connect("127.0.0.1:6666")
 
     -- 主动关闭连接
-    local ok, status = client.close(fd)
-    print("关闭连接:", ok, status)
+    cluster.close(peer)
+    print("peer 已关闭, fd:", peer.fd)  -- nil
 
-    -- 重复关闭会返回 false
-    ok, status = client.close(fd)
-    print("重复关闭:", ok, status)  -- false, "closed"
+    -- 关闭监听器
+    cluster.close(listener)
 end)
 ```
 
 ---
 
 ## 完整示例
+
+### 简单的 RPC 服务
+
+```lua validate
+local silly = require "silly"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+
+local proto = zproto:parse [[
+ping 0x01 {
+    .msg:string 1
+}
+pong 0x02 {
+    .msg:string 1
+}
+]]
+
+local function marshal(typ, cmd, body)
+    if typ == "response" and (cmd == "ping" or cmd == 0x01) then
+        cmd = "pong"
+    end
+    if type(cmd) == "string" then
+        cmd = proto:tag(cmd)
+    end
+    local dat, sz = proto:encode(cmd, body, true)
+    return cmd, proto:pack(dat, sz, false)
+end
+
+local function unmarshal(typ, cmd, buf)
+    if typ == "response" and (cmd == "ping" or cmd == 0x01) then
+        cmd = "pong"
+    end
+    local dat, sz = proto:unpack(buf, #buf, true)
+    return proto:decode(cmd, dat, sz)
+end
+
+cluster.serve {
+    marshal = marshal,
+    unmarshal = unmarshal,
+    accept = function(peer, addr)
+        print("新连接:", peer.fd, addr)
+    end,
+    call = function(peer, cmd, body)
+        print("收到:", body.msg)
+        return {msg = "pong from server"}
+    end,
+    close = function(peer, errno)
+        print("连接关闭:", peer.fd)
+    end,
+}
+
+cluster.listen("127.0.0.1:8888")
+
+silly.fork(function()
+    local peer = cluster.connect("127.0.0.1:8888")
+    local resp = cluster.call(peer, "ping", {msg = "ping"})
+    print("响应:", resp.msg)
+    cluster.close(peer)
+end)
+```
+
+---
 
 ### 多节点集群通信
 
@@ -638,12 +642,11 @@ local function marshal(typ, cmd, body)
         cmd = proto:tag(cmd)
     end
     local dat, sz = proto:encode(cmd, body, true)
-    local buf, size = proto:pack(dat, sz, true)
-    return cmd, buf, size
+    return cmd, proto:pack(dat, sz, false)
 end
 
-local function unmarshal(typ, cmd, buf, size)
-    local dat, sz = proto:unpack(buf, size, true)
+local function unmarshal(typ, cmd, buf)
+    local dat, sz = proto:unpack(buf, #buf, true)
     return proto:decode(cmd, dat, sz)
 end
 
@@ -652,16 +655,16 @@ local nodes = {}
 
 -- 创建节点服务器
 local function create_node(node_id, port)
-    local server = cluster.new {
+    cluster.serve {
         timeout = 5000,
         marshal = marshal,
         unmarshal = unmarshal,
-        accept = function(fd, addr)
+        accept = function(peer, addr)
             print(string.format("[%s] 接受连接: %s", node_id, addr))
+            nodes[addr] = peer
         end,
-        call = function(body, cmd, fd)
+        call = function(peer, cmd, body)
             if cmd == 0x01 then  -- register
-                nodes[body.node_id] = {fd = fd, addr = body.addr}
                 print(string.format("[%s] 节点注册: %s @ %s",
                     node_id, body.node_id, body.addr))
                 return {status = "ok"}
@@ -673,22 +676,14 @@ local function create_node(node_id, port)
                 return {result = "forwarded"}
             end
         end,
-        close = function(fd, errno)
-            -- 清理断开的节点
-            for k, v in pairs(nodes) do
-                if v.fd == fd then
-                    print(string.format("[%s] 节点断开: %s", node_id, k))
-                    nodes[k] = nil
-                    break
-                end
-            end
+        close = function(peer, errno)
+            print(string.format("[%s] 节点断开", node_id))
         end,
     }
 
-    local listen_fd = server.listen("127.0.0.1:" .. port)
+    local listener = cluster.listen("127.0.0.1:" .. port)
     print(string.format("[%s] 监听端口: %d", node_id, port))
-
-    return server
+    return listener
 end
 
 -- 创建三个节点
@@ -701,16 +696,9 @@ silly.fork(function()
     time.sleep(100)
 
     -- node2 连接到 node1
-    local client2 = cluster.new {
-        marshal = marshal,
-        unmarshal = unmarshal,
-        call = function() end,
-        close = function() end,
-    }
-
-    local fd2 = client2.connect("127.0.0.1:10001")
-    if fd2 then
-        local resp = client2.call(fd2, "register", {
+    local peer2 = cluster.connect("127.0.0.1:10001")
+    if peer2 then
+        local resp = cluster.call(peer2, "register", {
             node_id = "node2",
             addr = "127.0.0.1:10002"
         })
@@ -718,29 +706,22 @@ silly.fork(function()
 
         -- 发送心跳
         time.sleep(500)
-        local hb = client2.call(fd2, "heartbeat", {
+        local hb = cluster.call(peer2, "heartbeat", {
             timestamp = os.time()
         })
         print("心跳响应:", hb and hb.timestamp or "nil")
     end
 
     -- node3 连接到 node1
-    local client3 = cluster.new {
-        marshal = marshal,
-        unmarshal = unmarshal,
-        call = function() end,
-        close = function() end,
-    }
-
-    local fd3 = client3.connect("127.0.0.1:10001")
-    if fd3 then
-        client3.call(fd3, "register", {
+    local peer3 = cluster.connect("127.0.0.1:10001")
+    if peer3 then
+        cluster.call(peer3, "register", {
             node_id = "node3",
             addr = "127.0.0.1:10003"
         })
 
         -- 通过 node1 转发消息
-        local fwd = client3.call(fd3, "forward", {
+        local fwd = cluster.call(peer3, "forward", {
             target = "node2",
             data = "Hello from node3"
         })
@@ -768,8 +749,9 @@ ack 0x21 {
 }
 ]]
 
--- 广播服务器
-local broadcast_server = cluster.new {
+-- 配置广播服务器
+cluster.serve {
+    timeout = 1000,
     marshal = function(typ, cmd, body)
         if typ == "response" and cmd == "broadcast" then
             cmd = "ack"
@@ -778,64 +760,42 @@ local broadcast_server = cluster.new {
             cmd = proto:tag(cmd)
         end
         local dat, sz = proto:encode(cmd, body, true)
-        local buf, size = proto:pack(dat, sz, true)
-        return cmd, buf, size
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
     end,
-    unmarshal = function(typ, cmd, buf, size)
+    unmarshal = function(typ, cmd, buf)
         if typ == "response" and cmd == "broadcast" then
             cmd = "ack"
         end
-        local dat, sz = proto:unpack(buf, size, true)
+        local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
     accept = function() end,
-    call = function(body, cmd, fd)
+    call = function(peer, cmd, body)
         print("接收广播:", body.message)
-        return {node_id = "node_" .. fd}
+        return {node_id = "node_" .. peer.fd}
     end,
     close = function() end,
 }
 
 -- 启动 3 个接收节点
+local listeners = {}
 local ports = {8001, 8002, 8003}
 for _, port in ipairs(ports) do
-    broadcast_server.listen("127.0.0.1:" .. port)
+    local listener = cluster.listen("127.0.0.1:" .. port)
+    table.insert(listeners, listener)
 end
 
 -- 广播客户端
 silly.fork(function()
     time.sleep(200)
 
-    local broadcaster = cluster.new {
-        timeout = 1000,
-        marshal = function(typ, cmd, body)
-            if typ == "response" and cmd == "broadcast" then
-                cmd = "ack"
-            end
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = function(typ, cmd, buf, size)
-            if typ == "response" and cmd == "broadcast" then
-                cmd = "ack"
-            end
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        call = function() end,
-        close = function() end,
-    }
-
     -- 连接所有节点
-    local connections = {}
+    local peers = {}
     for _, port in ipairs(ports) do
-        local fd = broadcaster.connect("127.0.0.1:" .. port)
-        if fd then
-            table.insert(connections, fd)
+        local peer = cluster.connect("127.0.0.1:" .. port)
+        if peer then
+            table.insert(peers, peer)
         end
     end
 
@@ -843,9 +803,9 @@ silly.fork(function()
     local message = "重要通知：系统将于 10 分钟后维护"
     local acks = {}
 
-    for _, fd in ipairs(connections) do
+    for _, peer in ipairs(peers) do
         silly.fork(function()
-            local resp = broadcaster.call(fd, "broadcast", {
+            local resp = cluster.call(peer, "broadcast", {
                 message = message
             })
             if resp then
@@ -860,8 +820,8 @@ silly.fork(function()
     print("广播完成，确认数:", #acks)
 
     -- 清理连接
-    for _, fd in ipairs(connections) do
-        broadcaster.close(fd)
+    for _, peer in ipairs(peers) do
+        cluster.close(peer)
     end
 end)
 ```
@@ -887,98 +847,70 @@ result 0x31 {
 }
 ]]
 
--- 工作节点
-local function create_worker(worker_id, port)
-    local worker = cluster.new {
-        timeout = 3000,
-        marshal = function(typ, cmd, body)
-            if typ == "response" and cmd == "work" then
-                cmd = "result"
-            end
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = function(typ, cmd, buf, size)
-            if typ == "response" and cmd == "work" then
-                cmd = "result"
-            end
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        accept = function() end,
-        call = function(body, cmd, fd)
-            -- 模拟工作处理
-            print(string.format("[Worker %d] 处理任务 #%d: %s",
-                worker_id, body.task_id, body.data))
-            time.sleep(100 + math.random(200))
-            return {
-                task_id = body.task_id,
-                output = string.format("Worker %d 完成", worker_id)
-            }
-        end,
-        close = function() end,
-    }
-
-    worker.listen("127.0.0.1:" .. port)
-    return worker
-end
-
--- 启动 3 个工作节点
-local workers = {
-    create_worker(1, 9001),
-    create_worker(2, 9002),
-    create_worker(3, 9003),
+-- 配置 cluster 服务
+cluster.serve {
+    timeout = 3000,
+    marshal = function(typ, cmd, body)
+        if typ == "response" and cmd == "work" then
+            cmd = "result"
+        end
+        if type(cmd) == "string" then
+            cmd = proto:tag(cmd)
+        end
+        local dat, sz = proto:encode(cmd, body, true)
+        local buf = proto:pack(dat, sz, false)
+        return cmd, buf
+    end,
+    unmarshal = function(typ, cmd, buf)
+        if typ == "response" and cmd == "work" then
+            cmd = "result"
+        end
+        local dat, sz = proto:unpack(buf, #buf, true)
+        return proto:decode(cmd, dat, sz)
+    end,
+    accept = function() end,
+    call = function(peer, cmd, body)
+        -- 模拟工作处理（根据端口区分工作节点）
+        local worker_id = peer.fd % 3 + 1
+        print(string.format("[Worker %d] 处理任务 #%d: %s",
+            worker_id, body.task_id, body.data))
+        time.sleep(100 + math.random(200))
+        return {
+            task_id = body.task_id,
+            output = string.format("Worker %d 完成", worker_id)
+        }
+    end,
+    close = function() end,
 }
 
--- 负载均衡器
+-- 启动 3 个工作节点
+local listeners = {}
+local ports = {9001, 9002, 9003}
+for _, port in ipairs(ports) do
+    local listener = cluster.listen("127.0.0.1:" .. port)
+    table.insert(listeners, listener)
+end
+
+-- 负载均衡器客户端
 silly.fork(function()
     time.sleep(200)
 
-    local balancer = cluster.new {
-        timeout = 5000,
-        marshal = function(typ, cmd, body)
-            if typ == "response" and cmd == "work" then
-                cmd = "result"
-            end
-            if type(cmd) == "string" then
-                cmd = proto:tag(cmd)
-            end
-            local dat, sz = proto:encode(cmd, body, true)
-            local buf, size = proto:pack(dat, sz, true)
-            return cmd, buf, size
-        end,
-        unmarshal = function(typ, cmd, buf, size)
-            if typ == "response" and cmd == "work" then
-                cmd = "result"
-            end
-            local dat, sz = proto:unpack(buf, size, true)
-            return proto:decode(cmd, dat, sz)
-        end,
-        call = function() end,
-        close = function() end,
-    }
-
     -- 连接所有工作节点
-    local worker_fds = {}
-    local ports = {9001, 9002, 9003}
+    local worker_peers = {}
     for _, port in ipairs(ports) do
-        local fd = balancer.connect("127.0.0.1:" .. port)
-        if fd then
-            table.insert(worker_fds, fd)
+        local peer = cluster.connect("127.0.0.1:" .. port)
+        if peer then
+            table.insert(worker_peers, peer)
         end
     end
 
     -- 轮询分发任务
     local current = 1
     for task_id = 1, 10 do
-        local fd = worker_fds[current]
+        local peer = worker_peers[current]
 
         silly.fork(function()
-            local resp = balancer.call(fd, "work", {
+            local resp = cluster.call(peer, "work", {
                 task_id = task_id,
                 data = "任务数据 " .. task_id
             })
@@ -989,7 +921,7 @@ silly.fork(function()
         end)
 
         -- 轮询到下一个工作节点
-        current = (current % #worker_fds) + 1
+        current = (current % #worker_peers) + 1
         time.sleep(50)
     end
 end)
@@ -1005,19 +937,27 @@ end)
 
 ```lua
 -- ❌ 错误：直接调用会报错
-local fd = client.connect("127.0.0.1:8888")
+local peer = cluster.connect("127.0.0.1:8888")
 
 -- ✅ 正确：在协程中调用
 silly.fork(function()
-    local fd = client.connect("127.0.0.1:8888")
+    local peer = cluster.connect("127.0.0.1:8888")
 end)
 ```
 
-### 连接生命周期
+### Peer 对象和自动重连
 
-- 使用 `__fdaddr` 表跟踪所有活动连接
-- 实例被 GC 时自动关闭所有连接（`__gc` 元方法）
-- 手动关闭连接后，该 fd 从 `__fdaddr` 中移除
+- **connect 返回的 peer**：包含 `fd` 和 `addr` 字段，支持自动重连
+  - 当连接断开时，`peer.fd` 会被设为 `nil`
+  - 下次 `call()` 或 `send()` 时会自动重连
+  - 通过 `addr_to_peer` 缓存，防止重复连接同一地址
+
+- **accept 回调的 peer**：只包含 `fd` 字段，不支持自动重连
+  - 没有 `addr` 信息，无法自动重连
+  - 连接断开后返回 `nil, "peer closed"`
+
+- **listener 对象**：只包含 `fd` 字段，用于监听端口
+  - 通过 `cluster.close()` 可以关闭监听器
 
 ### 超时控制
 
@@ -1027,9 +967,15 @@ end)
 
 ### 序列化注意事项
 
-- `marshal` 必须返回命令数字（不能是字符串）
-- `unmarshal` 接收的 buffer 是 lightuserdata，需要通过 `np.tostring()` 或协议库处理
-- 处理完 buffer 后必须调用 `np.drop()` 释放（cluster 内部已自动处理）
+- `marshal` 返回 `(cmd_number, data)`：
+  - 第一个返回值必须是数字类型的命令 ID
+  - 第二个返回值是编码后的字符串数据
+  - 无需返回 size，自动从字符串获取长度
+
+- `unmarshal` 接收字符串参数：
+  - 参数 `buf` 是 Lua 字符串，可直接使用 `#buf` 获取长度
+  - 无需手动管理内存，buffer 已自动转换为字符串
+  - 返回解码后的 Lua 表和可选的错误信息
 
 ### 分布式追踪
 
@@ -1037,10 +983,10 @@ cluster 自动传播 trace ID：
 
 ```lua
 -- 客户端发起请求时，自动携带当前 trace ID
-local resp = client.call(fd, "ping", data)
+local resp = cluster.call(peer, "ping", data)
 
 -- 服务器端处理时，自动切换到请求的 trace ID
-call = function(body, cmd, fd)
+call = function(peer, cmd, body)
     -- 这里的 silly.trace() 返回的是客户端的 trace ID
     -- 可以用于分布式追踪
 end
@@ -1058,20 +1004,22 @@ end
 
 ```lua
 silly.fork(function()
-    local fd, err = client.connect(addr)
-    if not fd then
+    local peer, err = cluster.connect(addr)
+    if not peer then
         -- 连接失败
         print("连接错误:", err)
         return
     end
 
-    local resp, err = client.call(fd, cmd, data)
+    local resp, err = cluster.call(peer, cmd, data)
     if not resp then
         -- 调用失败
         if err == "timeout" then
             -- 超时处理
-        elseif err == "closed" then
-            -- 连接已关闭
+        elseif err == "peer closed" then
+            -- 连接已关闭（无 addr 的 peer）
+        elseif err then
+            -- 其他错误
         end
         return
     end

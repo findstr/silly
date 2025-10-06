@@ -114,10 +114,10 @@ end)
 ```lua validate
 local silly = require "silly"
 local time = require "silly.time"
-
-local task = silly.fork(function()
-    local result = silly.wait()
-    print("Got:", result)
+local task
+silly.fork(function()
+    task = silly.wait()
+    print("Got:", task)
 end)
 -- 延迟唤醒，确保协程已经进入wait状态
 time.after(10, function()

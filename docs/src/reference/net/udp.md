@@ -319,27 +319,12 @@ silly.fork(function()
         local msg = "Message " .. i
         udp.sendto(fd, msg)
         print("Sent:", msg)
-
-        -- 等待响应（超时机制）
-        local response_received = false
-
-        silly.fork(function()
-            local data, addr = udp.recvfrom(fd)
-            if data then
-                print("Received:", data)
-                response_received = true
-            end
-        end)
-
-        time.sleep(100) -- 等待响应
-
-        if not response_received then
+        local data, addr = udp.recvfrom(fd)
+        if not data then
             print("No response for message", i)
         end
-
         time.sleep(500) -- 消息间隔
     end
-
     udp.close(fd)
 end)
 ```

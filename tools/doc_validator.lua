@@ -68,6 +68,7 @@ for _, name in pairs(names) do
 	validate_md(name)
 end
 
+print("------------------------------------")
 if next(fail_docs) then
 	print("\n\27[31m验证失败文档:\27[0m")
 	for name in pairs(fail_docs) do

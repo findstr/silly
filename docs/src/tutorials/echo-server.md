@@ -454,7 +454,7 @@ socket.listen("127.0.0.1:9999", function(fd, addr)
     print("新连接:", fd, addr)
 
     -- 设置 30 秒超时
-    local timeout_timer = time.timeout(30000, function()
+    local timeout_timer = time.after(30000, function()
         print("连接超时:", fd)
         socket.close(fd)
     end)
@@ -465,7 +465,7 @@ socket.listen("127.0.0.1:9999", function(fd, addr)
 
         -- 有数据活动,重置超时
         time.cancel(timeout_timer)
-        timeout_timer = time.timeout(30000, function()
+        timeout_timer = time.after(30000, function()
             print("连接超时:", fd)
             socket.close(fd)
         end)
