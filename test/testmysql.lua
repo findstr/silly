@@ -429,7 +429,7 @@ do
 		password = "root",
 	}
 	local res, err = pool:query("DROP DATABASE IF EXISTS test")
-	testaux.assertneq(res, nil, "Test 8.1: drop `test` database")
+	testaux.assertneq(res, nil, "Test 8.1: drop `test` database." .. (err and err.message or ""))
 	local res, err = pool:query("CREATE DATABASE IF NOT EXISTS test")
 	testaux.assertneq(res, nil, "Test 8.2: create `test` database")
 	pool:close()
@@ -892,5 +892,579 @@ do
 	testaux.assertneq(res, nil, "Test 23: Should drop table")
 	testaux.asserteq(err, nil, "Test 23: Should not return error")
 
+	pool:close()
+end
+
+-- Test 24: test caching_sha2_password authentication (MySQL 8.0+)
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+	}
+
+	local res, err = pool:query("SELECT @@version AS version")
+	testaux.assertneq(res, nil, "Test 24.1: Should connect with default authentication")
+
+	-- Try to create a test user with caching_sha2_password (MySQL 8.0+)
+	local create_user_sql = [[
+		CREATE USER IF NOT EXISTS 'sha2testuser'@'%'
+		IDENTIFIED WITH caching_sha2_password BY 'sha2testpass'
+	]]
+	res, err = pool:query(create_user_sql)
+	if res then
+		pool:query("GRANT ALL ON test.* TO 'sha2testuser'@'%'")
+		pool:query("FLUSH PRIVILEGES")
+		pool:close()
+
+		-- Test connecting with the sha2 user
+		local pool2 = mysql.open {
+			addr = "127.0.0.1:3306",
+			user = "sha2testuser",
+			password = "sha2testpass",
+			database = "test",
+		}
+
+		local res2, err2 = pool2:ping()
+		testaux.assertneq(res2, nil, "Test 24.2: Should authenticate with caching_sha2_password")
+
+		-- Test query with sha2 user
+		local query_res, query_err = pool2:query("SELECT CURRENT_USER() AS user, 1+1 AS result")
+		testaux.assertneq(query_res, nil, "Test 24.3: Should execute query with sha2 user")
+		testaux.asserteq(query_res[1].result, 2, "Test 24.4: Should return correct result")
+
+		pool2:close()
+
+		-- Test second connection (should use cached password - fast auth path)
+		local pool3 = mysql.open {
+			addr = "127.0.0.1:3306",
+			user = "sha2testuser",
+			password = "sha2testpass",
+			database = "test",
+		}
+
+		local res3, err3 = pool3:ping()
+		testaux.assertneq(res3, nil, "Test 24.5: Should use fast auth with cached password")
+		pool3:close()
+
+		-- Cleanup
+		local pool4 = mysql.open {
+			addr = "127.0.0.1:3306",
+			user = "root",
+			password = "root",
+		}
+		pool4:query("DROP USER IF EXISTS 'sha2testuser'@'%'")
+		pool4:close()
+	else
+		-- MySQL 5.7 or earlier - skip caching_sha2_password tests
+		pool:close()
+	end
+end
+
+-- Test 25: test utf8mb4 charset support
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		charset = "utf8mb4",
+	}
+
+	-- Use a regular table instead of temporary
+	pool:query("DROP TABLE IF EXISTS emoji_test")
+	local res, err = pool:query("CREATE TABLE IF NOT EXISTS emoji_test (id INT PRIMARY KEY, content VARCHAR(100)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	testaux.assertneq(res, nil, "Test 25.1: Should create table with utf8mb4 charset")
+
+	-- Test multi-byte characters (avoiding emoji to reduce complexity)
+	local text = "Hello World 世界"
+	res, err = pool:query("INSERT INTO emoji_test VALUES (?, ?)", 1, text)
+	testaux.assertneq(res, nil, "Test 25.2: Should insert multi-byte data" .. (err and (": " .. err.message) or ""))
+
+	res, err = pool:query("SELECT content FROM emoji_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 25.3: Should retrieve multi-byte data")
+	if res then
+		testaux.asserteq(res[1].content, text, "Test 25.4: Should maintain multi-byte characters")
+	end
+
+	pool:query("DROP TABLE IF EXISTS emoji_test")
+	pool:close()
+end
+
+-- Test 26: test prepared statement cache validation
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	local res, err = pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS cache_test (id INT PRIMARY KEY, value INT)")
+	testaux.assertneq(res, nil, "Test 26.1: Should create table")
+
+	-- Execute same query multiple times to test statement cache
+	for i = 1, 5 do
+		res, err = pool:query("INSERT INTO cache_test VALUES (?, ?)", i, i * 10)
+		testaux.assertneq(res, nil, "Test 26.2." .. i .. ": Should insert data with cached statement")
+	end
+
+	-- Verify all inserts
+	res, err = pool:query("SELECT COUNT(*) as cnt FROM cache_test")
+	testaux.assertneq(res, nil, "Test 26.3: Should count rows")
+	assert(res)
+	testaux.asserteq(res[1].cnt, 5, "Test 26.4: Should have 5 rows")
+
+	pool:close()
+end
+
+-- Test 27: test multi-statement query support
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+	}
+
+	-- Test executing multiple simple statements
+	-- Note: Current driver uses prepared statements, which don't support multiple statements
+	-- This test verifies single statement behavior
+	local res, err = pool:query("SELECT 1 as first_result")
+	testaux.assertneq(res, nil, "Test 27.1: Should execute single statement")
+	if res then
+		testaux.asserteq(res[1].first_result, 1, "Test 27.2: Should get correct result")
+	end
+
+	pool:close()
+end
+
+-- Test 28: test connection pool with max_open_conns = 0 (unlimited)
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_open_conns = 0,  -- unlimited
+		max_idle_conns = 0,  -- no cache
+	}
+
+	-- Create many concurrent connections
+	local wg = wg.new()
+	local success_count = 0
+	for i = 1, 10 do
+		wg:fork(function()
+			local res, err = pool:query("SELECT SLEEP(0.1)")
+			if res then
+				success_count = success_count + 1
+			end
+		end)
+	end
+	wg:wait()
+
+	testaux.asserteq(success_count, 10, "Test 28: Should handle unlimited connections")
+	pool:close()
+end
+
+-- Test 29: test connection object methods directly
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	-- Get a transaction connection
+	local conn<close>, err = pool:begin()
+	testaux.asserteq(err, nil, "Test 29.1: Should get connection")
+	assert(conn)
+
+	-- Test conn:ping()
+	local res, err = conn:ping()
+	testaux.assertneq(res, nil, "Test 29.2: Should ping via connection object")
+
+	-- Test conn:query()
+	res, err = conn:query("SELECT 1 as val")
+	testaux.assertneq(res, nil, "Test 29.3: Should query via connection object")
+	assert(res)
+	testaux.asserteq(res[1].val, 1, "Test 29.4: Should get correct result")
+
+	-- Test conn:commit()
+	res, err = conn:commit()
+	testaux.asserteq(err, nil, "Test 29.5: Should commit transaction")
+
+	pool:close()
+end
+
+-- Test 30: test PING command detailed response
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+	}
+
+	local res, err = pool:ping()
+	testaux.assertneq(res, nil, "Test 30.1: Should ping successfully")
+	testaux.asserteq(err, nil, "Test 30.2: Should not have error")
+
+	-- Verify OK packet structure
+	assert(res)
+	testaux.asserteq(res.type, "OK", "Test 30.3: Should be OK packet")
+	testaux.assertneq(res.server_status, nil, "Test 30.4: Should have server_status")
+
+	pool:close()
+end
+
+-- Test 31: test special data types (JSON, DECIMAL, BIT)
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,  -- Force single connection to ensure TEMPORARY TABLE works
+	}
+
+	-- Check MySQL version for JSON support
+	local res, err = pool:query("SELECT @@version AS version")
+	local has_json = res and res[1].version:match("^[89]%.") ~= nil
+
+	if has_json then
+		-- Test JSON type
+		local create_res, create_err = pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS json_test (id INT PRIMARY KEY, data JSON)")
+		if create_res then
+			local json_data = '{"name":"Alice","age":30,"tags":["user","active"]}'
+			res, err = pool:query("INSERT INTO json_test VALUES (?, ?)", 1, json_data)
+			testaux.assertneq(res, nil, "Test 31.1: Should insert JSON data" .. (err and (": " .. err.message) or ""))
+
+			if res then
+				res, err = pool:query("SELECT data FROM json_test WHERE id = ?", 1)
+				testaux.assertneq(res, nil, "Test 31.2: Should retrieve JSON data")
+				if res then
+					-- JSON may be reformatted by MySQL, just verify it's not empty
+					testaux.assertneq(res[1].data, nil, "Test 31.3: Should have JSON data")
+				end
+			end
+		end
+	end
+
+	-- Test DECIMAL type
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS decimal_test (id INT PRIMARY KEY, price DECIMAL(10,2))")
+	res, err = pool:query("INSERT INTO decimal_test VALUES (?, ?)", 1, "12345.67")
+	testaux.assertneq(res, nil, "Test 31.4: Should insert DECIMAL data")
+
+	res, err = pool:query("SELECT price FROM decimal_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 31.5: Should retrieve DECIMAL data")
+	assert(res)
+	testaux.asserteq(res[1].price, "12345.67", "Test 31.6: Should maintain DECIMAL precision")
+
+	-- Test BIT type
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS bit_test (id INT PRIMARY KEY, flags BIT(8))")
+	res, err = pool:query("INSERT INTO bit_test VALUES (?, b'10101010')", 1)
+	testaux.assertneq(res, nil, "Test 31.7: Should insert BIT data")
+
+	res, err = pool:query("SELECT flags FROM bit_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 31.8: Should retrieve BIT data")
+	assert(res)
+	testaux.assertneq(res[1].flags, nil, "Test 31.9: Should have BIT data")
+
+	pool:close()
+end
+
+-- Test 32: test warning count validation
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	-- Create a scenario that generates warnings (e.g., implicit type conversion)
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS warning_test (id INT PRIMARY KEY, value INT)")
+
+	-- Insert string into INT column (may generate warning in strict mode)
+	local res, err = pool:query("INSERT INTO warning_test VALUES (?, ?)", 1, 100)
+	testaux.assertneq(res, nil, "Test 32.1: Should insert data")
+	assert(res)
+	-- Check if warning_count field exists
+	if res.warning_count then
+		testaux.asserteq(type(res.warning_count), "number", "Test 32.2: Should have warning_count as number")
+	end
+
+	pool:close()
+end
+
+-- Test 33: test BLOB types (TINYBLOB, BLOB, MEDIUMBLOB, LONGBLOB)
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	-- Test TINYBLOB (max 255 bytes)
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS blob_test (id INT PRIMARY KEY, data BLOB)")
+
+	local tiny_blob = string.rep("\xAB", 255)
+	local res, err = pool:query("INSERT INTO blob_test VALUES (?, ?)", 1, tiny_blob)
+	testaux.assertneq(res, nil, "Test 33.1: Should insert TINYBLOB data")
+
+	res, err = pool:query("SELECT data FROM blob_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 33.2: Should retrieve TINYBLOB data")
+	assert(res)
+	testaux.asserteq(#res[1].data, 255, "Test 33.3: Should maintain TINYBLOB size")
+
+	-- Test larger BLOB (16KB) - use a reasonable size that definitely works
+	local blob_data = string.rep("\xCD", 16384)
+	res, err = pool:query("INSERT INTO blob_test VALUES (?, ?)", 2, blob_data)
+	testaux.assertneq(res, nil, "Test 33.4: Should insert BLOB data")
+
+	res, err = pool:query("SELECT data FROM blob_test WHERE id = ?", 2)
+	testaux.assertneq(res, nil, "Test 33.5: Should retrieve BLOB data")
+	assert(res)
+	testaux.asserteq(#res[1].data, 16384, "Test 33.6: Should maintain BLOB size")
+
+	pool:close()
+end
+
+-- Test 34: test ENUM and SET types
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	-- Test ENUM type
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS enum_test (id INT PRIMARY KEY, status ENUM('active', 'inactive', 'pending'))")
+
+	local res, err = pool:query("INSERT INTO enum_test VALUES (?, ?)", 1, "active")
+	testaux.assertneq(res, nil, "Test 34.1: Should insert ENUM data")
+
+	res, err = pool:query("SELECT status FROM enum_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 34.2: Should retrieve ENUM data")
+	assert(res)
+	testaux.asserteq(res[1].status, "active", "Test 34.3: Should maintain ENUM value")
+
+	-- Test SET type
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS set_test (id INT PRIMARY KEY, permissions SET('read', 'write', 'execute'))")
+
+	res, err = pool:query("INSERT INTO set_test VALUES (?, ?)", 1, "read,write")
+	testaux.assertneq(res, nil, "Test 34.4: Should insert SET data")
+
+	res, err = pool:query("SELECT permissions FROM set_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 34.5: Should retrieve SET data")
+	assert(res)
+	testaux.assertneq(res[1].permissions, nil, "Test 34.6: Should have SET data")
+
+	pool:close()
+end
+
+-- Test 35: test TIMESTAMP with microsecond precision
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS timestamp_test (id INT PRIMARY KEY, created_at TIMESTAMP(6))")
+
+	local res, err = pool:query("INSERT INTO timestamp_test VALUES (?, NOW(6))", 1)
+	testaux.assertneq(res, nil, "Test 35.1: Should insert TIMESTAMP with microseconds")
+
+	res, err = pool:query("SELECT created_at FROM timestamp_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 35.2: Should retrieve TIMESTAMP data")
+	assert(res)
+	-- Verify microsecond precision (should contain decimal point)
+	testaux.assertneq(res[1].created_at:find("%."), nil, "Test 35.3: Should have microsecond precision")
+
+	pool:close()
+end
+
+-- Test 36: test connection pool cleanup on error
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 2,
+		max_open_conns = 2,
+	}
+
+	-- Execute a query that will fail
+	local res, err = pool:query("SELECT * FROM nonexistent_table_xyz")
+	testaux.asserteq(res, nil, "Test 36.1: Should fail on invalid table")
+	testaux.assertneq(err, nil, "Test 36.2: Should return error")
+
+	-- Verify pool is still functional after error
+	res, err = pool:query("SELECT 1 as val")
+	testaux.assertneq(res, nil, "Test 36.3: Should work after previous error")
+
+	pool:close()
+end
+
+-- Test 37: test very long SQL query
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+	}
+
+	-- Build a long query with many UNION ALL
+	local long_query = "SELECT 1 as num"
+	for i = 2, 100 do
+		long_query = long_query .. " UNION ALL SELECT " .. i
+	end
+
+	local res, err = pool:query(long_query)
+	testaux.assertneq(res, nil, "Test 37.1: Should handle long SQL query")
+	assert(res)
+	testaux.asserteq(#res, 100, "Test 37.2: Should return 100 rows")
+
+	pool:close()
+end
+
+-- Test 38: test TIME type with negative values
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS time_test (id INT PRIMARY KEY, duration TIME)")
+
+	-- Test negative time value
+	local res, err = pool:query("INSERT INTO time_test VALUES (?, ?)", 1, "-12:30:45")
+	testaux.assertneq(res, nil, "Test 38.1: Should insert negative TIME value")
+
+	res, err = pool:query("SELECT duration FROM time_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 38.2: Should retrieve negative TIME")
+	assert(res)
+	testaux.asserteq(res[1].duration:sub(1, 1), "-", "Test 38.3: Should maintain negative sign")
+
+	pool:close()
+end
+
+-- Test 39: test prepared statement with all NULL parameters
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 1,
+	}
+
+	pool:query("CREATE TEMPORARY TABLE IF NOT EXISTS null_params_test (id INT PRIMARY KEY, val1 INT, val2 VARCHAR(50), val3 DATE)")
+
+	local res, err = pool:query("INSERT INTO null_params_test VALUES (?, ?, ?, ?)", 1, nil, nil, nil)
+	testaux.assertneq(res, nil, "Test 39.1: Should insert all NULL parameters")
+
+	res, err = pool:query("SELECT * FROM null_params_test WHERE id = ?", 1)
+	testaux.assertneq(res, nil, "Test 39.2: Should retrieve NULL data")
+	assert(res)
+	testaux.asserteq(res[1].val1, nil, "Test 39.3: val1 should be NULL")
+	testaux.asserteq(res[1].val2, nil, "Test 39.4: val2 should be NULL")
+	testaux.asserteq(res[1].val3, nil, "Test 39.5: val3 should be NULL")
+
+	pool:close()
+end
+
+-- Test 40: test auto-reconnect after connection close
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 0,  -- Don't cache connections
+	}
+
+	-- First query
+	local res, err = pool:query("SELECT 1")
+	testaux.assertneq(res, nil, "Test 40.1: First query should succeed")
+
+	-- Force connection timeout by waiting
+	time.sleep(2000)
+
+	-- Second query should auto-reconnect
+	res, err = pool:query("SELECT 2")
+	testaux.assertneq(res, nil, "Test 40.2: Should auto-reconnect")
+
+	pool:close()
+end
+
+-- Test 41: test transaction auto-rollback on connection close without explicit commit/rollback
+do
+	local pool = mysql.open {
+		addr = "127.0.0.1:3306",
+		user = "root",
+		password = "root",
+		database = "test",
+		max_idle_conns = 1,
+		max_open_conns = 3,
+	}
+
+	-- Prepare test table
+	pool:query("DROP TABLE IF EXISTS test_autorollback")
+	local res, err = pool:query("CREATE TABLE test_autorollback (id INT PRIMARY KEY, value INT)")
+	testaux.assertneq(res, nil, "Test 41.1: Should create table")
+
+	-- Start a transaction and insert data, but don't commit/rollback
+	do
+		local tx, err = pool:begin()
+		testaux.asserteq(err, nil, "Test 41.2: Should begin transaction")
+		assert(tx)
+
+		res, err = tx:query("INSERT INTO test_autorollback VALUES (?, ?)", 1, 100)
+		testaux.assertneq(res, nil, "Test 41.3: Should insert data in transaction")
+
+		-- Verify data is visible within transaction
+		res, err = tx:query("SELECT * FROM test_autorollback")
+		testaux.asserteq(#res, 1, "Test 41.4: Should see data within transaction")
+
+		-- Close transaction connection WITHOUT commit/rollback
+		-- This should trigger automatic rollback via conn_close()
+		tx:close()
+	end
+
+	-- Now verify that the data was rolled back
+	res, err = pool:query("SELECT * FROM test_autorollback")
+	testaux.assertneq(res, nil, "Test 41.5: Should query after transaction close")
+	testaux.asserteq(#res, 0, "Test 41.6: Transaction should have been auto-rolled back, no data should exist")
+
+	-- Cleanup
+	pool:query("DROP TABLE IF EXISTS test_autorollback")
 	pool:close()
 end

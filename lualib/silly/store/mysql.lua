@@ -25,6 +25,8 @@ local tcp_write = tcp.write
 
 local digest = hash.digest
 local sha1 = hash.new("sha1")
+local sha256 = hash.new("sha256")
+local pkey = require "silly.crypto.pkey"
 
 local C
 local P
@@ -147,10 +149,27 @@ local OK<const> = 0x00
 local EOF<const> = 0xfe
 local ERR<const> = 0xff
 
+local CLIENT_LONG_PASSWORD<const> = 1
+local CLIENT_FOUND_ROWS<const> = 2
+local CLIENT_LONG_FLAG<const> = 4
+local CLIENT_CONNECT_WITH_DB<const> = 8
+local CLIENT_NO_SCHEMA<const> = 16
+local CLIENT_IGNORE_SPACE<const> = 256
+local CLIENT_PROTOCOL_41<const> = 512
+local CLIENT_TRANSACTIONS<const> = 8192
+local CLIENT_SECURE_CONNECTION<const> = 32768
+local CLIENT_MULTI_STATEMENTS<const> = 65536
+local CLIENT_MULTI_RESULTS<const> = 131072
+
 local CLIENT_SSL<const> = 0x00000800
 local CLIENT_PLUGIN_AUTH<const> = 0x00080000
 local CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA<const> = 0x00200000
 local DEFAULT_AUTH_PLUGIN<const> = "mysql_native_password"
+
+-- caching_sha2_password protocol constants
+local CACHE_SHA2_FAST_AUTH_SUCCESS<const> = 0x03
+local CACHE_SHA2_FULL_AUTH_REQUEST<const> = 0x04
+local CACHE_SHA2_REQUEST_PUBLIC_KEY<const> = 0x02
 
 -- the following charset map is generated from the following mysql query:
 --   SELECT CHARACTER_SET_NAME, ID
@@ -259,6 +278,28 @@ local function compute_token(password, scramble)
 	)
 end
 
+local function compute_token_sha256(password, scramble)
+	if password == "" then
+		return ""
+	end
+
+	-- caching_sha2_password algorithm (MySQL 8+):
+	-- XOR(SHA256(password), SHA256(SHA256(SHA256(password)) || scramble))
+
+	local message1 = digest(sha256, password)                       -- SHA256(password)
+	local message1_hash = digest(sha256, message1)                  -- SHA256(SHA256(password))
+	local message2 = digest(sha256, message1_hash .. scramble)      -- SHA256(SHA256(SHA256(password)) || scramble)
+
+	local i = 0
+	local token = strgsub(message1, ".",
+		function(x)
+			i = i + 1
+			return strchar(strbyte(x) ~ strbyte(message2, i))
+		end
+	)
+	return token
+end
+
 --- @param conn conn
 --- @param req string
 --- @return string
@@ -295,8 +336,6 @@ end
 
 local zero_23 = strrep("\0", 23)
 
--- https://dev.mysql.com/doc/dev/mysql-server/8.4.3/page_protocol_connection_phase_packets_protocol_handshake_v10.html
-
 --- @param conn conn
 --- @return boolean, err_packet|nil
 local function _mysql_login(conn)
@@ -332,12 +371,13 @@ local function _mysql_login(conn)
 	pos = pos + 10 --skip filler
 	server_cap = server_cap | server_cap2 << 16
 	if server_cap & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA ~= 0 then
-		local len = auth_plugin_data_len - 8 - 1
-		if len < 12 then
-			len = 12
-		end
+		-- The auth_plugin_data_len from the handshake is the length of auth data to be sent
+		-- For caching_sha2_password, it's 20 bytes total (8 bytes part1 + 12 bytes part2)
+		-- But the packet structure has: 8 bytes part1 + auth_plugin_data_len bytes of part2 + 1 byte NUL
+		-- So part2 is auth_plugin_data_len - 8 bytes, but we should read only 12 bytes for the scramble
+		local len = 12  -- For caching_sha2_password, we always want exactly 12 bytes for part2
 		auth_plugin_data_part2 = sub(packet, pos, pos + len - 1)
-		pos = pos + len
+		pos = pos + len + 1  -- +1 to skip the trailing NUL that separates part2 from auth_plugin_name
 	end
 	if server_cap & CLIENT_PLUGIN_AUTH ~= 0 then
 		auth_plugin_name = strunpack("<z", packet, pos)
@@ -351,18 +391,78 @@ local function _mysql_login(conn)
 	---@cast server_status number
 	conn.server_status = server_status
 	conn.auth_plugin_name = auth_plugin_name
+
 	local pool = conn.pool
-	local token = compute_token(pool.password, auth_plugin_data_part1 .. auth_plugin_data_part2)
-	local client_flags = 260047
-	local req = strpack("<I4I4c1c23zs1z",
-		client_flags,
-		pool.max_packet_size,
-		pool.charset,
-		zero_23,
-		pool.user,
-		token,
-		pool.database
-	)
+	local scramble = auth_plugin_data_part1 .. auth_plugin_data_part2
+
+	-- For caching_sha2_password, scramble should be exactly 20 bytes (without trailing NUL)
+	-- MySQL sends part1 (8 bytes) + part2 (12+ bytes), where part2 may have trailing NUL
+
+	if auth_plugin_name == "caching_sha2_password" and #scramble > 20 then
+		scramble = sub(scramble, 1, 20)
+	end
+
+	-- Compute token based on auth plugin
+	local token
+	if auth_plugin_name == "caching_sha2_password" then
+		token = compute_token_sha256(pool.password, scramble)
+	else
+		-- default to mysql_native_password
+		token = compute_token(pool.password, scramble)
+	end
+
+	-- Build client capabilities flags
+	-- Only set plugin auth flags if server supports them
+	local client_flags = CLIENT_LONG_PASSWORD |
+			 CLIENT_FOUND_ROWS |
+			 CLIENT_LONG_FLAG |
+			 CLIENT_CONNECT_WITH_DB |
+			 CLIENT_NO_SCHEMA |
+			 CLIENT_IGNORE_SPACE |
+			 CLIENT_PROTOCOL_41 |
+			 CLIENT_TRANSACTIONS |
+			 CLIENT_SECURE_CONNECTION |
+			 CLIENT_MULTI_STATEMENTS |
+			 CLIENT_MULTI_RESULTS
+
+	-- Add plugin auth capabilities if server supports them
+	local send_plugin_name = false
+	if server_cap & CLIENT_PLUGIN_AUTH ~= 0 then
+		client_flags = client_flags | CLIENT_PLUGIN_AUTH
+		send_plugin_name = true
+	end
+	if server_cap & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA ~= 0 then
+		client_flags = client_flags | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+	end
+
+	-- Build handshake response packet
+	-- Format depends on capabilities:
+	-- - Basic: client_flags(4) + max_packet_size(4) + charset(1) + filler(23) +
+	--          user(z) + auth_response(lenenc) + database(z)
+	-- - With CLIENT_PLUGIN_AUTH: ... + auth_plugin_name(z)
+	local req
+	if send_plugin_name then
+		req = strpack("<I4I4c1c23zs1zz",
+			client_flags,
+			pool.max_packet_size,
+			pool.charset,
+			zero_23,
+			pool.user,
+			token,  -- s1 format is compatible with lenenc for length < 251
+			pool.database,
+			auth_plugin_name
+		)
+	else
+		req = strpack("<I4I4c1c23zs1z",
+			client_flags,
+			pool.max_packet_size,
+			pool.charset,
+			zero_23,
+			pool.user,
+			token,
+			pool.database
+		)
+	end
 	local ok, err = tcp_write(conn.fd, compose_packet(conn, req))
 	if not ok then
 		return false, {
@@ -378,6 +478,288 @@ local function _mysql_login(conn)
 		}
 	end
 	local first_byte = strbyte(data)
+
+	-- Handle EOF packet which could be auth switch request
+	-- In MySQL protocol, 0xFE can mean different things based on packet length:
+	-- - length < 9: EOF packet (old protocol, deprecated)
+	-- - length >= 9: Auth Switch Request or Auth More Data
+	if first_byte == EOF and #data >= 9 then
+		-- This is an Auth Switch Request
+		-- Format: 0xFE + plugin_name<NUL> + plugin_data<NUL>
+		local switch_plugin_name, pos = strunpack("<z", data, 2)
+		-- Auth data includes trailing NUL which needs to be removed for correct scramble length
+		local switch_auth_data = sub(data, pos, #data - 1)
+
+		-- Server wants us to switch auth method
+		-- Compute new token with the new method and scramble
+		local new_token
+		if switch_plugin_name == "caching_sha2_password" then
+			new_token = compute_token_sha256(pool.password, switch_auth_data)
+		elseif switch_plugin_name == "mysql_native_password" then
+			new_token = compute_token(pool.password, switch_auth_data)
+		elseif switch_plugin_name == "sha256_password" then
+			-- sha256_password is deprecated in MySQL 8.0+ (use caching_sha2_password instead)
+			-- For sha256_password, we need to send password encrypted with server's public key
+			-- or plain text if using TLS (which we don't support yet)
+			-- Since we don't have TLS, we need to send 0x01 byte to request public key
+			new_token = "\x01"
+		else
+			return false, {
+				type = "ERR",
+				message = "unsupported auth switch plugin: " .. switch_plugin_name
+			}
+		end
+
+		-- Send switched auth response
+		-- For mysql_native_password and caching_sha2_password, send raw token (20 or 32 bytes)
+		-- For sha256_password, send 0x01 to request public key
+		ok, err = tcp_write(conn.fd, compose_packet(conn, new_token))
+		if not ok then
+			return false, {
+				type = "ERR",
+				message = "failed to write auth switch packet: " .. err
+			}
+		end
+
+		-- For sha256_password, handle public key exchange
+		if switch_plugin_name == "sha256_password" then
+			-- Read public key packet
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = "failed to read public key for sha256_password: " .. err
+				}
+			end
+
+			-- Check for error packet (e.g., invalid user)
+			local pkey_first_byte = strbyte(data)
+			if pkey_first_byte == ERR then
+				return false, parse_err_packet(data)
+			end
+
+			-- For debugging: check if this is an OK packet (authentication might have succeeded)
+			if pkey_first_byte == OK then
+				-- Authentication succeeded without needing public key
+				-- This might happen if password is empty or for other reasons
+				return true, nil
+			end
+
+			-- Public key should start with "-----BEGIN PUBLIC KEY-----" or might be length-prefixed
+			-- MySQL sends public key in plain format, may need to skip first byte if it's a length indicator
+			local pubkey_data = data
+			if not pubkey_data:match("^%-%-%-%-%-BEGIN") then
+				-- Try skipping first byte (might be a type indicator)
+				if #data > 1 then
+					pubkey_data = sub(data, 2)
+				end
+				if not pubkey_data:match("^%-%-%-%-%-BEGIN") then
+					return false, {
+						type = "ERR",
+						message = string.format("invalid public key format for sha256_password (first bytes: %02x %02x %02x)",
+							strbyte(data, 1) or 0, strbyte(data, 2) or 0, strbyte(data, 3) or 0)
+					}
+				end
+			end
+
+			-- Load public key
+			local public_key, err = pkey.new(pubkey_data)
+			if not public_key then
+				return false, {
+					type = "ERR",
+					message = "failed to load server public key for sha256_password: " .. err
+				}
+			end
+			-- Encrypt password: XOR(password + NULL, scramble) then RSA encrypt
+			local pass_null = pool.password .. "\0"
+			local scrambled_pass = ""
+			for i = 1, #pass_null do
+				scrambled_pass = scrambled_pass .. strchar(strbyte(pass_null, i) ~ strbyte(switch_auth_data, (i - 1) % #switch_auth_data + 1))
+			end
+
+			local success2, encrypted_pass = pcall(public_key.encrypt, public_key, scrambled_pass, pkey.RSA_PKCS1_OAEP, "sha1")
+			if not success2 then
+				return false, {
+					type = "ERR",
+					message = "failed to encrypt password for sha256_password: " .. tostring(encrypted_pass)
+				}
+			end
+
+			-- Send encrypted password
+			ok, err = tcp_write(conn.fd, compose_packet(conn, encrypted_pass))
+			if not ok then
+				return false, {
+					type = "ERR",
+					message = "failed to write encrypted password for sha256_password: " .. err
+				}
+			end
+		end
+
+		-- Read response after switch
+		data, err = read_packet(conn)
+		if not data then
+			return false, {
+				type = "ERR",
+				message = err
+			}
+		end
+		first_byte = strbyte(data)
+		auth_plugin_name = switch_plugin_name
+	end
+
+	-- Handle caching_sha2_password full auth
+	if auth_plugin_name == "caching_sha2_password" and first_byte == 0x01 then
+		local second_byte = strbyte(data, 2)
+		if second_byte == CACHE_SHA2_FAST_AUTH_SUCCESS then
+			-- Fast auth successful, read final OK packet
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = err
+				}
+			end
+			first_byte = strbyte(data)
+		elseif second_byte == CACHE_SHA2_FULL_AUTH_REQUEST then
+			-- Server requests full authentication
+			-- For non-TLS connections, we must use RSA encryption
+
+			-- Request server's public key
+			ok, err = tcp_write(conn.fd, compose_packet(conn, "\x02"))
+			if not ok then
+				return false, {
+					type = "ERR",
+					message = "failed to write request for public key: " .. err
+				}
+			end
+
+			-- Read server's public key
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = "failed to read server public key: " .. err
+				}
+			end
+
+			-- Check if this is an auth more data packet (0x01) containing the public key
+			local first_pkey_byte = strbyte(data)
+			if first_pkey_byte ~= 0x01 then
+				return false, {
+					type = "ERR",
+					message = string.format("expected auth more data packet with public key, got 0x%02x", first_pkey_byte)
+				}
+			end
+
+			-- Skip the 0x01 byte and extract the public key
+			local pubkey_data = sub(data, 2)
+
+			local public_key, err = pkey.new(pubkey_data)
+			if not public_key then
+				return false, {
+					type = "ERR",
+					message = "failed to load server public key: " .. err
+				}
+			end
+			-- Encrypt password: XOR(password + NULL, scramble) then RSA encrypt
+			local pass_null = pool.password .. "\0"
+			local scramble = auth_plugin_data_part1 .. auth_plugin_data_part2
+			local scrambled_pass = ""
+			for i = 1, #pass_null do
+				scrambled_pass = scrambled_pass .. strchar(strbyte(pass_null, i) ~ strbyte(scramble, (i - 1) % #scramble + 1))
+			end
+
+			local encrypted_pass, err = public_key:encrypt(scrambled_pass, pkey.RSA_PKCS1_OAEP, "sha1")
+			if not encrypted_pass then
+				return false, {
+					type = "ERR",
+					message = "failed to encrypt password: " .. err
+				}
+			end
+
+			-- Send encrypted password
+			ok, err = tcp_write(conn.fd, compose_packet(conn, encrypted_pass))
+			if not ok then
+				return false, {
+					type = "ERR",
+					message = "failed to write encrypted password: " .. err
+				}
+			end
+
+			-- Read final response
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = err
+				}
+			end
+			first_byte = strbyte(data)
+		elseif second_byte == CACHE_SHA2_REQUEST_PUBLIC_KEY then
+			-- Request server's public key
+			ok, err = tcp_write(conn.fd, compose_packet(conn, "\x02"))
+			if not ok then
+				return false, {
+					type = "ERR",
+					message = "failed to write request for public key: " .. err
+				}
+			end
+
+			-- Read server's public key
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = "failed to read server public key: " .. err
+				}
+			end
+
+			local success, result = pcall(pkey.new, data)
+			if not success then
+				return false, {
+					type = "ERR",
+					message = "failed to load server public key: " .. tostring(result)
+				}
+			end
+			local public_key = result
+
+			-- Encrypt password
+			local pass_null = pool.password .. "\0"
+			local scramble = auth_plugin_data_part1 .. auth_plugin_data_part2
+			local scrambled_pass = ""
+			for i = 1, #pass_null do
+				scrambled_pass = scrambled_pass .. strchar(strbyte(pass_null, i) ~ strbyte(scramble, (i - 1) % #scramble + 1))
+			end
+
+			local success2, encrypted_pass = pcall(public_key.encrypt, public_key, scrambled_pass, pkey.RSA_PKCS1_OAEP, "sha1")
+			if not success2 then
+				return false, {
+					type = "ERR",
+					message = "failed to encrypt password: " .. tostring(encrypted_pass)
+				}
+			end
+
+			-- Send encrypted password
+			ok, err = tcp_write(conn.fd, compose_packet(conn, encrypted_pass))
+			if not ok then
+				return false, {
+					type = "ERR",
+					message = "failed to write encrypted password: " .. err
+				}
+			end
+
+			-- Read final response
+			data, err = read_packet(conn)
+			if not data then
+				return false, {
+					type = "ERR",
+					message = err
+				}
+			end
+			first_byte = strbyte(data)
+		end
+	end
+
 	if first_byte == ERR then
 		return false, parse_err_packet(data)
 	end
@@ -603,7 +985,7 @@ local conn_rollback = conn_close_transaction(rollback_packet)
 --- @param conn conn
 local function conn_close(conn)
 	local pool = conn.pool
-	if conn.is_autocommit then
+	if not conn.is_autocommit then
 		conn_rollback(conn)
 	end
 	if not pool.is_closed and not conn.is_broken then

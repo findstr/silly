@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mysql:
-        image: mysql:5.7
+        image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: root
         ports:
@@ -59,3 +59,42 @@ jobs:
       run: |
         make test
         ./silly test/test.lua
+
+  build-linux-sql:
+    name: build-linux-sql
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: mysql-8.0
+            db_image: mysql:8.0
+            options: >-
+              --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=5
+          - name: mariadb-10.6
+            db_image: mariadb:10.6
+            options: >-
+              --health-cmd="mysqladmin ping -uroot -proot --silent" --health-interval=10s --health-timeout=5s --health-retries=5
+    services:
+      db:
+        image: ${{ matrix.db_image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: ${{ matrix.options }}
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev autoconf
+    - uses: actions/checkout@v4
+    - name: DB-focused tests
+      run: |
+        make test
+        ./silly test/testsql.lua
