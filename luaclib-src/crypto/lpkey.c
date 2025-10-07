@@ -19,6 +19,14 @@ struct pkey {
 	EVP_PKEY *key;
 };
 
+static int return_error(lua_State *L, const char *action)
+{
+	const char *err = ERR_lib_error_string(ERR_get_error());
+	lua_pushnil(L);
+	lua_pushfstring(L, "%s err:%s", action, err);
+	return 2;
+}
+
 static int lnew(lua_State *L)
 {
 	EVP_PKEY *evp_pkey;
@@ -34,13 +42,13 @@ static int lnew(lua_State *L)
 	}
 	evp_pkey = pkey_load(&key, &passwd);
 	if (evp_pkey == NULL) {
-		const char *err = ERR_lib_error_string(ERR_get_error());
-		return luaL_error(L, "load key error: %s", err);
+		return return_error(L, "pkey_load");
 	}
 	pkey_obj = (struct pkey *)lua_newuserdata(L, sizeof(struct pkey));
 	pkey_obj->key = evp_pkey;
 	luaL_setmetatable(L, METATABLE);
-	return 1;
+	lua_pushnil(L);
+	return 2;
 }
 
 /// gc(pkey)
@@ -121,14 +129,123 @@ static int lxverify(lua_State *L)
 	return 1;
 }
 
+static int set_rsa_padding(lua_State *L, EVP_PKEY_CTX *ctx)
+{
+	int padding = 0;
+	if (lua_gettop(L) >= 3) {
+		padding = (int)luaL_checkinteger(L, 3);
+		if (EVP_PKEY_CTX_set_rsa_padding(ctx, padding) <= 0) {
+			return -1;
+		}
+	}
+	if (padding == RSA_PKCS1_OAEP_PADDING && lua_gettop(L) >= 4) {
+		const EVP_MD *oaep_md = md_cache_get(L, 4);
+		if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx, oaep_md) <= 0) {
+			return -1;
+		}
+		if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, oaep_md) <= 0) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+/// encrypt(pkey, message, padding?, oaep_md?) string?, error?
+static int lxencrypt(lua_State *L)
+{
+	luaL_Buffer b;
+	struct pkey *pkey;
+	struct luastr message;
+	EVP_PKEY_CTX *ctx;
+	unsigned char *out;
+	size_t outlen;
+	pkey = (struct pkey *)luaL_checkudata(L, 1, METATABLE);
+	luastr_check(L, 2, &message);
+	ctx = EVP_PKEY_CTX_new(pkey->key, NULL);
+	if (ctx == NULL) {
+		return return_error(L, "EVP_PKEY_CTX_new");
+	}
+	if (EVP_PKEY_encrypt_init(ctx) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_encrypt_init");
+	}
+	if (set_rsa_padding(L, ctx) < 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "set_rsa_padding");
+	}
+	if (EVP_PKEY_encrypt(ctx, NULL, &outlen,
+			     (const unsigned char *)message.str,
+			     message.len) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_encrypt (for size)");
+	}
+	out = (unsigned char *)luaL_buffinitsize(L, &b, outlen);
+	if (EVP_PKEY_encrypt(ctx, out, &outlen,
+			     (const unsigned char *)message.str,
+			     message.len) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_encrypt");
+	}
+	EVP_PKEY_CTX_free(ctx);
+	luaL_pushresultsize(&b, outlen);
+	lua_pushnil(L);
+	return 2;
+}
+
+/// decrypt(pkey, ciphertext, padding?, oaep_md?) string?, error?
+static int lxdecrypt(lua_State *L)
+{
+	luaL_Buffer b;
+	struct pkey *pkey;
+	struct luastr ciphertext;
+	EVP_PKEY_CTX *ctx;
+	char *out;
+	size_t outlen;
+
+	pkey = (struct pkey *)luaL_checkudata(L, 1, METATABLE);
+	luastr_check(L, 2, &ciphertext);
+
+	ctx = EVP_PKEY_CTX_new(pkey->key, NULL);
+	if (!ctx) {
+		return return_error(L, "EVP_PKEY_CTX_new");
+	}
+	if (EVP_PKEY_decrypt_init(ctx) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_decrypt_init");
+	}
+	if (set_rsa_padding(L, ctx) < 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "set_rsa_padding");
+	}
+	if (EVP_PKEY_decrypt(ctx, NULL, &outlen,
+			     (const unsigned char *)ciphertext.str,
+			     ciphertext.len) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_decrypt (for size)");
+	}
+	out = luaL_buffinitsize(L, &b, outlen);
+	if (EVP_PKEY_decrypt(ctx, (unsigned char *)out, &outlen,
+			     (const unsigned char *)ciphertext.str,
+			     ciphertext.len) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return return_error(L, "EVP_PKEY_decrypt failed");
+	}
+	EVP_PKEY_CTX_free(ctx);
+	luaL_pushresultsize(&b, outlen);
+	lua_pushnil(L);
+	return 2;
+}
+
 SILLY_MOD_API int luaopen_silly_crypto_pkey(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "new",    lnew     },
+		{ "new",     lnew      },
 		// object methods
-		{ "sign",   lxsign   },
-		{ "verify", lxverify },
-		{ NULL,     NULL     },
+		{ "sign",    lxsign    },
+		{ "verify",  lxverify  },
+		{ "encrypt", lxencrypt },
+		{ "decrypt", lxdecrypt },
+		{ NULL,      NULL      },
 	};
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
@@ -145,5 +262,14 @@ SILLY_MOD_API int luaopen_silly_crypto_pkey(lua_State *L)
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	OpenSSL_add_all_digests();
 #endif
+	// set padding mode
+	lua_pushinteger(L, RSA_PKCS1_PADDING);
+	lua_setfield(L, -2, "RSA_PKCS1");
+	lua_pushinteger(L, RSA_NO_PADDING);
+	lua_setfield(L, -2, "RSA_NO");
+	lua_pushinteger(L, RSA_PKCS1_OAEP_PADDING);
+	lua_setfield(L, -2, "RSA_PKCS1_OAEP");
+	lua_pushinteger(L, RSA_X931_PADDING);
+	lua_setfield(L, -2, "RSA_X931");
 	return 1;
 }

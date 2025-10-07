@@ -64,8 +64,8 @@ end
 -- Test 3: Error handling
 do
 	-- Invalid key format
-	local status = pcall(pkey.new, "invalid key")
-	testaux.asserteq(status, false, "Case3: Detect invalid key format")
+	local status = pkey.new("invalid key")
+	testaux.asserteq(status, nil, "Case3: Detect invalid key format")
 
 	-- Unsupported algorithm
 	local priv = pkey.new(privkey)
@@ -73,8 +73,8 @@ do
 	testaux.asserteq(status, false, "Case3: Detect unsupported algorithm")
 
 	-- Non-EC key
-	local status, err = pcall(pkey.new, [[-----BEGIN RSA PRIVATE KEY-----...]])
-	testaux.asserteq(status, false, "Case3: Detect non-EC key")
+	local status, err = pkey.new [[-----BEGIN RSA PRIVATE KEY-----...]]
+	testaux.asserteq(status, nil, "Case3: Detect non-EC key")
 end
 
 -- Test 4: Object reuse

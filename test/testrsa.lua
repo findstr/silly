@@ -146,15 +146,15 @@ do
 		"Case3: Encrypted key with correct password")
 
 	-- Test wrong password
-	local status = pcall(pkey.new, encrypted_privkey, "wrongpass")
-	testaux.asserteq(status, false, "Case3: Detect wrong password")
+	local status, err = pkey.new(encrypted_privkey, "wrongpass")
+	testaux.asserteq(status, nil, "Case3: Detect wrong password")
 end
 
 -- Test 4: Error handling
 do
 	-- Invalid key format
-	local status = pcall(pkey.new, "invalid key")
-	testaux.asserteq(status, false, "Case4: Detect invalid key format")
+	local status = pkey.new("invalid key")
+	testaux.asserteq(status, nil, "Case4: Detect invalid key format")
 
 	-- Unsupported algorithm
 	local priv = pkey.new(privkey)
@@ -162,8 +162,8 @@ do
 	testaux.asserteq(status, false, "Case4: Detect unsupported algorithm")
 
 	-- Non-RSA key
-	local status = pcall(pkey.new, [[-----BEGIN EC PRIVATE KEY-----...]])
-	testaux.asserteq(status, false, "Case4: Detect non-RSA key")
+	local status = pkey.new([[-----BEGIN EC PRIVATE KEY-----...]])
+	testaux.asserteq(status, nil, "Case4: Detect non-RSA key")
 end
 
 -- Test 5: Object reuse
@@ -204,5 +204,174 @@ do
 	local sig_empty = priv:sign("", "sha256")
 	testaux.asserteq(pub:verify("", sig_empty, "sha256"), true,
 		"Case6: empty message")
+end
+
+-- ============ RSA Encryption/Decryption Tests ============
+-- The following tests focus on RSA encrypt/decrypt functionality
+-- and various padding modes (PKCS1, OAEP with different hash algorithms)
+
+local test_message = "Hello, RSA encryption!"
+local test_message_short = "Hi"  -- Shorter message for OAEP tests
+
+-- Test 7: Load private and public keys (encrypt/decrypt context)
+do
+	local priv_key, err = pkey.new(privkey)
+	testaux.assertneq(priv_key, nil, "Case7: Load private key - " .. (err or ""))
+
+	local pub_key, err = pkey.new(pubkey)
+	testaux.assertneq(pub_key, nil, "Case7: Load public key - " .. (err or ""))
+end
+
+-- Test 8: Basic RSA PKCS1 encryption/decryption
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	-- Encrypt with public key
+	local encrypted, err = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1)
+	testaux.asserteq(err, nil, "Case8: PKCS1 encryption should succeed")
+	testaux.assertneq(encrypted, nil, "Case8: PKCS1 encrypted data should not be nil")
+	testaux.asserteq(#encrypted, 256, "Case8: PKCS1 encrypted data should be 256 bytes (2048-bit key)")
+
+	-- Decrypt with private key
+	local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1)
+	testaux.asserteq(err, nil, "Case8: PKCS1 decryption should succeed")
+	testaux.asserteq(decrypted, test_message_short, "Case8: PKCS1 decrypted message should match original")
+end
+
+-- Test 9: RSA OAEP with SHA1 (default)
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	-- Encrypt with public key using OAEP + SHA1
+	local encrypted, err = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP, "sha1")
+	testaux.asserteq(err, nil, "Case9: OAEP SHA1 encryption should succeed")
+	testaux.assertneq(encrypted, nil, "Case9: OAEP SHA1 encrypted data should not be nil")
+	testaux.asserteq(#encrypted, 256, "Case9: OAEP SHA1 encrypted data should be 256 bytes")
+
+	-- Decrypt with private key
+	local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1_OAEP, "sha1")
+	testaux.asserteq(err, nil, "Case9: OAEP SHA1 decryption should succeed - " .. (err or ""))
+	testaux.asserteq(decrypted, test_message_short, "Case9: OAEP SHA1 decrypted message should match original")
+end
+
+-- Test 10: RSA OAEP with SHA256 (this tests the MGF1 fix)
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	-- Encrypt with public key using OAEP + SHA256
+	local encrypted, err = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP, "sha256")
+	testaux.asserteq(err, nil, "Case10: OAEP SHA256 encryption should succeed")
+	testaux.assertneq(encrypted, nil, "Case10: OAEP SHA256 encrypted data should not be nil")
+	testaux.asserteq(#encrypted, 256, "Case10: OAEP SHA256 encrypted data should be 256 bytes")
+
+	-- Decrypt with private key - THIS IS THE CRITICAL TEST
+	-- If MGF1 digest is not set correctly, this will fail
+	local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1_OAEP, "sha256")
+	testaux.asserteq(err, nil, "Case10: OAEP SHA256 decryption should succeed (MGF1 fix test) - " .. (err or ""))
+	testaux.asserteq(decrypted, test_message_short, "Case10: OAEP SHA256 decrypted message should match original")
+end
+
+-- Test 11: RSA OAEP with SHA512 (extended test)
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	-- Encrypt with public key using OAEP + SHA512
+	local encrypted, err = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP, "sha512")
+	testaux.asserteq(err, nil, "Case11: OAEP SHA512 encryption should succeed")
+	testaux.assertneq(encrypted, nil, "Case11: OAEP SHA512 encrypted data should not be nil")
+
+	-- Decrypt with private key
+	local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1_OAEP, "sha512")
+	testaux.asserteq(err, nil, "Case11: OAEP SHA512 decryption should succeed (MGF1 fix test) - " .. (err or ""))
+	testaux.asserteq(decrypted, test_message_short, "Case11: OAEP SHA512 decrypted message should match original")
+end
+
+-- Test 12: Error handling - decrypt with wrong key
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	local encrypted, _ = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1)
+
+	-- Try to decrypt with public key (should fail)
+	local decrypted, err = pub_key:decrypt(encrypted, pkey.RSA_PKCS1)
+	testaux.asserteq(decrypted, nil, "Case12: Decryption with wrong key should fail")
+	testaux.assertneq(err, nil, "Case12: Error message should be present")
+end
+
+-- Test 13: Error handling - invalid padding mode
+do
+	local pub_key = pkey.new(pubkey)
+
+	local encrypted, err = pub_key:encrypt(test_message_short, 9999)  -- Invalid padding
+	testaux.asserteq(encrypted, nil, "Case13: Encryption with invalid padding should fail")
+	testaux.assertneq(err, nil, "Case13: Error message should be present")
+end
+
+-- Test 14: Error handling - message too long for PKCS1
+do
+	local pub_key = pkey.new(pubkey)
+
+	-- PKCS1 padding requires 11 bytes overhead, so max message is 256 - 11 = 245 bytes
+	local too_long_message = string.rep("A", 246)
+	local encrypted, err = pub_key:encrypt(too_long_message, pkey.RSA_PKCS1)
+	testaux.asserteq(encrypted, nil, "Case14: Encryption of too long message should fail")
+	testaux.assertneq(err, nil, "Case14: Error message should be present")
+end
+
+-- Test 15: Encryption determinism - OAEP should produce different ciphertexts
+do
+	local pub_key = pkey.new(pubkey)
+
+	local encrypted1, _ = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP, "sha256")
+	local encrypted2, _ = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP, "sha256")
+
+	-- OAEP uses random padding, so two encryptions should produce different results
+	testaux.assertneq(encrypted1, encrypted2, "Case15: OAEP encryptions should be non-deterministic")
+end
+
+-- Test 16: Cross-encryption compatibility (encrypt with pub, decrypt with priv)
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	local test_messages = {"A", "Test", "Hello World!", string.rep("X", 50)}
+
+	for i, msg in ipairs(test_messages) do
+		local encrypted, err = pub_key:encrypt(msg, pkey.RSA_PKCS1_OAEP, "sha256")
+		testaux.asserteq(err, nil, string.format("Case16.%d: Encryption should succeed for message length %d", i, #msg))
+
+		local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1_OAEP, "sha256")
+		testaux.asserteq(err, nil, string.format("Case16.%d: Decryption should succeed for message length %d", i, #msg))
+		testaux.asserteq(decrypted, msg, string.format("Case16.%d: Roundtrip should preserve message", i))
+	end
+end
+
+-- Test 17: OAEP without explicit hash (should use default)
+do
+	local priv_key = pkey.new(privkey)
+	local pub_key = pkey.new(pubkey)
+
+	-- Encrypt without specifying hash (should use default padding)
+	local encrypted, err = pub_key:encrypt(test_message_short, pkey.RSA_PKCS1_OAEP)
+	testaux.asserteq(err, nil, "Case17: OAEP encryption without hash should use default")
+
+	-- Decrypt without specifying hash
+	local decrypted, err = priv_key:decrypt(encrypted, pkey.RSA_PKCS1_OAEP)
+	testaux.asserteq(err, nil, "Case17: OAEP decryption without hash should work")
+	testaux.asserteq(decrypted, test_message_short, "Case17: Default OAEP roundtrip should work")
+end
+
+-- Test 18: Verify padding constants are defined
+do
+	testaux.assertneq(pkey.RSA_PKCS1, nil, "Case18: RSA_PKCS1 constant should be defined")
+	testaux.assertneq(pkey.RSA_PKCS1_OAEP, nil, "Case18: RSA_PKCS1_OAEP constant should be defined")
+	testaux.assertneq(pkey.RSA_NO, nil, "Case18: RSA_NO constant should be defined")
+	testaux.asserteq(pkey.RSA_PKCS1, 1, "Case18: RSA_PKCS1 should equal RSA_PKCS1_PADDING")
+	testaux.asserteq(pkey.RSA_PKCS1_OAEP, 4, "Case18: RSA_PKCS1_OAEP should equal RSA_PKCS1_OAEP_PADDING")
 end
 

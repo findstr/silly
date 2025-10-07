@@ -13,17 +13,28 @@ tag:
 
 # silly.crypto.pkey
 
-`silly.crypto.pkey` 模块提供了公钥加密（Public Key Cryptography）功能，支持 RSA 和 ECDSA（椭圆曲线数字签名算法）两种非对称加密算法。该模块主要用于数字签名和签名验证，是构建安全系统的基础组件。
+`silly.crypto.pkey` 模块提供了公钥加密（Public Key Cryptography）功能，支持 RSA 和 ECDSA（椭圆曲线数字签名算法）两种非对称加密算法。该模块提供数字签名、签名验证以及 RSA 加密/解密功能，是构建安全系统的基础组件。
 
 ## 概述
 
-非对称加密使用一对密钥：公钥（Public Key）和私钥（Private Key）。私钥用于签名，公钥用于验证签名。这种机制广泛应用于：
+非对称加密使用一对密钥：公钥（Public Key）和私钥（Private Key）。本模块支持以下操作：
+
+**签名与验证**：
+- 私钥用于签名，公钥用于验证签名
+- 支持 RSA 和 ECDSA 两种算法
+
+**加密与解密**（仅 RSA）：
+- 公钥用于加密，私钥用于解密
+- 支持多种填充模式（PKCS#1、OAEP）
+
+这些功能广泛应用于：
 
 - **数字签名**：证明数据的完整性和来源
 - **身份认证**：验证通信双方的身份
 - **JWT 令牌**：使用 RSA/ECDSA 签名的 JSON Web Token
-- **TLS/SSL**：HTTPS 证书的签名验证
+- **TLS/SSL**：HTTPS 证书的签名验证、密钥交换
 - **代码签名**：验证软件包的完整性
+- **混合加密**：使用 RSA 加密对称密钥，用对称算法加密大量数据
 
 本模块基于 OpenSSL EVP（Envelope）接口实现，支持 PEM 格式的密钥文件，并提供了简洁的 Lua API。
 
@@ -78,6 +89,47 @@ ECDSA 是基于椭圆曲线的签名算法，使用更短的密钥达到与 RSA 
 - `sha512`：SHA-512（高安全要求场景）
 - `md5`：MD5（已弃用，不安全）
 
+### RSA 填充模式
+
+RSA 加密/解密需要指定填充模式（Padding），以确保安全性和兼容性：
+
+#### PKCS#1 v1.5 填充（`pkey.RSA_PKCS1`）
+
+- **值**：`1`（对应 OpenSSL 的 `RSA_PKCS1_PADDING`）
+- **特点**：传统填充方式，确定性填充
+- **安全性**：存在 Bleichenbacher 攻击风险，不推荐用于新系统
+- **最大消息长度**：密钥长度 - 11 字节（2048 位密钥 = 245 字节）
+- **用途**：兼容旧系统
+
+#### OAEP 填充（`pkey.RSA_PKCS1_OAEP`）
+
+- **值**：`4`（对应 OpenSSL 的 `RSA_PKCS1_OAEP_PADDING`）
+- **全称**：Optimal Asymmetric Encryption Padding
+- **特点**：现代化填充方式，包含随机性（每次加密结果不同）
+- **安全性**：抗选择密文攻击，**推荐使用**
+- **最大消息长度**：密钥长度 - 2×哈希长度 - 2（SHA256 时约 190 字节）
+- **哈希算法**：支持 SHA1、SHA256、SHA512 等
+- **用途**：新系统的默认选择，MySQL 8.0+ 密码加密
+
+**OAEP 技术细节**：
+- 使用两个哈希函数：OAEP digest（标签哈希）和 MGF1 digest（掩码生成）
+- 默认情况下，OAEP digest 和 MGF1 digest 均为 SHA1（OpenSSL 默认）
+- 当提供 `hash` 参数时，本模块会同时将 OAEP digest 和 MGF1 digest 设置为相同算法
+- 标准兼容：符合 PKCS#1 v2.0+ 规范
+
+#### 无填充（`pkey.RSA_NO`）
+
+- **值**：`3`（对应 OpenSSL 的 `RSA_NO_PADDING`）
+- **特点**：不添加填充，直接对数据加密
+- **要求**：消息长度必须等于密钥长度
+- **安全性**：**不安全**，仅用于特殊协议实现
+- **用途**：低层协议、自定义填充
+
+#### X9.31 填充（`pkey.RSA_X931`）
+
+- **值**：`5`（对应 OpenSSL 的 `RSA_X931_PADDING`）
+- **用途**：专门用于签名，不推荐用于加密
+
 ### 密钥格式
 
 模块支持多种 PEM 格式：
@@ -100,8 +152,8 @@ ECDSA 是基于椭圆曲线的签名算法，使用更短的密钥达到与 RSA 
   - `pem_string`: `string` - PEM 格式的密钥字符串（包括 `-----BEGIN/END-----` 标记）
   - `password`: `string` - 可选，加密私钥的密码（仅用于加密私钥）
 - **返回值**:
-  - 成功: `userdata` - 密钥对象，可用于签名或验证
-  - 失败: 抛出错误，错误信息包含 OpenSSL 错误描述
+  - 成功: `userdata, nil` - 密钥对象和 nil
+  - 失败: `nil, error_message` - nil 和错误信息字符串
 - **说明**:
   - 自动识别私钥或公钥格式
   - 支持 PKCS#8、PKCS#1、SEC1 等多种格式
@@ -113,7 +165,7 @@ ECDSA 是基于椭圆曲线的签名算法，使用更短的密钥达到与 RSA 
 local pkey = require "silly.crypto.pkey"
 
 -- 加载 RSA 公钥
-local rsa_public_key = pkey.new([[
+local rsa_public_key, err = pkey.new([[
 -----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
 YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
@@ -124,29 +176,38 @@ lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
 KQIDAQAB
 -----END PUBLIC KEY-----
 ]])
-
+if not rsa_public_key then
+    print("RSA 公钥加载失败:", err)
+    return
+end
 print("RSA 公钥加载成功")
 
 -- 加载 EC 私钥
-local ec_private_key = pkey.new([[
+local ec_private_key, err = pkey.new([[
 -----BEGIN EC PRIVATE KEY-----
 MHQCAQEEICaCaDvEFIgrZXksCEe/FG1803c71gyUBI362hd8vuNyoAcGBSuBBAAK
 oUQDQgAEe26lcpv6zAw3sO0gMwAGQ3QzXwE5IZCf/c+hOGwHalqi6V1wAiC1Hcx/
 T7XZiStZF9amqLQOkXul6MZgsascsg==
 -----END EC PRIVATE KEY-----
 ]])
-
+if not ec_private_key then
+    print("EC 私钥加载失败:", err)
+    return
+end
 print("EC 私钥加载成功")
 
 -- 加载加密的私钥
-local encrypted_key = pkey.new([[
+local encrypted_key, err = pkey.new([[
 -----BEGIN ENCRYPTED PRIVATE KEY-----
 MIIFLTBXBgkqhkiG9w0BBQ0wSjApBgkqhkiG9w0BBQwwHAQI2+GG3gsDJbwCAggA
 MAwGCCqGSIb3DQIJBQAwHQYJYIZIAWUDBAEqBBBl5BCE5p8mrjUpj0cdbN5SBIIE
 0FP54ygFb2qWXXLuRK241megT4wpy3ITDfkoyYtew23ScvZ/mNTBEUorA3H1ebas
 -----END ENCRYPTED PRIVATE KEY-----
 ]], "123456")  -- 提供密码
-
+if not encrypted_key then
+    print("加密私钥加载失败:", err)
+    return
+end
 print("加密私钥加载成功")
 ```
 
@@ -301,7 +362,408 @@ local is_tampered = public_key:verify(tampered_message, signature, "sha256")
 print("篡改消息验证结果:", is_tampered)  -- false
 ```
 
+### key:encrypt(plaintext, [padding], [hash])
+
+使用 RSA 公钥对数据进行加密（仅支持 RSA 密钥）。
+
+- **参数**:
+  - `plaintext`: `string` - 要加密的明文数据
+  - `padding`: `number` - 可选，填充模式（默认为 PKCS#1 v1.5）
+    - `pkey.RSA_PKCS1` (1): PKCS#1 v1.5 填充（OpenSSL 默认）
+    - `pkey.RSA_PKCS1_OAEP` (4): OAEP 填充（推荐）
+    - `pkey.RSA_NO` (3): 无填充（不安全）
+    - `pkey.RSA_X931` (5): X9.31 填充
+  - `hash`: `string` - 可选，仅用于 OAEP 填充时指定哈希算法（默认 SHA1）
+    - 支持：`"sha1"`, `"sha256"`, `"sha384"`, `"sha512"`
+    - 推荐：`"sha256"`
+- **返回值**:
+  - 成功: `ciphertext, nil` - 加密后的密文数据
+  - 失败: `nil, error_message` - 错误信息字符串
+- **说明**:
+  - 必须使用 **公钥** 进行加密（私钥也可以但不推荐）
+  - RSA 加密有最大长度限制：
+    - PKCS#1: 密钥长度 - 11 字节（2048位密钥最大 245 字节）
+    - OAEP: 密钥长度 - 2×哈希长度 - 2（SHA256 时约 190 字节）
+  - OAEP 填充每次加密结果不同(包含随机数)
+  - 当使用 OAEP 填充且提供 `hash` 参数时,本模块会同时将 OAEP digest 和 MGF1 digest 设置为相同算法
+- **示例**:
+
+```lua validate
+local pkey = require "silly.crypto.pkey"
+
+-- 加载 RSA 公钥
+local public_key = pkey.new([[
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
+YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
+N6N/TNT/nNhZXdSineoyQYkfxDeOOf9w2+fw6T32Ms/6H9sFkuXXu/UO1yRvbWoz
+PkZfebhaZoxvet7W7ObB+Fm475r+ap/icx2Yr1bPg7oPz3VBvsgGqugm+0mdpt0Y
+USRyQd0fihmYCsv6ldm6mfgoE0hVOthr52Kq2vAMcl9kEkyhghzw+W3M+VXlgJwb
+lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
+KQIDAQAB
+-----END PUBLIC KEY-----
+]])
+
+-- 使用 OAEP + SHA256 加密（推荐）
+local secret_message = "Confidential data"
+local ciphertext, err = public_key:encrypt(secret_message, pkey.RSA_PKCS1_OAEP, "sha256")
+
+if ciphertext then
+    print("加密成功，密文长度:", #ciphertext, "字节")
+else
+    print("加密失败:", err)
+end
+```
+
+### key:decrypt(ciphertext, [padding], [hash])
+
+使用 RSA 私钥对密文进行解密（仅支持 RSA 密钥）。
+
+- **参数**:
+  - `ciphertext`: `string` - 要解密的密文数据
+  - `padding`: `number` - 可选，填充模式（必须与加密时一致）
+    - `pkey.RSA_PKCS1` (1): PKCS#1 v1.5 填充
+    - `pkey.RSA_PKCS1_OAEP` (4): OAEP 填充（推荐）
+    - `pkey.RSA_NO` (3): 无填充
+    - `pkey.RSA_X931` (5): X9.31 填充
+  - `hash`: `string` - 可选，仅用于 OAEP 填充时指定哈希算法（必须与加密时一致）
+    - 支持：`"sha1"`, `"sha256"`, `"sha384"`, `"sha512"`
+- **返回值**:
+  - 成功: `plaintext, nil` - 解密后的明文数据
+  - 失败: `nil, error_message` - 错误信息字符串
+- **说明**:
+  - 必须使用 **私钥** 进行解密
+  - 填充模式和哈希算法必须与加密时完全一致
+  - 解密失败可能原因：
+    - 使用了错误的私钥
+    - 密文被篡改
+    - 填充模式或哈希算法不匹配
+- **示例**:
+
+```lua validate
+local pkey = require "silly.crypto.pkey"
+
+-- 加载密钥对
+local public_key = pkey.new([[
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
+YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
+N6N/TNT/nNhZXdSineoyQYkfxDeOOf9w2+fw6T32Ms/6H9sFkuXXu/UO1yRvbWoz
+PkZfebhaZoxvet7W7ObB+Fm475r+ap/icx2Yr1bPg7oPz3VBvsgGqugm+0mdpt0Y
+USRyQd0fihmYCsv6ldm6mfgoE0hVOthr52Kq2vAMcl9kEkyhghzw+W3M+VXlgJwb
+lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
+KQIDAQAB
+-----END PUBLIC KEY-----
+]])
+
+local private_key = pkey.new([[
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
+lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
+yEEAFhc3o39M1P+c2Fld1KKd6jJBiR/EN445/3Db5/DpPfYyz/of2wWS5de79Q7X
+JG9tajM+Rl95uFpmjG963tbs5sH4Wbjvmv5qn+JzHZivVs+Dug/PdUG+yAaq6Cb7
+SZ2m3RhRJHJB3R+KGZgKy/qV2bqZ+CgTSFU62GvnYqra8AxyX2QSTKGCHPD5bcz5
+VeWAnBuUhMH0MQE/Ypq51RrqANiw6lq6hTy9pzI0AtItdM7t+1NzNEUg0/dr2Z1i
+DlMeuSopAgMBAAECggEAYVue1TtwiN3GYmPXHRGgV9c/Dr2HOrcuF3RGL41iC8o8
+rFZQbvIa8Ngia+Umt9PUecGRtVltzFd1RT6rrEy/CLyWGK+2dIr80s90DKtZTZa1
+kS5aeyisXjTrL3VyL+bUi4wqegdVXYnLqhAFxNFrtZsCmf+WcwiIs98LnWutqNx7
+QJR2HedjBXk+mXxkaonGyIjcXiowoXdIF/XhvR4CsH9G0OG3iD0g0ZkHGZ2zqGu7
+qo9o2YwE1y1PTwd4otsuPITveCqj6egAm9rpHqaRQtRhAJqUPeKfKO2vlxdJrzLb
+KyngzusRgz/gz3yQtL7ink19+/p9HSnbqCasJ8QwAQKBgQDaYPnJnw0TyUG0GpyG
+MzC77vDqhbWGETPpgNS51UFRCpwrwY6URBMXw393YEb0DyLiP9w5U8camJC7DH1O
+I/A+gWDT6x/LX3axC36ydhz00hiPXJMHHXUr4L3dQHCZQuW5HNm4VKBqGo2d8Yy1
+KTpVyv8E0T0jtlDaz9cEas8igQKBgQDLAurBU8abUvoFFGMkfxoehsa7SLOudgTF
+5BVhwVLZ71UdD5pjSzfTeKyIMZDLHQca0HuQ4Ee4LMJFp/3LGkvJYRhpI4XNxa8b
+rg8x+VnFR7vMKzM4BiR7vzzQLk9Yl8JbUFCwu/0wqvi4K84V0BigSugYo+jO7mC0
+cDyrWOPjqQKBgQCbln5BZV2m3DxAurkMcEpni50AKpWjWHxZAF4PrN3lhJ6yGiyg
+fEPyKWqWvfSvjF05P3CDM6pmy45KhmJ8muRfVESNmDbF6lUhXOQ++CI3V70B314t
+spI52dzMV04iE+SiV+jTCRBlqFd/0YqDxET4vTGm2AEsgYfn7i7uyb6cgQKBgQCS
+hb9z24hb8M6dPfK0k7wBTls/LyDoiSu2vIEmNgcbXp76w5k1k0NusQktn0CXKJNJ
+KjIVBZsd9cgdyDroDUmnxhl9QPNA6i4Rd1ZmRkchmT2VBZUJGX3ZhtRYmSQRmC7i
+AxzKAlSifLPZEVzD55bukkHkDuFoASrw8JUJQrXwSQKBgGJNgiOksXQHGBMRQ4RN
+58yxce1MjsPb6lUT4fU1I9XoIOrXi3LMGRbwCEQcTnAl/fmqX/mn/OU0uWKhtB00
+mWF54QYcPrCDl4QWZjmnM9TeWab0Fdz5uGUe2PxhHs5dQ2hYRloTA/U+NsNLdiwW
+BHo1sC5Ix5jbkO/TaUMKGmNb
+-----END PRIVATE KEY-----
+]])
+
+-- 加密和解密流程
+local message = "Secret message"
+local ciphertext, _ = public_key:encrypt(message, pkey.RSA_PKCS1_OAEP, "sha256")
+
+-- 解密
+local decrypted, err = private_key:decrypt(ciphertext, pkey.RSA_PKCS1_OAEP, "sha256")
+
+if decrypted then
+    print("解密成功:", decrypted)  -- "Secret message"
+else
+    print("解密失败:", err)
+end
+```
+
 ## 使用示例
+
+### RSA 加密解密完整流程（OAEP + SHA256）
+
+```lua validate
+local pkey = require "silly.crypto.pkey"
+
+-- 加载密钥对
+local public_key = pkey.new([[
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
+YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
+N6N/TNT/nNhZXdSineoyQYkfxDeOOf9w2+fw6T32Ms/6H9sFkuXXu/UO1yRvbWoz
+PkZfebhaZoxvet7W7ObB+Fm475r+ap/icx2Yr1bPg7oPz3VBvsgGqugm+0mdpt0Y
+USRyQd0fihmYCsv6ldm6mfgoE0hVOthr52Kq2vAMcl9kEkyhghzw+W3M+VXlgJwb
+lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
+KQIDAQAB
+-----END PUBLIC KEY-----
+]])
+
+local private_key = pkey.new([[
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
+lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
+yEEAFhc3o39M1P+c2Fld1KKd6jJBiR/EN445/3Db5/DpPfYyz/of2wWS5de79Q7X
+JG9tajM+Rl95uFpmjG963tbs5sH4Wbjvmv5qn+JzHZivVs+Dug/PdUG+yAaq6Cb7
+SZ2m3RhRJHJB3R+KGZgKy/qV2bqZ+CgTSFU62GvnYqra8AxyX2QSTKGCHPD5bcz5
+VeWAnBuUhMH0MQE/Ypq51RrqANiw6lq6hTy9pzI0AtItdM7t+1NzNEUg0/dr2Z1i
+DlMeuSopAgMBAAECggEAYVue1TtwiN3GYmPXHRGgV9c/Dr2HOrcuF3RGL41iC8o8
+rFZQbvIa8Ngia+Umt9PUecGRtVltzFd1RT6rrEy/CLyWGK+2dIr80s90DKtZTZa1
+kS5aeyisXjTrL3VyL+bUi4wqegdVXYnLqhAFxNFrtZsCmf+WcwiIs98LnWutqNx7
+QJR2HedjBXk+mXxkaonGyIjcXiowoXdIF/XhvR4CsH9G0OG3iD0g0ZkHGZ2zqGu7
+qo9o2YwE1y1PTwd4otsuPITveCqj6egAm9rpHqaRQtRhAJqUPeKfKO2vlxdJrzLb
+KyngzusRgz/gz3yQtL7ink19+/p9HSnbqCasJ8QwAQKBgQDaYPnJnw0TyUG0GpyG
+MzC77vDqhbWGETPpgNS51UFRCpwrwY6URBMXw393YEb0DyLiP9w5U8camJC7DH1O
+I/A+gWDT6x/LX3axC36ydhz00hiPXJMHHXUr4L3dQHCZQuW5HNm4VKBqGo2d8Yy1
+KTpVyv8E0T0jtlDaz9cEas8igQKBgQDLAurBU8abUvoFFGMkfxoehsa7SLOudgTF
+5BVhwVLZ71UdD5pjSzfTeKyIMZDLHQca0HuQ4Ee4LMJFp/3LGkvJYRhpI4XNxa8b
+rg8x+VnFR7vMKzM4BiR7vzzQLk9Yl8JbUFCwu/0wqvi4K84V0BigSugYo+jO7mC0
+cDyrWOPjqQKBgQCbln5BZV2m3DxAurkMcEpni50AKpWjWHxZAF4PrN3lhJ6yGiyg
+fEPyKWqWvfSvjF05P3CDM6pmy45KhmJ8muRfVESNmDbF6lUhXOQ++CI3V70B314t
+spI52dzMV04iE+SiV+jTCRBlqFd/0YqDxET4vTGm2AEsgYfn7i7uyb6cgQKBgQCS
+hb9z24hb8M6dPfK0k7wBTls/LyDoiSu2vIEmNgcbXp76w5k1k0NusQktn0CXKJNJ
+KjIVBZsd9cgdyDroDUmnxhl9QPNA6i4Rd1ZmRkchmT2VBZUJGX3ZhtRYmSQRmC7i
+AxzKAlSifLPZEVzD55bukkHkDuFoASrw8JUJQrXwSQKBgGJNgiOksXQHGBMRQ4RN
+58yxce1MjsPb6lUT4fU1I9XoIOrXi3LMGRbwCEQcTnAl/fmqX/mn/OU0uWKhtB00
+mWF54QYcPrCDl4QWZjmnM9TeWab0Fdz5uGUe2PxhHs5dQ2hYRloTA/U+NsNLdiwW
+BHo1sC5Ix5jbkO/TaUMKGmNb
+-----END PRIVATE KEY-----
+]])
+
+-- 使用 OAEP + SHA256 加密（推荐方式）
+local plaintext = "Sensitive password: MySecret123"
+print("原始数据:", plaintext)
+
+-- 使用公钥加密
+local ciphertext, err = public_key:encrypt(plaintext, pkey.RSA_PKCS1_OAEP, "sha256")
+if not ciphertext then
+    print("加密失败:", err)
+    return
+end
+
+print("加密成功，密文长度:", #ciphertext, "字节")
+
+-- 使用私钥解密
+local decrypted, err = private_key:decrypt(ciphertext, pkey.RSA_PKCS1_OAEP, "sha256")
+if not decrypted then
+    print("解密失败:", err)
+    return
+end
+
+print("解密成功:", decrypted)
+print("数据匹配:", decrypted == plaintext and "是" or "否")
+
+-- 重要提示：OAEP 每次加密结果都不同（包含随机数）
+local ciphertext2, _ = public_key:encrypt(plaintext, pkey.RSA_PKCS1_OAEP, "sha256")
+print("\n两次加密结果相同吗?", ciphertext == ciphertext2 and "是" or "否（这是正常的）")
+```
+
+### RSA 多种填充模式对比
+
+```lua validate
+local pkey = require "silly.crypto.pkey"
+
+-- 加载密钥对
+local private_key = pkey.new([[
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
+lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
+yEEAFhc3o39M1P+c2Fld1KKd6jJBiR/EN445/3Db5/DpPfYyz/of2wWS5de79Q7X
+JG9tajM+Rl95uFpmjG963tbs5sH4Wbjvmv5qn+JzHZivVs+Dug/PdUG+yAaq6Cb7
+SZ2m3RhRJHJB3R+KGZgKy/qV2bqZ+CgTSFU62GvnYqra8AxyX2QSTKGCHPD5bcz5
+VeWAnBuUhMH0MQE/Ypq51RrqANiw6lq6hTy9pzI0AtItdM7t+1NzNEUg0/dr2Z1i
+DlMeuSopAgMBAAECggEAYVue1TtwiN3GYmPXHRGgV9c/Dr2HOrcuF3RGL41iC8o8
+rFZQbvIa8Ngia+Umt9PUecGRtVltzFd1RT6rrEy/CLyWGK+2dIr80s90DKtZTZa1
+kS5aeyisXjTrL3VyL+bUi4wqegdVXYnLqhAFxNFrtZsCmf+WcwiIs98LnWutqNx7
+QJR2HedjBXk+mXxkaonGyIjcXiowoXdIF/XhvR4CsH9G0OG3iD0g0ZkHGZ2zqGu7
+qo9o2YwE1y1PTwd4otsuPITveCqj6egAm9rpHqaRQtRhAJqUPeKfKO2vlxdJrzLb
+KyngzusRgz/gz3yQtL7ink19+/p9HSnbqCasJ8QwAQKBgQDaYPnJnw0TyUG0GpyG
+MzC77vDqhbWGETPpgNS51UFRCpwrwY6URBMXw393YEb0DyLiP9w5U8camJC7DH1O
+I/A+gWDT6x/LX3axC36ydhz00hiPXJMHHXUr4L3dQHCZQuW5HNm4VKBqGo2d8Yy1
+KTpVyv8E0T0jtlDaz9cEas8igQKBgQDLAurBU8abUvoFFGMkfxoehsa7SLOudgTF
+5BVhwVLZ71UdD5pjSzfTeKyIMZDLHQca0HuQ4Ee4LMJFp/3LGkvJYRhpI4XNxa8b
+rg8x+VnFR7vMKzM4BiR7vzzQLk9Yl8JbUFCwu/0wqvi4K84V0BigSugYo+jO7mC0
+cDyrWOPjqQKBgQCbln5BZV2m3DxAurkMcEpni50AKpWjWHxZAF4PrN3lhJ6yGiyg
+fEPyKWqWvfSvjF05P3CDM6pmy45KhmJ8muRfVESNmDbF6lUhXOQ++CI3V70B314t
+spI52dzMV04iE+SiV+jTCRBlqFd/0YqDxET4vTGm2AEsgYfn7i7uyb6cgQKBgQCS
+hb9z24hb8M6dPfK0k7wBTls/LyDoiSu2vIEmNgcbXp76w5k1k0NusQktn0CXKJNJ
+KjIVBZsd9cgdyDroDUmnxhl9QPNA6i4Rd1ZmRkchmT2VBZUJGX3ZhtRYmSQRmC7i
+AxzKAlSifLPZEVzD55bukkHkDuFoASrw8JUJQrXwSQKBgGJNgiOksXQHGBMRQ4RN
+58yxce1MjsPb6lUT4fU1I9XoIOrXi3LMGRbwCEQcTnAl/fmqX/mn/OU0uWKhtB00
+mWF54QYcPrCDl4QWZjmnM9TeWab0Fdz5uGUe2PxhHs5dQ2hYRloTA/U+NsNLdiwW
+BHo1sC5Ix5jbkO/TaUMKGmNb
+-----END PRIVATE KEY-----
+]])
+
+local public_key = pkey.new([[
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
+YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
+N6N/TNT/nNhZXdSineoyQYkfxDeOOf9w2+fw6T32Ms/6H9sFkuXXu/UO1yRvbWoz
+PkZfebhaZoxvet7W7ObB+Fm475r+ap/icx2Yr1bPg7oPz3VBvsgGqugm+0mdpt0Y
+USRyQd0fihmYCsv6ldm6mfgoE0hVOthr52Kq2vAMcl9kEkyhghzw+W3M+VXlgJwb
+lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
+KQIDAQAB
+-----END PUBLIC KEY-----
+]])
+
+local test_message = "Hello, RSA!"
+
+print("RSA 填充模式对比测试\n")
+
+-- 1. PKCS#1 v1.5 填充（传统方式）
+print("1. PKCS#1 v1.5 填充:")
+local enc1, _ = public_key:encrypt(test_message, pkey.RSA_PKCS1)
+local dec1, _ = private_key:decrypt(enc1, pkey.RSA_PKCS1)
+print("  - 密文长度:", #enc1, "字节")
+print("  - 解密结果:", dec1)
+print("  - 特点: 确定性填充（同一消息每次加密结果相同）")
+
+-- 2. OAEP 填充 + SHA1（MySQL 兼容模式）
+print("\n2. OAEP + SHA1:")
+local enc2, _ = public_key:encrypt(test_message, pkey.RSA_PKCS1_OAEP, "sha1")
+local dec2, _ = private_key:decrypt(enc2, pkey.RSA_PKCS1_OAEP, "sha1")
+print("  - 密文长度:", #enc2, "字节")
+print("  - 解密结果:", dec2)
+print("  - 特点: 随机性填充，MySQL 8.0+ 使用此模式")
+
+-- 3. OAEP 填充 + SHA256（推荐）
+print("\n3. OAEP + SHA256 (推荐):")
+local enc3, _ = public_key:encrypt(test_message, pkey.RSA_PKCS1_OAEP, "sha256")
+local dec3, _ = private_key:decrypt(enc3, pkey.RSA_PKCS1_OAEP, "sha256")
+print("  - 密文长度:", #enc3, "字节")
+print("  - 解密结果:", dec3)
+print("  - 特点: 最安全的填充模式，抗选择密文攻击")
+
+-- 4. OAEP 填充 + SHA512（高安全场景）
+print("\n4. OAEP + SHA512:")
+local enc4, _ = public_key:encrypt(test_message, pkey.RSA_PKCS1_OAEP, "sha512")
+local dec4, _ = private_key:decrypt(enc4, pkey.RSA_PKCS1_OAEP, "sha512")
+print("  - 密文长度:", #enc4, "字节")
+print("  - 解密结果:", dec4)
+print("  - 特点: 最高安全性，适合关键数据")
+
+print("\n推荐：使用 OAEP + SHA256，安全性和兼容性最佳")
+```
+
+### 混合加密模式（RSA + AES）
+
+```lua validate
+local pkey = require "silly.crypto.pkey"
+local cipher = require "silly.crypto.cipher"
+local rand = require "silly.crypto.rand"
+
+-- 加载 RSA 密钥对
+local rsa_public = pkey.new([[
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
+YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
+N6N/TNT/nNhZXdSineoyQYkfxDeOOf9w2+fw6T32Ms/6H9sFkuXXu/UO1yRvbWoz
+PkZfebhaZoxvet7W7ObB+Fm475r+ap/icx2Yr1bPg7oPz3VBvsgGqugm+0mdpt0Y
+USRyQd0fihmYCsv6ldm6mfgoE0hVOthr52Kq2vAMcl9kEkyhghzw+W3M+VXlgJwb
+lITB9DEBP2KaudUa6gDYsOpauoU8vacyNALSLXTO7ftTczRFINP3a9mdYg5THrkq
+KQIDAQAB
+-----END PUBLIC KEY-----
+]])
+
+local rsa_private = pkey.new([[
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
+lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
+yEEAFhc3o39M1P+c2Fld1KKd6jJBiR/EN445/3Db5/DpPfYyz/of2wWS5de79Q7X
+JG9tajM+Rl95uFpmjG963tbs5sH4Wbjvmv5qn+JzHZivVs+Dug/PdUG+yAaq6Cb7
+SZ2m3RhRJHJB3R+KGZgKy/qV2bqZ+CgTSFU62GvnYqra8AxyX2QSTKGCHPD5bcz5
+VeWAnBuUhMH0MQE/Ypq51RrqANiw6lq6hTy9pzI0AtItdM7t+1NzNEUg0/dr2Z1i
+DlMeuSopAgMBAAECggEAYVue1TtwiN3GYmPXHRGgV9c/Dr2HOrcuF3RGL41iC8o8
+rFZQbvIa8Ngia+Umt9PUecGRtVltzFd1RT6rrEy/CLyWGK+2dIr80s90DKtZTZa1
+kS5aeyisXjTrL3VyL+bUi4wqegdVXYnLqhAFxNFrtZsCmf+WcwiIs98LnWutqNx7
+QJR2HedjBXk+mXxkaonGyIjcXiowoXdIF/XhvR4CsH9G0OG3iD0g0ZkHGZ2zqGu7
+qo9o2YwE1y1PTwd4otsuPITveCqj6egAm9rpHqaRQtRhAJqUPeKfKO2vlxdJrzLb
+KyngzusRgz/gz3yQtL7ink19+/p9HSnbqCasJ8QwAQKBgQDaYPnJnw0TyUG0GpyG
+MzC77vDqhbWGETPpgNS51UFRCpwrwY6URBMXw393YEb0DyLiP9w5U8camJC7DH1O
+I/A+gWDT6x/LX3axC36ydhz00hiPXJMHHXUr4L3dQHCZQuW5HNm4VKBqGo2d8Yy1
+KTpVyv8E0T0jtlDaz9cEas8igQKBgQDLAurBU8abUvoFFGMkfxoehsa7SLOudgTF
+5BVhwVLZ71UdD5pjSzfTeKyIMZDLHQca0HuQ4Ee4LMJFp/3LGkvJYRhpI4XNxa8b
+rg8x+VnFR7vMKzM4BiR7vzzQLk9Yl8JbUFCwu/0wqvi4K84V0BigSugYo+jO7mC0
+cDyrWOPjqQKBgQCbln5BZV2m3DxAurkMcEpni50AKpWjWHxZAF4PrN3lhJ6yGiyg
+fEPyKWqWvfSvjF05P3CDM6pmy45KhmJ8muRfVESNmDbF6lUhXOQ++CI3V70B314t
+spI52dzMV04iE+SiV+jTCRBlqFd/0YqDxET4vTGm2AEsgYfn7i7uyb6cgQKBgQCS
+hb9z24hb8M6dPfK0k7wBTls/LyDoiSu2vIEmNgcbXp76w5k1k0NusQktn0CXKJNJ
+KjIVBZsd9cgdyDroDUmnxhl9QPNA6i4Rd1ZmRkchmT2VBZUJGX3ZhtRYmSQRmC7i
+AxzKAlSifLPZEVzD55bukkHkDuFoASrw8JUJQrXwSQKBgGJNgiOksXQHGBMRQ4RN
+58yxce1MjsPb6lUT4fU1I9XoIOrXi3LMGRbwCEQcTnAl/fmqX/mn/OU0uWKhtB00
+mWF54QYcPrCDl4QWZjmnM9TeWab0Fdz5uGUe2PxhHs5dQ2hYRloTA/U+NsNLdiwW
+BHo1sC5Ix5jbkO/TaUMKGmNb
+-----END PRIVATE KEY-----
+]])
+
+-- 大文件数据（RSA 无法直接加密大数据）
+local large_data = string.rep("This is a large document. ", 1000) -- 约 27KB
+
+print("混合加密示例（RSA + AES）\n")
+print("原始数据大小:", #large_data, "字节")
+
+-- 步骤 1：生成随机 AES 密钥（32 字节 = 256 位）
+local aes_key = rand.bytes(32)
+local aes_iv = rand.bytes(16) -- AES-256-CBC 的 IV 长度为 16 字节
+
+-- 步骤 2：使用 AES 加密大数据
+local aes_ciphertext = cipher.encrypt("aes-256-cbc", aes_key, aes_iv, large_data)
+print("\nAES 加密:")
+print("  - AES 密钥长度:", #aes_key, "字节")
+print("  - AES 密文长度:", #aes_ciphertext, "字节")
+
+-- 步骤 3：使用 RSA 加密 AES 密钥（密钥很小，可以用 RSA 加密）
+local encrypted_key, _ = rsa_public:encrypt(aes_key, pkey.RSA_PKCS1_OAEP, "sha256")
+local encrypted_iv, _ = rsa_public:encrypt(aes_iv, pkey.RSA_PKCS1_OAEP, "sha256")
+print("\nRSA 加密 AES 密钥:")
+print("  - 加密后的密钥长度:", #encrypted_key, "字节")
+print("  - 加密后的 IV 长度:", #encrypted_iv, "字节")
+
+-- 步骤 4：传输数据（encrypted_key + encrypted_iv + aes_ciphertext）
+local total_size = #encrypted_key + #encrypted_iv + #aes_ciphertext
+print("\n传输数据总大小:", total_size, "字节")
+
+-- ============ 解密过程 ============
+
+-- 步骤 5：使用 RSA 解密 AES 密钥
+local decrypted_key, _ = rsa_private:decrypt(encrypted_key, pkey.RSA_PKCS1_OAEP, "sha256")
+local decrypted_iv, _ = rsa_private:decrypt(encrypted_iv, pkey.RSA_PKCS1_OAEP, "sha256")
+
+-- 步骤 6：使用 AES 解密大数据
+local decrypted_data = cipher.decrypt("aes-256-cbc", decrypted_key, decrypted_iv, aes_ciphertext)
+
+print("\n解密结果:")
+print("  - 解密数据大小:", #decrypted_data, "字节")
+print("  - 数据完整性:", decrypted_data == large_data and "验证成功" or "验证失败")
+
+print("\n混合加密优势:")
+print("  - RSA 加密对称密钥，AES 加密大数据")
+print("  - 结合了 RSA 的安全性和 AES 的高性能")
+print("  - 适用于加密任意大小的数据")
+```
 
 ### RSA 密钥签名验证完整流程
 
@@ -482,11 +944,11 @@ print("签名和验证:", verified and "成功" or "失败")
 
 -- 测试错误密码
 local wrong_password = "wrong-password"
-local ok, err = pcall(pkey.new, encrypted_privkey, wrong_password)
+local key, err = pkey.new(encrypted_privkey, wrong_password)
 
-if not ok then
+if not key then
     print("\n错误密码测试:")
-    print("  无法加载私钥（密码错误）")
+    print("  无法加载私钥:", err)
 end
 ```
 
@@ -747,9 +1209,9 @@ print("错误处理示例\n")
 
 -- 1. 无效的密钥格式
 print("测试 1: 无效的密钥格式")
-local ok, err = pcall(pkey.new, "this is not a valid PEM key")
-if not ok then
-    print("  捕获错误: 密钥格式无效")
+local key, err = pkey.new("this is not a valid PEM key")
+if not key then
+    print("  检测到错误:", err)
 end
 print()
 
@@ -763,15 +1225,15 @@ MAwGCCqGSIb3DQIJBQAwHQYJYIZIAWUDBAEqBBBl5BCE5p8mrjUpj0cdbN5SBIIE
 -----END ENCRYPTED PRIVATE KEY-----
 ]]
 
-local ok, err = pcall(pkey.new, encrypted_key, "wrong-password")
-if not ok then
-    print("  捕获错误: 密码不正确")
+local key, err = pkey.new(encrypted_key, "wrong-password")
+if not key then
+    print("  检测到错误:", err)
 end
 print()
 
--- 3. 不支持的算法
-print("测试 3: 不支持的哈希算法")
-local valid_key = pkey.new([[
+-- 3. 加载有效密钥
+print("测试 3: 加载有效密钥")
+local valid_key, err = pkey.new([[
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCtLWMWY5gVqqu0
 lezUSXdhaT5vwldh5zbho4toYxCZuWjMBTPexwKMtXRXUnrEkZvflHc5TYlA4JPV
@@ -802,18 +1264,27 @@ BHo1sC5Ix5jbkO/TaUMKGmNb
 -----END PRIVATE KEY-----
 ]])
 
+if not valid_key then
+    print("  加载失败:", err)
+    return
+end
+print("  密钥加载成功")
+print()
+
+-- 4. 不支持的算法（使用 pcall 因为 sign/verify 仍然会抛出错误）
+print("测试 4: 不支持的哈希算法")
 local ok, err = pcall(valid_key.sign, valid_key, "test", "unknown_algorithm")
 if not ok then
     print("  捕获错误: 算法不支持")
 end
 print()
 
--- 4. 签名验证失败
-print("测试 4: 签名验证失败（消息被篡改）")
+-- 5. 签名验证失败
+print("测试 5: 签名验证失败（消息被篡改）")
 local message = "Original message"
 local signature = valid_key:sign(message, "sha256")
 
-local public_key = pkey.new([[
+local public_key, err = pkey.new([[
 -----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArS1jFmOYFaqrtJXs1El3
 YWk+b8JXYec24aOLaGMQmblozAUz3scCjLV0V1J6xJGb35R3OU2JQOCT1chBABYX
@@ -825,6 +1296,11 @@ KQIDAQAB
 -----END PUBLIC KEY-----
 ]])
 
+if not public_key then
+    print("  公钥加载失败:", err)
+    return
+end
+
 local tampered = "Tampered message"
 local is_valid = public_key:verify(tampered, signature, "sha256")
 
@@ -834,8 +1310,9 @@ end
 print()
 
 print("错误处理建议:")
-print("- 使用 pcall 捕获密钥加载错误")
-print("- 验证签名前检查算法是否支持")
+print("- pkey.new() 返回 nil + 错误信息，直接检查返回值")
+print("- sign() 和 verify() 在错误时会抛出异常，使用 pcall 捕获")
+print("- 验证失败 (verify 返回 false) 与错误 (抛出异常) 是不同的")
 print("- 验证失败应记录日志并拒绝请求")
 print("- 不要在错误信息中泄露密钥细节")
 ```
