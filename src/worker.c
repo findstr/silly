@@ -254,6 +254,7 @@ void worker_start(const struct boot_args *config)
 	luaL_openlibs(L);
 	W->argc = config->argc;
 	W->argv = config->argv;
+	W->L = L;
 #if LUA_GC_MODE == LUA_GC_INC
 	lua_gc(L, LUA_GCINC, 0, 0, 0);
 #else
@@ -302,7 +303,6 @@ void worker_start(const struct boot_args *config)
 	}
 	lua_pushvalue(L, STK_DISPATCH_WAKEUP);
 	lua_call(L, 0, 0);
-	W->L = L;
 	return;
 }
 
