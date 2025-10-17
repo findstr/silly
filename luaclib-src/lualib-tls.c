@@ -299,8 +299,11 @@ static const char *fill_entry(lua_State *L, struct ctx_entry *entry, int stk)
 	}
 
 	/* Load the rest of the certificate chain */
-	X509 *chain_cert;
-	while ((chain_cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL)) != NULL) {
+	for (;;) {
+		X509 *chain_cert;
+		chain_cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
+		if (chain_cert == NULL)
+			break;
 		ret = SSL_CTX_add_extra_chain_cert(ptr, chain_cert);
 		if (ret != 1) {
 			X509_free(chain_cert);

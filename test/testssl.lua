@@ -15,6 +15,7 @@ do
 		d = tls.readline(fd)
 		print(d)
 	end
+	tls.close(fd)
 end
 
 -- Test 2: Reload certs
@@ -57,6 +58,7 @@ do
 	result = hive.invoke(bee)
 	cn = result:match("subject:%s*CN=([%w%.%-]+)")
 	testaux.asserteq(cn, "localhost2", "certB")
+	tls.close(tlsfd)
 end
 
 

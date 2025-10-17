@@ -31,16 +31,15 @@
 #undef PAGE_SIZE
 #endif
 
-#define atomic_load_relax(a)                                          \
-	atomic_load_explicit(&(a), memory_order_relaxed)
+#define atomic_load_relax(a) atomic_load_explicit(&(a), memory_order_relaxed)
 
-#define atomic_store_relax(a, v)                                      \
+#define atomic_store_relax(a, v) \
 	atomic_store_explicit(&(a), (v), memory_order_relaxed)
 
-#define atomic_sub_relax(a, v)                                        \
+#define atomic_sub_relax(a, v) \
 	atomic_fetch_sub_explicit(&(a), (v), memory_order_relaxed)
 
-#define atomic_add_relax(a, v)                                        \
+#define atomic_add_relax(a, v) \
 	atomic_fetch_add_explicit(&(a), (v), memory_order_relaxed)
 
 struct page;

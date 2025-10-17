@@ -1875,16 +1875,16 @@ const char *socket_pollapi()
 
 void socket_netstat(struct silly_netstat *stat)
 {
-	stat->tcp_connections = atomic_load_explicit(&SM->netstat.tcp_connections,
-					       memory_order_relaxed);
+	stat->tcp_connections = atomic_load_explicit(
+		&SM->netstat.tcp_connections, memory_order_relaxed);
 	stat->received_bytes = atomic_load_explicit(&SM->netstat.received_bytes,
-					      memory_order_relaxed);
+						    memory_order_relaxed);
 	stat->sent_bytes = atomic_load_explicit(&SM->netstat.sent_bytes,
-					      memory_order_relaxed);
-	stat->operate_request = atomic_load_explicit(&SM->netstat.operate_request,
-					       memory_order_relaxed);
-	stat->operate_processed = atomic_load_explicit(&SM->netstat.operate_processed,
-						 memory_order_relaxed);
+						memory_order_relaxed);
+	stat->operate_request = atomic_load_explicit(
+		&SM->netstat.operate_request, memory_order_relaxed);
+	stat->operate_processed = atomic_load_explicit(
+		&SM->netstat.operate_processed, memory_order_relaxed);
 	return;
 }
 
@@ -1900,8 +1900,10 @@ void socket_stat(silly_socket_id_t sid, struct silly_sockstat *info)
 	int fd = s->fd;
 	int protocol = socket_protocol(s);
 	int type = socket_type(s);
-	info->sent_bytes = atomic_load_explicit(&s->sent_bytes, memory_order_relaxed);
-	info->received_bytes = atomic_load_explicit(&s->received_bytes, memory_order_relaxed);
+	info->sent_bytes =
+		atomic_load_explicit(&s->sent_bytes, memory_order_relaxed);
+	info->received_bytes =
+		atomic_load_explicit(&s->received_bytes, memory_order_relaxed);
 	s = pool_get(&SM->pool, sid);
 	if (s == NULL || is_zombine(s)) {
 		log_error("[socket] socket_stat sid:%llu invalid\n", sid);

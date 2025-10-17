@@ -18,7 +18,7 @@ jobs:
     - shell: msys2 {0}
       run: |
         make test
-        ./silly test/test.lua --test.timer.checkdelta=500
+        sh ./test/test.sh
   build-macosx:
     runs-on: macos-latest
     steps:
@@ -33,7 +33,7 @@ jobs:
     - name: make
       run: |
         make test
-        ./silly test/test.lua --test.timer.checkdelta=500
+        sh ./test/test.sh
   build-linux:
     runs-on: ubuntu-latest
     services:
@@ -58,7 +58,7 @@ jobs:
     - name: make
       run: |
         make test
-        ./silly test/test.lua
+        sh ./test/test.sh
 
   build-linux-sql:
     name: build-linux-sql
@@ -97,4 +97,4 @@ jobs:
     - name: DB-focused tests
       run: |
         make test
-        ./silly test/testsql.lua
+        ./silly test/test.lua --case=testmysql
