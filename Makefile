@@ -152,7 +152,7 @@ test:
 	make TEST=ON MALLOC=glibc all
 
 testall: test
-	./$(TARGET) test/test.lua --lualib_path="test/?.lua"
+	sh ./test/test.sh
 
 clean:
 	-rm .depend
