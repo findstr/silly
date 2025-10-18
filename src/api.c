@@ -201,42 +201,31 @@ SILLY_API void silly_push_error(lua_State *L, int stk, int code)
 {
 	worker_push_error(L, stk, code);
 }
-SILLY_API void silly_reset()
-{
-	worker_reset();
-}
-
 SILLY_API int silly_register_message(const char *name)
 {
 	return message_register(name);
 }
-
 SILLY_API void silly_cpu_usage(float *stime, float *utime)
 {
 	cpu_usage(stime, utime);
 }
-
 SILLY_API void silly_fd_open_limit(int *soft, int *hard)
 {
 	fd_open_limit(soft, hard);
 }
-
 SILLY_API int silly_open_fd_count(void)
 {
 	return open_fd_count();
 }
-
 SILLY_API int silly_cpu_count(void)
 {
 	return cpu_count();
 }
-
 SILLY_API void silly_exit(int status)
 {
 	worker_reset();
 	return engine_shutdown(status);
 }
-
 SILLY_API const struct silly_message_id *silly_messages()
 {
 	static const struct silly_message_id p = {
