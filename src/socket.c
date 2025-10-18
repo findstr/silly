@@ -70,9 +70,7 @@
 #if EAGAIN == EWOULDBLOCK
 #define ETRYAGAIN EAGAIN
 #else
-#define ETRYAGAIN \
-EAGAIN:           \
-	case EWOULDBLOCK
+#define ETRYAGAIN EAGAIN : case EWOULDBLOCK
 #endif
 
 #define EVENT_SIZE (128)
@@ -1476,7 +1474,7 @@ int socket_tcp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 		freex = mem_free;
 	if (unlikely(s == NULL || is_zombine(s))) {
 		freex(buf);
-		log_error("[socket] socket_tcp_send sid:%llu closed\n", sid);
+		log_warn("[socket] socket_tcp_send sid:%llu closed\n", sid);
 		return -EX_CLOSED;
 	}
 	if (unlikely(sz == 0)) {

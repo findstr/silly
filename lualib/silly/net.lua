@@ -184,6 +184,7 @@ silly.register(c.TCPDATA, function(fd, ptr, size)
 		local t = task_create(f)
 		task_resume(t, fd, ptr, size)
 	else
+		c.free(ptr)
 		log_info("[net] SILLY_SDATA fd:", fd, "closed")
 	end
 end)
@@ -194,6 +195,7 @@ silly.register(c.UDPDATA, function(fd, ptr, size, addr)
 		local t = task_create(f)
 		task_resume(t, fd, ptr, size, addr)
 	else
+		c.free(ptr)
 		log_info("[net] SILLY_UDP fd:", fd, "closed")
 	end
 end)

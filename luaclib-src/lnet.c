@@ -320,6 +320,13 @@ static int lsendsize(lua_State *L)
 	return 1;
 }
 
+static int lfree(lua_State *L)
+{
+	void *ptr = lua_touserdata(L, 1);
+	silly_free(ptr);
+	return 0;
+}
+
 static void set_message_type(lua_State *L, int tbl)
 {
 	const struct silly_message_id *msg_id = silly_messages();
@@ -351,6 +358,7 @@ SILLY_MOD_API int luaopen_silly_net_c(lua_State *L)
 		{ "readenable",    lreadenable   },
 		{ "ntop",          lntop         },
 		{ "close",         lclose        },
+		{ "free",          lfree         },
 		{ NULL,            NULL          },
 	};
 	luaL_checkversion(L);

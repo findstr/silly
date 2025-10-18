@@ -65,9 +65,9 @@ static inline void callback(struct silly_message *sm)
 			  err, lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
+	sm->free(sm);
 	lua_pushvalue(W->L, STK_DISPATCH_WAKEUP);
 	lua_call(W->L, 0, 0);
-	sm->free(sm);
 }
 
 void worker_push(struct silly_message *msg)
