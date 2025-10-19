@@ -164,17 +164,16 @@ function M.connect(addr)
 		return peer, nil
 	end
 	local fd, errstr = connect(addr)
-	if not fd then
-		return nil, errstr
-	end
 	peer = {
 		fd = fd,
 		addr = addr,
 	}
-	logger.info("[cluster] connect", addr, "fd:", fd)
-	fd_to_peer[fd] = peer
+	if fd then
+		fd_to_peer[fd] = peer
+	end
 	addr_to_peer[addr] = peer
-	return peer, errstr
+	logger.info("[cluster] connect to", addr)
+	return peer
 end
 
 ---@param peer silly.net.cluster.peer|silly.net.cluster.listener
