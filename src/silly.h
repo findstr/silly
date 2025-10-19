@@ -73,7 +73,7 @@ struct silly_sockstat {
 	char remoteaddr[SILLY_SOCKET_NAMELEN];
 };
 
-typedef uint16_t silly_tracespan_t;
+typedef uint16_t silly_tracenode_t;
 typedef uint64_t silly_traceid_t;
 
 SILLY_API void silly_exit(int status);
@@ -138,7 +138,7 @@ SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud);
 SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud);
 SILLY_API void silly_timerstat(struct silly_timerstat *stat);
 
-SILLY_API void silly_trace_span(silly_tracespan_t id);
+SILLY_API void silly_trace_node(silly_tracenode_t id);
 SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id);
 SILLY_API silly_traceid_t silly_trace_get();
 SILLY_API silly_traceid_t silly_trace_new();

@@ -324,6 +324,7 @@ char **worker_args(int *argc)
 
 void worker_resume(lua_State *L)
 {
+	assert(L != NULL);
 	W->running = L;
 }
 

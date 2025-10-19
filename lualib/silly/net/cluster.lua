@@ -55,7 +55,7 @@ local function process()
 	if not fd then
 		return
 	end
-	local otrace = silly.trace(traceid)
+	local otrace = silly.traceset(traceid)
 	silly.fork(process)
 	while true do
 		if cmd then	--rpc request
@@ -90,9 +90,9 @@ local function process()
 		if not fd then
 			return
 		end
-		silly.trace(traceid)
+		silly.traceset(traceid)
 	end
-	silly.trace(otrace)
+	silly.traceset(otrace)
 end
 
 ---@type silly.net.event

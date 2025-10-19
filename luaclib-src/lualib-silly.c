@@ -127,32 +127,30 @@ static int lsignal(lua_State *L)
 	return 1;
 }
 
-static int ltracespan(lua_State *L)
+static int ltracenode(lua_State *L)
 {
-	silly_tracespan_t span;
-	span = (silly_tracespan_t)luaL_checkinteger(L, 1);
-	silly_trace_span(span);
+	silly_tracenode_t span;
+	span = (silly_tracenode_t)luaL_checkinteger(L, 1);
+	silly_trace_node(span);
 	return 0;
 }
 
-static int ltracenew(lua_State *L)
+static int ltracespawn(lua_State *L)
 {
-	silly_traceid_t traceid;
-	traceid = silly_trace_new();
-	lua_pushinteger(L, (lua_Integer)traceid);
-	return 1;
+	silly_traceid_t oid, nid;
+	nid = silly_trace_new();
+	oid = silly_trace_set(nid);
+	lua_pushinteger(L, (lua_Integer)nid);
+	lua_pushinteger(L, (lua_Integer)oid);
+	return 2;
 }
 
 static int ltraceset(lua_State *L)
 {
 	silly_traceid_t traceid;
-	lua_State *co = lua_tothread(L, 1);
-	silly_resume(co);
-	if lua_isnoneornil (L, 2) {
-		traceid = TRACE_WORKER_ID;
-	} else {
-		traceid = (silly_traceid_t)luaL_checkinteger(L, 2);
-	}
+	lua_State *co = lua_tothread(L, 2);
+	silly_resume(co ? co : L);
+	traceid = (silly_traceid_t)luaL_optinteger(L, 1, 0);
 	traceid = silly_trace_set(traceid);
 	lua_pushinteger(L, (lua_Integer)traceid);
 	return 1;
@@ -181,10 +179,10 @@ SILLY_MOD_API int luaopen_silly_c(lua_State *L)
 		{ "strerror",   lstrerror  },
 		{ "exit",       lexit      },
 		//trace
-		{ "trace_span", ltracespan },
-		{ "trace_new",  ltracenew  },
-		{ "trace_set",  ltraceset  },
-		{ "trace_get",  ltraceget  },
+		{ "tracenode", ltracenode  },
+		{ "tracespawn",ltracespawn },
+		{ "traceset",  ltraceset   },
+		{ "traceget",  ltraceget   },
 		//end
 		{ NULL,         NULL       },
 	};

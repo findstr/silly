@@ -4,11 +4,6 @@
 #define STR(s) __STR(s)
 #define __STR(s) #s
 
-#define TRACE_WORKER_ID (0)
-#define TRACE_TIMER_ID (1)
-#define TRACE_SOCKET_ID (2)
-#define TRACE_MONITOR_ID (3)
-
 #ifdef __WIN32
 #define LUA_LIB_SUFFIX ".dll"
 #else

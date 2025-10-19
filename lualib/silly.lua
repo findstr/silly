@@ -20,13 +20,11 @@ local tunpack = table.unpack
 local traceback = debug.traceback
 local weakmt = {__mode="kv"}
 
-local function nop(_) end
 --misc
-local log_info = assert(logger.info)
 local log_error = assert(logger.error)
-local trace_new = assert(c.trace_new)
-local trace_set = assert(c.trace_set)
-local trace_span = assert(c.trace_span)
+local tracespawn = assert(c.tracespawn)
+local traceset = assert(c.traceset)
+local tracenode = assert(c.tracenode)
 
 silly.pid = c.getpid()
 silly.genid = c.genid
@@ -51,9 +49,9 @@ local function task_resume(t, ...)
 	local save = task_running
 	task_status[t] = "RUN"
 	task_running = t
-	local traceid = trace_set(t, task_traceid[t])
+	local traceid = traceset(task_traceid[t], t)
 	local ok, err = coresume(t, ...)
-	trace_set(traceid)
+	traceset(traceid)
 	task_running = save
 	if not ok then
 		task_status[t] = nil
@@ -76,22 +74,33 @@ local function silly_pcall(f, ...)
 	return xpcall(f, errmsg, ...)
 end
 
-silly.tracespan = trace_span
-silly.tracepropagate = trace_new
+local trace_node_id = 0
 
----@return integer
-function silly.tracenew()
-	local traceid = task_traceid[task_running]
-	if traceid then
-		return traceid
-	end
-	return trace_new()
+---@param nodeid integer
+function silly.tracenode(nodeid)
+	trace_node_id = nodeid
+	tracenode(nodeid)
 end
 
 ---@return integer
-function silly.trace(id)
+function silly.tracespawn()
+	local nid, oid = tracespawn()
+	task_traceid[task_running] = nid
+	return oid
+end
+
+---@return integer
+function silly.traceset(id)
 	task_traceid[task_running] = id
-	return (trace_set(task_running, id))
+	return (traceset(id, task_running))
+end
+
+local traceid_node_mask = ~0xffff -- grep silly_tracenode_t
+
+---@return integer
+function silly.tracepropagate()
+	local traceid = task_traceid[task_running] or 0
+	return traceid & traceid_node_mask | trace_node_id
 end
 
 function silly.error(errmsg)

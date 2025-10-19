@@ -153,9 +153,9 @@ SILLY_API uint64_t silly_monotonic()
 {
 	return timer_monotonic();
 }
-SILLY_API void silly_trace_span(silly_tracespan_t id)
+SILLY_API void silly_trace_node(silly_tracenode_t id)
 {
-	trace_span(id);
+	trace_node(id);
 }
 SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id)
 {

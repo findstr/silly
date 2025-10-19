@@ -34,7 +34,6 @@ static void *thread_timer(void *arg)
 	struct timespec req;
 	req.tv_sec = TIMER_ACCURACY / 1000;
 	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
-	trace_set(TRACE_TIMER_ID);
 	log_info("[timer] start\n");
 	for (;;) {
 		timer_update();
@@ -52,7 +51,6 @@ static void *thread_timer(void *arg)
 static void *thread_socket(void *arg)
 {
 	(void)arg;
-	trace_set(TRACE_SOCKET_ID);
 	log_info("[socket] start\n");
 	for (;;) {
 		int err = socket_poll();
@@ -72,7 +70,6 @@ static void *thread_worker(void *arg)
 	log_info("[worker] start\n");
 	worker_start(c);
 	pthread_mutex_lock(&R.mutex);
-	trace_set(TRACE_WORKER_ID);
 	while (R.running) {
 		worker_dispatch();
 		//allow spurious wakeup, it's harmless
@@ -93,7 +90,6 @@ static void thread_monitor()
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
 	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
-	trace_set(TRACE_MONITOR_ID);
 	log_info("[monitor] start\n");
 	for (;;) {
 		if (R.workerstatus == -1)

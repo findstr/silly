@@ -7,7 +7,7 @@
 #include "timer.h"
 #include "trace.h"
 
-static silly_tracespan_t spanid;
+static silly_tracenode_t nodeid;
 static atomic_uint_least16_t seq_idx = 0;
 
 // traceid format:
@@ -17,12 +17,11 @@ static THREAD_LOCAL silly_traceid_t trace_ctx = 0;
 
 void trace_init()
 {
-	trace_span((silly_tracespan_t)getpid());
 }
 
-void trace_span(silly_tracespan_t id)
+void trace_node(silly_tracenode_t id)
 {
-	spanid = id;
+	nodeid = id;
 }
 
 silly_traceid_t trace_set(silly_traceid_t id)
@@ -39,14 +38,8 @@ silly_traceid_t trace_get()
 
 silly_traceid_t trace_new()
 {
-	// child call, use type-safe MASK
-	if (trace_ctx > 0) {
-		const silly_traceid_t MASK = (silly_tracespan_t)-1;
-		return (trace_ctx & ~MASK) | (silly_traceid_t)spanid;
-	}
-
 	// root call, use dynamically calculated shifts
-	const int SPAN_BITS = sizeof(silly_tracespan_t) * 8;
+	const int SPAN_BITS = sizeof(silly_tracenode_t) * 8;
 	const int TIME_BITS = sizeof(uint16_t) * 8;
 	const int SEQ_BITS = sizeof(uint16_t) * 8;
 
@@ -58,10 +51,8 @@ silly_traceid_t trace_new()
 	uint16_t seq =
 		atomic_fetch_add_explicit(&seq_idx, 1, memory_order_relaxed) +
 		1;
-
-	silly_traceid_t id = (silly_traceid_t)spanid << ROOT_ID_SHIFT |
+	silly_traceid_t id = (silly_traceid_t)nodeid << ROOT_ID_SHIFT |
 			     (silly_traceid_t)time << SEQ_SHIFT |
-			     (silly_traceid_t)seq << TIME_SHIFT |
-			     (silly_traceid_t)spanid;
+			     (silly_traceid_t)seq << TIME_SHIFT ;
 	return id;
 }
