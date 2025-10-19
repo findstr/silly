@@ -584,9 +584,17 @@ static int read_varint(struct unpack_ctx *ctx, int bits)
 static int push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 {
 	int tx, type;
-	if (id < STATIC_TBL_SIZE) {
+	// RFC 7541 Section 2.3.2: Static table index range is [1, 61]
+	if (id == 0)
+		return -1;
+	if (id <= STATIC_TBL_SIZE) {
 		tx = uctx->stat;
 	} else {
+		// RFC 7541 Section 2.3.3: Validate dynamic table index range
+		// Valid range: [STATIC_TBL_SIZE + 1, STATIC_TBL_SIZE + (queue_head - queue_tail)]
+		int offset = id - STATIC_TBL_SIZE;
+		if (offset > (uctx->hpack->queue_head - uctx->hpack->queue_tail))
+			return -1;
 		tx = uctx->dyna;
 		id = dynamic_index(uctx->hpack, id);
 	}
@@ -607,6 +615,9 @@ static int push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 static int push_sv(lua_State *L, struct unpack_ctx *uctx)
 {
 	int ret, len;
+	// Check if there's data to read the length varint
+	if (uctx->p >= uctx->e)
+		return -1;
 	len = read_varint(uctx, 7);
 	if (uctx->p + len > uctx->e)
 		return -1;
@@ -626,18 +637,33 @@ static int push_sv(lua_State *L, struct unpack_ctx *uctx)
 static int read_index_kv(lua_State *L, struct unpack_ctx *uctx)
 {
 	int tx, type;
+	// Check if there's data to read the index varint
+	if (uctx->p >= uctx->e)
+		return -1;
 	int id = read_varint(uctx, 7);
+	// RFC 7541 Section 2.3.2: Static table index range is [1, 61]
+	if (id == 0)
+		return -1;
 	if (id <= STATIC_TBL_SIZE) {
 		tx = uctx->stat;
 	} else {
+		// RFC 7541 Section 2.3.3: Validate dynamic table index range
+		// Valid range: [STATIC_TBL_SIZE + 1, STATIC_TBL_SIZE + (queue_head - queue_tail)]
+		int offset = id - STATIC_TBL_SIZE;
+		if (offset > (uctx->hpack->queue_head - uctx->hpack->queue_tail))
+			return -1;
 		tx = uctx->dyna;
 		id = dynamic_index(uctx->hpack, id);
 	}
 	type = lua_geti(L, tx, id);
-	if (type != LUA_TTABLE)
+	if (type == LUA_TTABLE) {
+		lua_geti(L, -1, 1);
+		lua_geti(L, -2, 2);
+	} else if (type == LUA_TSTRING) {
+		lua_pushliteral(L, "");
+	} else {
 		return -1;
-	lua_geti(L, -1, 1);
-	lua_geti(L, -2, 2);
+	}
 	return 0;
 }
 
@@ -663,12 +689,14 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 	return 0;
 }
 
-//hpack.unpack(ctx, header)
+//hpack.unpack(ctx, data, header_list)
 static int lhpack_unpack(lua_State *L)
 {
+	int i;
 	int htbl, top;
 	luaL_Buffer b;
 	struct unpack_ctx uctx;
+	int seen_header_field = 0; // RFC 7541 Section 4.2: Track if we've seen any header fields
 	uctx.hpack = luaL_checkudata(L, 1, "HPACK");
 	uctx.hpack->queue_used_min = uctx.hpack->queue_head;
 	uctx.huffman = lua_touserdata(L, lua_upvalueindex(2));
@@ -683,25 +711,31 @@ static int lhpack_unpack(lua_State *L)
 		uctx.e = uctx.p + luaL_bufflen(&b);
 	}
 	//try predict the header hash size
-	lua_createtable(L, 0, 64);
-	htbl = lua_gettop(L);
+	htbl = 3;
+	top = lua_gettop(L);
 	lua_pushvalue(L, lua_upvalueindex(1));
 	lua_getiuservalue(L, 1, 1);
-	uctx.stat = htbl + 1;
-	uctx.dyna = htbl + 2;
-	top = lua_gettop(L);
+	uctx.stat = top + 1;
+	uctx.dyna = top + 2;
+	top += 2;
+	i = lua_rawlen(L, htbl);
 	while (uctx.p < uctx.e) {
 		int ret;
 		unsigned char n = *uctx.p;
 		lua_settop(L, top);
 		if ((n & 0x80) == 0x80) {
-			if ((ret = read_index_kv(L, &uctx)) < 0) //bit7
-				return 0;
+			if ((ret = read_index_kv(L, &uctx)) < 0) { //bit7
+				lua_pushboolean(L, 0);
+				return 1;
+			}
+			seen_header_field = 1;
 		} else if ((n & 0xc0) == 0x40) { //bit6
 			int stk;
 			struct lstr kstr, vstr;
-			if ((ret = read_ik_sv(L, &uctx, 6)) < 0)
-				return 0;
+			if ((ret = read_ik_sv(L, &uctx, 6)) < 0) {
+				lua_pushboolean(L, 0);
+				return 1;
+			}
 			kstr.str = lua_tolstring(L, -2, &kstr.len);
 			vstr.str = lua_tolstring(L, -1, &vstr.len);
 			push_kv(L, &kstr, &vstr);
@@ -709,37 +743,39 @@ static int lhpack_unpack(lua_State *L)
 			add_to_table(L, uctx.hpack, uctx.dyna, stk, stk + 1,
 				     stk + 2, field_size(&kstr, &vstr));
 			lua_pop(L, 1);
+			seen_header_field = 1;
 		} else if ((n & 0xf0) == 0x0 || (n & 0xf0) == 0x10) { //bit4
-			if ((ret = read_ik_sv(L, &uctx, 4)) < 0)
-				return 0;
+			if ((ret = read_ik_sv(L, &uctx, 4)) < 0) {
+				lua_pushboolean(L, 0);
+				return 1;
+			}
+			seen_header_field = 1;
 		} else if ((n & 0xe0) == 0x20) { //bit5
+			// RFC 7541 Section 4.2: Dynamic table size update MUST occur at the beginning
+			if (seen_header_field) {
+				lua_pushboolean(L, 0);
+				return 1;
+			}
 			int len = read_varint(&uctx, 5);
+			// RFC 7541 Section 6.3: The new maximum size MUST be lower than or equal
+			// to the limit determined by the protocol (SETTINGS_HEADER_TABLE_SIZE)
+			if (len > uctx.hpack->hard_limit) {
+				lua_pushboolean(L, 0);
+				return 1;
+			}
 			uctx.hpack->soft_limit = len;
 			try_evict(L, uctx.hpack, uctx.dyna, 0);
 			continue;
 		}
 		lua_pushvalue(L, -2); // push key
-		int type = lua_gettable(L, htbl);
-		switch (type) {
-		case LUA_TSTRING:
-			lua_createtable(L, 0, 2);
-			lua_pushvalue(L, -2);
-			lua_rawseti(L, -2, 1);
-			lua_pushvalue(L, -3);
-			lua_rawseti(L, -2, 2);
-			lua_replace(L, -3);
-			break;
-		case LUA_TTABLE: // hk = header[k]; hk[#hk+1] = v
-			lua_pushvalue(L, -2);
-			lua_rawseti(L, -2, lua_rawlen(L, -2) + 1);
-			break;
-		default:
-			break;
-		}
-		lua_pop(L, 1);
-		lua_settable(L, htbl);
+		lua_rawseti(L, htbl, ++i);
+		lua_pushvalue(L, -1); // push value
+		lua_rawseti(L, htbl, ++i);
+		lua_pop(L, 2); //pop key and value
 	}
-	lua_settop(L, htbl);
+	// RFC 7540 Section 4.3: All header block data must be consumed
+	// If there's remaining unparsed data, the header block is malformed
+	lua_pushboolean(L, uctx.p == uctx.e);
 	return 1;
 }
 
@@ -758,7 +794,7 @@ static int lhpack_hardlimit(lua_State *L)
 static void create_static_table(lua_State *L)
 {
 	size_t i, t;
-	lua_createtable(L, 61, 61);
+	lua_createtable(L, STATIC_TBL_SIZE, STATIC_TBL_SIZE);
 	t = lua_gettop(L);
 	for (i = 0; i < sizeof(static_tbl) / sizeof(static_tbl[0]); i++) {
 		int type;
@@ -850,6 +886,8 @@ SILLY_MOD_API int luaopen_silly_http2_hpack(lua_State *L)
 #define FRAME_HEADERS 1
 #define FRAME_RST 3
 #define FRAME_SETTINGS 4
+#define FRAME_PING 6
+#define FRAME_GOAWAY 7
 #define FRAME_WINUPDATE 8
 #define FRAME_CONTINUATION 9
 
@@ -909,32 +947,40 @@ static int lframe_build_header(lua_State *L)
 	return 1;
 }
 
-//build(id, framesize, body, endstream)
+//build(id, framesize, body, offset, length, endstream)
 static int lframe_build_body(lua_State *L)
 {
 	char *p;
 	const char *dat;
-	size_t sz, need, framesize;
+	int offset, len;
+	size_t sz, need, framesize, remaining;
 	unsigned int id, flag;
 	luaL_Buffer b;
 	id = luaL_checkinteger(L, 1);
 	framesize = luaL_checkinteger(L, 2);
 	dat = luaL_checklstring(L, 3, &sz);
-	flag = lua_toboolean(L, 4) ? END_STREAM : 0;
-	need = sz + (sz + framesize - 1) / framesize * FRAME_HDR_SIZE;
+	offset = luaL_checkinteger(L, 4);
+	len = luaL_checkinteger(L, 5);
+	luaL_argcheck(L, offset >= 0 && len >= 0 &&
+		       (size_t)offset + (size_t)len <= sz,
+		       4, "invalid offset or length");
+	flag = lua_toboolean(L, 6) ? END_STREAM : 0;
+	dat += offset;  // Advance to the offset position
+	remaining = (size_t)len;
+	need = remaining + (remaining + framesize - 1) / framesize * FRAME_HDR_SIZE;
 	p = luaL_buffinitsize(L, &b, need + FRAME_HDR_SIZE);
-	while (sz > framesize) {
+	while (remaining > framesize) {
 		write_frame_header(p, framesize, FRAME_DATA, 0, id);
 		p += FRAME_HDR_SIZE;
 		memcpy(p, dat, framesize);
 		p += framesize;
 		dat += framesize;
-		sz -= framesize;
+		remaining -= framesize;
 	}
-	write_frame_header(p, sz, FRAME_DATA, flag, id);
+	write_frame_header(p, remaining, FRAME_DATA, flag, id);
 	p += FRAME_HDR_SIZE;
-	memcpy(p, dat, sz);
-	p += sz;
+	memcpy(p, dat, remaining);
+	p += remaining;
 	luaL_pushresultsize(&b, p - luaL_buffaddr(&b));
 	return 1;
 }
@@ -1014,6 +1060,24 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
+//goaway(last_stream_id, errorcode)
+static int lframe_build_goaway(lua_State *L)
+{
+	char *p;
+	luaL_Buffer b;
+	unsigned int last_stream_id = luaL_checkinteger(L, 1);
+	int errorcode = luaL_checkinteger(L, 2);
+	p = luaL_buffinitsize(L, &b, FRAME_HDR_SIZE + 8);
+	write_frame_header(p, 8, FRAME_GOAWAY, 0, 0); // GOAWAY is always on stream 0
+	p += FRAME_HDR_SIZE;
+	write_int(p, last_stream_id);
+	p += 4;
+	write_int(p, errorcode);
+	p += 4;
+	luaL_pushresultsize(&b, p - luaL_buffaddr(&b));
+	return 1;
+}
+
 SILLY_MOD_API int luaopen_silly_http2_framebuilder(lua_State *L)
 {
 	luaL_Reg tbl[] = {
@@ -1022,6 +1086,7 @@ SILLY_MOD_API int luaopen_silly_http2_framebuilder(lua_State *L)
 		{ "setting",   lframe_build_setting   },
 		{ "winupdate", lframe_build_winupdate },
 		{ "rst",       lframe_build_rst       },
+		{ "goaway",    lframe_build_goaway    },
 		{ NULL,        NULL                   }
 	};
 	luaL_newlib(L, tbl);

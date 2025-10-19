@@ -224,16 +224,13 @@ local function general_call(timeout, connect, method, fullname)
 	local itype = method.input_type
 	local otype = method.output_type
 	return function(req)
-		local h2stream<close>, err = connect(fullname)
+		local h2stream, err = connect(fullname)
 		if not h2stream then
 			return nil, err
 		end
 		local reqdat = pb.encode(itype, req)
 		reqdat = pack(">I1I4", 0, #reqdat) .. reqdat
-		local ok, err = h2stream:write(reqdat)
-		if not ok then
-			return nil, err
-		end
+		h2stream:close(reqdat)
 		local status, header = h2stream:readheader(timeout)
 		if not status then
 			return nil, header

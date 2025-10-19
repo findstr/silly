@@ -5,6 +5,25 @@ local send_hpack = hpack.new(4096)
 local prefix = crypto.randomkey(200)
 local unit = 250+32
 
+-- Helper function to convert array format {k1, v1, k2, v2, ...} to hash table
+-- Multiple values with same key are stored in array
+local function array_to_headers(arr)
+	local headers = {}
+	for i = 1, #arr, 2 do
+		local k, v = arr[i], arr[i + 1]
+		if headers[k] then
+			if type(headers[k]) == "table" then
+				headers[k][#headers[k] + 1] = v
+			else
+				headers[k] = {headers[k], v}
+			end
+		else
+			headers[k] = v
+		end
+	end
+	return headers
+end
+
 -- Test 0: test prune
 do
 	local idx =  0
@@ -56,7 +75,10 @@ do
 		"user-agent", "test-client"
 	)
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 1: unpack should succeed")
+	decoded = array_to_headers(decoded)
 
 	for k, v in pairs(headers) do
 		testaux.asserteq(decoded[k], v, "Test 1: static table index: " .. k)
@@ -73,7 +95,10 @@ do
 
 	local buffer = hpack.pack(encoder, {}, ":path", long_path)
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 2: unpack should succeed")
+	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded[":path"], long_path, "Test 2: integer representation")
 end
@@ -88,7 +113,10 @@ do
 
 	local buffer = hpack.pack(encoder, {}, "x-custom-header", complex_value)
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 3: unpack should succeed")
+	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded["x-custom-header"], complex_value, "Test 3: Huffman encoding")
 end
@@ -104,8 +132,14 @@ do
 	-- Second encoding should reference dynamic table
 	testaux.assertlt(#buffer2, #buffer1, "Test 4: dynamic table update")
 
-	local decoded = hpack.unpack(decoder, buffer1)
-	local decoded2 = hpack.unpack(decoder, buffer2)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer1, decoded)
+	testaux.asserteq(ok, true, "Test 4: unpack should succeed")
+	decoded = array_to_headers(decoded)
+	local decoded2 = {}
+	local ok2 = hpack.unpack(decoder, buffer2, decoded2)
+	testaux.asserteq(ok2, true, "Test 4: unpack should succeed")
+	decoded2 = array_to_headers(decoded2)
 
 	testaux.asserteq(decoded["custom-header"], "value1", "Test 4: dynamic table decoding")
 	testaux.asserteq(decoded2["custom-header"], "value1", "Test 4: dynamic table decoding")
@@ -121,7 +155,10 @@ do
 
 	local buffer = hpack.pack(encoder, {["x-special"] = special_chars})
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 5: unpack should succeed")
+	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded["x-special"], special_chars, "Test 5: special characters encoding")
 end
@@ -141,7 +178,10 @@ do
 	}
 
 	local buffer = hpack.pack(encoder, headers, ":method", "POST", ":scheme", "https", ":path", "/api/data")
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 6: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	for k, v in pairs(headers) do
 		testaux.asserteq(decoded[k], v, "Test 6: multiple header fields: " .. k)
 	end
@@ -163,7 +203,10 @@ do
 		}
 	})
 
-	local decoded = hpack.unpack(decoder, {buffer1, buffer2})
+	local decoded = {}
+	local ok = hpack.unpack(decoder, {buffer1, buffer2}, decoded)
+	testaux.asserteq(ok, true, "Test 7: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	print(require "silly.encoding.json".encode(decoded))
 	-- Check if multiple headers with same name are handled correctly
 	local set_cookies = decoded["set-cookie"]
@@ -174,6 +217,8 @@ do
 	testaux.asserteq(#cookies, 2, "Test 7.4: should have two cookies")
 	testaux.asserteq(set_cookies[1], "cookie1=value1; Path=/", "Test 7.5: first cookie")
 	testaux.asserteq(set_cookies[2], "cookie2=value2; Path=/api", "Test 7.6: second cookie")
+	testaux.asserteq(cookies[1], "value1", "Test 7.7: first cookie value")
+	testaux.asserteq(cookies[2], "value2", "Test 7.8: second cookie value")
 end
 
 -- Test 8: Dynamic table eviction
@@ -224,7 +269,10 @@ do
 		"Test 8: oldest entries should be evicted from dynamic table")
 
 	-- Decode and verify
-	local decoded = hpack.unpack(decoder, table.concat(buffer))
+	local decoded = {}
+	local ok = hpack.unpack(decoder, table.concat(buffer), decoded)
+	testaux.asserteq(ok, true, "Test 8: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	for _, header in ipairs(headers) do
 		testaux.asserteq(decoded[header.name], header.value,
 			"Test 8: dynamic table eviction: " .. header.name)
@@ -236,8 +284,9 @@ do
 	local decoder = hpack.new(4096)
 	-- Test with invalid Huffman sequence
 	local invalid_data = string.char(0x80, 0xff, 0xff) -- Invalid Huffman sequence
-	local decoded = hpack.unpack(decoder, invalid_data)
-	testaux.asserteq(decoded, nil, "Test 9: should handle malformed input gracefully")
+	local decoded = {}
+	local ok = hpack.unpack(decoder, invalid_data, decoded)
+	testaux.asserteq(ok, false, "Test 9: should handle malformed input gracefully")
 end
 
 -- Test 10: Header field size limits
@@ -251,7 +300,10 @@ do
 		["x-large-header"] = large_value,
 	})
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 10: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["x-large-header"], large_value,
 		"Test 10: should handle large header values")
 end
@@ -298,7 +350,10 @@ do
 		request[':path'] = nil
 		local buf = hpack.pack(encoder, request, ":method", method, ":path", path)
 		-- Decode request
-		local decoded_req = hpack.unpack(decoder, buf)
+		local decoded_req = {}
+		local ok = hpack.unpack(decoder, buf, decoded_req)
+		testaux.asserteq(ok, true, "Test 11: unpack request should succeed")
+		decoded_req = array_to_headers(decoded_req)
 
 		-- Verify request
 		for k, v in pairs(exchange.request) do
@@ -313,7 +368,10 @@ do
 		response[':status'] = nil
 		local buf = hpack.pack(encoder, response, ":status", status)
 		-- Decode response
-		local decoded_resp = hpack.unpack(decoder, buf)
+		local decoded_resp = {}
+		local ok = hpack.unpack(decoder, buf, decoded_resp)
+		testaux.asserteq(ok, true, "Test 11: unpack response should succeed")
+		decoded_resp = array_to_headers(decoded_resp)
 		-- Verify response
 		for k, v in pairs(exchange.response) do
 			testaux.asserteq(decoded_resp[k], v, "Test 11: encoder-decoder sync response: " .. k)
@@ -347,8 +405,14 @@ do
 	})
 
 	-- Decode both buffers
-	local decoded1 = hpack.unpack(decoder, buffer1)
-	local decoded2 = hpack.unpack(decoder, buffer2)
+	local decoded1 = {}
+	local ok1 = hpack.unpack(decoder, buffer1, decoded1)
+	testaux.asserteq(ok1, true, "Test 12: unpack buffer1 should succeed")
+	decoded1 = array_to_headers(decoded1)
+	local decoded2 = {}
+	local ok2 = hpack.unpack(decoder, buffer2, decoded2)
+	testaux.asserteq(ok2, true, "Test 12: unpack buffer2 should succeed")
+	decoded2 = array_to_headers(decoded2)
 
 	-- Verify all headers
 	testaux.asserteq(decoded1["header1"], "value1", "Test 12: pre-resize header1")
@@ -379,8 +443,14 @@ do
 	})
 
 	-- Decode both buffers
-	local decoded1 = hpack.unpack(decoder, buffer1)
-	local decoded2 = hpack.unpack(decoder, buffer2)
+	local decoded1 = {}
+	local ok1 = hpack.unpack(decoder, buffer1, decoded1)
+	testaux.asserteq(ok1, true, "Test 13: unpack buffer1 should succeed")
+	decoded1 = array_to_headers(decoded1)
+	local decoded2 = {}
+	local ok2 = hpack.unpack(decoder, buffer2, decoded2)
+	testaux.asserteq(ok2, true, "Test 13: unpack buffer2 should succeed")
+	decoded2 = array_to_headers(decoded2)
 
 	-- Verify headers from different encoders
 	testaux.asserteq(decoded1["session"], "encoder1", "Test 13: encoder1 session")
@@ -398,7 +468,10 @@ do
 		empty_value = ""
 	})
 
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 14: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["empty_value"], "", "Test 14: zero-length header value")
 end
 
@@ -414,7 +487,10 @@ do
 	local buffer = hpack.pack(encoder, {
 		["x-custom-header"] =  "test-value"
 	})
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 15: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 15: table size update")
 end
 
@@ -423,7 +499,10 @@ do
 	local encoder = hpack.new(4096)
 	local decoder = hpack.new(4096)
 	local buffer = hpack.pack(encoder, {})
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 16: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	testaux.asserteq(next(decoded), nil, "Test 16: encode empty table")
 
 	local buffer = hpack.pack(encoder, {
@@ -431,8 +510,41 @@ do
 		["cookie"] =  {},
 		["x-custom-header2"] =  "test-value2",
 	})
-	local decoded = hpack.unpack(decoder, buffer)
+	local decoded = {}
+	local ok = hpack.unpack(decoder, buffer, decoded)
+	testaux.asserteq(ok, true, "Test 16: unpack should succeed")
+	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["cookie"], nil, "Test 16: encode empty table")
 	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 16: encode empty table")
 	testaux.asserteq(decoded["x-custom-header2"], "test-value2", "Test 16: encode empty table")
+end
+
+
+-- Test 17: Reusing decoded table should append new pairs
+do
+	local encoder = hpack.new(4096)
+	local decoder = hpack.new(4096)
+	local decoded = {}
+	local header = {
+		[":status"] = "200",
+		["content-type"] = "text/plain",
+	}
+	local buffer1 = hpack.pack(encoder, header)
+	local ok1 = hpack.unpack(decoder, buffer1, decoded)
+	testaux.asserteq(ok1, true, "Test 17: first unpack should succeed")
+	testaux.asserteq(#decoded, 4, "Test 17: first unpack should succeed")
+	for i = 1, #decoded, 2 do
+		local k = decoded[i]
+		local v = decoded[i+1]
+		testaux.asserteq(v, header[k], "Test 17: first decode key value")
+	end
+
+	local buffer2 = hpack.pack(encoder, {
+		[":status"] = "204",
+	})
+	local ok2 = hpack.unpack(decoder, buffer2, decoded)
+	testaux.asserteq(ok2, true, "Test 17: second unpack should succeed")
+	testaux.asserteq(decoded[5], ":status", "Test 17: appended new key")
+	testaux.asserteq(decoded[6], "204", "Test 17: appended new value")
+	testaux.asserteq(#decoded, 6, "Test 17: table length should reflect appended entries")
 end

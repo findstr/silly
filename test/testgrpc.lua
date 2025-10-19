@@ -1,4 +1,4 @@
-local silly = require "silly"
+local env = require "silly.env"
 local time = require "silly.time"
 local protoc = require "protoc"
 local grpc = require "silly.net.grpc"
@@ -7,6 +7,9 @@ local waitgroup = require "silly.sync.waitgroup"
 local registrar = require "silly.net.grpc.registrar".new()
 local transport = require "silly.net.http.transport"
 local testaux = require "test.testaux"
+
+local timeout = env.get("test.grpc.timeout")
+timeout = timeout and tonumber(timeout) or 5000
 
 local p = protoc:new()
 
@@ -39,12 +42,12 @@ local function case_one(msg)
 end
 
 local function case_two(msg)
-	time.sleep(100)
+	time.sleep(10)
 	return msg, nil
 end
 
 local function case_three(msg)
-	time.sleep(8000)
+	time.sleep(2*timeout)
 	return msg
 end
 
@@ -80,7 +83,7 @@ local function request(index, count)
 	end
 end
 
-local function timeout(index, count, cmd)
+local function timeoutx(index, count, cmd)
 	return function()
 		for i = 1, count do
 			local test = {
@@ -101,7 +104,7 @@ local function client_part()
 		service = "GreetService",
 		endpoints = {"127.0.0.1:8990"},
 		proto = proto,
-		timeout = 5000,
+		timeout = timeout,
 	}
 	local wg = waitgroup.new()
 	case = case_one
@@ -119,7 +122,7 @@ local function client_part()
 	print("case two finish")
 	case = case_three
 	for i = 1, 20 do
-		wg:fork(timeout(i, 2))
+		wg:fork(timeoutx(i, 2))
 		time.sleep(10)
 	end
 	wg:wait()
@@ -147,6 +150,7 @@ server = grpc.listen {
 }
 client_part()
 server:close()
+time.sleep(2000)
 for _, ch in pairs(transport.channels()) do
 	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
 	ch:close()

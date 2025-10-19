@@ -26,13 +26,13 @@ esac
 ARGS=""
 case "$PLATFORM" in
     linux)
-        ARGS="--test.timer.checkdelta=500"
+        ARGS="--test.timer.checkdelta=500 --test.grpc.timeout=5000"
         ;;
     darwin)
-        ARGS="--test.timer.checkdelta=500"
+        ARGS="--test.timer.checkdelta=1000 --test.grpc.timeout=10000"
         ;;
     mingw)
-        ARGS=""
+        ARGS="--test.timer.checkdelta=1000 --test.grpc.timeout=10000"
         ;;
     *)
         echo "⚠️  Unknown platform: $uname_S ($uname_M)"

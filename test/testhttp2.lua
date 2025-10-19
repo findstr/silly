@@ -1,12 +1,9 @@
-local silly = require "silly"
 local time = require "silly.time"
 local http = require "silly.net.http"
 local transport = require "silly.net.http.transport"
 local crypto = require "silly.crypto.utils"
 local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
-
-local f<const> = io.open("./a.txt", "w")
 
 local data = crypto.randomkey(65*1024)
 
@@ -16,7 +13,7 @@ local function POST(url, header, body, check_window_size)
 		header = header or {}
 		header["content-length"] = #body * 2
 	end
-	local stream<close>, err = http.request("POST", url, header, false, alpn_protos)
+	local stream, err = http.request("POST", url, header, false, alpn_protos)
 	if not stream then
 		return nil, err
 	end
@@ -69,34 +66,9 @@ local server = http.listen {
 		stream:close("http2")
 	end
 }
-local n = 0
-print("test http2 client")
---[[ disable test http2 client for temporary
+print("test http2 server1")
 local wg = waitgroup.new()
-for i = 1, 2000 do
-	wg:fork(function()
-		local key = crypto.randomkey(1028)
-		local status, header, body = http2.POST("https://http2.golang.org/reqinfo", {
-			['hello'] = 'world',
-			['foo'] = key,
-		}, "http2")
-		n = n + 1
-		print("test", n)
-		testaux.asserteq(status, 200, "http2.client status")
-		testaux.assertneq(body:find("Foo: " .. key), nil, "http2.header key")
-		testaux.assertneq(body:find("Hello: world"), nil, "http2.header key")
-	end)
-end
-wg:wait()
-]]
---[[
-local ack, err = http.GET("https://http2cdn.cdnsun.com/")
-testaux.asserteq(ack.status, 200, "http2.client status")
-testaux.asserteq(ack.body, "Hello\n", "http2.body")
-]]
-
-print("test http2 server")
-local wg = waitgroup.new()
+local count = 0
 for i = 1, 2000 do
 	wg:fork(function()
 		local key = crypto.randomkey(1028)
@@ -107,10 +79,13 @@ for i = 1, 2000 do
 		assert(ack, err)
 		testaux.asserteq(ack.status, 200, "http2.client status")
 		testaux.asserteq(ack.header['foo'], key, "http2.client header")
-		testaux.asserteq(ack.body, 'http2', "http2.client body")
+		testaux.asserteq(ack.body, 'http2', "http2.client body1")
+		count = count + 1
+		print("test http2 server1", count)
 	end)
 end
 wg:wait()
+print("test http2 server2")
 local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
 	['hello'] = 'world',
 	['foo'] = "bar",
@@ -118,9 +93,10 @@ local ack, err = POST("https://127.0.0.1:8082/test?foo=bar", {
 assert(ack, err)
 testaux.asserteq(ack.status, 200, "http2.client status")
 testaux.asserteq(ack.header['foo'], "bar", "http2.client header")
-testaux.asserteq(ack.body, 'http2', "http2.client body")
+testaux.asserteq(ack.body, 'http2', "http2.client body2")
 print("test http2 done")
 server:close()
+time.sleep(2000)
 for _, ch in pairs(transport.channels()) do
 	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
 	ch:close()
