@@ -1515,14 +1515,14 @@ end
 
 ```lua
 local logger = require "silly.logger"
+local json = require "json"
 
 if not res then
-    logger.error("数据库查询失败", {
+    logger.error("数据库查询失败:", json.encode({
         query = sql,
         error = err.message,
         errno = err.errno,
-        trace_id = silly.tracenew(),
-    })
+    }))
 end
 ```
 

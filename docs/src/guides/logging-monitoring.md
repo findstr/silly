@@ -27,7 +27,7 @@ Silly 框架为这三个方面提供了内置支持：
 
 - `silly.logger`：分级日志系统，支持日志轮转
 - `silly.metrics.prometheus`：Prometheus 指标收集和导出
-- `silly.tracenew/trace`：分布式追踪 ID 生成和传播
+- `silly.tracespawn/traceset`：分布式追踪 ID 生成和传播
 
 ## 日志系统
 
@@ -46,6 +46,34 @@ logger.debug("调试信息")           -- 不会输出
 logger.info("服务器启动")           -- 会输出
 logger.warn("连接超时，重试中")      -- 会输出
 logger.error("数据库连接失败")       -- 会输出
+```
+
+### 日志格式
+
+框架会自动为每条日志添加以下信息：
+
+```
+2025-10-21 09:37:27 0001e3d700010000 I cluster/node1.lua:30 [node1] Received HTTP GET /test
+```
+
+日志格式说明：
+- `2025-10-21 09:37:27` - 时间戳
+- `0001e3d700010000` - **Trace ID**（自动打印，无需业务代码显式添加）
+- `I` - 日志级别（D=DEBUG, I=INFO, W=WARN, E=ERROR）
+- `cluster/node1.lua:30` - 文件名和行号
+- `[node1] Received HTTP GET /test` - 日志消息
+
+::: tip Trace ID 自动打印
+框架会自动在每条日志前打印当前协程的 Trace ID，业务代码**无需**在日志消息中显式包含 Trace ID。这使得同一请求的所有日志都可以通过 Trace ID 进行关联。
+:::
+
+```lua
+-- ❌ 错误：不要显式打印 trace ID
+local trace_id = silly.tracepropagate()
+logger.info("[" .. trace_id .. "] Processing request")
+
+-- ✅ 正确：框架会自动打印 trace ID
+logger.info("Processing request")
 ```
 
 ### 日志级别选择
@@ -113,7 +141,6 @@ local function log_request(method, path, status, duration)
         path = path,
         status = status,
         duration_ms = duration,
-        trace_id = silly.tracenew(),
     }
     logger.info(json.encode(log_entry))
 end
@@ -366,9 +393,6 @@ local function handle_request(stream)
     local start = os.clock()
     http_requests_in_flight:inc()
 
-    -- 获取 trace ID
-    local trace_id = silly.tracenew()
-
     -- 处理不同路径
     local status_code = 200
     local response_body = ""
@@ -382,8 +406,7 @@ local function handle_request(stream)
         stream:close(metrics)
     elseif stream.path == "/api/users" then
         -- 业务 API
-        silly.tracespan("handle_users_api")
-        logger.infof("[%d] 处理用户 API 请求: %s", trace_id, stream.method)
+        logger.info("处理用户 API 请求:", stream.method)
 
         response_body = '{"users": []}'
         stream:respond(200, {["content-type"] = "application/json"})
@@ -403,8 +426,8 @@ local function handle_request(stream)
     http_requests_total:labels(stream.method, stream.path, tostring(status_code)):inc()
 
     -- 记录日志
-    logger.infof("[%d] %s %s %d %.3fs",
-        trace_id, stream.method, stream.path, status_code, duration)
+    logger.infof("%s %s %d %.3fs",
+        stream.method, stream.path, status_code, duration)
 end
 
 -- 启动服务
@@ -479,17 +502,10 @@ local logger = require "silly.logger"
 
 silly.fork(function()
     -- 创建新的 trace ID（如果当前协程没有）
-    local trace_id = silly.tracenew()
-    logger.infof("[%d] 开始处理请求", trace_id)
-
-    -- 添加 span 标记
-    silly.tracespan("database_query")
-    -- ... 执行数据库查询 ...
-
-    silly.tracespan("cache_update")
-    -- ... 更新缓存 ...
-
-    logger.infof("[%d] 请求处理完成", trace_id)
+    local old_trace_id = silly.tracespawn()
+    logger.infof("开始处理请求")
+    logger.infof("请求处理完成")
+    silly.traceset(old_trace_id)
 end)
 ```
 
@@ -506,7 +522,7 @@ local logger = require "silly.logger"
 local function call_service_b()
     -- 生成传播用的 trace ID
     local trace_id = silly.tracepropagate()
-    logger.infof("[%d] 调用服务 B", trace_id)
+    logger.info("调用服务 B")
 
     -- 通过 HTTP Header 传递 trace ID
     local response = http.request {
@@ -528,14 +544,11 @@ local server = http.listen {
         -- 提取并设置 trace ID
         local trace_id = tonumber(stream.headers["x-trace-id"])
         if trace_id then
-            silly.trace(trace_id)
+            silly.traceset(trace_id)
         else
-            trace_id = silly.tracenew()
+            trace_id = silly.tracespawn()
         end
-
-        logger.infof("[%d] 服务 B 收到请求", trace_id)
-        silly.tracespan("service_b_process")
-
+        logger.info("服务 B 收到请求")
         -- 处理业务逻辑
         stream:respond(200, {["content-type"] = "application/json"})
         stream:close('{"status": "ok"}')
@@ -551,26 +564,25 @@ local server = http.listen {
 local cluster = require "silly.net.cluster"
 local logger = require "silly.logger"
 
--- 创建 RPC 客户端/服务器
-local rpc = cluster.new {
+-- 创建 cluster 服务
+cluster.serve {
     marshal = ...,
     unmarshal = ...,
-    call = function(body, cmd, fd)
-        -- trace ID 已经自动设置
-        local trace_id = silly.tracenew()
-        logger.infof("[%d] RPC 调用: %s", trace_id, cmd)
+    call = function(peer, cmd, body)
+        -- trace ID 已由 cluster 自动设置，logger 会自动使用
+        logger.info("RPC 调用:", cmd)
 
         -- 处理 RPC 请求
         return handle_rpc(body, cmd)
     end,
-    close = function(fd, errno)
-        logger.warn("RPC 连接关闭:", fd, errno)
+    close = function(peer, errno)
+        logger.info("RPC 连接关闭, errno:", errno)
     end,
 }
 
 -- 发起 RPC 调用（trace ID 自动传播）
-local fd = rpc:connect("127.0.0.1:8080")
-local result = rpc:call(fd, "get_user", {user_id = 123})
+local peer = cluster.connect("127.0.0.1:8080")
+local result = cluster.call(peer, "get_user", {user_id = 123})
 ```
 
 ### 日志关联
@@ -586,7 +598,6 @@ local json = require "silly.encoding.json"
 local function log_with_trace(level, event, data)
     local log_entry = {
         timestamp = os.time(),
-        trace_id = silly.tracenew(),
         level = level,
         event = event,
     }
@@ -920,9 +931,8 @@ local function log_request(trace_id, method, path, status, duration, req_size, r
 end
 
 -- ========== 业务处理 ==========
-local function handle_user_get(stream, trace_id)
-    silly.tracespan("handle_user_get")
-    logger.debugf("[%d] 获取用户列表", trace_id)
+local function handle_user_get(stream)
+    logger.debug("获取用户列表")
 
     -- 模拟数据库查询
     time.sleep(10)
@@ -938,9 +948,8 @@ local function handle_user_get(stream, trace_id)
     return 200, response
 end
 
-local function handle_user_post(stream, trace_id)
-    silly.tracespan("handle_user_post")
-    logger.debugf("[%d] 创建用户", trace_id)
+local function handle_user_post(stream)
+    logger.debug("创建用户")
 
     -- 模拟数据库插入
     time.sleep(20)
@@ -961,9 +970,12 @@ local function handle_request(stream)
     http_requests_in_flight:inc()
 
     -- 获取或创建 trace ID
-    local trace_id = tonumber(stream.headers["x-trace-id"]) or silly.tracenew()
-    if stream.headers["x-trace-id"] then
-        silly.trace(trace_id)
+    local trace_id = tonumber(stream.headers["x-trace-id"])
+    if trace_id then
+        silly.traceset(trace_id)
+    else
+        silly.tracespawn()
+        trace_id = silly.tracepropagate()  -- 获取当前 trace ID 用于响应头
     end
 
     -- 记录请求大小
@@ -986,9 +998,9 @@ local function handle_request(stream)
     elseif stream.path == "/api/users" then
         -- 用户 API
         if stream.method == "GET" then
-            status_code, response_body = handle_user_get(stream, trace_id)
+            status_code, response_body = handle_user_get(stream)
         elseif stream.method == "POST" then
-            status_code, response_body = handle_user_post(stream, trace_id)
+            status_code, response_body = handle_user_post(stream)
         else
             status_code = 405
             response_body = "Method Not Allowed"
@@ -1031,8 +1043,8 @@ local server = http.listen {
     handler = function(stream)
         local ok, err = silly.pcall(handle_request, stream)
         if not ok then
-            local trace_id = silly.tracenew()
-            logger.errorf("[%d] 请求处理失败: %s", trace_id, err)
+            silly.tracespawn()  -- 创建新的 trace ID
+            logger.error("请求处理失败:", err)
 
             stream:respond(500, {["content-type"] = "application/json"})
             stream:close(json.encode({error = "Internal Server Error"}))
@@ -1142,7 +1154,6 @@ logger.info("========================================")
 ### 追踪最佳实践
 
 1. **始终传播 trace ID**：在跨服务调用时传递 trace ID
-2. **添加 span 标记**：在关键操作点添加 tracespan
 3. **日志关联**：将 trace ID 融入日志，便于问题排查
 4. **保留足够信息**：trace ID 要在日志、指标、错误报告中都包含
 

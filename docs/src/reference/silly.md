@@ -172,34 +172,53 @@ silly.exit(0)  -- 正常退出
 
 ## 分布式追踪
 
-### silly.tracenew()
-创建新的追踪ID，或返回当前协程的追踪ID。
+### silly.tracenode(nodeid)
+设置当前节点的节点ID（用于trace ID生成）。
 
-- **返回值**: `integer` - 追踪ID
+- **参数**:
+  - `nodeid`: `integer` - 节点ID（16位，0-65535）
+- **示例**:
+```lua validate
+local silly = require "silly"
 
-### silly.trace(id)
+-- 在服务启动时设置节点ID
+silly.tracenode(1)  -- 设置为节点1
+```
+
+### silly.tracespawn()
+创建新的根追踪ID并设置为当前协程的追踪ID。
+
+- **返回值**: `integer` - 之前的追踪ID（可用于后续恢复）
+- **示例**:
+```lua validate
+local silly = require "silly"
+
+-- 处理新的HTTP请求时创建新的trace ID
+local old_trace = silly.tracespawn()
+-- ... 处理请求 ...
+-- 如需恢复旧的trace context
+silly.traceset(old_trace)
+```
+
+### silly.traceset(id)
 设置当前协程的追踪ID。
 
 - **参数**:
   - `id`: `integer` - 追踪ID
 - **返回值**: `integer` - 之前的追踪ID
 
-### silly.tracespan(message)
-为当前追踪添加一个span标记。
+### silly.tracepropagate()
+获取用于跨服务传播的追踪ID（保留root trace，替换node ID为当前节点）。
 
-- **参数**:
-  - `message`: `string` - span消息
+- **返回值**: `integer` - 传播用的追踪ID
 - **示例**:
 ```lua validate
 local silly = require "silly"
 
-silly.tracespan("database query started")
+-- 在 RPC 调用时传播 trace ID
+local trace_id = silly.tracepropagate()
+-- 将 trace_id 发送到远程服务
 ```
-
-### silly.tracepropagate()
-生成新的追踪ID（用于跨服务传播）。
-
-- **返回值**: `integer` - 新的追踪ID
 
 ## 错误处理
 

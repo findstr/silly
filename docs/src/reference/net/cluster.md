@@ -67,6 +67,7 @@ cluster 模块不绑定特定的序列化格式，通过配置回调函数支持
     - `body`：解码后的请求数据
     - 返回：响应数据（nil 表示不需要响应）
   - `close` (function) - 可选，连接关闭回调：`function(peer, errno)`
+    - **仅在对端关闭连接时触发**，主动调用 `cluster.close()` 不会触发此回调
     - `peer`：连接的 peer 对象
     - `errno`：错误码
   - `accept` (function) - 可选，新连接回调：`function(peer, addr)`
@@ -138,28 +139,24 @@ cluster.serve {
     marshal = marshal,
     unmarshal = unmarshal,
     accept = function(peer, addr)
-        print("新连接:", peer.fd, addr)
+        print("新连接来自:", addr)
     end,
     call = function(peer, cmd, body)
         print("收到请求:", body.msg)
         return {msg = "Hello from server"}
     end,
     close = function(peer, errno)
-        print("连接关闭:", peer.fd, errno)
+        print("连接关闭, errno:", errno)
     end,
 }
 
 -- 启动监听
-local listen_handle = cluster.listen("127.0.0.1:8888")
-print("服务器监听:", listen_handle.fd)
+local listener = cluster.listen("127.0.0.1:8888")
+print("服务器监听: 127.0.0.1:8888")
 
 -- 创建客户端并测试
 silly.fork(function()
-    local peer, err = cluster.connect("127.0.0.1:8888")
-    if not peer then
-        print("连接失败:", err)
-        return
-    end
+    local peer = cluster.connect("127.0.0.1:8888")
 
     local resp = cluster.call(peer, "ping", {msg = "Hello"})
     print("收到响应:", resp and resp.msg or "nil")
@@ -217,13 +214,13 @@ cluster.serve {
         return proto:decode(cmd, dat, sz)
     end,
     accept = function(peer, addr)
-        print(string.format("接受连接 fd=%d 来自 %s", peer.fd, addr))
+        print(string.format("接受连接来自 %s", addr))
     end,
     call = function(peer, cmd, body)
         return body
     end,
     close = function(peer, errno)
-        print(string.format("连接 %d 关闭，错误码: %d", peer.fd, errno))
+        print(string.format("连接关闭，错误码: %d", errno))
     end,
 }
 
@@ -231,14 +228,14 @@ cluster.serve {
 local listener1 = cluster.listen("0.0.0.0:8888")
 local listener2 = cluster.listen("0.0.0.0:8889", 256)
 
-print("监听端口:", listener1.fd, listener2.fd)
+print("监听端口: 8888, 8889")
 ```
 
 ---
 
 ### cluster.connect(addr)
 
-连接到指定地址的服务器。这是一个**异步操作**，必须在协程中调用。
+生成指定地址的对端 handle，首次调用时会尝试连接一次。这是一个**异步操作**，必须在协程中调用。
 
 **参数：**
 
@@ -246,15 +243,15 @@ print("监听端口:", listener1.fd, listener2.fd)
 
 **返回值：**
 
-- `peer` (table|nil) - 成功返回 peer 对象，包含 `fd` 和 `addr` 字段
-- `err` (string) - 失败返回错误信息
+- `peer` (handle) - 对端 handle（不透明结构）
 
 **注意：**
 
 - 必须在 `silly.fork()` 创建的协程中调用
 - 支持域名解析（自动调用 DNS 查询）
-- peer 对象保存了地址信息，连接断开后可自动重连
-- 连接成功后即可使用 `cluster.call()` 或 `cluster.send()` 发送请求
+- 总是返回 peer handle，即使首次连接失败
+- peer handle 保存了地址信息，`cluster.call()` 会在需要时自动重连
+- 无需检查连接状态，直接使用 `cluster.call()` 或 `cluster.send()` 即可
 
 **示例：**
 
@@ -287,21 +284,17 @@ cluster.serve {
 }
 
 silly.fork(function()
-    -- 连接 IP 地址
-    local peer1, err1 = cluster.connect("127.0.0.1:8888")
-    print("连接1:", peer1 and peer1.fd or nil, err1)
+    -- 生成对端 handle
+    local peer1 = cluster.connect("127.0.0.1:8888")
+    local peer2 = cluster.connect("example.com:80")
 
-    -- 连接域名（会自动 DNS 解析）
-    local peer2, err2 = cluster.connect("example.com:80")
-    print("连接2:", peer2 and peer2.fd or nil, err2)
-
-    -- 连接失败处理
-    if not peer1 then
-        print("连接失败:", err1)
-        return
+    -- 直接使用 peer handle，无需检查连接状态
+    -- cluster.call() 会自动处理重连
+    local resp, err = cluster.call(peer1, "request", {data = "test"})
+    if not resp then
+        print("调用失败:", err)
     end
 
-    -- 使用连接...
     cluster.close(peer1)
 end)
 ```
@@ -498,8 +491,8 @@ end)
 **注意：**
 
 - 可以关闭客户端连接、accept 的连接或监听器
-- 关闭后会触发 `close` 回调（listener 除外）
-- 关闭后 peer.fd 会被设为 nil
+- 主动关闭的连接**不会**触发 `close` 回调，也**不会**自动重连
+- peer handle 关闭后不应再使用
 
 **示例：**
 
@@ -530,7 +523,7 @@ cluster.serve {
     accept = function() end,
     call = function() end,
     close = function(peer, errno)
-        print("连接已关闭:", peer.fd, errno)
+        print("连接已关闭, errno:", errno)
     end,
 }
 
@@ -541,7 +534,7 @@ silly.fork(function()
 
     -- 主动关闭连接
     cluster.close(peer)
-    print("peer 已关闭, fd:", peer.fd)  -- nil
+    print("peer 已关闭")
 
     -- 关闭监听器
     cluster.close(listener)
@@ -591,14 +584,14 @@ cluster.serve {
     marshal = marshal,
     unmarshal = unmarshal,
     accept = function(peer, addr)
-        print("新连接:", peer.fd, addr)
+        print("新连接来自:", addr)
     end,
     call = function(peer, cmd, body)
         print("收到:", body.msg)
         return {msg = "pong from server"}
     end,
     close = function(peer, errno)
-        print("连接关闭:", peer.fd)
+        print("连接关闭, errno:", errno)
     end,
 }
 
@@ -697,36 +690,32 @@ silly.fork(function()
 
     -- node2 连接到 node1
     local peer2 = cluster.connect("127.0.0.1:10001")
-    if peer2 then
-        local resp = cluster.call(peer2, "register", {
-            node_id = "node2",
-            addr = "127.0.0.1:10002"
-        })
-        print("注册响应:", resp and resp.status or "nil")
+    local resp = cluster.call(peer2, "register", {
+        node_id = "node2",
+        addr = "127.0.0.1:10002"
+    })
+    print("注册响应:", resp and resp.status or "nil")
 
-        -- 发送心跳
-        time.sleep(500)
-        local hb = cluster.call(peer2, "heartbeat", {
-            timestamp = os.time()
-        })
-        print("心跳响应:", hb and hb.timestamp or "nil")
-    end
+    -- 发送心跳
+    time.sleep(500)
+    local hb = cluster.call(peer2, "heartbeat", {
+        timestamp = os.time()
+    })
+    print("心跳响应:", hb and hb.timestamp or "nil")
 
     -- node3 连接到 node1
     local peer3 = cluster.connect("127.0.0.1:10001")
-    if peer3 then
-        cluster.call(peer3, "register", {
-            node_id = "node3",
-            addr = "127.0.0.1:10003"
-        })
+    cluster.call(peer3, "register", {
+        node_id = "node3",
+        addr = "127.0.0.1:10003"
+    })
 
-        -- 通过 node1 转发消息
-        local fwd = cluster.call(peer3, "forward", {
-            target = "node2",
-            data = "Hello from node3"
-        })
-        print("转发结果:", fwd and fwd.result or "nil")
-    end
+    -- 通过 node1 转发消息
+    local fwd = cluster.call(peer3, "forward", {
+        target = "node2",
+        data = "Hello from node3"
+    })
+    print("转发结果:", fwd and fwd.result or "nil")
 end)
 ```
 
@@ -773,7 +762,7 @@ cluster.serve {
     accept = function() end,
     call = function(peer, cmd, body)
         print("接收广播:", body.message)
-        return {node_id = "node_" .. peer.fd}
+        return {node_id = "node_" .. os.time()}  -- 使用其他标识符
     end,
     close = function() end,
 }
@@ -794,9 +783,7 @@ silly.fork(function()
     local peers = {}
     for _, port in ipairs(ports) do
         local peer = cluster.connect("127.0.0.1:" .. port)
-        if peer then
-            table.insert(peers, peer)
-        end
+        table.insert(peers, peer)
     end
 
     -- 并发广播到所有节点
@@ -870,8 +857,8 @@ cluster.serve {
     end,
     accept = function() end,
     call = function(peer, cmd, body)
-        -- 模拟工作处理（根据端口区分工作节点）
-        local worker_id = peer.fd % 3 + 1
+        -- 模拟工作处理（使用 task_id 来区分任务）
+        local worker_id = (body.task_id % 3) + 1
         print(string.format("[Worker %d] 处理任务 #%d: %s",
             worker_id, body.task_id, body.data))
         time.sleep(100 + math.random(200))
@@ -899,9 +886,7 @@ silly.fork(function()
     local worker_peers = {}
     for _, port in ipairs(ports) do
         local peer = cluster.connect("127.0.0.1:" .. port)
-        if peer then
-            table.insert(worker_peers, peer)
-        end
+        table.insert(worker_peers, peer)
     end
 
     -- 轮询分发任务
@@ -945,18 +930,19 @@ silly.fork(function()
 end)
 ```
 
-### Peer 对象和自动重连
+### Peer Handle 和自动重连
 
-- **connect 返回的 peer**：包含 `fd` 和 `addr` 字段，支持自动重连
-  - 当连接断开时，`peer.fd` 会被设为 `nil`
-  - 下次 `call()` 或 `send()` 时会自动重连
-  - 通过 `addr_to_peer` 缓存，防止重复连接同一地址
+- **connect 返回的 peer handle**：支持自动重连
+  - peer handle 保存了地址信息
+  - 当**对端关闭连接**时，下次 `call()` 或 `send()` 会自动重连
+  - **主动调用 `cluster.close()` 关闭的连接不会自动重连**
+  - 通过地址缓存机制，防止重复连接同一地址
 
-- **accept 回调的 peer**：只包含 `fd` 字段，不支持自动重连
-  - 没有 `addr` 信息，无法自动重连
-  - 连接断开后返回 `nil, "peer closed"`
+- **accept 回调的 peer handle**：不支持自动重连
+  - 入站连接的 peer handle 不保存地址信息
+  - 连接断开后无法自动重连，会返回 `nil, "peer closed"`
 
-- **listener 对象**：只包含 `fd` 字段，用于监听端口
+- **listener handle**：用于监听端口
   - 通过 `cluster.close()` 可以关闭监听器
 
 ### 超时控制
@@ -982,13 +968,14 @@ end)
 cluster 自动传播 trace ID：
 
 ```lua
--- 客户端发起请求时，自动携带当前 trace ID
+-- 客户端发起请求时，自动使用 silly.tracepropagate() 携带当前 trace ID
 local resp = cluster.call(peer, "ping", data)
 
--- 服务器端处理时，自动切换到请求的 trace ID
+-- 服务器端处理时，trace ID 已由 cluster 自动设置
 call = function(peer, cmd, body)
-    -- 这里的 silly.trace() 返回的是客户端的 trace ID
-    -- 可以用于分布式追踪
+    -- logger 会自动使用当前 trace ID 记录日志
+    -- 实现跨服务的分布式追踪
+    logger.info("Processing request:", cmd)
 end
 ```
 
@@ -1004,22 +991,20 @@ end
 
 ```lua
 silly.fork(function()
-    local peer, err = cluster.connect(addr)
-    if not peer then
-        -- 连接失败
-        print("连接错误:", err)
-        return
-    end
+    -- cluster.connect 总是返回 peer handle
+    local peer = cluster.connect(addr)
 
+    -- 错误处理在 call/send 时进行
     local resp, err = cluster.call(peer, cmd, data)
     if not resp then
         -- 调用失败
         if err == "timeout" then
             -- 超时处理
         elseif err == "peer closed" then
-            -- 连接已关闭（无 addr 的 peer）
-        elseif err then
-            -- 其他错误
+            -- 连接已关闭（入站连接断开后无法重连）
+        else
+            -- 其他错误（如连接失败、DNS解析失败等）
+            print("调用错误:", err)
         end
         return
     end

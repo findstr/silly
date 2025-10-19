@@ -1293,62 +1293,54 @@ local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
 
--- 生成 Trace ID
-local function generate_trace_id()
-    local random = math.random
-    return string.format("%08x%08x%08x%08x",
-        random(0, 0xffffffff),
-        random(0, 0xffffffff),
-        random(0, 0xffffffff),
-        random(0, 0xffffffff))
-end
-
--- 带追踪的日志
-local function trace_log(trace_id, level, ...)
-    logger[level]("[" .. trace_id .. "]", ...)
-end
-
 http.listen {
     addr = ":8080",
     handler = function(stream)
         -- 从请求头获取或生成 Trace ID
-        local trace_id = stream.header["x-trace-id"] or generate_trace_id()
+        local trace_id = tonumber(stream.header["x-trace-id"])
+        if trace_id then
+            silly.traceset(trace_id)
+        else
+            silly.tracespawn()
+            trace_id = silly.tracepropagate()  -- 用于返回给客户端
+        end
 
-        trace_log(trace_id, "info", "Request started:", stream.method, stream.path)
+        logger.info("Request started:", stream.method, stream.path)
 
         -- 处理请求
         local ok, err = pcall(function()
             -- 业务逻辑
-            trace_log(trace_id, "debug", "Processing request")
+            logger.debug("Processing request")
 
             -- 模拟调用其他服务
-            local service_response = call_external_service(trace_id)
+            local service_response = call_external_service()
 
-            trace_log(trace_id, "debug", "External service responded")
+            logger.debug("External service responded")
 
             local response_body = '{"status":"ok"}'
             stream:respond(200, {
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body,
-                ["x-trace-id"] = trace_id, -- 返回 Trace ID
+                ["x-trace-id"] = tostring(trace_id), -- 返回 Trace ID
             })
             stream:close(response_body)
         end)
 
         if not ok then
-            trace_log(trace_id, "error", "Request failed:", err)
-            stream:respond(500, {["x-trace-id"] = trace_id})
+            logger.error("Request failed:", err)
+            stream:respond(500, {["x-trace-id"] = tostring(trace_id)})
             stream:close("Internal Server Error")
         end
 
-        trace_log(trace_id, "info", "Request completed")
+        logger.info("Request completed")
     end
 }
 
--- 调用外部服务时传递 Trace ID
-function call_external_service(trace_id)
+-- 调用外部服务时自动传递当前 Trace ID
+function call_external_service()
+    local trace_id = silly.tracepropagate()
     local response = http.GET("http://other-service/api", {
-        ["x-trace-id"] = trace_id,
+        ["x-trace-id"] = tostring(trace_id),
     })
     return response
 end
@@ -1728,12 +1720,15 @@ end
 
 -- 中间件：日志
 local function logging_middleware(stream, next)
-    local trace_id = stream.header["x-trace-id"] or
-        string.format("%08x", math.random(0, 0xffffffff))
-    stream.trace_id = trace_id
+    -- 设置或创建 trace ID
+    local trace_id = tonumber(stream.header["x-trace-id"])
+    if trace_id then
+        silly.traceset(trace_id)
+    else
+        silly.tracespawn()
+    end
 
-    logger.info("[" .. trace_id .. "] Request:", stream.method, stream.path,
-        "from", stream.remoteaddr)
+    logger.info("Request:", stream.method, stream.path, "from", stream.remoteaddr)
 
     next()
 end
@@ -1810,7 +1805,7 @@ local function main_handler(stream)
     if handler then
         local ok, err = pcall(handler, stream)
         if not ok then
-            logger.error("[" .. stream.trace_id .. "] Handler error:", err)
+            logger.error("Handler error:", err)
             send_error(stream, ErrorCodes.INTERNAL_ERROR)
         end
     else

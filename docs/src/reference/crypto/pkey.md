@@ -1489,6 +1489,7 @@ end
 
 ```lua
 local logger = require "silly.logger"
+local json = require "json"
 
 local function safe_sign(message, algorithm)
     local ok, result = pcall(function()
@@ -1496,11 +1497,11 @@ local function safe_sign(message, algorithm)
     end)
 
     if not ok then
-        logger.error("Sign failed", {
+        logger.error("Sign failed:", json.encode({
             algorithm = algorithm,
             message_len = #message,
             error = result
-        })
+        }))
         return nil, "sign failed"
     end
 
