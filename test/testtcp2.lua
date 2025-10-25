@@ -18,15 +18,18 @@ do
 	print(string.format("Large block size: %d bytes", #largeBlock))
 end
 
-local listenfd = tcp.listen(listenaddr, function(fd, addr)
-	print("Accepted connection from", addr, fd)
-	if listen_cb then
-		listen_cb(fd, addr)
-		listen_cb = nil
-	else
-		tcp.close(fd)
+local listenfd = tcp.listen {
+	addr = listenaddr,
+	callback = function(fd, addr)
+		print("Accepted connection from", addr, fd)
+		if listen_cb then
+			listen_cb(fd, addr)
+			listen_cb = nil
+		else
+			tcp.close(fd)
+		end
 	end
-end)
+}
 
 local function wait_done()
 	while listen_cb do

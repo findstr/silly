@@ -38,6 +38,8 @@ local function escape(a)
 				v = tostring(v)
 			elseif t == "number" then
 				v = string.format("%g", v)
+			else
+				v = tostring(v)
 			end
 			l[#l + 1] = {k, v}
 		end
@@ -45,8 +47,10 @@ local function escape(a)
 			return tostring(a[1]) < tostring(b[1])
 		end)
 		return json.encode(l)
-	else
+	elseif type(a) == "number" then
 		return a
+	else
+		return tostring(a)
 	end
 end
 

@@ -174,7 +174,9 @@ local function clear(tbl)
 end
 
 return function (config)
-	tcp.listen(config.addr, function(fd, addr)
+tcp.listen {
+	addr = config.addr,
+	callback = function(fd, addr)
 		logger.info("console come in:", addr)
 		local param = {}
 		local dat = {}
@@ -211,7 +213,8 @@ return function (config)
 			end
 		end
 		logger.info(addr, "leave")
-end)
+	end
+}
 
 end
 

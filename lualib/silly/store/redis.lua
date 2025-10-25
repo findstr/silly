@@ -42,7 +42,7 @@ end
 
 
 local function read_response(sock)
-	local data = sock:readline("\r\n")
+	local data = sock:readline("\n")
 	local head = data:byte(1)
 	local func = response_header[head]
 	return func(sock, sub(data, 2, -3))

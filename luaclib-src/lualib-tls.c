@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "silly.h"
-
+#include "luastr.h"
 #ifdef USE_OPENSSL
 
 #include <openssl/bio.h>
@@ -16,19 +16,17 @@
 #define ssl_free silly_free
 #define ssl_realloc silly_realloc
 
-#define STK_BUF_SIZE (1024)
+#ifdef SILLY_TEST
+#define BUF_SIZE (32)
+#else
+#define BUF_SIZE (1024)
+#endif
 
 struct buf {
 	uint8_t *buf;
 	int offset;
 	int size;
 	int cap;
-	int onstk;
-};
-
-struct bufaux {
-	struct buf *b;
-	uint8_t stk[STK_BUF_SIZE];
 };
 
 struct ctx_entry {
@@ -50,6 +48,8 @@ struct tls {
 	BIO *in_bio;
 	BIO *out_bio;
 	struct buf buf;
+	int limit;
+	int pause;
 };
 
 static void ctx_destroy(struct ctx *ctx)
@@ -80,91 +80,39 @@ static inline void buf_init(struct buf *buf)
 	buf->offset = 0;
 	buf->size = 0;
 	buf->cap = 0;
-	buf->onstk = 0;
 }
 
 static inline void buf_destroy(struct buf *buf)
 {
-	if (!buf->onstk && buf->buf != NULL) {
-		ssl_free(buf->buf);
+	if (buf->buf == NULL) {
+		return;
 	}
+	ssl_free(buf->buf);
 	buf->buf = NULL;
 	buf->offset = 0;
 	buf->size = 0;
 	buf->cap = 0;
-	buf->onstk = 0;
 }
 
-static inline void bufaux_ref(struct bufaux *ba, struct buf *b)
+static void *buf_prepsize(struct buf *b, int size)
 {
-	ba->b = b;
-	if (b->buf == NULL) {
-		b->buf = &ba->stk[0];
-		b->cap = sizeof(ba->stk);
-		b->onstk = 1;
-	}
-}
 
-static inline void bufaux_unref(struct bufaux *ba)
-{
-	if (!ba->b->onstk)
-		return;
-	if (ba->b->size == 0) {
-		buf_destroy(ba->b);
-		return;
+	if (b->cap == 0) {
+		b->cap = BUF_SIZE;
+		b->buf = (uint8_t *)ssl_malloc(b->cap);
 	}
-	int cap = ba->b->size;
-	cap = cap * 3 / 2; /* // Reserve 1.5× buffer space for the next read */
-	void *buf = ssl_malloc(cap);
-	memcpy(buf, ba->b->buf + ba->b->offset, ba->b->size);
-	ba->b->buf = buf;
-	ba->b->cap = cap;
-	ba->b->offset = 0;
-	ba->b->onstk = 0;
-}
-
-static void *bufaux_prepsize(struct bufaux *ba, int size)
-{
-	if (ba->b->offset != 0) {
-		memmove(ba->b->buf, ba->b->buf + ba->b->offset, ba->b->size);
-		ba->b->offset = 0;
-	}
-	if (ba->b->size + size > ba->b->cap) {
-		ba->b->cap = ba->b->cap * 3 / 2; /* 1.5 */
-		if (ba->b->cap < ba->b->size + size) {
-			ba->b->cap = ba->b->size + size;
+	if (b->size + b->offset + size > b->cap) {
+		if (b->offset != 0) {
+			memmove(b->buf, b->buf + b->offset, b->size);
+			b->offset = 0;
 		}
-		if (ba->b->onstk) {
-			uint8_t *newbuf = ssl_malloc(ba->b->cap);
-			memcpy(newbuf, ba->b->buf, ba->b->size);
-			ba->b->buf = newbuf;
-			ba->b->onstk = 0;
-		} else {
-			ba->b->buf = ssl_realloc(ba->b->buf, ba->b->cap);
+		b->cap = b->cap * 3 / 2; /* 1.5 */
+		if (b->cap < b->size + size) {
+			b->cap = b->size + size;
 		}
+		b->buf = ssl_realloc(b->buf, b->cap);
 	}
-	return ba->b->buf + ba->b->size;
-}
-
-static void bufaux_addchar(struct bufaux *ba, uint8_t v)
-{
-	bufaux_prepsize(ba, 1);
-	ba->b->buf[ba->b->size++] = v;
-}
-
-static inline void bufaux_addsize(struct bufaux *ba, int size)
-{
-	ba->b->size += size;
-	assert(ba->b->size <= ba->b->cap);
-}
-
-static inline void bufaux_pushresult(lua_State *L, struct bufaux *ba, int size)
-{
-	assert(ba->b->size >= size);
-	lua_pushlstring(L, (const char *)ba->b->buf, size);
-	ba->b->size -= size;
-	ba->b->offset += size;
-	bufaux_unref(ba);
+	return b->buf + b->offset + b->size;
 }
 
 static int ltls_free(lua_State *L)
@@ -208,9 +156,45 @@ static struct tls *new_tls(lua_State *L, int64_t fd)
 	}
 	memset(tls, 0, sizeof(*tls));
 	tls->fd = fd;
+	tls->limit = INT_MAX;
+	tls->pause = 0;
 	buf_init(&tls->buf);
 	lua_setmetatable(L, -2);
 	return tls;
+}
+
+static inline void read_enable(struct tls *tls)
+{
+	if (tls->pause == 0)
+		return;
+	tls->pause = 0;
+	silly_socket_readenable(tls->fd, 1);
+}
+
+static inline void read_pause(struct tls *tls)
+{
+	if (tls->pause == 1)
+		return;
+	tls->pause = 1;
+	silly_socket_readenable(tls->fd, 0);
+}
+
+static inline int needpause(struct tls *tls)
+{
+	return tls->buf.size >= tls->limit;
+}
+
+static inline void read_adjust(struct tls *tls)
+{
+	if (needpause(tls))
+		read_pause(tls);
+	else
+		read_enable(tls);
+}
+
+static inline void adjust_read(struct tls *tls)
+{
+	read_adjust(tls);
 }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -491,70 +475,44 @@ static int ltls_open(lua_State *L)
 
 static int ltls_read(lua_State *L)
 {
-	int size, left;
-	struct tls *tls;
-	struct bufaux ba;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	left = size = luaL_checkinteger(L, 2);
-	bufaux_ref(&ba, &tls->buf);
-	left = size - tls->buf.size;
-	while (left > 0) {
-		void *ptr = bufaux_prepsize(&ba, left);
-		int ret = SSL_read(tls->ssl, ptr, left);
-		if (ret <= 0) {
-			bufaux_unref(&ba);
-			lua_pushnil(L);
-			return 1;
-		}
-		bufaux_addsize(&ba, ret);
-		left -= ret;
-	}
-	if (left == 0) {
-		bufaux_pushresult(L, &ba, size);
-	} else {
-		bufaux_unref(&ba);
+	struct tls *tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
+	int size = luaL_checkinteger(L, 2);
+	if (size <= 0) {
+		lua_pushliteral(L, "");
+	} else if (size > tls->buf.size) {
+		read_enable(tls);
 		lua_pushnil(L);
+		return 1;
+	} else {
+		lua_pushlstring(L, (char *)(tls->buf.buf + tls->buf.offset), size);
+		tls->buf.offset += size;
+		tls->buf.size -= size;
+		adjust_read(tls);
 	}
-	return 1;
-}
-
-static int ltls_readall(lua_State *L)
-{
-	struct tls *tls;
-	struct bufaux ba;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	bufaux_ref(&ba, &tls->buf);
-	for (;;) {
-		int ret;
-		void *ptr = bufaux_prepsize(&ba, 512);
-		ret = SSL_read(tls->ssl, ptr, 512);
-		if (ret <= 0)
-			break;
-		bufaux_addsize(&ba, ret);
-	}
-	bufaux_pushresult(L, &ba, ba.b->size);
 	return 1;
 }
 
 static int ltls_readline(lua_State *L)
 {
 	struct tls *tls;
-	struct bufaux ba;
+	struct luastr delim;
+	uint8_t *s, *e, *x;
 	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	bufaux_ref(&ba, &tls->buf);
-	for (;;) {
-		char c;
-		int ret = SSL_read(tls->ssl, &c, 1);
-		if (ret <= 0)
-			break;
-		bufaux_addchar(&ba, c);
-		if (c == '\n') {
-			bufaux_pushresult(L, &ba, ba.b->size);
-			return 1;
-		}
+	luastr_check(L, 2, &delim);
+	luaL_argcheck(L, delim.len == 1, 2, "delim length must be 1");
+	s = tls->buf.buf + tls->buf.offset;
+	e = s + tls->buf.size;
+	x = memchr(s, delim.str[0], e - s);
+	if (x == NULL) {
+		read_enable(tls);
+		lua_pushnil(L);
+	} else {
+		size_t line_size = x - s + 1;
+		lua_pushlstring(L, (char *)s, line_size);
+		tls->buf.offset += line_size;
+		tls->buf.size -= line_size;
+		adjust_read(tls);
 	}
-	bufaux_unref(&ba);
-	lua_pushnil(L);
 	return 1;
 }
 
@@ -577,8 +535,26 @@ static int ltls_write(lua_State *L)
 	struct tls *tls;
 	const char *str;
 	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	str = luaL_checklstring(L, 2, &sz);
-	SSL_write(tls->ssl, str, sz);
+	switch (lua_type(L, 2)) {
+	case LUA_TSTRING: {
+		str = luaL_checklstring(L, 2, &sz);
+		SSL_write(tls->ssl, str, sz);
+		break;
+	}
+	case LUA_TTABLE: {
+		size_t i, n;
+		n = luaL_len(L, 2);
+		for (i = 1; i <= n; i++) {
+			lua_geti(L, 2, i);
+			str = luaL_checklstring(L, -1, &sz);
+			SSL_write(tls->ssl, str, sz);
+			lua_pop(L, 1);
+		}
+		break;
+	}
+	default:
+		return luaL_error(L, "invalid data type");
+	}
 	ret = flushwrite(tls);
 	if (ret < 0) {
 		lua_pushboolean(L, 0);
@@ -612,11 +588,42 @@ static int ltls_handshake(lua_State *L)
 static int ltls_push(lua_State *L)
 {
 	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	struct buf *buf = &tls->buf;
 	char *str = lua_touserdata(L, 2);
 	int size = luaL_checkinteger(L, 3);
 	BIO_write(tls->in_bio, str, size);
 	silly_free(str);
-	return 0;
+	for (;;) {
+		buf_prepsize(buf, BUF_SIZE);
+		uint8_t *s = buf->buf + buf->offset + buf->size;
+		uint8_t *e = buf->buf + buf->cap;
+		int n = SSL_read(tls->ssl, s, e - s);
+		if (n <= 0)
+			break;
+		buf->size += n;
+	}
+	lua_pushinteger(L, buf->size);
+	adjust_read(tls);
+	return 1;
+}
+
+static int ltls_limit(lua_State *L)
+{
+	int limit, prev;
+	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	limit = luaL_checkinteger(L, 2);
+	prev = tls->limit;
+	tls->limit = limit;
+	read_adjust(tls);
+	lua_pushinteger(L, prev);
+	return 1;
+}
+
+static int ltls_size(lua_State *L)
+{
+	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	lua_pushinteger(L, tls->buf.size);
+	return 1;
 }
 
 #endif
@@ -664,10 +671,11 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 		{ "close",     ltls_free      },
 		{ "read",      ltls_read      },
 		{ "write",     ltls_write     },
-		{ "readall",   ltls_readall   },
 		{ "readline",  ltls_readline  },
 		{ "handshake", ltls_handshake },
 		{ "push",      ltls_push      },
+		{ "limit",     ltls_limit     },
+		{ "size",      ltls_size      },
 #endif
 		{ NULL,        NULL           },
 	};

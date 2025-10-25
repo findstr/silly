@@ -29,7 +29,7 @@ end})
 
 local function check_alive_timer(_)
 	for k, s in pairs(h2_pool) do
-		if not s.transport.isalive(s.fd) then
+		if not s.fd or not s.transport.isalive(s.fd) then
 			h2_pool[k] = nil
 		end
 	end
@@ -51,7 +51,7 @@ local function connect_exec(scheme, host, port, alpnprotos)
 	assert(ip, host)
 	local transport = transport_layers[scheme]
 	local addr = format("%s:%s", ip, port)
-	local fd, err = transport.connect(addr, nil, host, alpnprotos)
+	local fd, err = transport.connect(addr, {hostname = host, alpnprotos = alpnprotos})
 	if not fd then
 		return nil, nil, err
 	end
@@ -140,14 +140,17 @@ function M.listen(conf)
 	local addr = conf.addr
 	if not conf.tls then
 		transport = tcp
-		fd, err = tcp.listen(addr, handler)
+		fd, err = tcp.listen {
+			addr = addr,
+			callback = handler
+		}
 	else
 		transport = tls
 		fd, err = tls.listen {
 			addr = addr,
 			certs = conf.certs,
 			alpnprotos = conf.alpnprotos,
-			disp = handler,
+			callback = handler,
 		}
 	end
 	if not fd then

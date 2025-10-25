@@ -28,7 +28,7 @@ do
 				key = testaux.KEY_A,
 			},
 		},
-		disp = function(fd, addr)
+		callback = function(fd, addr)
 			local body = "testssl ok"
 			local resp = "HTTP/1.1 200 OK\r\nContent-Length: " .. #body .. "\r\n\r\n" .. body
 			tls.write(fd, resp)

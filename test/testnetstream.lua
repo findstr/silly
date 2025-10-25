@@ -38,7 +38,7 @@ do
     ns.tpush(sb, "foo")
     ns.tpush(sb, "bar")
     testaux.asserteq(ns.size(sb), 6, "Case 2.4: push two chunks, size==6")
-    testaux.asserteq(ns.readall(sb), "foobar", "Case 2.5: readall returns all data")
+    testaux.asserteq(ns.read(sb, ns.size(sb)), "foobar", "Case 2.5: readall returns all data")
     testaux.asserteq(ns.size(sb), 0, "Case 2.6: after readall, size==0")
     -- read from empty buffer
     testaux.asserteq(ns.read(sb, 1), nil, "Case 2.7: read from empty buffer returns empty string")
@@ -58,30 +58,20 @@ do
     local sb = ns.new(fd)
     ns.tpush(sb, "abc\ndef\r\nghi")
     testaux.asserteq(ns.readline(sb, "\n"), "abc\n", "Case 4.1: readline with \\n")
-    testaux.asserteq(ns.readline(sb, "\r\n"), "def\r\n", "Case 4.2: readline with \\r\\n")
+    testaux.asserteq(ns.readline(sb, "\n"), "def\r\n", "Case 4.2: readline with \\r\\n")
     testaux.asserteq(ns.readline(sb, "\n"), nil, "Case 4.3: readline not found returns nil")
     ns.tpush(sb, "\n")
     testaux.asserteq(ns.readline(sb, "\n"), "ghi\n", "Case 4.4: readline after append")
     -- empty delimiter
     local ok, err = pcall(function() ns.readline(sb, "") end)
     testaux.asserteq(not ok, true, "Case 4.5: readline with empty delim throws")
-    testaux.asserteq(not not err:find("delim is empty"), true, "Case 4.5: readline with empty delim throws")
-end
-
--- Test 5: readline across nodes
-do
-    local sb = ns.new(fd)
-    ns.tpush(sb, "foo")
-    ns.tpush(sb, "bar")
-    ns.tpush(sb, "baz")
-    testaux.asserteq(ns.readline(sb, "barb"), "foobarb", "Case 5.1: readline cross node")
-    testaux.asserteq(ns.readline(sb, "az"), "az", "Case 5.2: readline cross node at end")
+    testaux.asserteq(not not err:find("delim length must be 1"), true, "Case 4.5: readline with empty delim throws")
 end
 
 -- Test 6: readall on empty buffer
 do
     local sb = ns.new(fd)
-    testaux.asserteq(ns.readall(sb), "", "Case 6.1: readall on empty buffer returns empty string")
+    testaux.asserteq(ns.read(sb, ns.size(sb)), "", "Case 6.1: readall on empty buffer returns empty string")
 end
 
 -- Test 7: tpush with large data
@@ -108,13 +98,14 @@ do
     ns.tpush(sb, "b")
     ns.tpush(sb, "cd")
     ns.tpush(sb, "e\rf")
-    local x = ns.readline(sb, "\r\n")
+    local x = ns.readline(sb, "\n")
     -- can't read \r\n line
     testaux.asserteq(x, nil, "Case 9.1: read non line")
     -- switch delim should invalid cache
     local y = ns.readline(sb, "\r")
     testaux.asserteq(y, "abcde\r", "Case 9.2: read switch delim")
-    local z = ns.readall(sb)
+    testaux.asserteq(ns.size(sb), 1, "Case 9.2: read left one byte")
+    local z = ns.read(sb, 1)
     testaux.asserteq(z, "f", "Case 9.3 can't dop the last char")
 end
 

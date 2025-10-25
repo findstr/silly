@@ -8,14 +8,17 @@ local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 local IO
 local listen_cb
-local listenfd = tcp.listen("127.0.0.1:10001", function(fd, addr)
-	if listen_cb then
-		listen_cb(fd)
-		listen_cb = nil
-	else
-		tcp.close(fd)
+local listenfd = tcp.listen {
+	addr = "127.0.0.1:10001",
+	callback = function(s, addr)
+		if listen_cb then
+			listen_cb(s)
+			listen_cb = nil
+		else
+			s:close()
+		end
 	end
-end)
+}
 
 local tlsfd = tls.listen {
 	addr = "127.0.0.1:10002",
@@ -25,12 +28,12 @@ local tlsfd = tls.listen {
 			key = testaux.KEY_DEFAULT,
 		},
 	},
-	disp = function(fd, addr)
+	callback = function(s, addr)
 		if listen_cb then
-			listen_cb(fd)
+			listen_cb(s)
 			listen_cb = nil
 		else
-			tls.close(fd)
+			s:close()
 		end
 	end
 }
@@ -78,20 +81,6 @@ local function test_limit(port)
 	local daty = tcp.read(fd, 768)
 	local datz = tcp.read(fd, 768)
 	testaux.asserteq(datx..daty..datz, dat1..dat2, "tcp flow read 2048")
-	tcp.close(fd)
-	print("==test readall")
-	listen_cb = listen_func
-	local fd = tcp.connect("127.0.0.1" .. port)
-	print("limit tcp buffer to 1024", fd)
-	tcp.limit(fd, 1024)
-	print("wait for recv data")
-	time.sleep(1000)
-	testaux.asserteq(tcp.recvsize(fd), 1024, "tcp flow pause")
-	local datx = tcp.readall(fd)
-	testaux.asserteq(datx, dat1, "tcp flow readall 1024")
-	time.sleep(1000)
-	local daty = tcp.readall(fd)
-	testaux.asserteq(daty, dat2, "tcp flow readall 1024")
 	tcp.close(fd)
 	print("==test write function normal")
 	local recvfd
@@ -193,7 +182,6 @@ local function test_read(port)
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
 	IO.limit(fd, 8 * 1024 * 1024)
-	assert(fd >= 0)
 	local start = 8
 	local total = 32 * 1024 * 1024
 	for i = 1, 4 do
@@ -207,6 +195,7 @@ local function test_read(port)
 			time.sleep(0)
 		end
 	end
+	print("all data sent, wait recv")
 	WAIT = silly.running()
 	silly.wait()
 	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
@@ -233,8 +222,6 @@ local function test_close(port)
 		testaux.asserteq(ok, false, "server close fail")
 		local ok = IO.read(fd, 1)
 		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
@@ -248,38 +235,6 @@ local function test_close(port)
 	testaux.asserteq(ok , true, "client close ok")
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , false, "client close dummy")
-	wait_done()
-	--CASE2:client readall before server close
-	print("CASE2")
-	listen_cb = function(fd, addr)
-		local str = IO.readline(fd)
-		testaux.asserteq(str, "ping\n", "server readline")
-		local ok = IO.write(fd, "po")
-		testaux.asserteq(ok, true, "server write `po`")
-		local ok = IO.write(fd, "ng")
-		testaux.asserteq(ok, true, "server write `ng`")
-		time.sleep(100)
-		local ok = IO.close(fd)
-		testaux.asserteq(ok, true, "server close")
-		local ok = IO.close(fd)
-		testaux.asserteq(ok, false, "server close fail")
-		local ok = IO.read(fd, 1)
-		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
-		IO.close(fd)
-	end
-	local fd = IO.connect("127.0.0.1" .. port)
-	testaux.assertneq(fd, nil, "client connect")
-	local ok = IO.write(fd, "ping\n")
-	testaux.asserteq(ok, true, "client send `ping`")
-	local dat = IO.read(fd, 4)
-	testaux.asserteq(dat, "pong", "client recv `ping`")
-	local dat = IO.readall(fd)
-	testaux.asserteq(dat, "", "client recv '' ")
-	time.sleep(200)
-	local ok = IO.close(fd)
-	testaux.asserteq(ok , true, "client close")
 	wait_done()
 	--CASE3:client read more before server close
 	print("CASE3")
@@ -297,8 +252,6 @@ local function test_close(port)
 		testaux.asserteq(ok, false, "server close fail")
 		local ok = IO.read(fd, 1)
 		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
@@ -306,10 +259,8 @@ local function test_close(port)
 	testaux.asserteq(ok, true, "client send `ping`")
 	local dat = IO.read(fd, 5)
 	testaux.asserteq(dat, nil, "client recv more")
-	local dat = IO.readall(fd)
+	local dat = IO.read(fd, 4)
 	testaux.asserteq(dat, "pong", "client recv `pong` ")
-	local dat = IO.readall(fd)
-	testaux.asserteq(dat, nil, "client recv `nil` ")
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , true, "client close ok")
 	local ok = IO.close(fd)
@@ -330,8 +281,6 @@ local function test_close(port)
 		testaux.asserteq(ok, false, "server close fail")
 		local ok = IO.read(fd, 1)
 		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
 		IO.close(fd)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
@@ -348,7 +297,7 @@ local function test_close(port)
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , false, "client close dummy")
 	wait_done()
-	--CASE5:server write and close then cilent read and readall
+	--CASE5:server write and close then cilent read
 	print("CASE5")
 	listen_cb = function(fd, addr)
 		local str = IO.readline(fd)
@@ -363,8 +312,6 @@ local function test_close(port)
 		testaux.asserteq(ok, false, "server close fail")
 		local ok = IO.read(fd, 1)
 		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
 		IO.close(fd)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
@@ -374,41 +321,6 @@ local function test_close(port)
 	time.sleep(100)
 	local dat = IO.read(fd, 4)
 	testaux.asserteq(dat, "pong", "client recv `pong`")
-	local dat = IO.readall(fd)
-	testaux.asserteq(dat, nil, "client recv `nil` ")
-	local ok = IO.close(fd)
-	testaux.asserteq(ok , true, "client close ok")
-	local ok = IO.close(fd)
-	testaux.asserteq(ok , false, "client close dummy")
-	wait_done()
-	--CASE6:server write and close then cilent readall and readall
-	print("CASE6")
-	listen_cb = function(fd, addr)
-		local str = IO.readline(fd)
-		testaux.asserteq(str, "ping\n", "server readline")
-		local ok = IO.write(fd, "po")
-		testaux.asserteq(ok, true, "server write `po`")
-		local ok = IO.write(fd, "ng")
-		testaux.asserteq(ok, true, "server write `ng`")
-		local ok = IO.close(fd)
-		testaux.asserteq(ok, true, "server close")
-		local ok = IO.close(fd)
-		testaux.asserteq(ok, false, "server close fail")
-		local ok = IO.read(fd, 1)
-		testaux.asserteq(ok, nil, "server read fail")
-		local ok = IO.readall(fd)
-		testaux.asserteq(ok, nil, "server readall fail")
-		IO.close(fd)
-	end
-	local fd = IO.connect("127.0.0.1" .. port)
-	testaux.assertneq(fd, nil, "client connect")
-	local ok = IO.write(fd, "ping\n")
-	testaux.asserteq(ok, true, "client send `ping`")
-	time.sleep(100)
-	local dat = IO.readall(fd)
-	testaux.asserteq(dat, "pong", "client recv `pong`")
-	local dat = IO.readall(fd)
-	testaux.asserteq(dat, nil, "client recv `nil` ")
 	local ok = IO.close(fd)
 	testaux.asserteq(ok , true, "client close ok")
 	local ok = IO.close(fd)

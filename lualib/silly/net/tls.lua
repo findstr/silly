@@ -1,38 +1,54 @@
 local silly = require "silly"
 local net = require "silly.net"
+local tls = require "silly.tls.tls"
+local ctx = require "silly.tls.ctx"
 local logger = require "silly.logger"
+
 local type = type
 local pairs = pairs
 local assert = assert
 local concat = table.concat
+local setmetatable = setmetatable
 
-local socket_pool = {}
+local HANDSHAKE = {}
+local client_ctx = ctx.client()
 
----@class silly.net.tls.context_conf
----@field ciphers string|nil
----@field certs {cert:string, key:string}[]|nil
----@field alpnprotos silly.net.tls.alpn_proto[]|nil
-
----@class silly.net.tls.listen_conf : silly.net.tls.context_conf
----@field addr string
----@field backlog integer|nil
----@field disp fun(fd:integer, addr:string)
+---@class silly.net.tls.conf
+---@field ciphers string?
+---@field certs {cert:string, key:string}[]?
+---@field alpnprotos silly.net.tls.alpn_proto[]?
 
 ---@class silly.net.tls
----@field fd integer
----@field delim string|number|nil
----@field co thread|nil
----@field err string|nil
----@field alpnproto string?
----@field ctx any?
----@field ssl any?
----@field disp fun(fd:integer, addr:string)?
----@field conf silly.net.tls.context_conf?
 local M = {}
 
-local ctx
-local tls
-local client_ctx
+---@class silly.net.tls.listener
+---@field fd integer
+---@field callback async fun(s:silly.net.tls.conn, addr:string)
+---@field ctx any
+---@field conf silly.net.tls.conf
+
+---@class silly.net.tls.conn
+---@field fd integer?
+---@field delim string|number|table|nil
+---@field co thread?
+---@field err string?
+---@field alpnproto string?
+---@field ssl any
+local conn = {}
+local conn_mt = {
+	__index = conn,
+	__gc = function(self)
+		self:close()
+	end,
+	__close = function(self)
+		self:close()
+	end,
+}
+local listener = {}
+local listener_mt = {__index = listener}
+
+---@type table<integer, silly.net.tls.conn|silly.net.tls.listener>
+local socket_pool = {}
 
 ---@alias silly.net.tls.alpn_proto "http/1.1" | "h2"
 local char = string.char
@@ -54,36 +70,53 @@ end
 ---@param fd integer
 ---@param hostname string?
 ---@param alpnprotos silly.net.tls.alpn_proto[]?
+---@return silly.net.tls.conn
 local function new_socket(fd, ctx, hostname, alpnprotos)
 	local alpnstr
 	if alpnprotos then
 		alpnstr = wire_alpn_protos(alpnprotos)
 	end
-	local s = {
+	---@type silly.net.tls.conn
+	local s = setmetatable({
 		fd = fd,
-		delim = false,
-		---@type thread|nil
+		delim = nil,
 		co = nil,
 		ssl = tls.open(ctx, fd, hostname, alpnstr),
 		err = nil,
 		alpnproto = nil,
-	}
+	}, conn_mt)
+	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 	return s
 end
 
-local function del_socket(s)
-	tls.close(s.ssl)
-	socket_pool[s.fd] = nil
+---@param fd integer
+---@param ctx any
+---@param conf silly.net.tls.conf
+---@param callback async fun(s:silly.net.tls.conn, addr:string)
+---@return silly.net.tls.listener
+local function new_listener(fd, ctx, conf, callback)
+	---@type silly.net.tls.listener
+	local s = setmetatable({
+		fd = fd,
+		ctx = ctx,
+		conf = conf,
+		callback = callback,
+	}, listener_mt)
+	assert(not socket_pool[fd])
+	socket_pool[fd] = s
+	return s
 end
 
 ---@param dat string?
+---@param s silly.net.tls.conn
 local function wakeup(s, dat)
 	local co = s.co
 	s.co = nil
 	silly.wakeup(co, dat)
 end
 
+---@param s silly.net.tls.conn
 ---@return string?, string? error
 local function suspend(s)
 	assert(not s.co)
@@ -95,6 +128,7 @@ local function suspend(s)
 	return dat, nil
 end
 
+---@param s silly.net.tls.conn
 ---@return string?, string? error
 local function handshake(s)
 	local ok, alpnproto = tls.handshake(s.ssl)
@@ -102,7 +136,7 @@ local function handshake(s)
 		s.alpnproto = alpnproto
 		return "", nil
 	end
-	s.delim = "~"
+	s.delim = HANDSHAKE
 	return suspend(s)
 end
 
@@ -112,12 +146,13 @@ accept = function(fd, listenid, addr)
 	local s = new_socket(fd, lc.ctx, nil, nil)
 	local dat, _ = handshake(s)
 	if not dat then
+		s:close()
 		return
 	end
-	local ok, err = silly.pcall(lc.disp, fd, addr)
+	local ok, err = silly.pcall(lc.callback, s, addr)
 	if not ok then
 		logger.error(err)
-		M.close(fd)
+		s:close()
 	end
 end,
 
@@ -139,67 +174,73 @@ data = function(fd, ptr, size)
 	if not s then
 		return
 	end
+	local total_size = tls.push(s.ssl, ptr, size)
 	local delim = s.delim
-	tls.push(s.ssl, ptr, size)
 	if not delim then	--non suspend read
 		return
 	end
-	if type(delim) == "number" then
-		local dat = tls.read(s.ssl, delim)
-		if dat then
-			s.delim = false
+	local typ = type(delim)
+	if typ == "number" then
+		if total_size >= delim then
+			s.delim = nil
+			local dat = tls.read(s.ssl, delim)
 			wakeup(s, dat)
 		end
-	elseif delim == "\n" then
-		local dat = tls.readline(s.ssl)
+	elseif typ == "string" then
+		local dat = tls.readline(s.ssl, delim)
 		if dat then
-			s.delim = false
+			s.delim = nil
 			wakeup(s, dat)
 		end
-	elseif delim == "~" then
+	elseif delim == HANDSHAKE then
 		local ok, alpnproto = tls.handshake(s.ssl)
 		if ok then
 			s.alpnproto = alpnproto
-			s.delim = false
+			s.delim = nil
 			wakeup(s, "")
 		end
 	end
 end
 }
 
----@param ip string
----@param bind string|nil
----@param hostname string|nil
----@param alpnprotos silly.net.tls.alpn_proto[]|nil
----@return integer?, string? error
-local function connect_normal(ip, bind, hostname, alpnprotos)
-	local fd, err = net.tcpconnect(ip, EVENT, bind)
+---@class silly.net.tls.connect.opts
+---@field bind string?
+---@field hostname string?
+---@field alpnprotos silly.net.tls.alpn_proto[]?
+
+---@param addr string
+---@param opts silly.net.tls.connect.opts?
+---@return silly.net.tls.conn?, string? error
+local function connect_normal(addr, opts)
+	local bind, hostname, alpnprotos
+	local addr = assert(addr, "tls.connect missing addr")
+	if opts then
+		bind = opts.bind
+		hostname = opts.hostname
+		alpnprotos = opts.alpnprotos
+	end
+	local fd, err = net.tcpconnect(addr, EVENT, bind)
 	if not fd then
 		return nil, err
 	end
 	local s = new_socket(fd, client_ctx, hostname, alpnprotos)
 	local ok, err = handshake(s)
-	if ok then
-		return fd, nil
+	if not ok then
+		s:close()
+		return nil, err
 	end
-	M.close(fd)
-	return nil, err
+	return s, nil
 end
 
----@param ip string
----@param bind string|nil
----@param hostname string|nil
----@param alpn silly.net.tls.alpn_proto[]|nil
----@return integer?, string? error
-function M.connect(ip, bind, hostname, alpn)
-	tls = require "silly.tls.tls"
-	ctx = require "silly.tls.ctx"
-	client_ctx = ctx.client()
+---@param addr string
+---@param opts silly.net.tls.connect.opts?
+---@return silly.net.tls.conn?, string? error
+function M.connect(addr, opts)
 	M.connect = connect_normal
-	return connect_normal(ip, bind, hostname, alpn)
+	return connect_normal(addr, opts)
 end
 
----@param conf silly.net.tls.context_conf
+---@param conf silly.net.tls.conf
 local function new_server_ctx(conf)
 	ctx = ctx or require "silly.tls.ctx"
 	local alpns = conf.alpnprotos
@@ -212,37 +253,55 @@ local function new_server_ctx(conf)
 	return c
 end
 
----@param conf silly.net.tls.listen_conf
----@return integer?, string? error
-function M.listen(conf)
-	assert(conf.addr)
-	assert(conf.disp)
-	assert(#conf.certs > 0)
-	local portid, err = net.tcplisten(conf.addr, EVENT, conf.backlog)
-	if not portid then
+---@class silly.net.tls.listen.opts : silly.net.tls.conf
+---@field addr string
+---@field backlog integer?
+---@field callback async fun(s:silly.net.tls.conn, addr:string)
+
+---@param opts silly.net.tls.listen.opts
+---@return silly.net.tls.listener?, string? error
+function M.listen(opts)
+	local addr = opts.addr
+	local callback = opts.callback
+	local certs = opts.certs
+	assert(addr, "tls.listen missing addr")
+	assert(callback and type(callback) == "function", "tls.listen missing callback")
+	assert(#certs > 0, "tls.listen missing certs")
+	local fd, err = net.tcplisten(addr, EVENT, opts.backlog)
+	if not fd then
 		return nil, err
 	end
 	tls = require "silly.tls.tls"
-	local tls_ctx = new_server_ctx(conf)
-	local s = new_socket(portid, tls_ctx, nil, nil)
-	s.ctx = tls_ctx
-	s.conf = {
-		certs = conf.certs,
-		ciphers = conf.ciphers,
-		alpnprotos = conf.alpnprotos,
+	local tls_ctx = new_server_ctx(opts)
+	local tls_conf = {
+		certs = opts.certs,
+		ciphers = opts.ciphers,
+		alpnprotos = opts.alpnprotos,
 	}
-	s.disp = conf.disp
-	return portid, nil
+	local s = new_listener(fd, tls_ctx, tls_conf, opts.callback)
+	return s, nil
 end
 
----@param conf silly.net.tls.context_conf?
+---@param l silly.net.tls.listener
 ---@return boolean, string? error
-function M.reload(fd, conf)
-	local s = socket_pool[fd]
-	if not s then
+function listener.close(l)
+	local fd = l.fd
+	if not fd then
 		return false, "socket closed"
 	end
-	local old_conf = s.conf
+	socket_pool[fd] = nil
+	listener.fd = nil
+	return net.close(fd)
+end
+
+---@param l silly.net.tls.listener
+---@param conf silly.net.tls.conf?
+---@return boolean, string? error
+function listener.reload(l, conf)
+	if not l.fd then
+		return false, "socket closed"
+	end
+	local old_conf = l.conf
 	if not old_conf then
 		return false, "not listen socket"
 	end
@@ -251,31 +310,38 @@ function M.reload(fd, conf)
 			old_conf[k] = v
 		end
 	end
-	s.ctx = new_server_ctx(old_conf)
+	l.ctx = new_server_ctx(old_conf)
 	return true, nil
 end
 
----@param fd integer
+---@param s silly.net.tls.conn
+---@param limit integer
+---@return boolean
+function conn.limit(s, limit)
+	return tls.limit(s.ssl, limit)
+end
+
+---@param s silly.net.tls.conn
 ---@return boolean, string? error
-function M.close(fd)
-	local s = socket_pool[fd]
-	if s == nil then
+function conn.close(s)
+	local fd = s.fd
+	if not fd then
 		return false, "socket closed"
 	end
 	if s.co then
 		wakeup(s, nil)
 	end
-	del_socket(s)
+	tls.close(s.ssl)
+	socket_pool[fd] = nil
+	s.fd = nil
 	return net.close(fd)
 end
 
----@async
----@param fd integer
+---@param s silly.net.tls.conn
 ---@param n integer
 ---@return string?, string? error
-function M.read(fd, n)
-	local s = socket_pool[fd]
-	if not s then
+function conn.read(s, n)
+	if not s.fd then
 		return nil, "socket closed"
 	end
 	local d = tls.read(s.ssl, n)
@@ -289,61 +355,74 @@ function M.read(fd, n)
 	return suspend(s)
 end
 
----@param fd integer
+---@param s silly.net.tls.conn
+---@param delim string?
 ---@return string?, string? error
-function M.readall(fd)
-	local s = socket_pool[fd]
-	if not s then
+function conn.readline(s, delim)
+	if not s.fd then
 		return nil, "socket closed"
 	end
-	local r = tls.readall(s.ssl)
-	if r == "" and s.err then
-		return nil, s.err
-	end
-	return r, nil
-end
-
----@param fd integer
----@return string?, string? error
-function M.readline(fd)
-	local s = socket_pool[fd]
-	if not s then
-		return nil, "socket closed"
-	end
-	local d = tls.readline(s.ssl)
+	delim = delim or "\n"
+	local d = tls.readline(s.ssl, delim)
 	if d then
 		return d, nil
 	end
-	s.delim = "\n"
+	s.delim = delim
 	return suspend(s)
 end
 
----@param fd integer
----@param str string
+---@param s silly.net.tls.conn
+---@param data string|string[]
 ---@return boolean, string? error
-function M.write(fd, str)
-	local s = socket_pool[fd]
-	if not s then
+function conn.write(s, data)
+	if not s.fd then
 		return false, "socket closed"
 	end
-	return tls.write(s.ssl, str)
+	return tls.write(s.ssl, data)
 end
 
----@param fd integer
+---@param s silly.net.tls.conn
 ---@return string?
-function M.alpnproto(fd)
-	local s = socket_pool[fd]
-	if not s then
-		return nil
-	end
+function conn.alpnproto(s)
 	return s.alpnproto
 end
 
----@param fd integer
+---@param s silly.net.tls.conn
 ---@return boolean
-function M.isalive(fd)
-	local s = socket_pool[fd]
-	return s and not s.err
+function conn.isalive(s)
+	return s.fd and (not s.err)
 end
+
+---@param s silly.net.tls.conn
+---@return integer
+function conn.unreadbytes(s)
+	return tls.size(s.ssl)
+end
+
+---@param s silly.net.tls.conn
+---@return integer
+function conn.unsentbytes(s)
+	local fd = s.fd
+	if not fd then
+		return 0
+	end
+	return net.sendsize(fd)
+end
+
+-- for compatibility
+M.close = function(s)
+	return s:close()
+end
+M.reload = function(l, conf)
+	return l:reload(conf)
+end
+M.read = conn.read
+M.write = conn.write
+M.limit = conn.limit
+M.isalive = conn.isalive
+M.readline = conn.readline
+M.recvsize = conn.unreadbytes
+M.sendsize = conn.unsentbytes
+M.alpnproto = conn.alpnproto
 
 return M

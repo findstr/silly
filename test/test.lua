@@ -23,7 +23,14 @@ local case = env.get("case")
 M = case .. ":"
 print("=========start=========")
 local netinfo1 = netstat()
-dofile("test/" .. case .. ".lua")
+local function traceback(err)
+    return debug.traceback(err, 2)
+end
+local ok, err = xpcall(function() dofile("test/" .. case .. ".lua") end, traceback)
+if not ok then
+	print("FAIL crash:", err)
+	silly.exit(1)
+end
 time.sleep(500)
 local netinfo2 = netstat()
 testaux.asserteq(netinfo1.tcpclient, netinfo2.tcpclient, case .. ":netstat")

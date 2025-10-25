@@ -3,47 +3,58 @@ local net = require "silly.net"
 local ns = require "silly.netstream"
 local assert = assert
 local tremove = table.remove
+local setmetatable = setmetatable
 
---when luaVM destroyed, all process will be exit
---so no need to clear socket connection
----@type table<integer, silly.net.udp>
-local socket_pool = {}
+---@class silly.net.udp
+local udp = {}
 
 ---@class silly.net.udp.packet
 ---@field addr string
 ---@field data string
 
----@class silly.net.udp
----@field fd integer
----@field co thread|nil
----@field err string|nil
----@field packets silly.net.udp.packet[]
-local udp = {}
+---@class silly.net.udp.conn
+---@field fd integer?
+---@field co thread?
+---@field err string?
+---@field stash_bytes integer
+---@field stash_packets silly.net.udp.packet[]
+local conn = {}
+local conn_mt = {
+	__index = conn,
+	__gc = function(self)
+		self:close()
+	end,
+	__close = function(self)
+		self:close()
+	end,
+}
+
+--when luaVM destroyed, all process will be exit
+--so no need to clear socket connection
+---@type table<integer, silly.net.udp.conn>
+local socket_pool = {}
 
 ---@param fd integer
+---@return silly.net.udp.conn
 local function new_socket(fd)
-	local s = {
+	---@type silly.net.udp.conn
+	local s = setmetatable({
 		fd = fd,
-		---@type thread|nil
 		co = nil,
 		err = nil,
-		packets = {},
-	}
+		stash_bytes = 0,
+		stash_packets = {},
+	}, conn_mt)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
+	return s
 end
 
----@param s silly.net.udp
-local function del_socket(s)
-	socket_pool[s.fd] = nil
-end
-
----@param s silly.net.udp
+---@param s silly.net.udp.conn
 ---@return string?, string? error_or_addr
 local function suspend(s)
 	assert(not s.co)
-	local co = silly.running()
-	s.co = co
+	s.co = silly.running()
 	local dat = silly.wait()
 	if not dat then
 		return nil, s.err
@@ -51,6 +62,7 @@ local function suspend(s)
 	return dat.data, dat.addr
 end
 
+---@param s silly.net.udp.conn
 ---@param packet silly.net.udp.packet?
 local function wakeup(s, packet)
 	local co = s.co
@@ -72,8 +84,9 @@ local EVENT = {
 		if s.co then
 			wakeup(s, packet)
 		else
-			local packets = s.packets
+			local packets = s.stash_packets
 			packets[#packets + 1] = packet
+			s.stash_bytes = s.stash_bytes + size
 		end
 	end,
 	close = function(fd, errno)
@@ -89,39 +102,44 @@ local EVENT = {
 }
 
 ---@param addr string
----@return integer|nil, string? error
+---@return silly.net.udp.conn?, string? error
 function udp.bind(addr)
+	assert(addr, "udp.bind missing addr")
 	local fd, err = net.udpbind(addr, EVENT)
-	if fd then
-		new_socket(fd)
+	if not fd then
+		return nil, err
 	end
-	return fd, err
+	return new_socket(fd), nil
 end
+
+---@class silly.net.udp.connect.opts
+---@field bindaddr string
 
 ---@param addr string
----@param bindip string|nil
----@return integer|nil, string? error
-function udp.connect(addr, bindip)
+---@param opts silly.net.udp.connect.opts?
+---@return silly.net.udp.conn?, string? error
+function udp.connect(addr, opts)
+	assert(addr, "udp.connect missing addr")
+	local bindip = opts and opts.bindaddr
 	local fd, err = net.udpconnect(addr, EVENT, bindip)
-	if fd then
-		new_socket(fd)
+	if not fd then
+		return nil, err
 	end
-	return fd, err
+	return new_socket(fd), nil
 end
 
----@async
----@param fd integer
+---@param s silly.net.udp.conn
 ---@return string?, string? error_or_addr
-function udp.recvfrom(fd)
-	local s = socket_pool[fd]
-	if not s then
+function conn.recvfrom(s)
+	if not s.fd then
 		return nil, "socket closed"
 	end
-	local packets = s.packets
+	local packets = s.stash_packets
 	if #packets > 0 then
-		local packet = packets[1]
-		tremove(packets, 1)
-		return packet.data, packet.addr
+		local packet = tremove(packets, 1)
+		local data = packet.data
+		s.stash_bytes = s.stash_bytes - #data
+		return data, packet.addr
 	end
 	if s.err then
 		return nil, s.err
@@ -129,31 +147,60 @@ function udp.recvfrom(fd)
 	return suspend(s)
 end
 
----@param fd integer
+---@param s silly.net.udp.conn
 ---@return boolean, string? error
-function udp.close(fd)
-	local s = socket_pool[fd]
-	if not s then
+function conn.close(s)
+	local fd = s.fd
+	if not fd then
 		return false, "socket closed"
 	end
 	if s.co then
 		s.err = "active closed"
 		wakeup(s, nil)
 	end
-	del_socket(s)
+	socket_pool[fd] = nil
+	s.fd = nil
 	net.close(fd)
 	return true, nil
 end
 
----@param fd integer
+---@param s silly.net.udp.conn
 ---@return boolean
-function udp.isalive(fd)
-	local s = socket_pool[fd]
-	return s and not s.err
+function conn.isalive(s)
+	return s.fd and not s.err
 end
 
-udp.sendto = net.udpsend
-udp.sendsize = net.sendsize
+---@param s silly.net.udp.conn
+---@param data string
+---@param addr string?
+---@return boolean, string? error
+function conn.sendto(s, data, addr)
+	local fd = s.fd
+	if not fd then
+		return false, "socket closed"
+	end
+	return net.udpsend(fd, data, addr)
+end
+
+function conn.unreadbytes(s)
+	return s.stash_bytes
+end
+
+---@param s silly.net.udp.conn
+---@return integer
+function conn.unsentbytes(s)
+	local fd = s.fd
+	if not fd then
+		return 0
+	end
+	return net.sendsize(fd)
+end
+
+-- for compatibility
+udp.recvfrom = conn.recvfrom
+udp.close = conn.close
+udp.isalive = conn.isalive
+udp.sendto = conn.sendto
 
 return udp
 
