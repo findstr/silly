@@ -1,4 +1,5 @@
 local silly = require "silly"
+local assert = assert
 local setmetatable = setmetatable
 local remove = table.remove
 local running = silly.running
@@ -24,12 +25,15 @@ local function unlock(proxy)
 		local waitq = l.waitq
 		if waitq and #waitq > 0 then
 			local co = remove(waitq, 1)
+			l.refn = 1
+			l.owner = co
 			wakeup(co)
+		else
+			lockobj[l.key] = nil
+			l.owner = nil
+			l.key = nil
+			lockcache[#lockcache+1] = l
 		end
-		lockobj[l.key] = nil
-		l.owner = nil
-		l.key = nil
-		lockcache[#lockcache+1] = l
 	end
 	proxy.lockobj = nil
 end
@@ -49,7 +53,7 @@ function M.new()
 end
 
 ---@param co thread
-local function lockkey(lockobj, key, co)
+local function new_lock(key, co)
 	local l = remove(lockcache)
 	if l then
 		l.key = key
@@ -62,7 +66,6 @@ local function lockkey(lockobj, key, co)
 			refn = 1,
 		}
 	end
-	lockobj[key] = l
 	return l
 end
 
@@ -81,10 +84,10 @@ function M:lock(key)
 				l.waitq = {co}
 			end
 			silly.wait()
-			l = lockkey(lockobj, key, co)
 		end
 	else
-		l = lockkey(lockobj, key, co)
+		l = new_lock(key, co)
+		lockobj[key] = l
 	end
 	local proxy = remove(proxycache)
 	if not proxy then

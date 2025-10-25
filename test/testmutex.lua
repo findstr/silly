@@ -155,7 +155,26 @@ local function testcase6()
 	testaux.success("reentrant mutex is ok")
 end
 
-
+local function testcase7()
+	local obj = {
+		step = 1,
+	}
+	local l1 = mutex:lock(obj)
+	testaux.asserteq(obj.step, 1, "test lock race 1")
+	obj.step = 2
+	silly.fork(function()
+		print("2")
+		testaux.asserteq(obj.step, 2, "test lock race 2.1")
+		local l2<close> = mutex:lock(obj)
+		testaux.asserteq(obj.step, 2, "test lock race 2.2")
+		obj.step = 3
+	end)
+	time.sleep(0) -- yield for lock2
+	testaux.asserteq(obj.step, 2, "test lock race 2.3")
+	l1:unlock() -- unlock, the lock is wakeup
+	local l3<close> = mutex:lock(obj)
+	testaux.asserteq(obj.step, 3, "test lock race 3")
+end
 
 testcase1()
 testcase2()
@@ -163,3 +182,4 @@ testcase3()
 testcase4()
 testcase5()
 testcase6()
+testcase7()
