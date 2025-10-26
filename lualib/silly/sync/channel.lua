@@ -1,12 +1,17 @@
 local silly = require "silly"
+local queue = require "silly.adt.queue"
 local assert = assert
+local setmetatable = setmetatable
+local wakeup = silly.wakeup
+local qnew = queue.new
+local qpop = queue.pop
+local qpush = queue.push
+local qclear = queue.clear
 
 ---@class silly.sync.channel
----@field queue table
+---@field queue userdata
 ---@field closed boolean
 ---@field co thread|nil
----@field popi integer
----@field pushi integer
 local channel = {}
 
 local mt = {__index = channel}
@@ -14,10 +19,8 @@ local mt = {__index = channel}
 ---@return silly.sync.channel
 function channel.new()
 	local obj = {
-		queue = {},
+		queue = qnew(),
 		co = nil,
-		popi = 1,
-		pushi = 1,
 		closed = false,
 	}
 	setmetatable(obj, mt)
@@ -37,19 +40,16 @@ function channel.push(self, dat)
 	local co = self.co
 	if co then
 		self.co = nil
-		silly.wakeup(co, dat)
+		wakeup(co, dat)
 	else
-		local pushi = self.pushi
-		self.queue[pushi] = dat
-		pushi = pushi + 1
-		assert(pushi - self.popi < 0x7FFFFFFF, "channel size must less then 2G")
-		self.pushi = pushi
+		qpush(self.queue, dat)
 	end
 	return true, nil
 end
 
 function channel.pop(self)
-	if self.popi == self.pushi then
+	local dat = qpop(self.queue)
+	if not dat then
 		if self.closed then
 			return nil, "channel closed"
 		end
@@ -61,27 +61,11 @@ function channel.pop(self)
 		end
 		return dat, nil
 	end
-	assert(self.popi - self.pushi < 0)
-	local i = self.popi
-	local popi = i + 1
-	if popi == self.pushi then
-		self.popi = 1
-		self.pushi = 1
-	else
-		self.popi= popi
-	end
-	local queue = self.queue
-	local d = queue[i]
-	queue[i] = nil
-	return d, nil
+	return dat, nil
 end
 
 function channel.clear(self)
-	for i = self.popi, self.pushi do
-		self.queue[i] = nil
-	end
-	self.popi = 1
-	self.pushi = 1
+	qclear(self.queue)
 end
 
 function channel.close(self)

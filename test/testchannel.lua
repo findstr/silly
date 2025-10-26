@@ -56,29 +56,17 @@ do
 		ch:push(i)
 	end
 
-	-- Check if popi and pushi are correctly set
-	testaux.asserteq(ch.popi, 1, "Case2: popi starts at 1")
-	testaux.asserteq(ch.pushi, 101, "Case2: pushi correctly incremented")
-
 	-- Pop 50 items
 	for i = 1, 50 do
 		local value = ch:pop()
 		testaux.asserteq(value, i, "Case2: Pop returns correct value " .. i)
 	end
 
-	-- Check updated popi
-	testaux.asserteq(ch.popi, 51, "Case2: popi correctly incremented")
-
 	-- Pop remaining 50 items
 	for i = 51, 100 do
 		local value = ch:pop()
 		testaux.asserteq(value, i, "Case2: Pop returns correct value " .. i)
 	end
-
-	-- Queue should be empty now, popi == pushi
-	testaux.asserteq(ch.popi, ch.pushi, "Case2: Queue is empty")
-	testaux.asserteq(ch.popi, 1, "Case2: popi starts at 1")
-	testaux.asserteq(ch.pushi, 1, "Case2: pushi correctly incremented")
 end
 
 -- Test 3: Channel wait and wakeup mechanics
@@ -171,7 +159,7 @@ do
 	end
 end
 
--- Test 6: Queue reset after empty
+-- Test 6: Large batch operations
 do
 	local ch = channel.new()
 
@@ -182,53 +170,18 @@ do
 
 	-- Pop all items
 	for i = 1, 1000 do
-		ch:pop()
+		local value = ch:pop()
+		testaux.asserteq(value, i, "Case6: Pop returns correct value " .. i)
 	end
 
-	-- Check if popi and pushi were reset to 1
-	-- This will trigger a wait, and thus should reset indices
-	pop_coroutine("Case6: Waiting coroutine", ch, "reset test", nil)
-
-	-- Push a value to wake up the coroutine
-	ch:push("reset test")
-	silly.fork(function()
-		local value, err = ch:pop()
-		testaux.asserteq(value, "reset test", "Case6: popi reset after queue emptied")
-		testaux.asserteq(err, nil, "Case6: popi reset after queue emptied")
-		testaux.asserteq(ch.pushi, 1, "Case6: pushi reset after queue emptied")
-		testaux.asserteq(ch.popi, 1, "Case6: popi reset after queue emptied")
-	end)
+	-- Test wait/wakeup after emptying
+	pop_coroutine("Case6: Waiting coroutine after empty", ch, "after empty", nil)
+	ch:push("after empty")
 end
 
--- Test 7: Error handling and boundary conditions
+-- Test 7: Concurrent operations
 do
 	local ch = channel.new()
-
-	-- Test the assertion for channel size limit
-	local success = pcall(function()
-		-- Set indices to trigger the assertion
-		ch.popi = 1
-		ch.pushi = 0x7FFFFFFF + 2  -- Should trigger assertion
-		ch:push("overflow")
-	end)
-
-	testaux.asserteq(success, false, "Case7: Assertion fails when channel size >= 2G")
-
-	-- Reset channel
-	ch = channel.new()
-
-	-- Test boundary of maximum allowed size
-	ch.popi = 1
-	ch.pushi = 0x7FFFFFFF - 1  -- Maximum allowed size
-
-	success = pcall(function()
-		ch:push("max size")
-	end)
-
-	testaux.asserteq(success, true, "Case7: Push succeeds at maximum allowed size")
-
-	-- Test concurrent operations
-	ch = channel.new()
 
 	-- Start 10 producers and 10 consumers
 	local producers = {}
