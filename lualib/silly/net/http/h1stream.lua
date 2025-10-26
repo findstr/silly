@@ -31,7 +31,7 @@ local valid_methods = {
 local function readheader(fd, readline)
 	local header = {}
 	local tmp, err = readline(fd)
-	if not tmp then
+	if err then
 		return nil, err
 	end
 	while tmp ~= "\r\n" do
@@ -51,7 +51,7 @@ local function readheader(fd, readline)
 			header[k] = v
 		end
 		tmp, err = readline(fd)
-		if not tmp then
+		if err then
 			return nil, err
 		end
 	end
@@ -76,7 +76,7 @@ end
 local function read_chunk(fd, transport)
 	local readline = transport.readline
 	local n, err = readline(fd)
-	if not n then
+	if err then
 		return nil, err
 	end
 	local sz = tonumber(n, 16)
@@ -84,7 +84,7 @@ local function read_chunk(fd, transport)
 		return "", "EOF"
 	end
 	local dat, err = transport.read(fd, sz)
-	if not dat then
+	if err then
 		return nil, err
 	end
 	readline(fd)
@@ -144,11 +144,11 @@ local stream_mt = {
 		local fd = s.fd
 		local readline = s.transport.readline
 		local first, err = readline(fd)
-		if not first then
+		if err then
 			return nil, err
 		end
 		local header, err = readheader(fd, readline)
-		if not header then
+		if err then
 			return nil, err
 		end
 		local ver, status = first:match("HTTP/([%d|.]+)%s+(%d+)")

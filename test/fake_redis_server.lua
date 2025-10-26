@@ -37,7 +37,7 @@ function M:handle_client(client)
 	while true do
 		-- Read command line
 		local line, err = client:readline("\n")
-		if not line then
+		if err then
 			self.clients[client] = nil
 			client:close()
 			break
@@ -48,11 +48,11 @@ function M:handle_client(client)
 			local count = tonumber(line:match("%*(%d+)"))
 			local cmd_parts = {}
 			for i = 1, count do
-				local len_line = client:readline("\n")
-				if not len_line then break end
+				local len_line, err = client:readline("\n")
+				if err then break end
 				local len = tonumber(len_line:match("%$(%d+)"))
-				local data = client:read(len + 2) -- +2 for \r\n
-				if not data then break end
+				local data, err = client:read(len + 2) -- +2 for \r\n
+				if err then break end
 				cmd_parts[i] = data:sub(1, -3) -- Remove \r\n
 			end
 

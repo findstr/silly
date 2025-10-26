@@ -10,7 +10,10 @@ local assert = assert
 local concat = table.concat
 local setmetatable = setmetatable
 
-local HANDSHAKE = {}
+local HANDSHAKE<const> = {}
+local HANDSHAKE_OK<const> = 1
+local HANDSHAKE_ERROR<const> = 0
+
 local client_ctx = ctx.client()
 
 ---@class silly.net.tls.conf
@@ -35,17 +38,7 @@ local M = {}
 ---@field alpnproto string?
 ---@field ssl any
 local conn = {}
-local conn_mt = {
-	__index = conn,
-	__gc = function(self)
-		self:close()
-	end,
-	__close = function(self)
-		self:close()
-	end,
-}
 local listener = {}
-local listener_mt = {__index = listener}
 
 ---@type table<integer, silly.net.tls.conn|silly.net.tls.listener>
 local socket_pool = {}
@@ -66,6 +59,27 @@ local function wire_alpn_protos(alpnprotos)
 	end
 	return concat(buf)
 end
+
+local function gc(s)
+	local fd = s.fd
+	if fd then
+		socket_pool[fd] = nil
+		s.fd = nil
+		return net.close(fd)
+	end
+	return false, "socket closed"
+end
+
+local conn_mt = {
+	__index = conn,
+	__gc = gc,
+	__close = nil,
+}
+
+local listener_mt = {
+	__index = listener,
+	__gc = gc,
+}
 
 ---@param fd integer
 ---@param hostname string?
@@ -118,26 +132,36 @@ end
 
 ---@param s silly.net.tls.conn
 ---@return string?, string? error
-local function suspend(s)
-	assert(not s.co)
-	s.co = silly.running()
-	local dat = silly.wait()
-	if not dat then
-		return nil, s.err
+local function block_read(s, delim)
+	local err = s.err
+	if not err then
+		s.delim = delim
+		assert(not s.co)
+		s.co = silly.running()
+		local dat = silly.wait()
+		if dat then
+			return dat, nil
+		end
+		err = s.err
 	end
-	return dat, nil
+	if #err == 0 then
+		return "", "end of file"
+	end
+	return nil, err
 end
 
 ---@param s silly.net.tls.conn
 ---@return string?, string? error
 local function handshake(s)
-	local ok, alpnproto = tls.handshake(s.ssl)
-	if ok then
+	local ret, alpnproto = tls.handshake(s.ssl)
+	if ret == HANDSHAKE_OK then
 		s.alpnproto = alpnproto
 		return "", nil
+	elseif ret == HANDSHAKE_ERROR then
+		s.err = alpnproto
+		return nil, alpnproto
 	end
-	s.delim = HANDSHAKE
-	return suspend(s)
+	return block_read(s, HANDSHAKE)
 end
 
 local EVENT = {
@@ -193,11 +217,16 @@ data = function(fd, ptr, size)
 			wakeup(s, dat)
 		end
 	elseif delim == HANDSHAKE then
-		local ok, alpnproto = tls.handshake(s.ssl)
-		if ok then
-			s.alpnproto = alpnproto
+		local ret, alpnproto = tls.handshake(s.ssl)
+		-- 1:success 0:error <0:continue
+		if ret == 1 then -- success
 			s.delim = nil
+			s.alpnproto = alpnproto
 			wakeup(s, "")
+		elseif ret == 0 then -- error
+			s.delim = nil
+			s.err = alpnproto
+			wakeup(s, nil)
 		end
 	end
 end
@@ -282,17 +311,7 @@ function M.listen(opts)
 	return s, nil
 end
 
----@param l silly.net.tls.listener
----@return boolean, string? error
-function listener.close(l)
-	local fd = l.fd
-	if not fd then
-		return false, "socket closed"
-	end
-	socket_pool[fd] = nil
-	listener.fd = nil
-	return net.close(fd)
-end
+listener.close = gc
 
 ---@param l silly.net.tls.listener
 ---@param conf silly.net.tls.conf?
@@ -329,13 +348,12 @@ function conn.close(s)
 		return false, "socket closed"
 	end
 	if s.co then
+		s.err = "active closed"
 		wakeup(s, nil)
 	end
-	tls.close(s.ssl)
-	socket_pool[fd] = nil
-	s.fd = nil
-	return net.close(fd)
+	return gc(s)
 end
+conn_mt.__close = conn.close
 
 ---@param s silly.net.tls.conn
 ---@param n integer
@@ -348,11 +366,7 @@ function conn.read(s, n)
 	if d then
 		return d, nil
 	end
-	if s.err then
-		return nil, s.err
-	end
-	s.delim = n
-	return suspend(s)
+	return block_read(s, n)
 end
 
 ---@param s silly.net.tls.conn
@@ -367,8 +381,7 @@ function conn.readline(s, delim)
 	if d then
 		return d, nil
 	end
-	s.delim = delim
-	return suspend(s)
+	return block_read(s, delim)
 end
 
 ---@param s silly.net.tls.conn

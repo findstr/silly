@@ -48,7 +48,7 @@ local data_type = {
 local function read_frame(fd, r, needmask)
 	local dat
 	local tmp, err = r(fd, 2)
-	if not tmp then -- the frame header is not read, treat as EOF
+	if err then -- the frame header is not read, treat as EOF
 		return nil, err, ""
 	end
 	local masking_key
@@ -61,13 +61,13 @@ local function read_frame(fd, r, needmask)
 	end
 	if payload == 126 then
 		tmp, err = r(fd, 2)
-		if not tmp then
+		if err then
 			return nil, err, ""
 		end
 		payload = unpack(">I2", tmp)
 	elseif payload == 127 then
 		tmp, err = r(fd, 8)
-		if not tmp then
+		if err then
 			return nil, err, ""
 		end
 		payload = unpack(">I8", tmp)
@@ -78,13 +78,13 @@ local function read_frame(fd, r, needmask)
 			return nil, err, ""
 		end
 		dat, err = r(fd, payload)
-		if not dat then
+		if err then
 			return nil, err, ""
 		end
 		dat = xor(masking_key, dat)
 	else
 		dat, err = r(fd, payload)
-		if not dat then
+		if err then
 			return nil, err, ""
 		end
 	end
@@ -315,6 +315,7 @@ function M.connect(url, header)
 	end
 	local status, err = stream:readheader()
 	if not status or status ~= 101 then
+		stream:close()
 		return nil, format("websocket.connect fail:%s", status or err)
 	end
 	return upgrade(stream, true), nil

@@ -106,10 +106,11 @@ do
 		testaux.asserteq(dat, "hello", "Case 4: Server read initial data")
 		print("Case 4: Server read 'hello'.")
 
-		-- 2. Subsequent read should immediately return nil due to FIN
+		-- 2. Subsequent read should immediately return ("", "end of file") due to FIN
 		local dat2, err2 = tcp.read(sfd, 1)
-		testaux.asserteq(dat2, nil, "Case 4: Server read after FIN returns nil")
-		print("Case 4: Server read after FIN correctly returned nil.")
+		testaux.asserteq(dat2, "", "Case 4: Server read after FIN returns empty string")
+		testaux.asserteq(err2, "end of file", "Case 4: Server read after FIN returns 'end of file'")
+		print("Case 4: Server read after FIN correctly returned EOF.")
 
 		-- 3. Server should still be able to write
 		local ok, err3 = tcp.write(sfd, "world")
@@ -135,15 +136,15 @@ do
 end
 
 -- Test 5: Readline interrupted by close
--- Tests if readline correctly unblocks and returns nil if connection is closed before delimiter is found.
+-- Tests if readline correctly unblocks and returns ("", "end of file") if connection is closed before delimiter is found.
 do
 	print("\nTest 5: Readline interrupted by close")
 	listen_cb = function(sfd, addr)
 		print("Case 5: Server accepted connection from", addr)
 		local data, err = tcp.readline(sfd, "\n")
-		testaux.asserteq(data, nil, "Case 5: Readline returns nil on interrupted read")
-		testaux.asserteq(err, "end of file", "Case 5: Readline returns 'closed' error")
-		print("Case 5: Readline correctly returned nil and 'closed' error.")
+		testaux.asserteq(data, "", "Case 5: Readline returns empty string on interrupted read")
+		testaux.asserteq(err, "end of file", "Case 5: Readline returns 'end of file' error")
+		print("Case 5: Readline correctly returned empty string and 'end of file' error.")
 		tcp.close(sfd)
 	end
 

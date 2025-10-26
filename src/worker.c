@@ -131,7 +131,7 @@ static inline void new_error_table(lua_State *L)
 	def(EX_NOSOCKET, "no free socket");
 	def(EX_CLOSING, "socket is closing");
 	def(EX_CLOSED, "socket is closed");
-	def(EX_EOF, "end of file");
+	def(EX_EOF, "");
 #undef def
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);

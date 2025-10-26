@@ -184,8 +184,8 @@ tcp.listen {
 		tcp.write(fd, "Type 'help' for help.\n\n")
 		tcp.write(fd, prompt)
 		while true do
-			local l = tcp.readline(fd)
-			if not l then
+			local l, err = tcp.readline(fd)
+			if err then
 				break
 			end
 			for w in string.gmatch(l, "%g+") do

@@ -16,26 +16,37 @@ local M = {}
 ---@field err string?
 ---@field sbuffer any
 local conn = {}
-local conn_mt = {
-	__index = conn,
-	__gc = function(self)
-		self:close()
-	end,
-	__close = function(self)
-		self:close()
-	end,
-}
 
 ---@class silly.net.tcp.listener
 ---@field fd integer
 ---@field callback async fun(s:silly.net.tcp.conn, addr:string)
 local listener = {}
-local listener_mt = {__index = listener}
 
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
 ---@type table<integer, silly.net.tcp.conn|silly.net.tcp.listener>
 local socket_pool = {}
+
+local function gc(s)
+	local fd = s.fd
+	if fd then
+		socket_pool[fd] = nil
+		s.fd = nil
+		return net.close(fd)
+	end
+	return false, "socket closed"
+end
+
+local conn_mt = {
+	__index = conn,
+	__gc = gc,
+	__close = nil,
+}
+
+local listener_mt = {
+	__index = listener,
+	__gc = gc,
+}
 
 ---@param fd integer
 ---@return silly.net.tcp.conn
@@ -55,15 +66,22 @@ end
 
 ---@param s silly.net.tcp.conn
 ---@return string?, string? error
-local function suspend(s)
-	assert(not s.co)
-	local co = silly.running()
-	s.co = co
-	local dat = silly.wait()
-	if not dat then
-		return nil, s.err
+local function block_read(s, delim)
+	local err = s.err
+	if not err then
+		s.delim = delim
+		assert(not s.co)
+		s.co = silly.running()
+		local dat = silly.wait()
+		if dat then
+			return dat, nil
+		end
+		err = s.err
 	end
-	return dat, nil
+	if #err == 0 then
+		return "", "end of file"
+	end
+	return nil, err
 end
 
 ---@param s silly.net.tcp.conn
@@ -147,17 +165,7 @@ function M.listen(conf)
 	return s, err
 end
 
----@param s silly.net.tcp.listener
----@return boolean, string? error
-function listener.close(s)
-	local fd = s.fd
-	if not fd then
-		return false, "socket closed"
-	end
-	socket_pool[fd] = nil
-	s.fd = nil
-	return net.close(fd)
-end
+listener.close = gc
 
 ---@class silly.net.tcp.connect.opts
 ---@field bind string?
@@ -192,12 +200,11 @@ function conn.close(s)
 		s.err = "active closed"
 		wakeup(s, nil)
 	end
-	ns.free(s.sbuffer)
-	socket_pool[s.fd] = nil
-	s.fd = nil
-	net.close(fd)
-	return true, nil
+	return gc(s)
 end
+conn_mt.__close = conn.close
+
+
 
 ---@async
 ---@param s silly.net.tcp.conn
@@ -211,12 +218,7 @@ function conn.read(s, n)
 	if r then
 		return r, nil
 	end
-	local err = s.err
-	if err then
-		return nil, err
-	end
-	s.delim = n
-	return suspend(s)
+	return block_read(s, n)
 end
 
 ---@async
@@ -232,11 +234,7 @@ function conn.readline(s, delim)
 	if r then
 		return r, nil
 	end
-	if s.err then
-		return nil, s.err
-	end
-	s.delim = delim
-	return suspend(s)
+	return block_read(s, delim)
 end
 
 ---@param s silly.net.tcp.conn

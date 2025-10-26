@@ -12,6 +12,8 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
+#define UPVAL_ERROR_TABLE (1)
+
 #define ssl_malloc silly_malloc
 #define ssl_free silly_free
 #define ssl_realloc silly_realloc
@@ -51,6 +53,11 @@ struct tls {
 	int limit;
 	int pause;
 };
+
+static inline void push_error(lua_State *L, int code)
+{
+	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
+}
 
 static void ctx_destroy(struct ctx *ctx)
 {
@@ -522,7 +529,7 @@ static int flushwrite(struct tls *tls)
 	uint8_t *dat;
 	sz = BIO_pending(tls->out_bio);
 	if (sz <= 0)
-		return -1;
+		return 0;
 	dat = ssl_malloc(sz);
 	BIO_read(tls->out_bio, dat, sz);
 	return silly_tcp_send(tls->fd, dat, sz, NULL);
@@ -556,11 +563,10 @@ static int ltls_write(lua_State *L)
 		return luaL_error(L, "invalid data type");
 	}
 	ret = flushwrite(tls);
+	lua_pushboolean(L, ret >= 0);
 	if (ret < 0) {
-		lua_pushboolean(L, 0);
-		lua_pushinteger(L, -ret);
+		push_error(L, -ret);
 	} else {
-		lua_pushboolean(L, 1);
 		lua_pushnil(L);
 	}
 	return 2;
@@ -572,16 +578,21 @@ static int ltls_handshake(lua_State *L)
 	struct tls *tls;
 	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
 	ret = SSL_do_handshake(tls->ssl);
-	lua_pushboolean(L, ret > 0);
-	if (ret > 0) {
+	// 1:success 0:error <0:continue
+	lua_pushinteger(L, ret);
+	if (ret == 1) {// success
 		unsigned int len;
 		const unsigned char *data;
 		SSL_get0_alpn_selected(tls->ssl, &data, &len);
 		lua_pushlstring(L, (const char *)data, len);
-	} else {
-		lua_pushliteral(L, "");
+	} else if (ret <= 0) {
+		lua_pushnil(L);
 	}
-	flushwrite(tls);
+	if (flushwrite(tls) < 0) {
+		lua_pop(L, 2);
+		lua_pushinteger(L, 0);
+		push_error(L, -ret);
+	}
 	return 2;
 }
 
@@ -682,6 +693,7 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
-	luaL_setfuncs(L, tbl, 0);
+	silly_error_table(L);
+	luaL_setfuncs(L, tbl, 1);
 	return 1;
 }
