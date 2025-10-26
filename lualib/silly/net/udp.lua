@@ -1,9 +1,13 @@
 local silly = require "silly"
 local net = require "silly.net"
 local ns = require "silly.netstream"
+local queue = require "silly.adt.queue"
 local assert = assert
-local tremove = table.remove
 local setmetatable = setmetatable
+local tremove = table.remove
+local qnew = queue.new
+local qpop = queue.pop
+local qpush = queue.push
 
 ---@class silly.net.udp
 local udp = {}
@@ -17,7 +21,7 @@ local udp = {}
 ---@field co thread?
 ---@field err string?
 ---@field stash_bytes integer
----@field stash_packets silly.net.udp.packet[]
+---@field stash_packets userdata
 local conn = {}
 local conn_mt = {
 	__index = conn,
@@ -43,7 +47,7 @@ local function new_socket(fd)
 		co = nil,
 		err = nil,
 		stash_bytes = 0,
-		stash_packets = {},
+		stash_packets = qnew(),
 	}, conn_mt)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
@@ -84,8 +88,7 @@ local EVENT = {
 		if s.co then
 			wakeup(s, packet)
 		else
-			local packets = s.stash_packets
-			packets[#packets + 1] = packet
+			qpush(s.stash_packets, packet)
 			s.stash_bytes = s.stash_bytes + size
 		end
 	end,
@@ -134,9 +137,8 @@ function conn.recvfrom(s)
 	if not s.fd then
 		return nil, "socket closed"
 	end
-	local packets = s.stash_packets
-	if #packets > 0 then
-		local packet = tremove(packets, 1)
+	local packet = qpop(s.stash_packets)
+	if packet then
 		local data = packet.data
 		s.stash_bytes = s.stash_bytes - #data
 		return data, packet.addr
