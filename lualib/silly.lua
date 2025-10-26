@@ -5,19 +5,21 @@ They are not part of the public API and MUST NOT be used in business code.
 ]]
 
 local c = require "silly.c"
+local queue = require "silly.adt.queue"
 local logger = require "silly.logger.c"
 
 local silly = {}
-local type = type
 local pairs = pairs
 local assert = assert
 local xpcall = xpcall
 local tostring = tostring
-local smatch = string.match
+local setmetatable = setmetatable
 local tremove = table.remove
-local tpack = table.pack
-local tunpack = table.unpack
 local traceback = debug.traceback
+local qpop = queue.pop
+local qpush = queue.push
+local qsize = queue.size
+
 local weakmt = {__mode="kv"}
 
 --misc
@@ -177,7 +179,7 @@ function silly.task_hook(create, term)
 end
 
 
-local wakeup_task_queue = {}
+local wakeup_task_queue = queue.new()
 local wakeup_task_param = {}
 
 silly._task_create = task_create
@@ -186,7 +188,7 @@ silly._task_yield = task_yield
 
 function silly._dispatch_wakeup()
 	while true do
-		local co = tremove(wakeup_task_queue, 1)
+		local co = qpop(wakeup_task_queue)
 		if not co then
 			return
 		end
@@ -197,9 +199,11 @@ function silly._dispatch_wakeup()
 end
 
 ---@type fun(status:integer)
-silly.exit = function(status)
-	wakeup_task_queue = {}
+function silly.exit(status)
+	queue.clear(wakeup_task_queue)
 	wakeup_task_param = {}
+	silly.wakeup = function()end
+	silly.fork = function()end
 	c.exit(status)
 	coyield()
 end
@@ -208,7 +212,7 @@ end
 function silly.fork(func)
 	local t = task_create(func)
 	task_status[t] = "READY"
-	wakeup_task_queue[#wakeup_task_queue + 1] = t
+	qpush(wakeup_task_queue, t)
 	return t
 end
 
@@ -230,7 +234,7 @@ function silly.wakeup(t, res)
 	assert(status == "WAIT", status)
 	task_status[t] = "READY"
 	wakeup_task_param[t] = res
-	wakeup_task_queue[#wakeup_task_queue + 1] = t
+	qpush(wakeup_task_queue, t)
 end
 
 ---@param func async fun()
@@ -241,7 +245,7 @@ end
 
 ---@return integer
 function silly.taskstat()
-	return #wakeup_task_queue
+	return qsize(wakeup_task_queue)
 end
 
 ---@return { [thread]: { traceback: string, status: string } }
