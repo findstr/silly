@@ -85,7 +85,8 @@ fi
 echo "📂 Scanning test directory: $TEST_DIR"
 
 # POSIX-compatible sorting (works on macOS / Linux)
-TEST_FILES=$(find "$TEST_DIR" -maxdepth 1 -type f -name '*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' | sort)
+# Search in test/ and test/adt/ directories for files starting with "test"
+TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' 2>/dev/null | sort)
 if [ -z "$TEST_FILES" ]; then
     echo "⚠️  No test files (*.lua) found"
     exit 1
@@ -96,14 +97,18 @@ FILTERED_TESTS=""
 SERIAL_TESTS=""  # Tests that must run serially
 SKIPPED=0
 for file in $TEST_FILES; do
-    base=$(basename "$file" .lua)
+    # Remove 'test/' prefix and '.lua' suffix to get the case name
+    # e.g., test/adt/testqueue.lua -> adt/testqueue
+    base=$(echo "$file" | sed 's|^test/||' | sed 's|\.lua$||')
+    filename=$(basename "$file" .lua)
+
     # Skip certain tests on non-Linux platforms
-    if [ "$PLATFORM" != "linux" ] && { [ "$base" = "testmysql" ] || [ "$base" = "testredis" ]; }; then
+    if [ "$PLATFORM" != "linux" ] && { [ "$filename" = "testmysql" ] || [ "$filename" = "testredis" ]; }; then
         echo "⏭️  Skipping test: $base (only runs on Linux)"
         SKIPPED=$((SKIPPED + 1))
     else
         # Mark tests that need serial execution (database tests, resource-sensitive tests)
-        case "$base" in
+        case "$filename" in
             testmysql|testredis)
                 SERIAL_TESTS="$SERIAL_TESTS $base"
                 ;;
@@ -143,6 +148,14 @@ else
     # Parallel execution in batches
     TMPDIR=$(mktemp -d)
     trap 'rm -rf "$TMPDIR"' EXIT
+
+    # Create subdirectories for test cases with paths (e.g., adt/testqueue)
+    for t in $FILTERED_TESTS $SERIAL_TESTS; do
+        test_dir=$(dirname "$t")
+        if [ "$test_dir" != "." ]; then
+            mkdir -p "$TMPDIR/$test_dir"
+        fi
+    done
 
     # Color codes
     GREEN='\033[0;32m'

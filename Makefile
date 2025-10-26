@@ -110,7 +110,8 @@ LIB_SRC = lualib-silly.c \
 	lnet.c \
 	lsignal.c \
 	mysql/lmysql.c \
-	lcompress.c
+	lcompress.c \
+	adt/lqueue.c
 
 ifeq ($(OPENSSL), ON)
        LIB_SRC += $(patsubst $(LUACLIB_SRC_PATH)/%,%,$(wildcard $(LUACLIB_SRC_PATH)/crypto/*.c))
