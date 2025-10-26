@@ -1,15 +1,24 @@
+local silly = require "silly"
 local logger = require "silly.logger"
-local dispatch = require "silly.net.socketq"
+local tcp = require "silly.net.tcp"
+local mutex = require "silly.sync.mutex"
 local type = type
+local pairs = pairs
 local assert = assert
 local tostring = tostring
 local tonumber = tonumber
+local tremove = table.remove
 local sub = string.sub
 local upper = string.upper
 local format = string.format
 
 ---@class silly.store.redis
----@field sock silly.net.socketq
+---@field addr string
+---@field auth string
+---@field db integer
+---@field sock silly.net.tcp.conn|false
+---@field readco thread|false
+---@field waitq thread[]
 ---@field new fun(config:{addr:string, auth:string, db:integer}):silly.store.redis
 ---@field select fun(self:silly.store.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
@@ -18,31 +27,28 @@ local redis = {}
 local redis_mt = { __index = redis }
 local header = "+-:*$"
 local response_header = {}
-
 response_header[header:byte(1)] = function (sock, res)        --'+'
-	return true, res
+	return true, true, res
 end
-
 response_header[header:byte(2)] = function (sock, res)        --'-'
-	return false, res
+	return true, false, res
 end
-
 response_header[header:byte(3)] = function (sock, res)        --':'
-	return true, tonumber(res)
+	return true, true, tonumber(res)
 end
-
 response_header[header:byte(5)] = function (sock, res)        --'$'
 	local nr = tonumber(res)
 	if nr < 0 then
-		return true, nil
+		return true, true, nil
 	end
 	local param = sock:read(nr + 2)
-	return true, sub(param, 1, -3)
+	return true, true, sub(param, 1, -3)
 end
-
-
 local function read_response(sock)
-	local data = sock:readline("\n")
+	local data, err = sock:readline("\n")
+	if not data then
+		return false, err, nil
+	end
 	local head = data:byte(1)
 	local func = response_header[head]
 	return func(sock, sub(data, 2, -3))
@@ -51,16 +57,19 @@ end
 response_header[header:byte(4)] = function (sock, res)        --'*'
 	local nr = tonumber(res)
 	if nr < 0 then
-		return true, nil
+		return true, true, nil
 	end
 	local cmd_success = true
 	local cmd_res = {}
 	for i = 1, nr do
-		local success, data = read_response(sock)
+		local ok, success, data = read_response(sock)
+		if not ok then
+			return false, success, nil
+		end
 		cmd_success = cmd_success and success
 		cmd_res[i] = data
 	end
-	return cmd_success, cmd_res
+	return true, cmd_success, cmd_res
 end
 
 local function cache_(func)
@@ -114,60 +123,161 @@ local function composetable(cmd, out)
 	out[oi] = "\r\n"
 end
 
-local function redis_login(auth, db)
-	if not auth and not db then
-		return
+local function handshake(sock, cmd, p1)
+	local data = compose(cmd, {p1})
+	local ok, err = sock:write(data)
+	if not ok then
+		return false, err
 	end
-	return function(sock)
-		local ok, err
-		if auth then
-			local req = format("AUTH %s\r\n", auth)
-			ok, err = sock:request(req, read_response)
-			if not ok then
-				return ok, err
-			end
-		end
-		if db then
-			local req = format("SELECT %s\r\n", db)
-			ok, err = sock:request(req, read_response)
-			if not ok then
-				return ok, err
-			end
-		end
-		return true
+	local ok, success, err = read_response(sock)
+	if not ok then
+		return false, success
 	end
+	return success, err
 end
+
+---@class silly.store.redis.connect.opts
+---@field addr string
+---@field auth string?
+---@field db integer?
 
 ---@param config table
 ---@return silly.store.redis
 function redis.new(config)
 	local obj = {
-		sock = dispatch.new {
-			addr = config.addr,
-			auth = redis_login(config.auth, config.db)
-		},
+		sock = false,
+		addr = config.addr,
+		auth = config.auth or "",
+		db = config.db or 0,
+		readco = false,
+		waitq = {},
 	}
 	return setmetatable(obj, redis_mt)
 end
 
 function redis:close()
-	self.sock:close()
+	if self.sock then
+		self.sock:close()
+		self.sock = false
+	end
 end
 
 function redis:select()
-	assert(~"please specify the dbid when redis:create")
+	assert(not "please specify the db when redis.new")
 end
 
-setmetatable(redis, {__index = function (self, k)
+local connect_lock = mutex.new()
+---@param redis silly.store.redis
+local function connect_to_redis(redis)
+	local ok
+	local l<close> = connect_lock:lock(redis)
+	local sock, err = tcp.connect(redis.addr)
+	if not sock then
+		return nil, err
+	end
+	local auth = redis.auth
+	local db = redis.db
+	if auth ~= "" then
+		ok, err = handshake(sock, "AUTH", auth)
+		if not ok then
+			sock:close()
+			return nil, err
+		end
+	end
+	if db ~= 0 then
+		ok, err = handshake(sock, "SELECT", db)
+		if not ok then
+			sock:close()
+			return nil, err
+		end
+	end
+	return sock, nil
+end
+
+---@param redis silly.store.redis
+---@param err string
+local function close_socket(redis, err)
+	err = err or "unknown error"
+	local sock = redis.sock
+	if sock then
+		sock:close()
+		redis.sock = false
+	end
+	-- close_socket must be called by redis.readco
+	-- so just directly set readco to nil
+	assert(redis.readco == silly.running())
+	redis.readco = false
+	local waitq = redis.waitq
+	for i, wco in pairs(waitq) do
+		waitq[i] = nil
+		silly.wakeup(wco, err)
+	end
+end
+
+---@param redis silly.store.redis
+local function wait_for_read(redis)
+	local co = silly.running()
+	if redis.readco then -- already exist readco, enqueue for wait
+		local waitq = redis.waitq
+		waitq[#waitq + 1] = co
+		local err = silly.wait()
+		if err then
+			-- The socket is not closed here.
+			-- because the waker handles errors and closes socket.
+			return false, err
+		end
+		assert(redis.readco == co)
+	else
+		redis.readco = co
+	end
+	return true, nil
+end
+
+local function wakeup_next_reader(redis)
+	local waitq = redis.waitq
+	local co = tremove(waitq, 1)
+	if co then
+		redis.readco = co
+		silly.wakeup(co)
+	else
+		redis.readco = false
+	end
+end
+
+setmetatable(redis, {__index = function(self, k)
 	local cmd = upper(k)
 	local f = function (self, p1, ...)
+		local ok, err
+		local sock = self.sock
+		if not sock then
+			sock, err = connect_to_redis(self)
+			if not sock then
+				return false, err
+			end
+			self.sock = sock
+		end
 		local str
 		if type(p1) == "table" then
 			str = compose(cmd, p1)
 		else
 			str = compose(cmd, {p1, ...})
 		end
-		return self.sock:request(str, read_response)
+		ok, err = sock:write(str)
+		if not ok then
+			close_socket(self, err)
+			return false, err
+		end
+		ok, err =wait_for_read(self)
+		if not ok then
+			return false, err
+		end
+		local ok, success, res = read_response(sock)
+		if not ok then
+			close_socket(self, success)
+			return false, success
+		end
+		wakeup_next_reader(self)
+		return success, res
 	end
 	self[k] = f
 	return f
@@ -177,38 +287,46 @@ end
 function redis:call(cmd, p1, ...)
 	return self[cmd](self, p1, ...)
 end
-function redis:pipeline(req, ret)
+
+---@param req table[]
+---@return table[]?, string?
+function redis:pipeline(req)
+	local ok, err, res
+	local sock = self.sock
+	if not sock then
+		sock, err = connect_to_redis(self)
+		if not sock then
+			return nil, err
+		end
+		self.sock = sock
+	end
 	local out = {}
 	local cmd_len = #req
 	for i = 1, cmd_len do
 		composetable(req[i], out)
 	end
-	if not ret then
-		return self.sock:request(out, function(sock)
-			local ok, res
-			for i = 1, cmd_len do
-				ok, res = read_response(sock)
-				if not ok then
-					logger.error('[redis] pipeline error',
-						res
-					)
-				end
-			end
-			return ok, res
-		end)
+	ok, err = self.sock:write(out)
+	if not ok then
+		return nil, err
 	end
-	return self.sock:request(out, function(sock)
-		local ok, res
-		local j = 0
-		for i = 1, cmd_len do
-			ok, res = read_response(sock)
-			j = j + 1
-			ret[j] = ok
-			j = j + 1
-			ret[j] = res
+	ok, err = wait_for_read(self)
+	if not ok then
+		return nil, err
+	end
+	local results = {}
+	local j = 1
+	for i = 1, cmd_len do
+		local ok, success, res = read_response(sock)
+		if not ok then
+			close_socket(self, success)
+			return nil, success
 		end
-		return true, j
-	end)
+		results[j] = success
+		results[j + 1] = res
+		j = j + 2
+	end
+	wakeup_next_reader(self)
+	return results, nil
 end
 
 return redis

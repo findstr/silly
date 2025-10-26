@@ -9,10 +9,6 @@ local setmetatable = setmetatable
 ---@class silly.net.tcp
 local M = {}
 
----@class silly.net.tcp.listener
----@field fd integer
----@field callback async fun(s:silly.net.tcp.conn, addr:string)
-
 ---@class silly.net.tcp.conn
 ---@field fd integer
 ---@field delim boolean|string|integer|nil
@@ -30,6 +26,9 @@ local conn_mt = {
 	end,
 }
 
+---@class silly.net.tcp.listener
+---@field fd integer
+---@field callback async fun(s:silly.net.tcp.conn, addr:string)
 local listener = {}
 local listener_mt = {__index = listener}
 
