@@ -1,9 +1,14 @@
 local silly = require "silly"
+local queue = require "silly.adt.queue"
 local assert = assert
 local setmetatable = setmetatable
 local remove = table.remove
 local running = silly.running
 local wakeup = silly.wakeup
+local qnew = queue.new
+local qpop = queue.pop
+local qpush = queue.push
+local qclear = queue.clear
 local weakmt = {__mode="v"}
 local lockcache = setmetatable({}, weakmt)
 local proxycache = setmetatable({}, weakmt)
@@ -23,8 +28,8 @@ local function unlock(proxy)
 	if l.refn == 0 then
 		local lockobj = proxy.lockobj
 		local waitq = l.waitq
-		if waitq and #waitq > 0 then
-			local co = remove(waitq, 1)
+		local co = qpop(waitq)
+		if co then
 			l.refn = 1
 			l.owner = co
 			wakeup(co)
@@ -32,6 +37,7 @@ local function unlock(proxy)
 			lockobj[l.key] = nil
 			l.owner = nil
 			l.key = nil
+			qclear(waitq)
 			lockcache[#lockcache+1] = l
 		end
 	end
@@ -64,6 +70,7 @@ local function new_lock(key, co)
 			key = key,
 			owner = co,
 			refn = 1,
+			waitq = qnew(),
 		}
 	end
 	return l
@@ -77,12 +84,7 @@ function M:lock(key)
 		if  l.owner == co then --reentrant mutex
 			l.refn = l.refn + 1
 		else
-			local q = l.waitq
-			if q then
-				q[#q + 1] = co
-			else
-				l.waitq = {co}
-			end
+			qpush(l.waitq, co)
 			silly.wait()
 		end
 	else
