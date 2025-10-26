@@ -97,4 +97,4 @@ jobs:
     - name: DB-focused tests
       run: |
         make test
-        ./silly test/test.lua --case=testmysql
+        ./silly test/test.lua --set=testmysql

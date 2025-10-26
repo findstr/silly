@@ -129,7 +129,7 @@ if [ $JOBS -eq 1 ]; then
     all_tests="$FILTERED_TESTS $SERIAL_TESTS"
     for base in $all_tests; do
         echo "🔹 Running test: $base"
-        $SILLY "$TEST_SCRIPT" --case="$base" $ARGS
+        $SILLY "$TEST_SCRIPT" --set="$base" $ARGS
         rc=$?
         TOTAL=$((TOTAL + 1))
         if [ $rc -eq 0 ]; then
@@ -266,7 +266,7 @@ else
             logfile="$TMPDIR/$base.log"
             echo "🔹 Running test: $base" > "$logfile"
 
-            if $SILLY "$TEST_SCRIPT" --case="$base" $ARGS >> "$logfile" 2>&1; then
+            if $SILLY "$TEST_SCRIPT" --set="$base" $ARGS >> "$logfile" 2>&1; then
                 echo "0" > "$TMPDIR/$base.status"
             else
                 echo "$?" > "$TMPDIR/$base.status"
@@ -291,13 +291,15 @@ else
             logfile="$TMPDIR/$t.log"
             echo "🔹 Running test: $t" > "$logfile"
 
-            if $SILLY "$TEST_SCRIPT" --case="$t" $ARGS >> "$logfile" 2>&1; then
+            if $SILLY "$TEST_SCRIPT" --set="$t" $ARGS >> "$logfile" 2>&1; then
                 echo "0" > "$TMPDIR/$t.status"
-                printf "\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d)\n" "$t" "$completed" "$TOTAL_TESTS"
+                # Move up one line, clear, and print success
+                printf "\033[1A\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d)\033[K\n" "$t" "$completed" "$TOTAL_TESTS"
             else
                 rc=$?
                 echo "$rc" > "$TMPDIR/$t.status"
-                printf "\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\n" "$t" "$completed" "$TOTAL_TESTS" "$rc"
+                # Move up one line, clear, and print failure
+                printf "\033[1A\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\033[K\n" "$t" "$completed" "$TOTAL_TESTS" "$rc"
             fi
         done
         echo ""

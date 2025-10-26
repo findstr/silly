@@ -216,6 +216,20 @@ function testaux.netstat()
 	}
 end
 
+local case_filter = nil
+
+function testaux.filtercase(pattern)
+	case_filter = pattern
+end
+
+function testaux.case(name, fn)
+	if case_filter and not name:find(case_filter) then
+		print(string.format("-----Skipping %s (filtered)-----", name))
+		return
+	end
+	fn()
+end
+
 -- TLS Certificate constants (PEM format)
 testaux.CERT_A = [[-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUPc2faaWEjGh1RklF9XPAgYS5WSMwDQYJKoZIhvcNAQEL

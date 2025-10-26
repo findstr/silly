@@ -22,7 +22,7 @@ local fake_server = fakeredis.new(16379)
 fake_server:start()
 
 -- Test 1: Basic Redis operations (original testbasic)
-do
+testaux.case("Test 1: Basic Redis operations", function()
 	print("-----Test 1: Basic Redis operations-----")
 	local db = redis.new {
 		addr = "127.0.0.1:6379",
@@ -49,10 +49,10 @@ do
 	asserteq("HGETALL hash", true, "k1", db:hgetall("hash"))
 	db:close()
 	testaux.success("Test 1: Basic Redis operations passed")
-end
+end)
 
 -- Test 2: Concurrent operations (original concurrent test)
-do
+testaux.case("Test 2: Concurrent operations", function()
 	print("-----Test 2: Concurrent operations (1024 requests)-----")
 	local db = redis.new {
 		addr = "127.0.0.1:6379",
@@ -79,10 +79,10 @@ do
 	wg:wait()
 	db:close()
 	testaux.success("Test 2: Concurrent operations passed")
-end
+end)
 
 -- Test 3: Pipeline operations with return value validation
-do
+testaux.case("Test 3: Pipeline operations", function()
 	print("-----Test 3: Pipeline operations-----")
 	local db = redis.new {
 		addr = "127.0.0.1:6379",
@@ -133,10 +133,10 @@ do
 
 	db:close()
 	testaux.success("Test 3: Pipeline operations passed")
-end
+end)
 
 -- Test 4: Normal operation (resilience)
-do
+testaux.case("Test 4: Normal operation", function()
 	print("-----Test 4: Normal operation (with fake server)-----")
 	-- Reset to default handler (no custom logic needed)
 	fake_server:set_handler(nil)
@@ -157,10 +157,10 @@ do
 
 	db:close()
 	testaux.success("Test 4: Normal operation passed")
-end
+end)
 
 -- Test 5: Disconnect during read
-do
+testaux.case("Test 5: Disconnect during read", function()
 	print("-----Test 5: Disconnect during read-----")
 
 	-- Disconnect after second command
@@ -195,10 +195,10 @@ do
 
 	db:close()
 	testaux.success("Test 5: Disconnect during read passed")
-end
+end)
 
 -- Test 6: Partial response (connection breaks mid-response)
-do
+testaux.case("Test 6: Partial response", function()
 	print("-----Test 6: Partial response-----")
 
 	local partial_sent = false
@@ -234,10 +234,10 @@ do
 
 	db:close()
 	testaux.success("Test 6: Partial response passed")
-end
+end)
 
 -- Test 7: Concurrent requests with disconnect
-do
+testaux.case("Test 7: Concurrent requests with disconnect", function()
 	print("-----Test 7: Concurrent requests with disconnect-----")
 
 	local total_commands = 0
@@ -288,10 +288,10 @@ do
 
 	db:close()
 	testaux.success("Test 7: Concurrent disconnect passed")
-end
+end)
 
 -- Test 8: Pipeline with disconnect
-do
+testaux.case("Test 8: Pipeline with disconnect", function()
 	print("-----Test 8: Pipeline with disconnect-----")
 
 	local cmd_count = 0
@@ -332,10 +332,10 @@ do
 
 	db:close()
 	testaux.success("Test 8: Pipeline disconnect passed")
-end
+end)
 
 -- Test 9: Server restart
-do
+testaux.case("Test 9: Server restart", function()
 	print("-----Test 9: Server restart-----")
 	-- Use default behavior
 
@@ -364,10 +364,10 @@ do
 
 	db:close()
 	testaux.success("Test 9: Server restart passed")
-end
+end)
 
 -- Test 10: Redis error response (-ERR)
-do
+testaux.case("Test 10: Redis error response", function()
 	print("-----Test 10: Redis error response-----")
 
 	fake_server:set_handler(function(cmd, args, count, client)
@@ -401,10 +401,10 @@ do
 
 	db:close()
 	testaux.success("Test 10: Redis error response passed")
-end
+end)
 
 -- Test 11: Auto-reconnect with db selection
-do
+testaux.case("Test 11: Auto-reconnect with db selection", function()
 	print("-----Test 11: Auto-reconnect with db selection-----")
 
 	local disconnected = false
@@ -443,10 +443,10 @@ do
 
 	db:close()
 	testaux.success("Test 11: Auto-reconnect with db selection passed")
-end
+end)
 
 -- Test 12: Auto-reconnect with server restart and db selection
-do
+testaux.case("Test 12: Auto-reconnect with server restart and db selection", function()
 	print("-----Test 12: Auto-reconnect with server restart and db selection-----")
 
 	-- Reset to default handler
@@ -494,10 +494,10 @@ do
 	-- Clean up
 	db:close()
 	testaux.success("Test 12: Server restart with auto-reconnect and db selection passed")
-end
+end)
 
 -- Test 13: Close wakes up blocked coroutine
-do
+testaux.case("Test 13: Close wakes up blocked coroutine", function()
 	print("-----Test 13: Close wakes up blocked coroutine-----")
 
 	fake_server:set_handler(function(cmd, args, command_count, client)
@@ -554,10 +554,10 @@ do
 	testaux.asserteq(type(blocked_error), "string", "Test 13.4: Should receive error message")
 
 	testaux.success("Test 13: Close wakes up blocked coroutine passed")
-end
+end)
 
 -- Test 14: Close wakes up readco and waitq
-do
+testaux.case("Test 14: Close wakes up readco and waitq", function()
 	print("-----Test 14: Close wakes up readco and waitq-----")
 
 	local first_hang_seen = false
@@ -634,7 +634,302 @@ do
 	testaux.asserteq(type(waitco1_error), "string", "Test 14.7: Waitco1 should receive error")
 
 	testaux.success("Test 14: Close wakes up readco and waitq passed")
-end
+end)
+
+-- Test 15: Concurrent reconnect after disconnection
+testaux.case("Test 15: Concurrent reconnect after disconnection", function()
+	print("-----Test 15: Concurrent reconnect after disconnection-----")
+
+	local connect_count = 0
+	local clients = {}
+	local first_ping_seen = false
+
+	fake_server:set_handler(function(cmd, args, command_count, client)
+		-- Track unique connections
+		if not clients[client] then
+			clients[client] = true
+			connect_count = connect_count + 1
+		end
+
+		-- First connection's first PING command: disconnect immediately
+		if connect_count == 1 and cmd == "PING" and not first_ping_seen then
+			first_ping_seen = true
+			return false  -- Disconnect without response
+		end
+
+		-- Normal command handling
+		if cmd == "PING" then
+			return "+PONG\r\n"
+		elseif cmd == "GET" then
+			return "$3\r\nbar\r\n"
+		elseif cmd == "SET" then
+			return "+OK\r\n"
+		elseif cmd == "SELECT" then
+			return "+OK\r\n"
+		end
+		return "-ERR unknown command\r\n"
+	end)
+
+	-- redis.new() does NOT establish connection (lazy connection)
+	local db = redis.new {
+		addr = "127.0.0.1:16379",
+	}
+	testaux.asserteq(connect_count, 0, "Test 15.1: redis.new() should NOT establish connection")
+
+	-- Send first PING - this will trigger connection, then server will disconnect
+	-- This is the synchronization point: client will detect disconnection
+	local ok1, err1 = db:ping()
+	testaux.asserteq(ok1, false, "Test 15.2: First PING should fail (disconnect)")
+	testaux.asserteq(connect_count, 1, "Test 15.3: Should have created first connection")
+
+	-- NOW: sock = false, all coroutines will see disconnected state
+	-- Launch concurrent operations - all will race to reconnect
+	local wg = waitgroup.new()
+	local results = {}
+
+	for i = 1, 5 do
+		wg:fork(function()
+			local ok, val = db:ping()
+			results[i] = {ok = ok, val = val}
+		end)
+	end
+
+	wg:wait()
+
+	-- Verify all requests succeeded
+	for i = 1, 5 do
+		testaux.asserteq(results[i].ok, true, string.format("Test 15.%d: PING should succeed", i + 3))
+	end
+
+	-- CRITICAL: Should have created exactly 2 connections total (first + one reconnect)
+	testaux.asserteq(connect_count, 2, "Test 15.9: Should create exactly 2 connections (first + one reconnect)")
+
+	db:close()
+	testaux.success("Test 15: Concurrent reconnect correctly uses mutex")
+end)
+
+-- Test 16: Operations after close should fail and not reconnect
+testaux.case("Test 16: Operations after close should fail and not reconnect", function()
+	print("-----Test 16: Operations after close should not reconnect-----")
+
+	local connect_count = 0
+	local clients = {}
+
+	fake_server:set_handler(function(cmd, args, command_count, client)
+		-- Track unique connections
+		if not clients[client] then
+			clients[client] = true
+			connect_count = connect_count + 1
+		end
+
+		if cmd == "PING" then
+			return "+PONG\r\n"
+		elseif cmd == "GET" then
+			return "$3\r\nbar\r\n"
+		elseif cmd == "SET" then
+			return "+OK\r\n"
+		elseif cmd == "SELECT" then
+			return "+OK\r\n"
+		end
+		return "-ERR unknown command\r\n"
+	end)
+
+	local db = redis.new {
+		addr = "127.0.0.1:16379",
+	}
+
+	-- First, establish a connection
+	local ok1, val1 = db:ping()
+	testaux.asserteq(ok1, true, "Test 16.1: First PING should succeed")
+	testaux.asserteq(connect_count, 1, "Test 16.2: Should have created one connection")
+
+	-- Close the connection
+	db:close()
+
+	-- Second request should fail (closed state) and NOT reconnect
+	local ok2, err2 = db:get("key")
+	testaux.asserteq(ok2, false, "Test 16.3: Operation after close should fail")
+	testaux.asserteq(err2, "active closed", "Test 16.4: Should return 'active close' error")
+	testaux.asserteq(connect_count, 1, "Test 16.5: Should NOT create new connection after close")
+
+	-- Multiple operations after close should all fail
+	local ok3, err3 = db:set("key", "value")
+	testaux.asserteq(ok3, false, "Test 16.6: SET after close should fail")
+	testaux.asserteq(err3, "active closed", "Test 16.7: Should return 'active close' error")
+
+	local ok4, err4 = db:ping()
+	testaux.asserteq(ok4, false, "Test 16.8: PING after close should fail")
+	testaux.asserteq(err4, "active closed", "Test 16.9: Should return 'active close' error")
+
+	-- Verify no new connections were created
+	testaux.asserteq(connect_count, 1, "Test 16.10: Total connections should remain 1")
+
+	testaux.success("Test 16: Operations after close correctly rejected")
+end)
+
+-- Test 17: Concurrent close and reconnect
+testaux.case("Test 17: Concurrent close and reconnect", function()
+	print("-----Test 17: Concurrent close and reconnect-----")
+
+	local connect_count = 0
+	local clients = {}
+	local first_ping_seen = false
+
+	fake_server:set_handler(function(cmd, args, command_count, client)
+		if not clients[client] then
+			clients[client] = true
+			connect_count = connect_count + 1
+		end
+		-- First connection's first PING: disconnect
+		if connect_count == 1 and cmd == "PING" and not first_ping_seen then
+			first_ping_seen = true
+			return false
+		end
+		if cmd == "PING" then return "+PONG\r\n"
+		elseif cmd == "GET" then return "$3\r\nbar\r\n"
+		elseif cmd == "SET" then return "+OK\r\n"
+		elseif cmd == "SELECT" then return "+OK\r\n"
+		end
+		return "-ERR unknown command\r\n"
+	end)
+
+	local db = redis.new {
+		addr = "127.0.0.1:16379",
+	}
+	testaux.asserteq(connect_count, 0, "Test 17.1: No connection yet")
+
+	-- Trigger disconnection first
+	local ok1, err1 = db:ping()
+	testaux.asserteq(ok1, false, "Test 17.2: First PING should fail (disconnect)")
+	testaux.asserteq(connect_count, 1, "Test 17.3: Should have created first connection")
+
+	local wg = waitgroup.new()
+	local results = {}
+
+	-- Coroutine 1: Try to reconnect via PING, then close
+	wg:fork(function()
+		local ok, val = db:ping()
+		results[1] = {ok = ok, val = val}
+		db:close()
+	end)
+
+	-- Coroutine 2: Try to reconnect via PING concurrently
+	wg:fork(function()
+		local ok, val = db:ping()
+		results[2] = {ok = ok, val = val}
+	end)
+
+	wg:wait()
+
+	-- At least one of the concurrent operations might succeed before close
+	-- But after close, all operations should fail with "active closed"
+	local ok_final, err_final = db:ping()
+	testaux.asserteq(ok_final, false, "Test 17.4: Operation after close should fail")
+	testaux.asserteq(err_final, "active closed", "Test 17.5: Should return 'active closed' error")
+
+	-- Verify at most 2 connections were created (initial + one reconnect)
+	testaux.assertle(connect_count, 2, "Test 17.6: Should create at most 2 connections")
+
+	testaux.success("Test 17: Concurrent close and reconnect handled correctly")
+end)
+
+-- Test 18: First concurrent reconnect succeeds and closes, others get "active closed" from double-check
+testaux.case("Test 18: First reconnect closes, queued coroutines get 'active closed'", function()
+	print("-----Test 18: First reconnect closes, queued coroutines get 'active closed'-----")
+
+	local connect_count = 0
+	local clients = {}
+	local first_ping_seen = false
+	local close_co = nil  -- Will store the close coroutine
+
+	fake_server:set_handler(function(cmd, args, command_count, client)
+		if not clients[client] then
+			clients[client] = true
+			connect_count = connect_count + 1
+		end
+
+		-- First connection's first PING: disconnect
+		if connect_count == 1 and cmd == "PING" and not first_ping_seen then
+			first_ping_seen = true
+			return false
+		end
+
+		-- Second connection (reconnect): when GET is received, signal close coroutine
+		if connect_count == 2 and cmd == "GET" then
+			if close_co then
+				silly.wakeup(close_co)
+			end
+			return "$3\r\nbar\r\n"
+		end
+
+		if cmd == "PING" then return "+PONG\r\n"
+		elseif cmd == "SELECT" then return "+OK\r\n"
+		end
+		return "-ERR unknown command\r\n"
+	end)
+
+	local db = redis.new {
+		addr = "127.0.0.1:16379",
+	}
+	testaux.asserteq(connect_count, 0, "Test 18.1: No connection yet")
+
+	-- Trigger disconnection
+	local ok1, err1 = db:ping()
+	testaux.asserteq(ok1, false, "Test 18.2: First PING fails")
+	testaux.asserteq(connect_count, 1, "Test 18.3: First connection created")
+
+	-- Launch concurrent operations
+	local wg = waitgroup.new()
+	local results = {}
+
+	-- First coroutine: will successfully reconnect
+	wg:fork(function()
+		local ok, val = db:get("key1")
+		results[1] = {ok = ok, err = val}
+	end)
+
+	-- Give first coroutine time to enter connect_to_redis and acquire mutex
+	time.sleep(50)
+
+	-- Close coroutine: will wait for signal from server
+	wg:fork(function()
+		close_co = silly.running()
+		silly.wait()  -- Wait for signal from server handler
+		db:close()
+	end)
+
+	-- Other coroutines: will queue on mutex, then hit double-check and see closed=true
+	for i = 2, 5 do
+		time.sleep(10)  -- Small stagger
+		wg:fork(function()
+			local ok, val = db:get("key" .. i)
+			results[i] = {ok = ok, err = val}
+		end)
+	end
+
+	wg:wait()
+
+	-- Verify results
+	local success_count = 0
+	local active_close_count = 0
+
+	for i = 1, 5 do
+		if results[i].ok then
+			success_count = success_count + 1
+		elseif results[i].err == "active closed" then
+			active_close_count = active_close_count + 1
+		end
+	end
+
+	-- Only first request should succeed
+	testaux.asserteq(success_count, 1, "Test 18.4: Exactly ONE request should succeed")
+	-- Others should fail with "active closed" from double-check
+	testaux.asserteq(active_close_count, 4, "Test 18.5: Other 4 requests should get 'active closed'")
+	-- Only 2 connections total
+	testaux.asserteq(connect_count, 2, "Test 18.6: Should create exactly 2 connections")
+
+	testaux.success("Test 18: Double-check correctly detects closed flag")
+end)
 
 -- Cleanup: Stop the fake server
 fake_server:stop()

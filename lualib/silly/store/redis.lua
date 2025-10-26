@@ -1,5 +1,5 @@
 local silly = require "silly"
-local logger = require "silly.logger"
+local queue = require "silly.adt.queue"
 local tcp = require "silly.net.tcp"
 local mutex = require "silly.sync.mutex"
 local type = type
@@ -7,10 +7,12 @@ local pairs = pairs
 local assert = assert
 local tostring = tostring
 local tonumber = tonumber
-local tremove = table.remove
 local sub = string.sub
 local upper = string.upper
 local format = string.format
+local qnew = queue.new
+local qpush = queue.push
+local qpop = queue.pop
 
 ---@class silly.store.redis
 ---@field addr string
@@ -18,11 +20,12 @@ local format = string.format
 ---@field db integer
 ---@field sock silly.net.tcp.conn|false
 ---@field readco thread|false
----@field waitq thread[]
+---@field waitq userdata
 ---@field new fun(config:{addr:string, auth:string, db:integer}):silly.store.redis
 ---@field select fun(self:silly.store.redis,)
 ---@field [string] fun(self, ...):boolean, string|table|nil
 ---@field close fun(self:silly.store.redis)
+---@field closed boolean
 local redis = {}
 local redis_mt = { __index = redis }
 local header = "+-:*$"
@@ -150,7 +153,8 @@ function redis.new(config)
 		auth = config.auth or "",
 		db = config.db or 0,
 		readco = false,
-		waitq = {},
+		waitq = qnew(),
+		closed = false,
 	}
 	return setmetatable(obj, redis_mt)
 end
@@ -160,6 +164,7 @@ function redis:close()
 		self.sock:close()
 		self.sock = false
 	end
+	self.closed = true
 end
 
 function redis:select()
@@ -171,6 +176,13 @@ local connect_lock = mutex.new()
 local function connect_to_redis(redis)
 	local ok
 	local l<close> = connect_lock:lock(redis)
+	local sock = redis.sock
+	if sock then
+		return sock, nil
+	end
+	if redis.closed then
+		return nil, "active closed"
+	end
 	local sock, err = tcp.connect(redis.addr)
 	if not sock then
 		return nil, err
@@ -208,8 +220,11 @@ local function close_socket(redis, err)
 	assert(redis.readco == silly.running())
 	redis.readco = false
 	local waitq = redis.waitq
-	for i, wco in pairs(waitq) do
-		waitq[i] = nil
+	while true do
+		local wco = qpop(waitq)
+		if not wco then
+			break
+		end
 		silly.wakeup(wco, err)
 	end
 end
@@ -218,8 +233,7 @@ end
 local function wait_for_read(redis)
 	local co = silly.running()
 	if redis.readco then -- already exist readco, enqueue for wait
-		local waitq = redis.waitq
-		waitq[#waitq + 1] = co
+		qpush(redis.waitq, co)
 		local err = silly.wait()
 		if err then
 			-- The socket is not closed here.
@@ -234,8 +248,7 @@ local function wait_for_read(redis)
 end
 
 local function wakeup_next_reader(redis)
-	local waitq = redis.waitq
-	local co = tremove(waitq, 1)
+	local co = qpop(redis.waitq)
 	if co then
 		redis.readco = co
 		silly.wakeup(co)
