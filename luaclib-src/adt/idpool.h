@@ -1,5 +1,5 @@
-#ifndef SILLY_ADT_IDPOOL_H
-#define SILLY_ADT_IDPOOL_H
+#ifndef _SILLY_ADT_IDPOOL_H
+#define _SILLY_ADT_IDPOOL_H
 
 #include "stack.h"
 #include "bitmask.h"

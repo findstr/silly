@@ -1,5 +1,5 @@
-#ifndef SILLY_ADT_BITMASK_H
-#define SILLY_ADT_BITMASK_H
+#ifndef _SILLY_ADT_BITMASK_H
+#define _SILLY_ADT_BITMASK_H
 
 #include <assert.h>
 #include <stdint.h>

@@ -228,6 +228,13 @@ static int lclose(lua_State *L)
 	return 0;
 }
 
+static int lpointer(lua_State *L)
+{
+	const void *ptr = lua_topointer(L, 1);
+	lua_pushlightuserdata(L, (void *)ptr);
+	return 1;
+}
+
 SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
@@ -242,6 +249,7 @@ SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 		{ "send",        lsend        },
 		{ "recv",        lrecv        },
 		{ "close",       lclose       },
+		{ "pointer",     lpointer     },
 		{ NULL,          NULL         },
 	};
 

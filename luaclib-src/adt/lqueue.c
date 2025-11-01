@@ -15,7 +15,7 @@ struct queue {
 	int *buf;  	// Array of ref IDs
 };
 
-static const char *METANAME = "silly.adt.queue";
+#define METANAME "silly.adt.queue"
 static const int INITIAL_CAP = 8;
 
 static inline int qsize(struct queue *q)
@@ -51,11 +51,14 @@ static void compact(struct queue *q)
 
 static int lnew(lua_State *L);
 
-static struct queue *checkqueue(lua_State *L, int index)
+static inline struct queue *check_queue(lua_State *L, int index)
 {
+	if (lua_type(L, index) != LUA_TUSERDATA) {
+		luaL_typeerror(L, index, METANAME);
+	}
 	struct queue *q = (struct queue *)lua_touserdata(L, index);
 	if (unlikely(q == NULL || q->meta != (void *)&lnew))
-		luaL_error(L, "expected silly.adt.queue");
+		luaL_typeerror(L, index, METANAME);
 	return q;
 }
 
@@ -77,10 +80,10 @@ static int lnew(lua_State *L)
 }
 
 // queue:push(value)
-static int lpush(lua_State *L)
+static int lappend(lua_State *L)
 {
 	int ref;
-	struct queue *q = checkqueue(L, 1);
+	struct queue *q = check_queue(L, 1);
 	luaL_checkany(L, 2);
 	luaL_assert(L, q->writei < INT_MAX, "queue write index overflow");
 	if (q->writei >= q->bufcap && q->readi > 0) {
@@ -102,7 +105,7 @@ static int lpush(lua_State *L)
 static int lpop(lua_State *L)
 {
 	int ok;
-	struct queue *q = checkqueue(L, 1);
+	struct queue *q = check_queue(L, 1);
 	if (q->readi >= q->writei) {
 		lua_pushnil(L);
 		return 1;
@@ -122,7 +125,7 @@ static int lpop(lua_State *L)
 // queue:size() -> integer
 static int lsize(lua_State *L)
 {
-	struct queue *q = checkqueue(L, 1);
+	struct queue *q = check_queue(L, 1);
 	lua_pushinteger(L, qsize(q));
 	return 1;
 }
@@ -130,7 +133,7 @@ static int lsize(lua_State *L)
 // queue:clear() - Clear all items and free references
 static int lclear(lua_State *L)
 {
-	struct queue *q = checkqueue(L, 1);
+	struct queue *q = check_queue(L, 1);
 	if (q->readi < q->writei) {
 		lua_getiuservalue(L, 1, 1);  // Stack: [table]
 		for (int i = q->readi; i < q->writei; i++) {
@@ -148,7 +151,7 @@ static int lclear(lua_State *L)
 
 static int lgc(lua_State *L)
 {
-	struct queue *q = checkqueue(L, 1);
+	struct queue *q = check_queue(L, 1);
 	if (q->buf) {
 		silly_free(q->buf);
 		q->buf = NULL;
@@ -162,7 +165,7 @@ SILLY_MOD_API int luaopen_silly_adt_queue(lua_State *L)
 {
 	luaL_Reg methods[] = {
 		{"new",  lnew},
-		{"push", lpush},
+		{"push", lappend},
 		{"pop", lpop},
 		{"size", lsize},
 		{"clear", lclear},
