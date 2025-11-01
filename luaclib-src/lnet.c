@@ -320,6 +320,15 @@ static int lsendsize(lua_State *L)
 	return 1;
 }
 
+static int ltostring(lua_State *L)
+{
+	const char *s = (const char *)lua_touserdata(L, 1);
+	luaL_argcheck(L, s != NULL, 1, "invalid pointer");
+	lua_pushlstring(L, s, luaL_checkinteger(L, 2));
+	silly_free((void *)s);
+	return 1;
+}
+
 static int lfree(lua_State *L)
 {
 	void *ptr = lua_touserdata(L, 1);
@@ -359,6 +368,7 @@ SILLY_MOD_API int luaopen_silly_net_c(lua_State *L)
 		{ "ntop",          lntop         },
 		{ "close",         lclose        },
 		{ "free",          lfree         },
+		{ "tostring",      ltostring     },
 		{ NULL,            NULL          },
 	};
 	luaL_checkversion(L);

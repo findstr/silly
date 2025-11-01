@@ -1,4 +1,4 @@
-local testaux = require "testaux"
+local testaux = require "test.testaux"
 local adtqueue = require "silly.adt.queue"
 
 -- Upvalue optimization: cache frequently used functions

@@ -13,6 +13,8 @@
 #include <openssl/x509v3.h>
 
 #define UPVAL_ERROR_TABLE (1)
+#define META_CTX	"silly.tls.ctx"
+#define META_TLS	"silly.tls.tls"
 
 #define ssl_malloc silly_malloc
 #define ssl_free silly_free
@@ -37,6 +39,7 @@ struct ctx_entry {
 };
 
 struct ctx {
+	void *meta;
 	int mode;
 	int alpn_size;
 	const unsigned char *alpn_protos;
@@ -45,40 +48,17 @@ struct ctx {
 };
 
 struct tls {
+	void *meta;
 	silly_socket_id_t fd;
 	SSL *ssl;
 	BIO *in_bio;
 	BIO *out_bio;
 	struct buf buf;
-	int limit;
-	int pause;
 };
 
 static inline void push_error(lua_State *L, int code)
 {
 	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
-}
-
-static void ctx_destroy(struct ctx *ctx)
-{
-	int i;
-	for (i = 0; i < ctx->entry_count; i++) {
-		if (ctx->entries[i].ptr != NULL) {
-			SSL_CTX_free(ctx->entries[i].ptr);
-		}
-		if (ctx->entries[i].cert != NULL) {
-			X509_free(ctx->entries[i].cert);
-		}
-	}
-	ctx->entry_count = 0;
-}
-
-static int lctx_free(lua_State *L)
-{
-	struct ctx *ctx;
-	ctx = (struct ctx *)luaL_checkudata(L, 1, "TLS_CTX");
-	ctx_destroy(ctx);
-	return 0;
 }
 
 static inline void buf_init(struct buf *buf)
@@ -122,19 +102,7 @@ static void *buf_prepsize(struct buf *b, int size)
 	return b->buf + b->offset + b->size;
 }
 
-static int ltls_free(lua_State *L)
-{
-	struct tls *tls;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	if (tls->ssl != NULL) {
-		SSL_free(tls->ssl);
-		tls->ssl = NULL;
-	}
-	buf_destroy(&tls->buf);
-	return 0;
-}
-
-static struct ctx *new_tls_ctx(lua_State *L, int mode, int ctx_count,
+static struct ctx *new_ctx(lua_State *L, int mode, int ctx_count,
 			       int nupval)
 {
 	int size;
@@ -142,66 +110,83 @@ static struct ctx *new_tls_ctx(lua_State *L, int mode, int ctx_count,
 	size = offsetof(struct ctx, entries) +
 	       ctx_count * sizeof(struct ctx_entry);
 	ctx = (struct ctx *)lua_newuserdatauv(L, size, nupval);
-	if (luaL_newmetatable(L, "TLS_CTX")) {
-		lua_pushcfunction(L, lctx_free);
-		lua_setfield(L, -2, "__gc");
-	}
+	luaL_getmetatable(L, META_CTX);
 	memset(ctx, 0, size);
 	ctx->mode = mode;
 	ctx->entry_count = ctx_count;
+	ctx->meta = (void *)new_ctx;
 	lua_setmetatable(L, -2);
 	return ctx;
+}
+
+static inline struct ctx *check_ctx(lua_State *L, int index)
+{
+	if (lua_type(L, index) != LUA_TUSERDATA) {
+		luaL_typeerror(L, index, META_CTX);
+	}
+	struct ctx *c = (struct ctx *)lua_touserdata(L, index);
+	if (unlikely(c == NULL || c->meta != (void *)&new_ctx))
+		luaL_typeerror(L, index, META_CTX);
+	return c;
+}
+
+static void ctx_destroy(struct ctx *ctx)
+{
+	int i;
+	for (i = 0; i < ctx->entry_count; i++) {
+		if (ctx->entries[i].ptr != NULL) {
+			SSL_CTX_free(ctx->entries[i].ptr);
+		}
+		if (ctx->entries[i].cert != NULL) {
+			X509_free(ctx->entries[i].cert);
+		}
+	}
+	ctx->entry_count = 0;
+}
+
+static int lctx_free(lua_State *L)
+{
+	struct ctx *ctx = check_ctx(L, 1);
+	ctx_destroy(ctx);
+	ctx->meta = NULL;
+	return 0;
 }
 
 static struct tls *new_tls(lua_State *L, int64_t fd)
 {
 	struct tls *tls;
 	tls = (struct tls *)lua_newuserdatauv(L, sizeof(*tls), 0);
-	if (luaL_newmetatable(L, "TLS")) {
-		lua_pushcfunction(L, ltls_free);
-		lua_setfield(L, -2, "__gc");
-	}
+	luaL_getmetatable(L, META_TLS);
 	memset(tls, 0, sizeof(*tls));
 	tls->fd = fd;
-	tls->limit = INT_MAX;
-	tls->pause = 0;
+	tls->meta = (void *)&new_tls;
 	buf_init(&tls->buf);
 	lua_setmetatable(L, -2);
 	return tls;
 }
 
-static inline void read_enable(struct tls *tls)
+static inline struct tls *check_tls(lua_State *L, int index)
 {
-	if (tls->pause == 0)
-		return;
-	tls->pause = 0;
-	silly_socket_readenable(tls->fd, 1);
+	if (lua_type(L, index) != LUA_TUSERDATA) {
+		luaL_typeerror(L, index, META_TLS);
+	}
+	struct tls *tls = (struct tls *)lua_touserdata(L, index);
+	if (unlikely(tls == NULL || tls->meta != (void *)&new_tls))
+		luaL_typeerror(L, index, META_TLS);
+	return tls;
 }
 
-static inline void read_pause(struct tls *tls)
+static int ltls_free(lua_State *L)
 {
-	if (tls->pause == 1)
-		return;
-	tls->pause = 1;
-	silly_socket_readenable(tls->fd, 0);
-}
-
-static inline int needpause(struct tls *tls)
-{
-	return tls->buf.size >= tls->limit;
-}
-
-static inline void read_adjust(struct tls *tls)
-{
-	if (needpause(tls))
-		read_pause(tls);
-	else
-		read_enable(tls);
-}
-
-static inline void adjust_read(struct tls *tls)
-{
-	read_adjust(tls);
+	struct tls *tls;
+	tls = check_tls(L, 1);
+	if (tls->ssl != NULL) {
+		SSL_free(tls->ssl);
+		tls->ssl = NULL;
+	}
+	buf_destroy(&tls->buf);
+	tls->meta = NULL;
+	return 0;
 }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -218,7 +203,7 @@ static int lctx_client(lua_State *L)
 		lua_pushstring(L, "SSL_CTX_new fail");
 		return 2;
 	}
-	ctx = new_tls_ctx(L, 'C', 1, 0);
+	ctx = new_ctx(L, 'C', 1, 0);
 	ctx->entries[0].ptr = ptr;
 	return 1;
 }
@@ -395,7 +380,7 @@ static int lctx_server(lua_State *L)
 	ncert = luaL_len(L, 1);
 	alpn_protos =
 		(const unsigned char *)luaL_optlstring(L, 3, NULL, &alpn_size);
-	ctx = new_tls_ctx(L, 'S', ncert, alpn_protos != NULL ? 1 : 0);
+	ctx = new_ctx(L, 'S', ncert, alpn_protos != NULL ? 1 : 0);
 	ctx->alpn_protos = alpn_protos;
 	ctx->alpn_size = alpn_size;
 	for (i = 0; i < ctx->entry_count; i++) {
@@ -449,7 +434,7 @@ static int ltls_open(lua_State *L)
 	struct tls *tls;
 	const char *hostname;
 	const unsigned char *alpn_protos;
-	ctx = luaL_checkudata(L, 1, "TLS_CTX");
+	ctx = check_ctx(L, 1);
 	fd = luaL_checkinteger(L, 2);
 	hostname = lua_tostring(L, 3);
 	alpn_protos =
@@ -480,47 +465,52 @@ static int ltls_open(lua_State *L)
 	return 1;
 }
 
-static int ltls_read(lua_State *L)
+static void read_line(lua_State *L, struct tls *tls, int delim)
 {
-	struct tls *tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	int size = luaL_checkinteger(L, 2);
-	if (size <= 0) {
-		lua_pushliteral(L, "");
-	} else if (size > tls->buf.size) {
-		read_enable(tls);
-		lua_pushnil(L);
-		return 1;
-	} else {
-		lua_pushlstring(L, (char *)(tls->buf.buf + tls->buf.offset), size);
-		tls->buf.offset += size;
-		tls->buf.size -= size;
-		adjust_read(tls);
-	}
-	return 1;
-}
-
-static int ltls_readline(lua_State *L)
-{
-	struct tls *tls;
-	struct luastr delim;
 	uint8_t *s, *e, *x;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
-	luastr_check(L, 2, &delim);
-	luaL_argcheck(L, delim.len == 1, 2, "delim length must be 1");
 	s = tls->buf.buf + tls->buf.offset;
 	e = s + tls->buf.size;
-	x = memchr(s, delim.str[0], e - s);
+	x = memchr(s, delim, e - s);
 	if (x == NULL) {
-		read_enable(tls);
 		lua_pushnil(L);
 	} else {
 		size_t line_size = x - s + 1;
 		lua_pushlstring(L, (char *)s, line_size);
 		tls->buf.offset += line_size;
 		tls->buf.size -= line_size;
-		adjust_read(tls);
 	}
-	return 1;
+}
+
+static void read_bytes(lua_State *L, struct tls *tls, int size)
+{
+	if (size <= 0 || size > tls->buf.size) {
+		lua_pushnil(L);
+	} else {
+		lua_pushlstring(L, (char *)(tls->buf.buf + tls->buf.offset), size);
+		tls->buf.offset += size;
+		tls->buf.size -= size;
+	}
+}
+
+static int ltls_read(lua_State *L)
+{
+	struct luastr delim;
+	struct tls *tls = check_tls(L, 1);
+	switch (lua_type(L, 2)) {
+	case LUA_TNUMBER:
+		read_bytes(L, tls, lua_tointeger(L, 2));
+		break;
+	case LUA_TSTRING:
+		luastr_check(L, 2, &delim);
+		luaL_argcheck(L, delim.len == 1, 2, "delimiter length must be 1");
+		read_line(L, tls, delim.str[0]);
+		break;
+	default:
+		return luaL_error(L, "invalid read argument type");
+	}
+	lua_pushinteger(L, tls->buf.size);
+	return 2;
+
 }
 
 static int flushwrite(struct tls *tls)
@@ -541,7 +531,7 @@ static int ltls_write(lua_State *L)
 	size_t sz;
 	struct tls *tls;
 	const char *str;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
+	tls = check_tls(L, 1);
 	switch (lua_type(L, 2)) {
 	case LUA_TSTRING: {
 		str = luaL_checklstring(L, 2, &sz);
@@ -576,7 +566,7 @@ static int ltls_handshake(lua_State *L)
 {
 	int ret;
 	struct tls *tls;
-	tls = (struct tls *)luaL_checkudata(L, 1, "TLS");
+	tls = check_tls(L, 1);
 	ret = SSL_do_handshake(tls->ssl);
 	// 1:success 0:error <0:continue
 	lua_pushinteger(L, ret);
@@ -598,7 +588,7 @@ static int ltls_handshake(lua_State *L)
 
 static int ltls_push(lua_State *L)
 {
-	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	struct tls *tls = check_tls(L, 1);
 	struct buf *buf = &tls->buf;
 	char *str = lua_touserdata(L, 2);
 	int size = luaL_checkinteger(L, 3);
@@ -614,25 +604,12 @@ static int ltls_push(lua_State *L)
 		buf->size += n;
 	}
 	lua_pushinteger(L, buf->size);
-	adjust_read(tls);
-	return 1;
-}
-
-static int ltls_limit(lua_State *L)
-{
-	int limit, prev;
-	struct tls *tls = luaL_checkudata(L, 1, "TLS");
-	limit = luaL_checkinteger(L, 2);
-	prev = tls->limit;
-	tls->limit = limit;
-	read_adjust(tls);
-	lua_pushinteger(L, prev);
 	return 1;
 }
 
 static int ltls_size(lua_State *L)
 {
-	struct tls *tls = luaL_checkudata(L, 1, "TLS");
+	struct tls *tls = check_tls(L, 1);
 	lua_pushinteger(L, tls->buf.size);
 	return 1;
 }
@@ -652,6 +629,13 @@ SILLY_MOD_API int luaopen_silly_tls_ctx(lua_State *L)
 	luaL_checkversion(L);
 	luaL_newlibtable(L, tbl);
 	luaL_setfuncs(L, tbl, 0);
+
+	luaL_newmetatable(L, META_CTX);
+	lua_pushvalue(L, -2);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, lctx_free);
+	lua_setfield(L, -2, "__gc");
+	lua_pop(L, 1);
 #ifdef USE_OPENSSL
 	SSL_library_init();
 	SSL_load_error_strings();
@@ -682,10 +666,8 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 		{ "close",     ltls_free      },
 		{ "read",      ltls_read      },
 		{ "write",     ltls_write     },
-		{ "readline",  ltls_readline  },
 		{ "handshake", ltls_handshake },
 		{ "push",      ltls_push      },
-		{ "limit",     ltls_limit     },
 		{ "size",      ltls_size      },
 #endif
 		{ NULL,        NULL           },
@@ -695,5 +677,13 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 	luaL_newlibtable(L, tbl);
 	silly_error_table(L);
 	luaL_setfuncs(L, tbl, 1);
+#ifdef USE_OPENSSL
+	luaL_newmetatable(L, META_TLS);
+	lua_pushvalue(L, -2);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, ltls_free);
+	lua_setfield(L, -2, "__gc");
+	lua_pop(L, 1);
+#endif
 	return 1;
 }

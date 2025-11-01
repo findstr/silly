@@ -103,7 +103,6 @@ LIB_SRC = lualib-silly.c \
 	lualib-tls.c \
 	lualib-debugger.c \
 	lcluster.c \
-	lnetstream.c \
 	lencoding.c \
 	lhive.c \
 	lhttp.c \

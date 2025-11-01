@@ -139,7 +139,7 @@ end
 
 function console.debug(fd)
 	local read = function ()
-		return tcp.readline(fd)
+		return tcp.read(fd, "\n")
 	end
 	local write = function(dat)
 		return tcp.write(fd, dat)
@@ -184,7 +184,7 @@ tcp.listen {
 		tcp.write(fd, "Type 'help' for help.\n\n")
 		tcp.write(fd, prompt)
 		while true do
-			local l, err = tcp.readline(fd)
+			local l, err = tcp.read(fd, "\n")
 			if err then
 				break
 			end

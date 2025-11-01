@@ -30,7 +30,7 @@ local valid_methods = {
 ---@return table<string, string>|nil, string?
 local function readheader(fd, readline)
 	local header = {}
-	local tmp, err = readline(fd)
+	local tmp, err = readline(fd, "\n")
 	if err then
 		return nil, err
 	end
@@ -50,7 +50,7 @@ local function readheader(fd, readline)
 		else
 			header[k] = v
 		end
-		tmp, err = readline(fd)
+		tmp, err = readline(fd, "\n")
 		if err then
 			return nil, err
 		end
@@ -75,7 +75,7 @@ end
 ---@return string?, string? error
 local function read_chunk(fd, transport)
 	local readline = transport.readline
-	local n, err = readline(fd)
+	local n, err = readline(fd, "\n")
 	if err then
 		return nil, err
 	end
@@ -87,7 +87,7 @@ local function read_chunk(fd, transport)
 	if err then
 		return nil, err
 	end
-	readline(fd)
+	readline(fd, "\n")
 	return dat, nil
 end
 
@@ -143,7 +143,7 @@ local stream_mt = {
 	readheader = function(s)
 		local fd = s.fd
 		local readline = s.transport.readline
-		local first, err = readline(fd)
+		local first, err = readline(fd, "\n")
 		if err then
 			return nil, err
 		end
@@ -282,7 +282,7 @@ function M.httpd(handler, fd, transport, addr)
 	local write = transport.write
 	local readline = transport.readline
 	while true do
-		local first, err = readline(fd)
+		local first, err = readline(fd, "\n")
 		if not first then
 			break
 		end

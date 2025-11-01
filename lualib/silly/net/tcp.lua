@@ -1,20 +1,29 @@
 local silly = require "silly"
 local net = require "silly.net"
 local logger = require "silly.logger"
-local ns = require "silly.netstream"
+local buffer = require "silly.adt.buffer"
 local type = type
 local assert = assert
 local setmetatable = setmetatable
+
+local bnew = buffer.new
+local bappend = buffer.append
+local bread = buffer.read
+local bsize = buffer.size
+local readenable = net.readenable
+local twakeup = silly.wakeup
 
 ---@class silly.net.tcp
 local M = {}
 
 ---@class silly.net.tcp.conn
 ---@field fd integer
----@field delim boolean|string|integer|nil
 ---@field co thread?
 ---@field err string?
----@field sbuffer any
+---@field buf userdata
+---@field buflimit integer?
+---@field delim string|integer|nil
+---@field readpause boolean
 local conn = {}
 
 ---@class silly.net.tcp.listener
@@ -54,42 +63,31 @@ local function new_socket(fd)
 	---@type silly.net.tcp.conn
 	local s = setmetatable({
 		fd = fd,
-		delim = false,
 		co = nil,
 		err = nil,
-		sbuffer = ns.new(fd),
+		delim = nil,
+		readpause = false,
+		buf = bnew(),
+		buflimit = nil,
 	}, conn_mt)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 	return s
 end
 
----@param s silly.net.tcp.conn
----@return string?, string? error
-local function block_read(s, delim)
-	local err = s.err
-	if not err then
-		s.delim = delim
-		assert(not s.co)
-		s.co = silly.running()
-		local dat = silly.wait()
-		if dat then
-			return dat, nil
+local function check_limit(s, buflimit, size)
+	local readpause = s.readpause
+	if readpause then
+		if size < buflimit then
+			s.readpause = false
+			readenable(s.fd, true)
 		end
-		err = s.err
+	else
+		if size >= buflimit then
+			s.readpause = true
+			readenable(s.fd, false)
+		end
 	end
-	if #err == 0 then
-		return "", "end of file"
-	end
-	return nil, err
-end
-
----@param s silly.net.tcp.conn
----@param dat string?
-local function wakeup(s, dat)
-	local co = s.co
-	s.co = nil
-	silly.wakeup(co, dat)
 end
 
 local EVENT = {
@@ -110,8 +108,10 @@ close = function(fd, errno)
 		return
 	end
 	s.err = errno
-	if s.co then
-		wakeup(s, nil)
+	local co = s.co
+	if co then
+		s.co = nil
+		twakeup(co, nil)
 	end
 end,
 
@@ -120,23 +120,22 @@ data = function(fd, ptr, chunk_size)
 	if not s then
 		return
 	end
-	local sbuffer = s.sbuffer
-	local size = ns.push(sbuffer, ptr, chunk_size)
+	local buf = s.buf
+	local size = bappend(buf, ptr, chunk_size)
 	local delim = s.delim
-	local typ = type(delim)
-	if typ == "number" then
-		if size >= delim then
-			local dat = ns.read(sbuffer, delim)
-			s.delim = false
-			wakeup(s, dat)
-		end
-	elseif typ == "string" then
-		local dat = ns.readline(sbuffer, delim)
+	if delim then
+		local dat
+		dat, size = bread(buf, delim)
 		if dat then
-			s.delim = false
-			wakeup(s, dat)
-			return
+			s.delim = nil
+			local co = s.co
+			s.co = nil
+			twakeup(co, dat)
 		end
+	end
+	local limit = s.buflimit
+	if limit then
+		check_limit(s, limit, size)
 	end
 end
 }
@@ -183,10 +182,17 @@ function M.connect(addr, opts)
 end
 
 ---@param s silly.net.tcp.conn
----@param limit integer
----@return boolean
+---@param limit integer|nil
 function conn.limit(s, limit)
-	return ns.limit(s.sbuffer, limit)
+	s.buflimit = limit
+	if limit then
+		check_limit(s, limit, bsize(s.buf))
+	else
+		if s.readpause then
+			s.readpause = false
+			readenable(s.fd, true)
+		end
+	end
 end
 
 ---@param s silly.net.tcp.conn
@@ -196,46 +202,55 @@ function conn.close(s)
 	if not fd then
 		return false, "socket closed"
 	end
-	if s.co then
+	local co = s.co
+	if co then
+		s.co = nil
 		s.err = "active closed"
-		wakeup(s, nil)
+		twakeup(co, nil)
 	end
 	return gc(s)
 end
 conn_mt.__close = conn.close
 
-
-
 ---@async
 ---@param s silly.net.tcp.conn
----@param n integer
+---@param n integer|string
 ---@return string?, string? error
 function conn.read(s, n)
 	if not s.fd then
 		return nil, "socket closed"
 	end
-	local r = ns.read(s.sbuffer, n)
+	local r, size = bread(s.buf, n)
 	if r then
+		local limit = s.buflimit
+		if limit then
+			check_limit(s, limit, size)
+		end
 		return r, nil
 	end
-	return block_read(s, n)
+	local err = s.err
+	if not err then
+		if s.readpause then
+			s.readpause = false
+			readenable(s.fd, true)
+		end
+		s.delim = n
+		assert(not s.co)
+		s.co = silly.running()
+		local dat = silly.wait()
+		if dat then
+			return dat, nil
+		end
+		err = s.err
+	end
+	if #err == 0 then
+		return "", "end of file"
+	end
+	return nil, err
 end
 
----@async
----@param s silly.net.tcp.conn
----@param delim string?
----@return string?, string? error
-function conn.readline(s, delim)
-	if not s.fd then
-		return nil, "socket closed"
-	end
-	delim = delim or "\n"
-	local r = ns.readline(s.sbuffer, delim)
-	if r then
-		return r, nil
-	end
-	return block_read(s, delim)
-end
+---@deprecated
+conn.readline = conn.read
 
 ---@param s silly.net.tcp.conn
 ---@param data string|string[]
@@ -257,7 +272,7 @@ end
 ---@param s silly.net.tcp.conn
 ---@return integer
 function conn.unreadbytes(s)
-	return ns.size(s.sbuffer)
+	return bsize(s.buf)
 end
 
 ---@param s silly.net.tcp.conn

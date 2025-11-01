@@ -10,6 +10,9 @@ local assert = assert
 local concat = table.concat
 local setmetatable = setmetatable
 
+local readenable = net.readenable
+local twakeup = silly.wakeup
+
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1
 local HANDSHAKE_ERROR<const> = 0
@@ -32,11 +35,13 @@ local M = {}
 
 ---@class silly.net.tls.conn
 ---@field fd integer?
----@field delim string|number|table|nil
 ---@field co thread?
 ---@field err string?
 ---@field alpnproto string?
 ---@field ssl any
+---@field buflimit integer?
+---@field delim string|integer|table|nil
+---@field readpause boolean
 local conn = {}
 local listener = {}
 
@@ -93,15 +98,32 @@ local function new_socket(fd, ctx, hostname, alpnprotos)
 	---@type silly.net.tls.conn
 	local s = setmetatable({
 		fd = fd,
-		delim = nil,
 		co = nil,
-		ssl = tls.open(ctx, fd, hostname, alpnstr),
 		err = nil,
+		ssl = tls.open(ctx, fd, hostname, alpnstr),
 		alpnproto = nil,
+		buflimit = nil,
+		delim = nil,
+		readpause = false,
 	}, conn_mt)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 	return s
+end
+
+local function check_limit(s, buflimit, size)
+	local readpause = s.readpause
+	if readpause then
+		if size < buflimit then
+			s.readpause = false
+			readenable(s.fd, true)
+		end
+	else
+		if size >= buflimit then
+			s.readpause = true
+			readenable(s.fd, false)
+		end
+	end
 end
 
 ---@param fd integer
@@ -120,14 +142,6 @@ local function new_listener(fd, ctx, conf, callback)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 	return s
-end
-
----@param dat string?
----@param s silly.net.tls.conn
-local function wakeup(s, dat)
-	local co = s.co
-	s.co = nil
-	silly.wakeup(co, dat)
 end
 
 ---@param s silly.net.tls.conn
@@ -188,8 +202,10 @@ close = function(fd, errno)
 		return
 	end
 	s.err = errno
-	if s.co then
-		wakeup(s, nil)
+	local co = s.co
+	if co then
+		s.co = nil
+		twakeup(co, nil)
 	end
 end,
 
@@ -200,34 +216,35 @@ data = function(fd, ptr, size)
 	end
 	local total_size = tls.push(s.ssl, ptr, size)
 	local delim = s.delim
-	if not delim then	--non suspend read
-		return
-	end
-	local typ = type(delim)
-	if typ == "number" then
-		if total_size >= delim then
-			s.delim = nil
-			local dat = tls.read(s.ssl, delim)
-			wakeup(s, dat)
-		end
-	elseif typ == "string" then
-		local dat = tls.readline(s.ssl, delim)
-		if dat then
-			s.delim = nil
-			wakeup(s, dat)
-		end
-	elseif delim == HANDSHAKE then
+	if delim == HANDSHAKE then
 		local ret, alpnproto = tls.handshake(s.ssl)
 		-- 1:success 0:error <0:continue
-		if ret == 1 then -- success
+		if ret >= 0 then
+			local res
+			if ret == 1 then -- success
+				res = ""
+				s.alpnproto = alpnproto
+			else
+				s.err = alpnproto
+			end
 			s.delim = nil
-			s.alpnproto = alpnproto
-			wakeup(s, "")
-		elseif ret == 0 then -- error
-			s.delim = nil
-			s.err = alpnproto
-			wakeup(s, nil)
+			local co = s.co
+			s.co = nil
+			twakeup(co, res)
 		end
+	elseif delim then
+		local dat
+		dat, total_size = tls.read(s.ssl, delim)
+		if dat then
+			s.delim = nil
+			local co = s.co
+			s.co = nil
+			twakeup(co, dat)
+		end
+	end
+	local limit = s.buflimit
+	if limit then
+		check_limit(s, limit, total_size)
 	end
 end
 }
@@ -334,10 +351,15 @@ function listener.reload(l, conf)
 end
 
 ---@param s silly.net.tls.conn
----@param limit integer
----@return boolean
+---@param limit integer|nil
 function conn.limit(s, limit)
-	return tls.limit(s.ssl, limit)
+	s.buflimit = limit
+	if limit then
+		check_limit(s, limit, tls.size(s.ssl))
+	elseif s.readpause then
+		s.readpause = false
+		readenable(s.fd, true)
+	end
 end
 
 ---@param s silly.net.tls.conn
@@ -347,42 +369,53 @@ function conn.close(s)
 	if not fd then
 		return false, "socket closed"
 	end
-	if s.co then
+	local co = s.co
+	if co then
+		s.co = nil
 		s.err = "active closed"
-		wakeup(s, nil)
+		twakeup(co, nil)
 	end
 	return gc(s)
 end
 conn_mt.__close = conn.close
 
 ---@param s silly.net.tls.conn
----@param n integer
+---@param n integer|string
 ---@return string?, string? error
 function conn.read(s, n)
 	if not s.fd then
 		return nil, "socket closed"
 	end
-	local d = tls.read(s.ssl, n)
-	if d then
-		return d, nil
+	local r, size = tls.read(s.ssl, n)
+	if r then
+		local limit = s.buflimit
+		if limit then
+			check_limit(s, limit, size)
+		end
+		return r, nil
 	end
-	return block_read(s, n)
+	local err = s.err
+	if not err then
+		if s.readpause then
+			s.readpause = false
+			readenable(s.fd, true)
+		end
+		s.delim = n
+		assert(not s.co)
+		s.co = silly.running()
+		local dat = silly.wait()
+		if dat then
+			return dat, nil
+		end
+		err = s.err
+	end
+	if #err == 0 then
+		return "", "end of file"
+	end
+	return nil, err
 end
 
----@param s silly.net.tls.conn
----@param delim string?
----@return string?, string? error
-function conn.readline(s, delim)
-	if not s.fd then
-		return nil, "socket closed"
-	end
-	delim = delim or "\n"
-	local d = tls.readline(s.ssl, delim)
-	if d then
-		return d, nil
-	end
-	return block_read(s, delim)
-end
+conn.readline = conn.read
 
 ---@param s silly.net.tls.conn
 ---@param data string|string[]

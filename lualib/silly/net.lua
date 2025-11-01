@@ -42,6 +42,10 @@ M.tcpsend = assert(c.tcp_send)
 M.udpsend = assert(c.udp_send)
 ---@type fun(fd:integer, data:lightuserdata, size:integer?, addr:string?): boolean, string? error
 M.tcpmulticast = assert(c.tcp_multicast)
+---@type fun(fd:integer, enable:boolean)
+M.readenable = assert(c.readenable)
+---@type fun(ptr:lightuserdata, size:integer):string
+M.tostring = assert(c.tostring)
 
 M.multipack = assert(c.multipack)
 ---@type fun(fd:integer):integer

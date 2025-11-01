@@ -48,7 +48,7 @@ response_header[header:byte(5)] = function (sock, res)        --'$'
 	return true, true, sub(param, 1, -3)
 end
 local function read_response(sock)
-	local data, err = sock:readline("\n")
+	local data, err = sock:read("\n")
 	if err then
 		return false, err, nil
 	end

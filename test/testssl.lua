@@ -14,7 +14,7 @@ testaux.case("Test 1: Connect to www.baidu.com", function()
 		   "Host: www.baidu.com\r\n\r\n")
 	local d
 	while not d do
-		d = conn:readline()
+		d = conn:readline("\n")
 		print(d)
 	end
 	conn:close()

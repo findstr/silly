@@ -1,10 +1,8 @@
 local silly = require "silly"
 local net = require "silly.net"
-local ns = require "silly.netstream"
 local queue = require "silly.adt.queue"
 local assert = assert
 local setmetatable = setmetatable
-local tremove = table.remove
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
@@ -80,7 +78,7 @@ local EVENT = {
 		if not s then
 			return
 		end
-		local data = ns.todata(ptr, size)
+		local data = net.tostring(ptr, size)
 		local packet = {
 			addr = addr,
 			data = data,

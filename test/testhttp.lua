@@ -28,7 +28,7 @@ do
 	local fd = tcp.connect("127.0.0.1:8080")
 	testaux.assertneq(fd, nil, "Test 2.1: Client connection should succeed")
 	tcp.write(fd, "INVALID / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-	local line, err = tcp.readline(fd)
+	local line, err = tcp.readline(fd, "\n")
 	testaux.assertneq(line, nil, "Test 2.2: Server should respond with 405 for invalid method")
 	testaux.asserteq(err, nil, "Test 2.2: Server should respond with 405 for invalid method")
 	local ver, status = line:match("HTTP/([%d|.]+)%s+(%d+)")
@@ -38,7 +38,7 @@ do
 	fd = tcp.connect("127.0.0.1:8080")
 	testaux.assertneq(fd, nil, "Test 2.4: Client connection should succeed")
 	tcp.write(fd, "INVALID HTTP\r\nHost: localhost\r\n\r\n")
-	local line, err = tcp.readline(fd)
+	local line, err = tcp.readline(fd, "\n")
 	testaux.assertneq(line, nil, "Test 2.5: Server should respond with 405 for invalid request line")
 	testaux.asserteq(err, nil, "Test 2.5: Server should respond with 405 for invalid request line")
 	local ver, status = line:match("HTTP/([%d|.]+)%s+(%d+)")
@@ -75,7 +75,7 @@ do
 	end
 	huge_header = huge_header .. table.concat(buf) .. "\r\n"
 	tcp.write(fd, huge_header)
-	local line, err = tcp.readline(fd)
+	local line, err = tcp.readline(fd, "\n")
 	testaux.assertneq(line, nil, "Test 4.2: Server should respond with 200 for too large headers")
 	testaux.asserteq(err, nil, "Test 4.2: Server should respond with 200 for too large headers")
 	local ver, status = line:match("HTTP/([%d|.]+)%s+(%d+)")
@@ -90,11 +90,11 @@ do
 
 	-- Send multiple requests on same connection
 	tcp.write(fd, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
-	local response1, err = tcp.readline(fd)
+	local response1, err = tcp.readline(fd, "\n")
 	testaux.assertneq(response1, nil, "Test 5.2: First request should succeed")
 	testaux.asserteq(err, nil, "Test 5.2: First request should succeed")
 	tcp.write(fd, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-	local response2, err = tcp.readline(fd)
+	local response2, err = tcp.readline(fd, "\n")
 	testaux.assertneq(response2, nil, "Test 5.3: Second request should succeed")
 	testaux.asserteq(err, nil, "Test 5.3: Second request should succeed")
 	local ver, status = response1:match("HTTP/([%d|.]+)%s+(%d+)")
