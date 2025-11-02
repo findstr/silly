@@ -121,9 +121,6 @@ static struct ctx *new_ctx(lua_State *L, int mode, int ctx_count,
 
 static inline struct ctx *check_ctx(lua_State *L, int index)
 {
-	if (lua_type(L, index) != LUA_TUSERDATA) {
-		luaL_typeerror(L, index, META_CTX);
-	}
 	struct ctx *c = (struct ctx *)lua_touserdata(L, index);
 	if (unlikely(c == NULL || c->meta != (void *)&new_ctx))
 		luaL_typeerror(L, index, META_CTX);
@@ -386,7 +383,7 @@ static int lctx_server(lua_State *L)
 	for (i = 0; i < ctx->entry_count; i++) {
 		int absidx;
 		struct ctx_entry *entry;
-		lua_rawgeti(L, 1, i + 1);
+		lua_geti(L, 1, i + 1);
 		absidx = lua_absindex(L, -1);
 		entry = &ctx->entries[i];
 		err = fill_entry(L, entry, absidx);
@@ -630,13 +627,13 @@ SILLY_MOD_API int luaopen_silly_tls_ctx(lua_State *L)
 	luaL_newlibtable(L, tbl);
 	luaL_setfuncs(L, tbl, 0);
 
+#ifdef USE_OPENSSL
 	luaL_newmetatable(L, META_CTX);
 	lua_pushvalue(L, -2);
 	lua_setfield(L, -2, "__index");
 	lua_pushcfunction(L, lctx_free);
 	lua_setfield(L, -2, "__gc");
 	lua_pop(L, 1);
-#ifdef USE_OPENSSL
 	SSL_library_init();
 	SSL_load_error_strings();
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
