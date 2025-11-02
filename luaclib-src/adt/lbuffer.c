@@ -52,7 +52,6 @@ struct reader {
 	int ref_tbl;
 };
 
-#define nb_head(nb) (&(nb)->nodes[nb->readi])
 
 // borrowed from luaO_ceillog2
 static int ceillog2(unsigned int x)
@@ -80,7 +79,7 @@ static void node_destroy(lua_State *L, struct buffer *b, int ref_tbl, struct nod
 {
 	if (n->ref > 0) {
 		lua_pushnil(L);
-		lua_rawseti(L, ref_tbl, n->ref);
+		lua_seti(L, ref_tbl, n->ref);
 		id_pool_free(&b->idx, n->ref);
 		n->ref = 0;
 	} else {
@@ -168,8 +167,8 @@ static inline void reader_consume(struct reader *r, int size)
 static void reader_push_single_node(struct reader *r, struct node *n, int size)
 {
 	assert(size <= n->bytes);
-	if (r->b->offset == 0 && n->bytes == size && n->ref > 0) { //刚好是一整个字符串
-		lua_rawgeti(r->L, r->ref_tbl, n->ref);
+	if (r->b->offset == 0 && n->bytes == size && n->ref > 0) {
+		lua_geti(r->L, r->ref_tbl, n->ref);
 	} else {
 		const char *s = n->buff + r->b->offset;
 		lua_pushlstring(r->L, s, size);
@@ -273,9 +272,6 @@ static int lnew(lua_State *L)
 
 static inline struct buffer *check_buffer(lua_State *L, int index)
 {
-	if (lua_type(L, index) != LUA_TUSERDATA) {
-		luaL_typeerror(L, index, METANAME);
-	}
 	struct buffer *b = (struct buffer *)lua_touserdata(L, index);
 	if (unlikely(b == NULL || b->meta != (void *)&lnew))
 		luaL_typeerror(L, index, METANAME);
@@ -404,7 +400,7 @@ static int ref_value(lua_State *L, struct buffer *b, int stk)
 	int ref = id_pool_alloc(&b->idx);
 	lua_getiuservalue(L, 1, 1);
 	lua_pushvalue(L, stk);
-	lua_rawseti(L, -2, ref);
+	lua_seti(L, -2, ref);
 	lua_pop(L, 1);
 	assert(ref > 0);
 	return ref;
