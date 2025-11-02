@@ -11,6 +11,12 @@
 #include "silly.h"
 #include "luastr.h"
 
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#define EVP_CIPHER_get_iv_length(cipher)        EVP_CIPHER_iv_length(cipher)
+#define EVP_CIPHER_CTX_get_block_size(ctx)      EVP_CIPHER_CTX_block_size(ctx)
+#define EVP_CIPHER_CTX_tag_length(ctx)          16
+#endif
+
 #define METATABLE "silly.crypto.cipher"
 
 struct cipher {
