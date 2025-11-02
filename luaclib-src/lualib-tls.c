@@ -164,9 +164,6 @@ static struct tls *new_tls(lua_State *L, int64_t fd)
 
 static inline struct tls *check_tls(lua_State *L, int index)
 {
-	if (lua_type(L, index) != LUA_TUSERDATA) {
-		luaL_typeerror(L, index, META_TLS);
-	}
 	struct tls *tls = (struct tls *)lua_touserdata(L, index);
 	if (unlikely(tls == NULL || tls->meta != (void *)&new_tls))
 		luaL_typeerror(L, index, META_TLS);
