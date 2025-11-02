@@ -53,12 +53,10 @@ static int lnew(lua_State *L);
 
 static inline struct queue *check_queue(lua_State *L, int index)
 {
-	if (lua_type(L, index) != LUA_TUSERDATA) {
+	struct queue *q = (struct queue *)lua_touserdata(L, index);
+	if (unlikely(q == NULL || q->meta != (void *)&lnew)) {
 		luaL_typeerror(L, index, METANAME);
 	}
-	struct queue *q = (struct queue *)lua_touserdata(L, index);
-	if (unlikely(q == NULL || q->meta != (void *)&lnew))
-		luaL_typeerror(L, index, METANAME);
 	return q;
 }
 
@@ -84,7 +82,6 @@ static int lappend(lua_State *L)
 {
 	int ref;
 	struct queue *q = check_queue(L, 1);
-	luaL_checkany(L, 2);
 	luaL_assert(L, q->writei < INT_MAX, "queue write index overflow");
 	if (q->writei >= q->bufcap && q->readi > 0) {
 		compact(q);
@@ -95,7 +92,7 @@ static int lappend(lua_State *L)
 	ref = id_pool_alloc(&q->idx);
 	lua_getiuservalue(L, 1, 1);
 	lua_pushvalue(L, 2);
-	lua_rawseti(L, -2, ref);
+	lua_seti(L, -2, ref);
 	lua_pop(L, 1);
 	q->buf[q->writei++] = ref;
 	return 0;
@@ -112,13 +109,13 @@ static int lpop(lua_State *L)
 	}
 	int ref = q->buf[q->readi++];
 	lua_getiuservalue(L, 1, 1);   // Stack: [table]
-	lua_rawgeti(L, -1, ref);      // Stack: [table, object]
+	lua_geti(L, -1, ref);      // Stack: [table, object]
 	lua_pushnil(L);               // Stack: [table, object, nil]
-	lua_rawseti(L, -3, ref);      // table[ref] = nil, Stack: [table, object]
+	lua_seti(L, -3, ref);      // table[ref] = nil, Stack: [table, object]
 	ok = id_pool_free(&q->idx, ref);
 	if (unlikely(ok != 0))
 		luaL_error(L, "queue corrupted: invalid reference id");
-	lua_remove(L, -2);            // Stack: [object]
+	lua_replace(L, -2);            // Stack: [object]
 	return 1;
 }
 
@@ -139,7 +136,7 @@ static int lclear(lua_State *L)
 		for (int i = q->readi; i < q->writei; i++) {
 			int ref = q->buf[i];
 			lua_pushnil(L);
-			lua_rawseti(L, -2, ref);  // table[ref] = nil
+			lua_seti(L, -2, ref);  // table[ref] = nil
 			id_pool_free(&q->idx, ref);
 		}
 		lua_pop(L, 1);  // Pop table
