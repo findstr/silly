@@ -138,8 +138,8 @@ local server_stream_q = {}
 ---@param read fun(fd:integer, size:integer):string|nil
 ---@return integer?, integer?, string?, integer?
 local function read_frame(fd, read)
-	local x9 = read(fd, 9)
-	if not x9 then
+	local x9, err = read(fd, 9)
+	if err then
 		return nil, nil, nil, nil
 	end
 	local n, t, f, id = unpack(">I3I1I1I4", x9)

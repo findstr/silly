@@ -1,4 +1,5 @@
 local silly = require "silly"
+local time = require "silly.time"
 local net = require "silly.net"
 local tls = require "silly.tls.tls"
 local ctx = require "silly.tls.ctx"
@@ -10,12 +11,15 @@ local assert = assert
 local concat = table.concat
 local setmetatable = setmetatable
 
+local wait = silly.wait
+local running = silly.running
 local readenable = net.readenable
-local twakeup = silly.wakeup
+local wakeup = silly.wakeup
 
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1
 local HANDSHAKE_ERROR<const> = 0
+local TIMEOUT<const> = {}
 
 local client_ctx = ctx.client()
 
@@ -145,14 +149,34 @@ local function new_listener(fd, ctx, conf, callback)
 end
 
 ---@param s silly.net.tls.conn
+local function read_timer(s)
+	local co = s.co
+	if co then
+		s.co = nil
+		s.delim = nil
+		wakeup(co, TIMEOUT)
+	end
+end
+
+---@param s silly.net.tls.conn
 ---@return string?, string? error
-local function block_read(s, delim)
+local function block_read(s, delim, timeout)
 	local err = s.err
 	if not err then
-		s.delim = delim
 		assert(not s.co)
-		s.co = silly.running()
-		local dat = silly.wait()
+		s.delim = delim
+		s.co = running()
+		local dat
+		if not timeout then
+			dat = wait()
+		else
+			local timer = time.after(timeout, read_timer, s)
+			dat = wait()
+			if dat == TIMEOUT then
+				return nil, "read timeout"
+			end
+			time.cancel(timer)
+		end
 		if dat then
 			return dat, nil
 		end
@@ -205,7 +229,8 @@ close = function(fd, errno)
 	local co = s.co
 	if co then
 		s.co = nil
-		twakeup(co, nil)
+		s.delim = nil
+		wakeup(co, nil)
 	end
 end,
 
@@ -230,16 +255,16 @@ data = function(fd, ptr, size)
 			s.delim = nil
 			local co = s.co
 			s.co = nil
-			twakeup(co, res)
+			wakeup(co, res)
 		end
 	elseif delim then
 		local dat
 		dat, total_size = tls.read(s.ssl, delim)
 		if dat then
-			s.delim = nil
 			local co = s.co
+			s.delim = nil
 			s.co = nil
-			twakeup(co, dat)
+			wakeup(co, dat)
 		end
 	end
 	local limit = s.buflimit
@@ -371,9 +396,10 @@ function conn.close(s)
 	end
 	local co = s.co
 	if co then
-		s.co = nil
 		s.err = "active closed"
-		twakeup(co, nil)
+		s.co = nil
+		s.delim = nil
+		wakeup(co, nil)
 	end
 	return gc(s)
 end
@@ -381,8 +407,9 @@ conn_mt.__close = conn.close
 
 ---@param s silly.net.tls.conn
 ---@param n integer|string
+---@param timeout integer? --milliseconds
 ---@return string?, string? error
-function conn.read(s, n)
+function conn.read(s, n, timeout)
 	if not s.fd then
 		return nil, "socket closed"
 	end
@@ -394,25 +421,7 @@ function conn.read(s, n)
 		end
 		return r, nil
 	end
-	local err = s.err
-	if not err then
-		if s.readpause then
-			s.readpause = false
-			readenable(s.fd, true)
-		end
-		s.delim = n
-		assert(not s.co)
-		s.co = silly.running()
-		local dat = silly.wait()
-		if dat then
-			return dat, nil
-		end
-		err = s.err
-	end
-	if #err == 0 then
-		return "", "end of file"
-	end
-	return nil, err
+	return block_read(s, n, timeout)
 end
 
 conn.readline = conn.read

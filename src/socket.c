@@ -70,7 +70,9 @@
 #if EAGAIN == EWOULDBLOCK
 #define ETRYAGAIN EAGAIN
 #else
-#define ETRYAGAIN EAGAIN : case EWOULDBLOCK
+#define ETRYAGAIN \
+EAGAIN:           \
+	case EWOULDBLOCK
 #endif
 
 #define EVENT_SIZE (128)
@@ -940,13 +942,12 @@ static enum read_result forward_msg_udp(struct socket_manager *ss,
 	uint8_t *data;
 	ssize_t n;
 	union sockaddr_full addr;
-	uint8_t udpbuf[MAX_UDP_PACKET];
 	socklen_t len = sizeof(addr);
 	if (is_closing(s)) {
 		return READ_EOF;
 	}
 	for (;;) {
-		n = recvfrom(s->fd, (void *)udpbuf, MAX_UDP_PACKET, 0,
+		n = recvfrom(s->fd, (void *)ss->readbuf, sizeof(ss->readbuf), 0,
 			     (struct sockaddr *)&addr, &len);
 		if (n < 0) {
 			switch (errno) {
@@ -959,7 +960,7 @@ static enum read_result forward_msg_udp(struct socket_manager *ss,
 			}
 		}
 		data = (uint8_t *)mem_alloc(n);
-		memcpy(data, udpbuf, n);
+		memcpy(data, ss->readbuf, n);
 		report_udpdata(ss, s, data, n, &addr);
 		atomic_add(&ss->netstat.received_bytes, n);
 		atomic_add(&s->received_bytes, n);

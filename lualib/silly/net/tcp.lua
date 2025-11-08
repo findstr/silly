@@ -1,4 +1,5 @@
 local silly = require "silly"
+local time = require "silly.time"
 local net = require "silly.net"
 local logger = require "silly.logger"
 local buffer = require "silly.adt.buffer"
@@ -11,7 +12,10 @@ local bappend = buffer.append
 local bread = buffer.read
 local bsize = buffer.size
 local readenable = net.readenable
-local twakeup = silly.wakeup
+local running = silly.running
+local wait = silly.wait
+local wakeup = silly.wakeup
+local TIMEOUT<const> = {}
 
 ---@class silly.net.tcp
 local M = {}
@@ -111,7 +115,8 @@ close = function(fd, errno)
 	local co = s.co
 	if co then
 		s.co = nil
-		twakeup(co, nil)
+		s.delim = nil
+		wakeup(co, nil)
 	end
 end,
 
@@ -127,10 +132,10 @@ data = function(fd, ptr, chunk_size)
 		local dat
 		dat, size = bread(buf, delim)
 		if dat then
-			s.delim = nil
 			local co = s.co
+			s.delim = nil
 			s.co = nil
-			twakeup(co, dat)
+			wakeup(co, dat)
 		end
 	end
 	local limit = s.buflimit
@@ -204,19 +209,31 @@ function conn.close(s)
 	end
 	local co = s.co
 	if co then
-		s.co = nil
 		s.err = "active closed"
-		twakeup(co, nil)
+		s.co = nil
+		s.delim = nil
+		wakeup(co, nil)
 	end
 	return gc(s)
 end
 conn_mt.__close = conn.close
 
+---@param s silly.net.tcp.conn
+local function read_timer(s)
+	local co = s.co
+	if co then
+		s.co = nil
+		s.delim = nil
+		wakeup(co, TIMEOUT)
+	end
+end
+
 ---@async
 ---@param s silly.net.tcp.conn
 ---@param n integer|string
+---@param timeout integer? --milliseconds
 ---@return string?, string? error
-function conn.read(s, n)
+function conn.read(s, n, timeout)
 	if not s.fd then
 		return nil, "socket closed"
 	end
@@ -230,14 +247,24 @@ function conn.read(s, n)
 	end
 	local err = s.err
 	if not err then
+		local dat
 		if s.readpause then
 			s.readpause = false
 			readenable(s.fd, true)
 		end
 		s.delim = n
 		assert(not s.co)
-		s.co = silly.running()
-		local dat = silly.wait()
+		s.co = running()
+		if not timeout then
+			dat = wait()
+		else
+			local timer = time.after(timeout, read_timer, s)
+			dat = wait()
+			if dat == TIMEOUT then
+				return nil, "read timeout"
+			end
+			time.cancel(timer)
+		end
 		if dat then
 			return dat, nil
 		end

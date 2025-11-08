@@ -6,6 +6,7 @@ local tls = require "silly.net.tls"
 local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
 
+-- Test 1: Connect to www.baidu.com
 testaux.case("Test 1: Connect to www.baidu.com", function()
 	local ip = dns.lookup("www.baidu.com", dns.A)
 	local conn = tls.connect(ip..":443")
@@ -18,8 +19,10 @@ testaux.case("Test 1: Connect to www.baidu.com", function()
 		print(d)
 	end
 	conn:close()
+	testaux.success("Test 1 passed")
 end)
 
+-- Test 2: Reload certs
 testaux.case("Test 2: Reload certs", function()
 	local listener = tls.listen {
 		addr = "127.0.0.1:10003",
@@ -47,7 +50,7 @@ testaux.case("Test 2: Reload certs", function()
 	]]
 	local result = hive.invoke(bee)
 	local cn = result:match("subject:%s*CN=([%w%.%-]+)")
-	testaux.asserteq(cn, "localhost", "certA")
+	testaux.asserteq(cn, "localhost", "Test 2.1: Initial cert CN is localhost")
 	tls.reload(listener, {
 		certs = {
 			{
@@ -58,8 +61,9 @@ testaux.case("Test 2: Reload certs", function()
 	})
 	result = hive.invoke(bee)
 	cn = result:match("subject:%s*CN=([%w%.%-]+)")
-	testaux.asserteq(cn, "localhost2", "certB")
+	testaux.asserteq(cn, "localhost2", "Test 2.2: Reloaded cert CN is localhost2")
 	listener:close()
+	testaux.success("Test 2 passed")
 end)
 
 -- TLS EOF Handling Tests - shared server
@@ -77,104 +81,303 @@ local eof_server = tls.listen {
 	},
 	callback = function(conn, addr)
 		listen_cb(conn, addr)
+		listen_cb = nil
 	end,
 }
 
 local ch = channel.new()
 
+local function waitdone()
+	while listen_cb do
+		time.sleep(10)
+	end
+end
+
+-- Test 3.1: TLS read after peer closes
 testaux.case("Test 3.1: TLS read after peer closes", function()
 	listen_cb = function(conn, addr)
 		-- Read initial data
 		local dat, err = conn:read(5)
-		testaux.asserteq(dat, "hello", "Server read initial data")
+		testaux.asserteq(dat, "hello", "Test 3.1.1: Server read initial data")
 
+		ch:pop()
 		-- Subsequent read after client closes should return EOF
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "TLS read after close returns empty string")
-		testaux.asserteq(err2, "end of file", "TLS read after close returns 'end of file'")
+		testaux.asserteq(dat2, "", "Test 3.1.2: TLS read after close returns empty string")
+		testaux.asserteq(err2, "end of file", "Test 3.1.3: TLS read after close returns 'end of file'")
 
 		conn:close()
-		ch:push("")
 	end
 
 	local cfd = tls.connect(ip .. ":" .. port)
-	testaux.assertneq(cfd, nil, "Client connected to TLS server")
+	testaux.assertneq(cfd, nil, "Test 3.1.4: Client connected to TLS server")
 	local ok, err = cfd:write("hello")
-	testaux.asserteq(ok, true, "Client wrote 'hello'")
+	testaux.asserteq(ok, true, "Test 3.1.5: Client wrote 'hello'")
 	cfd:close() -- Close cleanly (with SSL_shutdown)
-	ch:pop()
+	ch:push("done")
+	testaux.success("Test 3.1 passed")
+	waitdone()
 end)
 
+-- Test 3.2: TLS readline interrupted by close
 testaux.case("Test 3.2: TLS readline interrupted by close", function()
 	listen_cb = function(conn, addr)
+		ch:pop()
 		-- Try to readline but client will close before sending newline
 		local data, err = conn:readline("\n")
-		testaux.asserteq(data, "", "TLS readline returns empty string on interrupted read")
-		testaux.asserteq(err, "end of file", "TLS readline returns 'end of file' error")
+		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty string on interrupted read")
+		testaux.asserteq(err, "end of file", "Test 3.2.2: TLS readline returns 'end of file' error")
 		conn:close()
-		ch:push("done") -- Signal handler finished
 	end
 
 	local cfd = tls.connect(ip .. ":" .. port)
-	testaux.assertneq(cfd, nil, "Client connected to TLS server")
+	testaux.assertneq(cfd, nil, "Test 3.2.3: Client connected to TLS server")
 	local ok, err = cfd:write("incomplete")
-	testaux.asserteq(ok, true, "Client wrote incomplete line")
+	testaux.asserteq(ok, true, "Test 3.2.4: Client wrote incomplete line")
 	time.sleep(50) -- Give server time to start readline
 	cfd:close() -- Close before sending newline
-	ch:pop() -- Wait for handler to finish
+	ch:push("done")
+	testaux.success("Test 3.2 passed")
+	waitdone()
 end)
 
+-- Test 3.3: TLS abrupt close
 testaux.case("Test 3.3: TLS abrupt close", function()
 	listen_cb = function(conn, addr)
 		-- Read initial data
 		local dat, err = conn:read(5)
-		testaux.asserteq(dat, "hello", "Server read initial data")
-
-		-- Wait for client to close
-		time.sleep(50)
-
+		testaux.asserteq(dat, "hello", "Test 3.3.1: Server read initial data")
 		-- Try to read after abrupt close
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "TLS read after abrupt close returns empty string")
-		testaux.asserteq(err2, "end of file", "TLS read after abrupt close returns 'end of file'")
-
+		testaux.asserteq(dat2, "", "Test 3.3.2: TLS read after abrupt close returns empty string")
+		testaux.asserteq(err2, "end of file", "Test 3.3.3: TLS read after abrupt close returns 'end of file'")
 		conn:close()
-		ch:push("done") -- Signal handler finished
 	end
 
 	local cfd = tls.connect(ip .. ":" .. port)
-	testaux.assertneq(cfd, nil, "Client connected to TLS server")
+	testaux.assertneq(cfd, nil, "Test 3.3.4: Client connected to TLS server")
 	local ok, err = cfd:write("hello")
-	testaux.asserteq(ok, true, "Client wrote 'hello'")
-
-	-- Force close underlying TCP without SSL_shutdown
+	testaux.asserteq(ok, true, "Test 3.3.5: Client wrote 'hello'")
 	cfd:close()
-	ch:pop() -- Wait for handler to finish
+	testaux.success("Test 3.3 passed")
+	waitdone()
 end)
 
+-- Test 3.4: Multiple reads after EOF
 testaux.case("Test 3.4: Multiple reads after EOF", function()
 	listen_cb = function(conn, addr)
 		-- First read gets EOF
 		local dat1, err1 = conn:read(1)
-		testaux.asserteq(dat1, "", "First read returns empty string")
-		testaux.asserteq(err1, "end of file", "First read returns 'end of file'")
+		testaux.asserteq(dat1, "", "Test 3.4.1: First read returns empty string")
+		testaux.asserteq(err1, "end of file", "Test 3.4.2: First read returns 'end of file'")
 
 		-- Second read should also get EOF
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "Second read returns empty string")
-		testaux.asserteq(err2, "end of file", "Second read returns 'end of file'")
+		testaux.asserteq(dat2, "", "Test 3.4.3: Second read returns empty string")
+		testaux.asserteq(err2, "end of file", "Test 3.4.4: Second read returns 'end of file'")
 
 		conn:close()
-		ch:push("done") -- Signal handler finished
 	end
 
 	local cfd = tls.connect(ip .. ":" .. port)
-	testaux.assertneq(cfd, nil, "Client connected to TLS server")
+	testaux.assertneq(cfd, nil, "Test 3.4.5: Client connected to TLS server")
 	cfd:close() -- Close immediately without sending data
-	ch:pop() -- Wait for handler to finish
+	testaux.success("Test 3.4 passed")
+	waitdone()
+end)
+
+-- Test 4: Basic read timeout
+testaux.case("Test 4: Basic read timeout", function()
+	listen_cb = function(conn, addr)
+		-- Try to read 10 bytes with 500ms timeout, but don't send anything
+		local dat, err = conn:read(10, 500)
+		ch:push("ready")
+		testaux.asserteq(dat, nil, "Test 4.1: Read should timeout")
+		testaux.asserteq(err, "read timeout", "Test 4.2: Should return 'read timeout' error")
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 4.3: Connect to server")
+	-- Don't send any data, let server timeout
+	ch:pop()
+	cfd:close()
+	testaux.success("Test 4 passed")
+	waitdone()
+end)
+
+-- Test 5: Partial data then timeout then continue reading
+testaux.case("Test 5: Partial data then timeout then continue reading", function()
+	listen_cb = function(conn, addr)
+		-- Try to read 5 bytes with 500ms timeout, but only 2 bytes available
+		local dat, err = conn:read(5, 500)
+		ch:push("timeout")
+		testaux.asserteq(dat, nil, "Test 5.1: First read should timeout")
+		testaux.asserteq(err, "read timeout", "Test 5.2: Should return 'read timeout' error")
+		-- This read should succeed immediately with the 5 bytes in buffer
+		local dat2, err2 = conn:read(5)
+		testaux.asserteq(dat2, "12345", "Test 5.3: Second read should get complete data")
+		testaux.asserteq(err2, nil, "Test 5.4: Should have no error")
+		-- Try to read 10 bytes with timeout, client will send 8 bytes total
+		local dat3, err3 = conn:read(10, 500)
+		ch:push("timeout")
+		testaux.asserteq(dat3, nil, "Test 5.5: Third read should timeout")
+		testaux.asserteq(err3, "read timeout", "Test 5.6: Should return 'read timeout' error")
+		-- Read the buffered 8 bytes
+		local dat4, err4 = conn:read(8)
+		testaux.asserteq(dat4, "abcdefgh", "Test 5.7: Fourth read should get buffered data")
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 5.8: Connect to server")
+
+	-- Send 2 bytes, server will timeout waiting for 5
+	cfd:write("12")
+	ch:pop()
+	-- Send 3 more bytes, now server can read 5 bytes
+	cfd:write("345")
+	-- Send 3 bytes, server will timeout waiting for 10
+	cfd:write("abc")
+	ch:pop()
+	-- Send 5 more bytes (total 8 bytes for server)
+	cfd:write("defgh")
+	cfd:close()
+	testaux.success("Test 5 passed")
+	waitdone()
+end)
+
+-- Test 6: Readline timeout
+testaux.case("Test 6: Readline timeout", function()
+	listen_cb = function(conn, addr)
+		-- Try to readline with timeout, but no newline sent
+		local dat, err = conn:readline("\n", 500)
+		testaux.asserteq(dat, nil, "Test 6.1: Readline should timeout")
+		testaux.asserteq(err, "read timeout", "Test 6.2: Should return 'read timeout' error")
+		ch:push("timeout")
+		-- Now complete line is available, should succeed
+		local dat2, err2 = conn:readline("\n")
+		testaux.asserteq(dat2, "hello world\n", "Test 6.3: Readline should succeed")
+		testaux.asserteq(err2, nil, "Test 6.4: Should have no error")
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 6.5: Connect to server")
+
+	-- Send partial line without newline
+	cfd:write("hello world")
+	ch:pop()
+	-- Send newline
+	cfd:write("\n")
+	cfd:close()
+	testaux.success("Test 6 passed")
+	waitdone()
+end)
+
+-- Test 7: Mixed read and readline with timeout
+testaux.case("Test 7: Mixed read and readline with timeout", function()
+	listen_cb = function(conn, addr)
+		-- Try to read 10 bytes with timeout, only 5 available
+		local dat, err = conn:read(10, 500)
+		testaux.asserteq(dat, nil, "Test 7.1: Read should timeout")
+		testaux.asserteq(err, "read timeout", "Test 7.2: Should return 'read timeout' error")
+		-- Now read the buffered 5 bytes
+		local dat2, err2 = conn:read(5)
+		testaux.asserteq(dat2, "HELLO", "Test 7.3: Should read buffered data")
+		-- Try readline with timeout, no newline yet
+		local dat3, err3 = conn:readline("\n", 500)
+		ch:push("ready")
+		testaux.asserteq(dat3, nil, "Test 7.4: Readline should timeout")
+		testaux.asserteq(err3, "read timeout", "Test 7.5: Should return 'read timeout' error")
+		-- Complete the line
+		local dat4, err4 = conn:readline("\n")
+		testaux.asserteq(dat4, "WORLD\n", "Test 7.6: Readline should succeed")
+
+		-- Mix: read 3 bytes with timeout, only 2 available
+		local dat5, err5 = conn:read(3, 500)
+		ch:push("ready")
+		testaux.asserteq(dat5, nil, "Test 7.7: Read should timeout")
+		testaux.asserteq(err5, "read timeout", "Test 7.8: Should return 'read timeout' error")
+		-- Readline should get the buffered "ab" plus "c\n"
+		local dat6, err6 = conn:readline("\n")
+		testaux.asserteq(dat6, "abc\n", "Test 7.9: Readline should get buffered + new data")
+
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 7.10: Connect to server")
+
+	-- Send 5 bytes, server expects 10
+	cfd:write("HELLO")
+	ch:pop()
+	-- Send partial line without newline
+	cfd:write("WORLD")
+	-- Send newline
+	cfd:write("\n")
+
+	-- Send 2 bytes, server expects 3
+	cfd:write("ab")
+	ch:pop()
+	-- Send remaining data with newline
+	cfd:write("c\n")
+	cfd:close()
+	testaux.success("Test 7 passed")
+	waitdone()
+end)
+
+-- Test 8: Connection closed during timeout wait
+testaux.case("Test 8: Connection closed during timeout wait", function()
+	listen_cb = function(conn, addr)
+		-- Try to read with a long timeout, but connection will close
+		local dat, err = conn:read(100, 2000)
+		testaux.asserteq(dat, "", "Test 8.1: Read should return empty string on close")
+		testaux.asserteq(err, "end of file", "Test 8.2: Should return 'end of file' error")
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 8.3: Connect to server")
+	cfd:close()
+	testaux.success("Test 8 passed")
+	waitdone()
+end)
+
+-- Test 9: Multiple sequential timeouts
+testaux.case("Test 9: Multiple sequential timeouts", function()
+	listen_cb = function(conn, addr)
+		-- First timeout
+		local dat1, err1 = conn:read(5, 300)
+		testaux.asserteq(dat1, nil, "Test 9.1: First read should timeout")
+		testaux.asserteq(err1, "read timeout", "Test 9.2: Should return 'read timeout'")
+		-- Second timeout
+		local dat2, err2 = conn:read(5, 300)
+		testaux.asserteq(dat2, nil, "Test 9.3: Second read should timeout")
+		testaux.asserteq(err2, "read timeout", "Test 9.4: Should return 'read timeout'")
+		-- Third timeout
+		local dat3, err3 = conn:read(5, 300)
+		testaux.asserteq(dat3, nil, "Test 9.5: Third read should timeout")
+		testaux.asserteq(err3, "read timeout", "Test 9.6: Should return 'read timeout'")
+		ch:push("ready")
+		-- Finally succeed
+		local dat4, err4 = conn:read(5)
+		testaux.asserteq(dat4, "FINAL", "Test 9.7: Final read should succeed")
+		conn:close()
+	end
+
+	local cfd = tls.connect(ip .. ":" .. port)
+	testaux.assertneq(cfd, nil, "Test 9.8: Connect to server")
+	ch:pop()
+	-- Finally send data
+	cfd:write("FINAL")
+	cfd:close()
+	testaux.success("Test 9 passed")
+	waitdone()
 end)
 
 -- Cleanup EOF server
 eof_server:close()
 
+print("\ntestssl all tests passed!")
 silly.exit(0)

@@ -1,4 +1,5 @@
 local silly = require "silly"
+local time = require "silly.time"
 local net = require "silly.net"
 local queue = require "silly.adt.queue"
 local assert = assert
@@ -6,6 +7,10 @@ local setmetatable = setmetatable
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
+local wait = silly.wait
+local running = silly.running
+local wakeup = silly.wakeup
+local TIMEOUT<const> = {}
 
 ---@class silly.net.udp
 local udp = {}
@@ -53,23 +58,12 @@ local function new_socket(fd)
 end
 
 ---@param s silly.net.udp.conn
----@return string?, string? error_or_addr
-local function suspend(s)
-	assert(not s.co)
-	s.co = silly.running()
-	local dat = silly.wait()
-	if not dat then
-		return nil, s.err
-	end
-	return dat.data, dat.addr
-end
-
----@param s silly.net.udp.conn
----@param packet silly.net.udp.packet?
-local function wakeup(s, packet)
+local function recvfrom_timer(s)
 	local co = s.co
-	s.co = nil
-	silly.wakeup(co, packet)
+	if co then
+		s.co = nil
+		wakeup(co, TIMEOUT)
+	end
 end
 
 local EVENT = {
@@ -83,8 +77,10 @@ local EVENT = {
 			addr = addr,
 			data = data,
 		}
-		if s.co then
-			wakeup(s, packet)
+		local co = s.co
+		if co then
+			s.co = nil
+			wakeup(co, packet)
 		else
 			qpush(s.stash_packets, packet)
 			s.stash_bytes = s.stash_bytes + size
@@ -96,8 +92,10 @@ local EVENT = {
 			return
 		end
 		s.err = errno
+		local co = s.co
 		if s.co then
-			wakeup(s, nil)
+			s.co = nil
+			wakeup(co, nil)
 		end
 	end,
 }
@@ -130,8 +128,9 @@ function udp.connect(addr, opts)
 end
 
 ---@param s silly.net.udp.conn
+---@param timeout integer? --milliseconds
 ---@return string?, string? error_or_addr
-function conn.recvfrom(s)
+function conn.recvfrom(s, timeout)
 	if not s.fd then
 		return nil, "socket closed"
 	end
@@ -144,7 +143,23 @@ function conn.recvfrom(s)
 	if s.err then
 		return nil, s.err
 	end
-	return suspend(s)
+	assert(not s.co)
+	s.co = running()
+	local dat
+	if not timeout then
+		dat = wait()
+	else
+		local timer = time.after(timeout, recvfrom_timer, s)
+		dat = wait()
+		if dat == TIMEOUT then
+			return nil, "read timeout"
+		end
+		time.cancel(timer)
+	end
+	if dat then
+		return dat.data, dat.addr
+	end
+	return nil, s.err
 end
 
 ---@param s silly.net.udp.conn
@@ -154,9 +169,11 @@ function conn.close(s)
 	if not fd then
 		return false, "socket closed"
 	end
-	if s.co then
-		s.err = "active closed"
-		wakeup(s, nil)
+	s.err = "active closed"
+	local co = s.co
+	if co then
+		s.co = nil
+		wakeup(co, nil)
 	end
 	socket_pool[fd] = nil
 	s.fd = nil
