@@ -15,10 +15,18 @@
 #include "spinlock.h"
 #include "message.h"
 #include "silly_conf.h"
-#include "log.h"
+#include "flipbuf.h"
 #include "worker.h"
-#include "mem.h"
 #include "timer.h"
+#include "mem.h"
+#include "log.h"
+
+enum NODE_STATE {
+	NODE_ADDING = 0,
+	NODE_TICKING = 1,
+	NODE_CANCLED = 2,
+	NODE_FREED = 3,
+};
 
 #define SR_BITS (8) //root slot
 #define SL_BITS (6) //level slot
@@ -45,12 +53,22 @@
 struct page;
 
 struct node {
-	uint32_t expire;
-	uint32_t version;
-	uint32_t cookie; //page_id * PAGE_SIZE + page_offset
+	atomic_uint_least32_t version;
+	atomic_uint_least8_t state;
+	uint32_t cookie;
 	uint32_t userdata;
+	uint32_t expire;
 	struct node *next;
 	struct node **prev;
+};
+
+struct cmdafter {
+	struct node *n;
+};
+
+struct cmdcancel {
+	struct node *n;
+	uint32_t version;
 };
 
 #define PAGE_SIZE (4096 / sizeof(struct node))
@@ -60,9 +78,11 @@ struct page {
 };
 
 struct pool {
+	spinlock_t lock;
 	uint32_t cap;
 	uint32_t count;
 	struct node *free;
+	struct node **tail;
 	struct page **buf;
 };
 
@@ -75,7 +95,6 @@ struct slot_level {
 };
 
 struct timer {
-	spinlock_t lock;
 	struct pool pool;
 	uint32_t expire;
 	atomic_uint_least64_t ticktime;
@@ -84,6 +103,8 @@ struct timer {
 	struct slot_root root;
 	struct slot_level level[4];
 	struct silly_timerstat stat;
+	struct flipbuf cmdafter;
+	struct flipbuf cmdcancel;
 };
 
 struct message_expire { //timer expire
@@ -93,16 +114,6 @@ struct message_expire { //timer expire
 };
 
 static struct timer *T;
-
-static inline void lock(struct timer *timer)
-{
-	spinlock_lock(&timer->lock);
-}
-
-static inline void unlock(struct timer *timer)
-{
-	spinlock_unlock(&timer->lock);
-}
 
 static struct page *pool_newpage(struct pool *pool)
 {
@@ -118,24 +129,16 @@ static struct page *pool_newpage(struct pool *pool)
 		pool->buf = (struct page **)mem_realloc(pool->buf, newsz);
 	}
 	p = mem_alloc(sizeof(*p));
+	memset(p, 0, sizeof(*p));
 	pool->buf[page_id] = p;
 	for (i = 0; i < PAGE_SIZE; i++) {
 		n = &p->buf[i];
-		n->prev = NULL;
+		atomic_store_relax(n->state, NODE_FREED);
 		n->next = n + 1;
-		n->version = 0;
 		n->cookie = page_id * PAGE_SIZE + i;
 	}
 	n->next = NULL;
 	return p;
-}
-
-static inline struct node *pool_locate(struct pool *pool, uint32_t cookie)
-{
-	uint32_t page_id = cookie / PAGE_SIZE;
-	uint32_t page_offset = cookie % PAGE_SIZE;
-	assert(page_id < pool->count);
-	return &pool->buf[page_id]->buf[page_offset];
 }
 
 static inline void pool_init(struct pool *pool)
@@ -146,6 +149,8 @@ static inline void pool_init(struct pool *pool)
 	pool->buf = NULL;
 	p = pool_newpage(pool);
 	pool->free = &p->buf[0];
+	pool->tail = &p->buf[PAGE_SIZE - 1].next;
+	spinlock_init(&pool->lock);
 }
 
 static void pool_free(struct pool *p)
@@ -154,36 +159,48 @@ static void pool_free(struct pool *p)
 	for (i = 0; i < p->count; i++)
 		mem_free(p->buf[i]);
 	mem_free(p->buf);
+	spinlock_destroy(&p->lock);
 }
 
-static inline struct node *pool_newnode(struct timer *t, struct pool *pool)
+static inline struct node *pool_locate(struct pool *pool, uint32_t cookie)
 {
 	struct node *n;
-	if (pool->free == NULL) {
-		struct page *p;
-		unlock(t);
-		p = pool_newpage(pool);
-		lock(t);
-		p->buf[PAGE_SIZE - 1].next = pool->free;
-		pool->free = &p->buf[0];
-	}
-	n = pool->free;
-	pool->free = n->next;
-	n->version++;
+	uint32_t page_id = cookie / PAGE_SIZE;
+	uint32_t page_offset = cookie % PAGE_SIZE;
+	assert(page_id < pool->count);
+	spinlock_lock(&pool->lock);
+	n = &pool->buf[page_id]->buf[page_offset];
+	spinlock_unlock(&pool->lock);
 	return n;
 }
 
-static inline void pool_freenode(struct pool *pool, struct node *n)
+static inline struct node *pool_newnode(struct pool *pool)
 {
-	n->next = pool->free;
-	pool->free = n;
+	struct node *n;
+	spinlock_lock(&pool->lock);
+	if (pool->free == NULL) {
+		struct page *p;
+		p = pool_newpage(pool);
+		p->buf[PAGE_SIZE - 1].next = pool->free;
+		pool->free = &p->buf[0];
+		pool->tail = &p->buf[PAGE_SIZE - 1].next;
+	}
+	n = pool->free;
+	pool->free = n->next;
+	if (pool->free == NULL) {
+		pool->tail = &pool->free;
+	}
+	spinlock_unlock(&pool->lock);
+	return n;
 }
 
 static inline void pool_freelist(struct pool *pool, struct node *head,
 				 struct node **tail)
 {
-	*tail = pool->free;
-	pool->free = head;
+	spinlock_lock(&pool->lock);
+	*pool->tail = head;
+	pool->tail = tail;
+	spinlock_unlock(&pool->lock);
 }
 
 uint64_t timer_now()
@@ -253,7 +270,7 @@ static void add_node(struct timer *timer, struct node *n)
 
 static inline uint64_t session_of(struct node *n)
 {
-	return (uint64_t)n->version << 32 | n->cookie;
+	return (uint64_t)atomic_load_relax(n->version) << 32 | n->cookie;
 }
 
 static inline uint32_t version_of(uint64_t session)
@@ -268,41 +285,47 @@ static inline uint32_t cookie_of(uint64_t session)
 
 uint64_t timer_after(uint32_t expire, uint32_t userdata)
 {
-	uint64_t session;
 	struct node *n;
+	uint64_t session;
+	struct cmdafter cmd;
 	atomic_add_relax(T->stat.scheduled, 1);
 	atomic_add_relax(T->stat.pending, 1);
-	lock(T);
-	n = pool_newnode(T, &T->pool);
+	n = pool_newnode(&T->pool);
+	assert(atomic_load_relax(n->state) == NODE_FREED);
+	atomic_store_relax(n->state, NODE_ADDING);
 	n->userdata = userdata;
-	session = session_of(n);
 	n->expire = expire / TIMER_RESOLUTION +
 		    atomic_load_explicit(&T->ticktime, memory_order_relaxed);
-	add_node(T, n);
-	unlock(T);
+	session = session_of(n);
+	cmd.n = n;
+	flipbuf_write(&T->cmdafter, (const uint8_t *)&cmd, sizeof(cmd));
 	return session;
 }
 
 int timer_cancel(uint64_t session, uint32_t *ud)
 {
 	struct node *n;
+	uint32_t nver;
+	struct cmdcancel cmd;
 	uint32_t version = version_of(session);
 	uint32_t cookie = cookie_of(session);
-	atomic_sub_relax(T->stat.pending, 1);
-	atomic_add_relax(T->stat.canceled, 1);
-	lock(T);
 	n = pool_locate(&T->pool, cookie);
-	if (n->version != version) {
-		unlock(T);
+	// first load version
+	nver = atomic_load_explicit(&n->version, memory_order_acquire);
+	if (nver == version) {
+		*ud = n->userdata;
+		// double load version
+		nver = atomic_load_explicit(&n->version, memory_order_acquire);
+	}
+	if (nver != version) {
 		*ud = 0;
-		log_warn("[timer] cancel session late:%d %d", version,
-			 n->version);
+		log_warn("[timer] cancel session invalid:%d %d", version,
+			 cookie);
 		return 0;
 	}
-	unlinklist(n);
-	*ud = n->userdata;
-	pool_freenode(&T->pool, n);
-	unlock(T);
+	cmd.n = n;
+	cmd.version = version;
+	flipbuf_write(&T->cmdcancel, (const uint8_t *)&cmd, sizeof(cmd));
 	return 1;
 }
 
@@ -362,24 +385,28 @@ static uint64_t clocktime()
 	return ms;
 }
 
-static void expire_timer(struct timer *timer, struct node **tail)
+static inline void node_free(struct node ***tail, struct node *n)
+{
+	**tail = n;
+	*tail = &n->next;
+	atomic_add_relax(n->version, 1);
+	atomic_store_relax(n->state, NODE_FREED);
+}
+
+static inline void expire_timer(struct timer *timer, struct node ***tail)
 {
 	int idx = timer->expire & SR_MASK;
 	while (timer->root.slot[idx]) {
 		struct node *n = timer->root.slot[idx];
 		timer->root.slot[idx] = NULL;
-		unlock(timer);
 		while (n) {
 			struct node *tmp = n;
 			n = n->next;
 			assert((int32_t)(tmp->expire - timer->expire) <= 0);
 			timeout(timer, tmp);
-			*tail = tmp;
-			tail = &tmp->next;
+			node_free(tail, tmp);
 		}
-		lock(timer);
 	}
-	return;
 }
 
 static int cascade_timer(struct timer *timer, int level)
@@ -400,10 +427,9 @@ static int cascade_timer(struct timer *timer, int level)
 	return idx;
 }
 
-static void update_timer(struct timer *timer, struct node **tail)
+static void update_timer(struct timer *timer, struct node ***tail)
 {
 	uint32_t idx;
-	lock(T);
 	expire_timer(timer, tail);
 	idx = ++timer->expire;
 	idx &= SR_MASK;
@@ -416,8 +442,53 @@ static void update_timer(struct timer *timer, struct node **tail)
 		}
 	}
 	expire_timer(timer, tail);
-	unlock(T);
 	return;
+}
+
+static inline void process_cancel(struct node ***tail)
+{
+	int count = 0;
+	struct cmdcancel *ptr, *end;
+	struct array *arr = flipbuf_flip(&T->cmdcancel);
+	assert(arr->size % sizeof(struct cmdcancel) == 0);
+	ptr = (struct cmdcancel *)arr->buf;
+	end = (struct cmdcancel *)(arr->buf + arr->size);
+	for (; ptr < end; ptr++) {
+		struct node *n = ptr->n;
+		if (atomic_load_relax(n->version) != ptr->version)
+			continue;
+		int state = atomic_load_relax(n->state);
+		if (state == NODE_ADDING) {
+			atomic_store_relax(n->state, NODE_CANCLED);
+		} else {
+			assert(state == NODE_TICKING);
+			unlinklist(n);
+			node_free(tail, n);
+		}
+		count++;
+	}
+	atomic_sub_relax(T->stat.pending, count);
+	atomic_add_relax(T->stat.canceled, count);
+}
+
+static inline void process_after(struct node ***tail)
+{
+	struct cmdafter *ptr, *end;
+	struct array *arr = flipbuf_flip(&T->cmdafter);
+	assert(arr->size % sizeof(struct cmdafter) == 0);
+	ptr = (struct cmdafter *)arr->buf;
+	end = (struct cmdafter *)(arr->buf + arr->size);
+	for (; ptr < end; ptr++) {
+		struct node *n = ptr->n;
+		int state = atomic_load_relax(n->state);
+		if (state == NODE_ADDING) {
+			atomic_store_relax(n->state, NODE_TICKING);
+			add_node(T, ptr->n);
+		} else {
+			assert(state == NODE_CANCLED);
+			node_free(tail, n);
+		}
+	}
 }
 
 void timer_update()
@@ -450,12 +521,13 @@ void timer_update()
 	atomic_fetch_add_explicit(&T->monotonic, delta, memory_order_relaxed);
 	head = NULL;
 	tail = &head;
+	process_cancel(&tail);
+	process_after(&tail);
 	for (i = 0; i < delta; i++)
-		update_timer(T, tail);
+		update_timer(T, &tail);
+	*tail = NULL;
 	if (head != NULL) {
-		lock(T);
 		pool_freelist(&T->pool, head, tail);
-		unlock(T);
 	}
 	assert((uint32_t)atomic_load_explicit(
 		       &T->ticktime, memory_order_relaxed) == T->expire);
@@ -476,15 +548,17 @@ void timer_init()
 	atomic_init(&T->stat.scheduled, 0);
 	atomic_init(&T->stat.fired, 0);
 	atomic_init(&T->stat.canceled, 0);
-	spinlock_init(&T->lock);
 	pool_init(&T->pool);
+	flipbuf_init(&T->cmdafter);
+	flipbuf_init(&T->cmdcancel);
 	return;
 }
 
 void timer_exit()
 {
-	spinlock_destroy(&T->lock);
 	pool_free(&T->pool);
+	flipbuf_destroy(&T->cmdafter);
+	flipbuf_destroy(&T->cmdcancel);
 	mem_free(T);
 	return;
 }

@@ -46,15 +46,12 @@ end
 function M.cancel(session)
 	local f = sleep_session_task[session]
 	if f then
-		assert(type(f) == "function")
+		sleep_session_task[session] = nil
 		local ud = timercancel(session)
 		if ud then
 			if ud ~= 0 then
 				timer_user_data[ud] = nil
 			end
-			sleep_session_task[session] = nil
-		else -- The expire event has already been triggered and is on its way.
-			sleep_session_task[session] = nop
 		end
 	end
 end
