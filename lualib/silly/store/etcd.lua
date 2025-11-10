@@ -7,9 +7,9 @@ local pb = require "pb"
 ---@class silly.store.etcd.client
 ---@field retry integer
 ---@field retry_sleep integer
----@field kv silly.net.grpc.client
----@field lease silly.net.grpc.client
----@field watcher silly.net.grpc.client
+---@field kv silly.net.grpc.client.conn
+---@field lease silly.net.grpc.client.conn
+---@field watcher silly.net.grpc.client.conn
 ---@field lease_list table<integer, boolean>
 ---@field lease_timer fun(self:silly.store.etcd.client)
 local M = {}
@@ -428,7 +428,7 @@ function M.watch(self, req)
 	end
 	local ok, err = stream:write({ create_request = req })
 	if not ok then
-		stream:close()
+		stream:closewrite()
 		return nil, err
 	end
 	local ack, err = stream:read()
@@ -474,7 +474,7 @@ local function wait_for_lock(self, prefix, key)
 		local res, err = stream:read()
 		if not res then
 			logger.error("[etcd] watch key:", last_key, "err:", err)
-			stream:close()
+			stream:closewrite()
 			return false, err
 		end
 		for _, event in ipairs(res.events) do

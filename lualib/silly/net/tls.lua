@@ -41,7 +41,7 @@ local M = {}
 ---@field fd integer?
 ---@field co thread?
 ---@field err string?
----@field alpnproto string?
+---@field alpn string?
 ---@field ssl any
 ---@field buflimit integer?
 ---@field delim string|integer|table|nil
@@ -105,7 +105,7 @@ local function new_socket(fd, ctx, hostname, alpnprotos)
 		co = nil,
 		err = nil,
 		ssl = tls.open(ctx, fd, hostname, alpnstr),
-		alpnproto = nil,
+		alpn = nil,
 		buflimit = nil,
 		delim = nil,
 		readpause = false,
@@ -193,7 +193,7 @@ end
 local function handshake(s)
 	local ret, alpnproto = tls.handshake(s.ssl)
 	if ret == HANDSHAKE_OK then
-		s.alpnproto = alpnproto
+		s.alpn = alpnproto
 		return "", nil
 	elseif ret == HANDSHAKE_ERROR then
 		s.err = alpnproto
@@ -248,7 +248,7 @@ data = function(fd, ptr, size)
 			local res
 			if ret == 1 then -- success
 				res = ""
-				s.alpnproto = alpnproto
+				s.alpn = alpnproto
 			else
 				s.err = alpnproto
 			end
@@ -439,7 +439,7 @@ end
 ---@param s silly.net.tls.conn
 ---@return string?
 function conn.alpnproto(s)
-	return s.alpnproto
+	return s.alpn
 end
 
 ---@param s silly.net.tls.conn

@@ -208,14 +208,6 @@ function silly.exit(status)
 	coyield()
 end
 
----@param func async fun()
-function silly.fork(func)
-	local t = task_create(func)
-	task_status[t] = "READY"
-	qpush(wakeup_task_queue, t)
-	return t
-end
-
 function silly.status(t)
 	return task_status[t]
 end
@@ -235,6 +227,15 @@ function silly.wakeup(t, res)
 	task_status[t] = "READY"
 	wakeup_task_param[t] = res
 	qpush(wakeup_task_queue, t)
+end
+
+---@param func async fun(any)
+function silly.fork(func, param)
+	local t = task_create(func)
+	task_status[t] = "READY"
+	qpush(wakeup_task_queue, t)
+	wakeup_task_param[t] = param
+	return t
 end
 
 ---@param func async fun()

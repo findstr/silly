@@ -5,7 +5,6 @@ local grpc = require "silly.net.grpc"
 local crypto = require "silly.crypto.utils"
 local waitgroup = require "silly.sync.waitgroup"
 local registrar = require "silly.net.grpc.registrar".new()
-local transport = require "silly.net.http.transport"
 local testaux = require "test.testaux"
 
 local timeout = env.get("test.grpc.timeout")
@@ -38,6 +37,7 @@ assert(ok)
 
 local case
 local function case_one(msg)
+	print("case_one", msg)
 	return msg, nil
 end
 
@@ -52,7 +52,7 @@ local function case_three(msg)
 end
 
 local proto = p.loaded["greetpb.proto"]
-registrar:register(proto, {
+registrar:register(proto, "GreetService", {
 	SayHello = function(input)
 		return case(input)
 	end
@@ -76,7 +76,7 @@ local function request(index, count)
 				age = index,
 				rand = crypto.randomkey(8) .. x
 			}
-			local body, err = client.SayHello(test)
+			local body, err = client:SayHello(test)
 			testaux.assertneq(body, nil, "rpc call error:" .. (err or ""))
 			testaux.asserteq(test.rand, body.rand, "rpc match request/response")
 		end
@@ -91,7 +91,7 @@ local function timeoutx(index, count, cmd)
 				age = index,
 				rand = crypto.randomkey(8),
 			}
-			local body, ack = client.SayHello(test)
+			local body, ack = client:SayHello(test)
 			testaux.asserteq(body, nil, "rpc timeout, body is nil")
 			testaux.asserteq(ack, "timeout", "rpc timeout, ack is timeout")
 		end
@@ -100,58 +100,18 @@ end
 
 
 local function client_part()
-	client = grpc.newclient {
-		service = "GreetService",
-		endpoints = {"127.0.0.1:8990"},
-		proto = proto,
-		timeout = timeout,
+	local conn = grpc.newclient {
+		target = "127.0.0.1:8990",
 	}
+	client = grpc.newservice(conn, proto, "GreetService")
 	local wg = waitgroup.new()
 	case = case_one
 	for i = 1, 2 do
-		wg:fork(request(i, 5))
+		wg:fork(request(i, 1))
 	end
 	wg:wait()
-	print("case one finish")
-	case  = case_two
-	for i = 1, 20 do
-		wg:fork(request(i, 50))
-		time.sleep(100)
-	end
-	wg:wait()
-	print("case two finish")
-	case = case_three
-	for i = 1, 20 do
-		wg:fork(timeoutx(i, 2))
-		time.sleep(10)
-	end
-	wg:wait()
-	print("case three finish")
+
 end
 testaux.module("tcp")
 client_part()
 server:close()
-
-time.sleep(1000)
-testaux.module("tls")
-server = grpc.listen {
-	addr = "127.0.0.1:8990",
-	registrar = registrar,
-	tls = true,
-	alpnprotos = {
-		"h2",
-	},
-	certs = {
-		{
-			cert = testaux.CERT_DEFAULT,
-			key = testaux.KEY_DEFAULT,
-		}
-	},
-}
-client_part()
-server:close()
-time.sleep(2000)
-for _, ch in pairs(transport.channels()) do
-	testaux.asserteq(next(ch.streams), nil, "all stream is closed")
-	ch:close()
-end

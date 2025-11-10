@@ -947,7 +947,7 @@ static int lframe_build_header(lua_State *L)
 	return 1;
 }
 
-//build(id, framesize, body, offset, length, endstream)
+//build(id, framesize, body, endstream, offset, length)
 static int lframe_build_body(lua_State *L)
 {
 	char *p;
@@ -959,12 +959,12 @@ static int lframe_build_body(lua_State *L)
 	id = luaL_checkinteger(L, 1);
 	framesize = luaL_checkinteger(L, 2);
 	dat = luaL_checklstring(L, 3, &sz);
-	offset = luaL_checkinteger(L, 4);
-	len = luaL_checkinteger(L, 5);
+	flag = lua_toboolean(L, 4) ? END_STREAM : 0;
+	offset = luaL_optinteger(L, 5, 0);
+	len = luaL_optinteger(L, 6, sz - offset);
 	luaL_argcheck(L, offset >= 0 && len >= 0 &&
 		       (size_t)offset + (size_t)len <= sz,
 		       4, "invalid offset or length");
-	flag = lua_toboolean(L, 6) ? END_STREAM : 0;
 	dat += offset;  // Advance to the offset position
 	remaining = (size_t)len;
 	need = remaining + (remaining + framesize - 1) / framesize * FRAME_HDR_SIZE;
@@ -1034,12 +1034,6 @@ static int lframe_build_winupdate(lua_State *L)
 	p += FRAME_HDR_SIZE;
 	write_int(p, size);
 	p += 4;
-	if (id != 0) {
-		write_frame_header(p, 4, FRAME_WINUPDATE, 0, 0);
-		p += FRAME_HDR_SIZE;
-		write_int(p, size);
-		p += 4;
-	}
 	luaL_pushresultsize(&b, p - luaL_buffaddr(&b));
 	return 1;
 }
