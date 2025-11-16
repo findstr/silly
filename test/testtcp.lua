@@ -10,7 +10,7 @@ local IO
 local listen_cb
 local listenfd = tcp.listen {
 	addr = "127.0.0.1:10001",
-	callback = function(s, addr)
+	accept = function(s)
 		if listen_cb then
 			listen_cb(s)
 			listen_cb = nil
@@ -28,7 +28,7 @@ local tlsfd = tls.listen {
 			key = testaux.KEY_DEFAULT,
 		},
 	},
-	callback = function(s, addr)
+	accept = function(s)
 		if listen_cb then
 			listen_cb(s)
 			listen_cb = nil
@@ -220,7 +220,7 @@ end
 local function test_close(port)
 	--CASE1:client read before server close
 	print("CASE1")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local str = IO.readline(fd, "\n")
 		testaux.asserteq(str, "ping\n", "server readline")
 		local ok = IO.write(fd, "po")
@@ -252,7 +252,7 @@ local function test_close(port)
 	wait_done()
 	--CASE3:client read more before server close
 	print("CASE3")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local str = IO.readline(fd, "\n")
 		testaux.asserteq(str, "ping\n", "server readline")
 		local ok = IO.write(fd, "po")
@@ -282,7 +282,7 @@ local function test_close(port)
 	wait_done()
 	--CASE4:server write and close then cilent read twice
 	print("CASE4")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local str = IO.readline(fd, "\n")
 		testaux.asserteq(str, "ping\n", "server readline")
 		local ok = IO.write(fd, "po")
@@ -313,7 +313,7 @@ local function test_close(port)
 	wait_done()
 	--CASE5:server write and close then cilent read
 	print("CASE5")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local str = IO.readline(fd, "\n")
 		testaux.asserteq(str, "ping\n", "server readline")
 		local ok = IO.write(fd, "po")
@@ -342,7 +342,7 @@ local function test_close(port)
 	wait_done()
 	--CASE7:cilent read, server write, other coroutine IO.close
 	print("CASE7")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local ok = IO.write(fd, "po")
 		testaux.asserteq(ok, true, "server write `po`")
 		local ok = IO.write(fd, "ng")
@@ -362,7 +362,7 @@ local function test_close(port)
 	wait_done()
 	--CASE8:cilent read, server write to an closed tcp
 	print("CASE8")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		-- on macosx, need two write syscalls to trigger the error event
 		local ok = IO.write(fd, "p")
 		print("write p:", fd, ok)
@@ -395,7 +395,7 @@ local function test_close(port)
 	print("CASE9")
 	local dat = crypto.randomkey(64*1024*1024)
 
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local ok = IO.write(fd, dat)
 		testaux.asserteq(ok, true, "server write `64MByte`")
 		local ok = IO.close(fd)

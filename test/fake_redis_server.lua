@@ -22,7 +22,7 @@ end
 function M:start()
 	self.listenfd = tcp.listen {
 		addr = "127.0.0.1:" .. self.port,
-		callback = function(client)
+		accept = function(client)
 			self.clients[client] = true
 			silly.fork(function()
 				self:handle_client(client)

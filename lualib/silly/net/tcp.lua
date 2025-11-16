@@ -21,7 +21,8 @@ local TIMEOUT<const> = {}
 local M = {}
 
 ---@class silly.net.tcp.conn
----@field fd integer
+---@field fd integer?
+---@field raddr string
 ---@field co thread?
 ---@field err string?
 ---@field buf userdata
@@ -32,7 +33,7 @@ local conn = {}
 
 ---@class silly.net.tcp.listener
 ---@field fd integer
----@field callback async fun(s:silly.net.tcp.conn, addr:string)
+---@field accept async fun(s:silly.net.tcp.conn)
 local listener = {}
 
 --when luaVM destroyed, all process will be exit
@@ -62,11 +63,13 @@ local listener_mt = {
 }
 
 ---@param fd integer
+---@param addr string
 ---@return silly.net.tcp.conn
-local function new_socket(fd)
+local function new_socket(fd, addr)
 	---@type silly.net.tcp.conn
 	local s = setmetatable({
 		fd = fd,
+		raddr = addr,
 		co = nil,
 		err = nil,
 		delim = nil,
@@ -98,8 +101,8 @@ local EVENT = {
 
 accept = function(fd, listenid, addr)
 	local lc = socket_pool[listenid];
-	local s = new_socket(fd)
-	local ok, err = silly.pcall(lc.callback, s, addr)
+	local s = new_socket(fd, addr)
+	local ok, err = silly.pcall(lc.accept, s)
 	if not ok then
 		logger.error(err)
 		s:close()
@@ -148,23 +151,25 @@ end
 ---@class silly.net.tcp.listen.conf
 ---@field addr string
 ---@field backlog integer?
----@field callback async fun(c:silly.net.tcp.conn, addr:string)
+---@field accept async fun(c:silly.net.tcp.conn)
 
 ---@param conf silly.net.tcp.listen.conf
 ---@return silly.net.tcp.listener?, string? error
 function M.listen(conf)
 	local addr = conf.addr
-	local callback = conf.callback
+	local accept = conf.accept
 	assert(addr, "tcp.listen missing addr")
-	assert(callback and type(callback) == "function", "tcp.listen missing callback")
+	assert(type(accept) == "function", "tcp.listen missing accept")
 	local listenid, err = net.tcplisten(addr, EVENT, conf.backlog)
 	if not listenid then
 		return nil, err
 	end
-	local s = setmetatable({
+	---@type silly.net.tcp.listener
+	local s = {
 		fd = listenid,
-		callback = callback,
-	}, listener_mt)
+		accept = accept,
+	}
+	setmetatable(s, listener_mt)
 	socket_pool[listenid] = s
 	return s, err
 end
@@ -178,12 +183,14 @@ listener.close = gc
 ---@param opts silly.net.tcp.connect.opts?
 ---@return silly.net.tcp.conn?, string? error
 function M.connect(addr, opts)
-	assert(addr, "tcp.connect missing addr")
+	if not addr then
+		error("tcp.connect missing addr", 2)
+	end
 	local fd, err = net.tcpconnect(addr, EVENT, opts and opts.bind)
 	if not fd then
 		return nil, err
 	end
-	return new_socket(fd), nil
+	return new_socket(fd, addr), nil
 end
 
 ---@param s silly.net.tcp.conn
@@ -310,6 +317,12 @@ function conn.unsentbytes(s)
 		return 0
 	end
 	return net.sendsize(fd)
+end
+
+---@param s silly.net.tcp.conn
+---@return string
+function conn.remoteaddr(s)
+	return s.raddr
 end
 
 -- for compatibility

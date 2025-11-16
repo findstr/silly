@@ -176,7 +176,8 @@ end
 return function (config)
 tcp.listen {
 	addr = config.addr,
-	callback = function(fd, addr)
+	accept = function(fd)
+		local addr = fd:remoteaddr()
 		logger.info("console come in:", addr)
 		local param = {}
 		local dat = {}

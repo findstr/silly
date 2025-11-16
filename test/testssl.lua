@@ -32,7 +32,7 @@ testaux.case("Test 2: Reload certs", function()
 				key = testaux.KEY_A,
 			},
 		},
-		callback = function(conn, addr)
+		accept = function(conn)
 			local body = "testssl ok"
 			local resp = "HTTP/1.1 200 OK\r\nContent-Length: " .. #body .. "\r\n\r\n" .. body
 			conn:write(resp)
@@ -79,8 +79,8 @@ local eof_server = tls.listen {
 			key = testaux.KEY_A,
 		},
 	},
-	callback = function(conn, addr)
-		listen_cb(conn, addr)
+	accept = function(conn)
+		listen_cb(conn)
 		listen_cb = nil
 	end,
 }
@@ -95,7 +95,7 @@ end
 
 -- Test 3.1: TLS read after peer closes
 testaux.case("Test 3.1: TLS read after peer closes", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Read initial data
 		local dat, err = conn:read(5)
 		testaux.asserteq(dat, "hello", "Test 3.1.1: Server read initial data")
@@ -121,7 +121,7 @@ end)
 
 -- Test 3.2: TLS readline interrupted by close
 testaux.case("Test 3.2: TLS readline interrupted by close", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		ch:pop()
 		-- Try to readline but client will close before sending newline
 		local data, err = conn:readline("\n")
@@ -143,7 +143,7 @@ end)
 
 -- Test 3.3: TLS abrupt close
 testaux.case("Test 3.3: TLS abrupt close", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Read initial data
 		local dat, err = conn:read(5)
 		testaux.asserteq(dat, "hello", "Test 3.3.1: Server read initial data")
@@ -165,7 +165,7 @@ end)
 
 -- Test 3.4: Multiple reads after EOF
 testaux.case("Test 3.4: Multiple reads after EOF", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- First read gets EOF
 		local dat1, err1 = conn:read(1)
 		testaux.asserteq(dat1, "", "Test 3.4.1: First read returns empty string")
@@ -188,7 +188,7 @@ end)
 
 -- Test 4: Basic read timeout
 testaux.case("Test 4: Basic read timeout", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Try to read 10 bytes with 500ms timeout, but don't send anything
 		local dat, err = conn:read(10, 500)
 		ch:push("ready")
@@ -208,7 +208,7 @@ end)
 
 -- Test 5: Partial data then timeout then continue reading
 testaux.case("Test 5: Partial data then timeout then continue reading", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Try to read 5 bytes with 500ms timeout, but only 2 bytes available
 		local dat, err = conn:read(5, 500)
 		ch:push("timeout")
@@ -249,7 +249,7 @@ end)
 
 -- Test 6: Readline timeout
 testaux.case("Test 6: Readline timeout", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Try to readline with timeout, but no newline sent
 		local dat, err = conn:readline("\n", 500)
 		testaux.asserteq(dat, nil, "Test 6.1: Readline should timeout")
@@ -277,7 +277,7 @@ end)
 
 -- Test 7: Mixed read and readline with timeout
 testaux.case("Test 7: Mixed read and readline with timeout", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Try to read 10 bytes with timeout, only 5 available
 		local dat, err = conn:read(10, 500)
 		testaux.asserteq(dat, nil, "Test 7.1: Read should timeout")
@@ -329,7 +329,7 @@ end)
 
 -- Test 8: Connection closed during timeout wait
 testaux.case("Test 8: Connection closed during timeout wait", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- Try to read with a long timeout, but connection will close
 		local dat, err = conn:read(100, 2000)
 		testaux.asserteq(dat, "", "Test 8.1: Read should return empty string on close")
@@ -346,7 +346,7 @@ end)
 
 -- Test 9: Multiple sequential timeouts
 testaux.case("Test 9: Multiple sequential timeouts", function()
-	listen_cb = function(conn, addr)
+	listen_cb = function(conn)
 		-- First timeout
 		local dat1, err1 = conn:read(5, 300)
 		testaux.asserteq(dat1, nil, "Test 9.1: First read should timeout")

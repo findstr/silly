@@ -31,14 +31,9 @@ local client_ctx = ctx.client()
 ---@class silly.net.tls
 local M = {}
 
----@class silly.net.tls.listener
----@field fd integer
----@field callback async fun(s:silly.net.tls.conn, addr:string)
----@field ctx any
----@field conf silly.net.tls.conf
-
 ---@class silly.net.tls.conn
 ---@field fd integer?
+---@field raddr string
 ---@field co thread?
 ---@field err string?
 ---@field alpnproto string?
@@ -47,6 +42,12 @@ local M = {}
 ---@field delim string|integer|table|nil
 ---@field readpause boolean
 local conn = {}
+
+---@class silly.net.tls.listener
+---@field fd integer
+---@field accept async fun(s:silly.net.tls.conn)
+---@field ctx any
+---@field conf silly.net.tls.conf
 local listener = {}
 
 ---@type table<integer, silly.net.tls.conn|silly.net.tls.listener>
@@ -69,6 +70,7 @@ local function wire_alpn_protos(alpnprotos)
 	return concat(buf)
 end
 
+---@param s silly.net.tls.conn | silly.net.tls.listener
 local function gc(s)
 	local fd = s.fd
 	if fd then
@@ -91,10 +93,11 @@ local listener_mt = {
 }
 
 ---@param fd integer
+---@param raddr string
 ---@param hostname string?
 ---@param alpnprotos silly.net.tls.alpn_proto[]?
 ---@return silly.net.tls.conn
-local function new_socket(fd, ctx, hostname, alpnprotos)
+local function new_socket(fd, raddr, ctx, hostname, alpnprotos)
 	local alpnstr
 	if alpnprotos then
 		alpnstr = wire_alpn_protos(alpnprotos)
@@ -102,6 +105,7 @@ local function new_socket(fd, ctx, hostname, alpnprotos)
 	---@type silly.net.tls.conn
 	local s = setmetatable({
 		fd = fd,
+		raddr = raddr,
 		co = nil,
 		err = nil,
 		ssl = tls.open(ctx, fd, hostname, alpnstr),
@@ -133,16 +137,17 @@ end
 ---@param fd integer
 ---@param ctx any
 ---@param conf silly.net.tls.conf
----@param callback async fun(s:silly.net.tls.conn, addr:string)
+---@param accept async fun(s:silly.net.tls.conn)
 ---@return silly.net.tls.listener
-local function new_listener(fd, ctx, conf, callback)
+local function new_listener(fd, ctx, conf, accept)
 	---@type silly.net.tls.listener
-	local s = setmetatable({
+	local s = {
 		fd = fd,
 		ctx = ctx,
 		conf = conf,
-		callback = callback,
-	}, listener_mt)
+		accept = accept,
+	}
+	setmetatable(s, listener_mt)
 	assert(not socket_pool[fd])
 	socket_pool[fd] = s
 	return s
@@ -205,13 +210,13 @@ end
 local EVENT = {
 accept = function(fd, listenid, addr)
 	local lc = socket_pool[listenid]
-	local s = new_socket(fd, lc.ctx, nil, nil)
+	local s = new_socket(fd, addr, lc.ctx, nil, nil)
 	local dat, _ = handshake(s)
 	if not dat then
 		s:close()
 		return
 	end
-	local ok, err = silly.pcall(lc.callback, s, addr)
+	local ok, err = silly.pcall(lc.accept, s)
 	if not ok then
 		logger.error(err)
 		s:close()
@@ -282,9 +287,11 @@ end
 ---@param addr string
 ---@param opts silly.net.tls.connect.opts?
 ---@return silly.net.tls.conn?, string? error
-local function connect_normal(addr, opts)
+function M.connect(addr, opts)
 	local bind, hostname, alpnprotos
-	local addr = assert(addr, "tls.connect missing addr")
+	if not addr then
+		error("tls.connect missing addr", 2)
+	end
 	if opts then
 		bind = opts.bind
 		hostname = opts.hostname
@@ -294,21 +301,13 @@ local function connect_normal(addr, opts)
 	if not fd then
 		return nil, err
 	end
-	local s = new_socket(fd, client_ctx, hostname, alpnprotos)
+	local s = new_socket(fd, addr, client_ctx, hostname, alpnprotos)
 	local ok, err = handshake(s)
 	if not ok then
 		s:close()
 		return nil, err
 	end
 	return s, nil
-end
-
----@param addr string
----@param opts silly.net.tls.connect.opts?
----@return silly.net.tls.conn?, string? error
-function M.connect(addr, opts)
-	M.connect = connect_normal
-	return connect_normal(addr, opts)
 end
 
 ---@param conf silly.net.tls.conf
@@ -327,16 +326,16 @@ end
 ---@class silly.net.tls.listen.opts : silly.net.tls.conf
 ---@field addr string
 ---@field backlog integer?
----@field callback async fun(s:silly.net.tls.conn, addr:string)
+---@field accept async fun(s:silly.net.tls.conn)
 
 ---@param opts silly.net.tls.listen.opts
 ---@return silly.net.tls.listener?, string? error
 function M.listen(opts)
 	local addr = opts.addr
-	local callback = opts.callback
+	local accept = opts.accept
 	local certs = opts.certs
 	assert(addr, "tls.listen missing addr")
-	assert(callback and type(callback) == "function", "tls.listen missing callback")
+	assert(type(accept) == "function", "tls.listen missing accept")
 	assert(#certs > 0, "tls.listen missing certs")
 	local fd, err = net.tcplisten(addr, EVENT, opts.backlog)
 	if not fd then
@@ -349,7 +348,7 @@ function M.listen(opts)
 		ciphers = opts.ciphers,
 		alpnprotos = opts.alpnprotos,
 	}
-	local s = new_listener(fd, tls_ctx, tls_conf, opts.callback)
+	local s = new_listener(fd, tls_ctx, tls_conf, opts.accept)
 	return s, nil
 end
 
@@ -462,6 +461,12 @@ function conn.unsentbytes(s)
 		return 0
 	end
 	return net.sendsize(fd)
+end
+
+---@param s silly.net.tls.conn
+---@return string
+function conn.remoteaddr(s)
+	return s.raddr
 end
 
 -- for compatibility

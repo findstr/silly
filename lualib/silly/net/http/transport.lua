@@ -120,7 +120,7 @@ end
 ---@param conf silly.net.http.transport.listen.conf
 ---@return integer?, silly.net.tcp|silly.net.tls|string
 function M.listen(conf)
-	local handler = function(fd, addr)
+	local handler = function(fd)
 		local transport
 		local is_h2 = conf.forceh2
 		if conf.tls then
@@ -133,7 +133,7 @@ function M.listen(conf)
 			is_h2 = alpnproto and alpnproto(fd) == "h2"
 		end
 		local httpd = is_h2 and h2.httpd or h1.httpd
-		httpd(conf.handler, fd, transport, addr)
+		httpd(conf.handler, fd, transport, fd:remoteaddr())
 	end
 
 	local fd, transport, err
@@ -142,7 +142,7 @@ function M.listen(conf)
 		transport = tcp
 		fd, err = tcp.listen {
 			addr = addr,
-			callback = handler
+			accept = handler
 		}
 	else
 		transport = tls
@@ -150,7 +150,7 @@ function M.listen(conf)
 			addr = addr,
 			certs = conf.certs,
 			alpnprotos = conf.alpnprotos,
-			callback = handler,
+			accept = handler,
 		}
 	end
 	if not fd then

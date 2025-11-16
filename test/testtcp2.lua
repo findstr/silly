@@ -20,10 +20,11 @@ end
 
 local listenfd = tcp.listen {
 	addr = listenaddr,
-	callback = function(fd, addr)
+	accept = function(fd)
+		local addr = fd:remoteaddr()
 		print("Accepted connection from", addr, fd)
 		if listen_cb then
-			listen_cb(fd, addr)
+			listen_cb(fd)
 			listen_cb = nil
 		else
 			tcp.close(fd)
@@ -43,7 +44,8 @@ testaux.case("Test 1: Accept a connection", function()
 	print("\nTest 1: Accept a connection")
 	local localfd
 	local remoteaddr = ""
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
+		local addr = fd:remoteaddr()
 		print("Accepted connection from", addr)
 		remoteaddr = addr
 		local localaddr = testaux.getsockname(localfd)
@@ -62,7 +64,7 @@ testaux.case("Test 2: Read from a connection", function()
 	print("\nTest 2: Read from a connection")
 	local subblock = largeBlock:sub(1024, 1024 + 1024)
 	local cfd
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		local dat = tcp.read(fd, #largeBlock)
 		tcp.write(fd, subblock)
 		testaux.asserteq(dat, largeBlock, "Test 2.1: Read large block from connection")
@@ -81,7 +83,7 @@ end)
 -- Test 3: Write to a connection
 testaux.case("Test 3: Write to a connection", function()
 	print("\nTest 3: Write to a connection")
-	listen_cb = function(fd, addr)
+	listen_cb = function(fd)
 		for i = 1, #largeBlock, 1024 do
 			local chunk = largeBlock:sub(i, i + 1023)
 			local dat = tcp.write(fd, chunk)
@@ -104,7 +106,8 @@ end)
 -- Test 4: Half-close scenario
 testaux.case("Test 4: Half-close scenario", function()
 	print("\nTest 4: Half-close scenario")
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
+		local addr = sfd:remoteaddr()
 		print("Test 4: Server accepted connection from", addr)
 		-- 1. Read the initial data
 		local dat, err = tcp.read(sfd, 5)
@@ -144,7 +147,8 @@ end)
 -- Test 5: Readline interrupted by close
 testaux.case("Test 5: Readline interrupted by close", function()
 	print("\nTest 5: Readline interrupted by close")
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
+		local addr = sfd:remoteaddr()
 		print("Test 5: Server accepted connection from", addr)
 		local data, err = tcp.readline(sfd, "\n")
 		testaux.asserteq(data, "", "Test 5.1: Readline returns empty string on interrupted read")
@@ -164,7 +168,8 @@ end)
 -- Test 6: Double close
 testaux.case("Test 6: Double close", function()
 	print("\nTest 6: Double close")
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
+		local addr = sfd:remoteaddr()
 		print("Test 6: Server accepted connection from", addr)
 		local ok1, err1 = tcp.close(sfd)
 		testaux.asserteq(ok1, true, "Test 6.1: First close succeeds")
@@ -191,7 +196,7 @@ testaux.case("Test 7: Write buffer saturation", function()
 	local total_size = block_size * blocks_to_send
 	local large_data = string.rep("a", block_size)
 	local cfd
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 7: Server accepted connection", sfd)
 		-- Write a large amount of data to saturate the buffer
 		for i = 1, blocks_to_send do
@@ -219,7 +224,7 @@ end)
 testaux.case("Test 8: Interleaved Read/Write", function()
 	print("\nTest 8: Interleaved Read/Write")
 	local echo_count = 5
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 8: Echo server accepted connection")
 		for i = 1, echo_count do
 			local data, err = tcp.readline(sfd, "\n")
@@ -277,7 +282,7 @@ end)
 -- Test 10: Basic read timeout
 testaux.case("Test 10: Basic read timeout", function()
 	print("\nTest 10: Basic read timeout")
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 10: Server accepted connection")
 		-- Try to read 10 bytes with 500ms timeout, but don't send anything
 		local dat, err = tcp.read(sfd, 10, 500)
@@ -300,7 +305,7 @@ end)
 testaux.case("Test 11: Partial data then timeout then continue reading", function()
 	print("\nTest 11: Partial data then timeout then continue reading")
 	local cfd
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 11: Server accepted connection")
 		-- Try to read 5 bytes with 500ms timeout, but only 2 bytes available
 		local dat, err = tcp.read(sfd, 5, 500)
@@ -363,7 +368,7 @@ end)
 testaux.case("Test 12: Readline timeout", function()
 	print("\nTest 12: Readline timeout")
 	local cfd
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 12: Server accepted connection")
 
 		-- Try to readline with timeout, but no newline sent
@@ -403,7 +408,7 @@ end)
 testaux.case("Test 13: Mixed read and readline with timeout", function()
 	print("\nTest 13: Mixed read and readline with timeout")
 	local cfd
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 13: Server accepted connection")
 
 		-- Try to read 10 bytes with timeout, only 5 available
@@ -479,7 +484,7 @@ end)
 -- Test 14: Connection closed during timeout wait
 testaux.case("Test 14: Connection closed during timeout wait", function()
 	print("\nTest 14: Connection closed during timeout wait")
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 14: Server accepted connection")
 
 		-- Try to read with a long timeout, but connection will close
@@ -506,7 +511,7 @@ end)
 testaux.case("Test 15: Multiple sequential timeouts", function()
 	print("\nTest 15: Multiple sequential timeouts")
 	local cfd
-	listen_cb = function(sfd, addr)
+	listen_cb = function(sfd)
 		print("Test 15: Server accepted connection")
 
 		-- First timeout
