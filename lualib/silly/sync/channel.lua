@@ -9,7 +9,7 @@ local qpush = queue.push
 local qclear = queue.clear
 
 ---@class silly.sync.channel
----@field queue userdata
+---@field queue silly.adt.queue
 ---@field closed boolean
 ---@field co thread|nil
 local channel = {}

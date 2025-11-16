@@ -4,14 +4,19 @@ local logger = require "silly.logger"
 local grpc = require "silly.net.grpc"
 local proto = require "silly.store.etcd.v3.proto"
 local pb = require "pb"
+
 ---@class silly.store.etcd.client
+---@field closed boolean
+---@field timeout integer
 ---@field retry integer
 ---@field retry_sleep integer
----@field kv silly.net.grpc.client
----@field lease silly.net.grpc.client
----@field watcher silly.net.grpc.client
+---@field kvconn silly.net.grpc.client.conn
+---@field streamconn silly.net.grpc.client.conn
+---@field kv silly.net.grpc.client.service
+---@field lease silly.net.grpc.client.service
+---@field watcher silly.net.grpc.client.service
 ---@field lease_list table<integer, boolean>
----@field lease_timer fun(self:silly.store.etcd.client)
+---@field lease_stream silly.net.grpc.client.bstream?
 local M = {}
 
 local next = next
@@ -113,68 +118,83 @@ local function apply_options(options)
 	end
 end
 
+---@param s silly.net.grpc.client.bstream
+local function lease_read_task(s)
+
+end
+
+---@param c silly.store.etcd.client
+local function lease_write_task(c)
+	while not c.closed do
+		local stream, err = c.lease:LeaseKeepAlive()
+		if stream then
+			local n = 0
+			for lease_id in pairs(c.lease_list) do
+				local ok, err = stream:write {
+					ID = lease_id,
+				}
+				if not ok then
+					break
+				end
+				logger.error("[etcd] lease keepalive lease:",
+					lease_id, "ok", ok, "error:", err)
+				n = n + 1
+			end
+		end
+		time.sleep(1000)
+	end
+end
+
+---@param c silly.store.etcd.client
+local function lease_read_task(c)
+
+end
+
 local mt = { __index = M }
----@param conf {
+---@param opts {
 ---	endpoints:string[],	--etcd server address
 ---	retry:integer|nil,	--retry times
 ---	retry_sleep:integer|nil,--retry sleep time(ms)
 ---	timeout:number|nil,	--timeout
 ---}
----@return silly.store.etcd.client
-function M.newclient(conf)
-	local c = setmetatable({
-		retry = conf.retry or 5,
-		retry_sleep = conf.retry_sleep or 1000,
-		kv = assert(grpc.newclient {
-			service = "KV",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		lease = assert(grpc.newclient {
-			service = "Lease",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		watcher = assert(grpc.newclient {
-			service = "Watch",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		lease_list = {},
-		lease_timer = nil,
-		keepalive_stream = nil
-	}, mt)
-	c.lease_timer = function(_)
-		local n = 0
-		local stream = c.keepalive_stream
-		if not stream then
-			stream = c.lease.LeaseKeepAlive()
-			c.keepalive_stream = stream
-		end
-		for lease_id in pairs(c.lease_list) do
-			local ok, err = stream:write {
-				ID = lease_id,
-			}
-			if ok then
-				local res, err = stream:read()
-				if not res then
-					logger.error("[etcd] lease keepalive error:", err)
-				end
-			else
-				logger.error("[etcd] lease keepalive lease:", lease_id, "error:", err)
-			end
-			n = n + 1
-		end
-		if n > 0 then
-			timeout(1000, c.lease_timer)
-		else
-			stream:close()
-			c.keepalive_stream = nil
-		end
+---@return silly.store.etcd.client?, string? error
+function M.newclient(opts)
+	local kvconn, err = grpc.newclient {
+		targets = opts.endpoints
+	}
+	if not kvconn then
+		return nil, err
 	end
+	local streamconn, err = grpc.newclient {
+		targets = opts.endpoints
+	}
+	if not streamconn then
+		kvconn:close()
+		return nil, err
+	end
+	local proto = proto.loaded["etcdv3.proto"]
+	local lease = assert(grpc.newservice(streamconn, proto, "Lease"))
+	local ls, err = lease:LeaseKeepAlive()
+	if not ls then
+		kvconn:close()
+		streamconn:close()
+		return nil, err
+	end
+	---@type silly.store.etcd.client
+	local c = {
+		closed = false,
+		retry = opts.retry or 5,
+		retry_sleep = opts.retry_sleep or 1000,
+		timeout = opts.timeout,
+		kvconn = kvconn,
+		streamconn = streamconn,
+		kv = assert(grpc.newservice(kvconn, proto, "KV")),
+		lease = lease,
+		watcher = assert(grpc.newservice(streamconn, proto, "Watch")),
+		lease_list = {},
+		lease_stream =
+	}
+	setmetatable(c, mt)
 	return c
 end
 
@@ -225,7 +245,7 @@ function M.put(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Put(req)
+		res, err = self.kv:Put(req)
 		if res then
 			break
 		end
@@ -260,7 +280,7 @@ function M.get(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Range(req)
+		res, err = self.kv:Range(req)
 		if res then
 			break
 		end
@@ -284,7 +304,7 @@ function M.delete(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.DeleteRange(req)
+		res, err = self.kv:DeleteRange(req)
 		if res then
 			return res, err
 		end
@@ -305,7 +325,7 @@ function M.compact(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Compact(req)
+		res, err = self.kv:Compact(req)
 		if res then
 			break
 		end
@@ -328,11 +348,11 @@ end
 function M.grant(self, req)
 	local res, err
 	for i = 1, self.retry do
-		res, err = self.lease.LeaseGrant(req)
+		res, err = self.lease:LeaseGrant(req)
 		if res then
 			local lease_list = self.lease_list
 			if not next(lease_list) then
-				timeout(1000, self.lease_timer)
+				silly.fork(lease_write_task, self)
 			end
 			lease_list[res.ID] = true
 			break
@@ -353,7 +373,7 @@ function M.revoke(self, req)
 	local res, err
 	self.lease_list[req.ID] = nil
 	for i = 1, self.retry do
-		res, err = self.lease.LeaseRevoke(req)
+		res, err = self.lease:LeaseRevoke(req)
 		if res then
 			break
 		end
@@ -375,7 +395,7 @@ end
 ---}
 ---@return string|nil
 function M.ttl(self, req)
-	return self.lease.LeaseTimeToLive(req)
+	return self.lease:LeaseTimeToLive(req)
 end
 
 ---@return {
@@ -384,7 +404,7 @@ end
 ---	}[],                  -- The list of leases
 ---}
 function M.leases(self)
-	return self.lease.LeaseLeases()
+	return self.lease:LeaseLeases()
 end
 
 ---@param req {
@@ -397,7 +417,7 @@ end
 ---}
 ---@return string|nil
 function M.keepalive(self, req)
-	return self.lease.LeaseKeepAlive(req)
+	return self.lease:LeaseKeepAlive(req)
 end
 
 --- @param req {
@@ -422,7 +442,7 @@ function M.watch(self, req)
 	if #filters > 0 then
 		req.filters = filters
 	end
-	local stream, err = self.watcher.Watch()
+	local stream, err = self.watcher:Watch()
 	if not stream then
 		return nil, err
 	end
@@ -474,7 +494,7 @@ local function wait_for_lock(self, prefix, key)
 		local res, err = stream:read()
 		if not res then
 			logger.error("[etcd] watch key:", last_key, "err:", err)
-			stream:close()
+			stream:closewrite()
 			return false, err
 		end
 		for _, event in ipairs(res.events) do

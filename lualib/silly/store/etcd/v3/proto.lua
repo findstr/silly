@@ -2961,6 +2961,6 @@ message AuthRoleRevokePermissionResponse {
 
   ResponseHeader header = 1;
 }
-]], "rpc.proto"))
+]], "etcdv3.proto"))
 
 return p

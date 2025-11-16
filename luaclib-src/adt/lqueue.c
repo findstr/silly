@@ -78,7 +78,7 @@ static int lnew(lua_State *L)
 }
 
 // queue:push(value)
-static int lappend(lua_State *L)
+static int lpush(lua_State *L)
 {
 	int ref;
 	struct queue *q = check_queue(L, 1);
@@ -95,7 +95,8 @@ static int lappend(lua_State *L)
 	lua_seti(L, -2, ref);
 	lua_pop(L, 1);
 	q->buf[q->writei++] = ref;
-	return 0;
+	lua_pushinteger(L, qsize(q));
+	return 1;
 }
 
 // queue:pop() -> value or nil
@@ -162,7 +163,7 @@ SILLY_MOD_API int luaopen_silly_adt_queue(lua_State *L)
 {
 	luaL_Reg methods[] = {
 		{"new",  lnew},
-		{"push", lappend},
+		{"push", lpush},
 		{"pop", lpop},
 		{"size", lsize},
 		{"clear", lclear},

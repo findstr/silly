@@ -1,115 +1,62 @@
-local helper = require "silly.net.http.helper"
-local transport = require "silly.net.http.transport"
-local parseurl = helper.parseurl
-local setmetatable = setmetatable
+local tcp = require "silly.net.tcp"
+local tls = require "silly.net.tls"
+local h1 = require "silly.net.http.h1"
+local h2 = require "silly.net.http.h2"
+local client = require "silly.net.http.client"
 
-local alpn_protos = {"http/1.1", "h2"}
+local httpc = client.new()
 
 local M = {}
 
----@class silly.net.http.server_mt
-local server = {
-	close = function(self)
-		local fd = self.fd
-		if fd then
-			self.transport.close(fd)
-			self.fd = nil
+---@class silly.net.http.transport.listen.conf
+---@field handler fun(s:silly.net.http.h1.stream.client|silly.net.http.h2.stream)
+---@field addr string
+---@field tls boolean?
+---@field certs table<number, {
+---		cert:string,
+---		cert_key:string,
+---	}>?,
+---@field alpnprotos string[]?
+---}
+
+---@param conf silly.net.http.transport.listen.conf
+---@return silly.net.tcp.listener|silly.net.tls.listener|nil, string?
+function M.listen(conf)
+	local accept = function(conn)
+		local alpnproto = conn.alpnproto
+		if alpnproto and alpnproto(conn) == "h2" then
+			h2.httpd(conf.handler, conn)
+		else
+			local scheme = conf.tls and "https" or "http"
+			h1.httpd(conf.handler, conn, scheme)
 		end
 	end
-}
-
-local server_mt = {
-	__index = server,
-}
-
-local listen = transport.listen
----@param conf silly.net.http.transport.listen.conf
----@return silly.net.http.server?, string? error
-function M.listen(conf)
-	local fd, transport = listen(conf)
-	if not fd then
-		return nil, transport
-	end
-	---@class silly.net.http.server:silly.net.http.server_mt
-	local server = {
-		fd = fd,
-		transport = transport,
-	}
-	return setmetatable(server, server_mt), nil
-end
-
-
----@param method string
----@param url string
----@param header table<string, string|number>?
----@param close boolean?
----@param alpn_protos silly.net.tls.alpn_proto[]?
----@return silly.net.http.h2stream|silly.net.http.h1stream|nil, string?
-function M.request(method, url, header, close, alpn_protos)
-	local scheme, host, port, path = parseurl(url)
-	local stream, err = transport.connect(scheme, host, port, alpn_protos)
-	if not stream then
-		return nil, err
-	end
-	header = header or {}
-	header["host"] = host
-	local ok, err = stream:request(method, path, header, close)
-	if not ok then
-		stream:close()
-		return nil, err
-	end
-	return stream, nil
-end
-
-local request = M.request
-
-function M.GET(url, header)
-	local stream<close>, err = request("GET", url, header, true, alpn_protos)
-	if not stream then
-		return nil, err
-	end
-	local status, header = stream:readheader()
-	if not status then
-		return nil, header
-	end
-	local body, err = stream:readall()
-	if not body then
-		return nil, err
-	end
-	return {
-		status = status,
-		header = header,
-		body = body,
-	}, nil
-end
-
-function M.POST(url, header, body)
-	if body then
-		header = header or {}
-		header["content-length"] = #body
-	end
-	local stream<close>, err = request("POST", url, header, false, alpn_protos)
-	if not stream then
-		return nil, err
-	end
-	if stream.version == "HTTP/2" then
-		stream:close(body)
+	local addr = conf.addr
+	if not conf.tls then
+		return tcp.listen {
+			addr = addr,
+			accept = accept
+		}
 	else
-		stream:write(body)
+		return tls.listen {
+			addr = addr,
+			certs = conf.certs,
+			alpnprotos = conf.alpnprotos,
+			accept = accept,
+		}
 	end
-	local status, header = stream:readheader()
-	if not status then
-		return nil, header
-	end
-	local body, err = stream:readall()
-	if not body then
-		return nil, err
-	end
-	return {
-		status = status,
-		header = header,
-		body = body,
-	}, nil
+end
+
+function M.newclient(conf)
+	return httpc.new(conf)
+end
+
+function M.get(url, header)
+	return httpc:get(url, header)
+end
+
+function M.post(url, header, body)
+	return httpc:post(url, header, body)
 end
 
 return M

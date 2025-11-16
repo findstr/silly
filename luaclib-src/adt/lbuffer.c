@@ -376,10 +376,18 @@ static int lread(lua_State *L)
 		read_line(L, b, delim.str[0]);
 		break;
 	default:
-		return luaL_error(L, "invalid read argument type");
+		return luaL_typeerror(L, vstk, "number or string");
 	}
 	lua_pushinteger(L, b->bytes);
 	return 2;
+}
+
+static int lreadall(lua_State *L)
+{
+	struct buffer *b = check_buffer(L, BUFFER);
+	read_bytes(L, b, b->bytes);
+	assert(b->bytes == 0);
+	return 1;
 }
 
 static int lclear(lua_State *L)
@@ -408,26 +416,31 @@ static int ref_value(lua_State *L, struct buffer *b, int stk)
 
 static int lappend(lua_State *L)
 {
-	int ref;
-	size_t len, bytes;
-	const char *ptr;
-	int vstk, type;
+	int ref, top, vstk;
 	struct buffer *b = check_buffer(L, BUFFER);
+	size_t bytes = b->bytes;
+	top = lua_gettop(L);
 	vstk = BUFFER+1;
-	type = lua_type(L, vstk);
-	switch (type) {
-	case LUA_TSTRING:
-		ptr = lua_tolstring(L, vstk, &len);
-		ref = ref_value(L, b, vstk);
-		bytes = push_data(L, ptr, len, ref);
-		break;
-	case LUA_TLIGHTUSERDATA:
-		ptr = lua_touserdata(L, vstk);
-		len = luaL_checkinteger(L, vstk+1);
-		bytes = push_data(L, ptr, len, 0);
-		break;
-	default:
-		return luaL_error(L, "invalid append argument type");
+	while (vstk <= top) {
+		size_t len;
+		const char *ptr;
+		int type = lua_type(L, vstk);
+		switch (type) {
+		case LUA_TSTRING:
+			ptr = lua_tolstring(L, vstk, &len);
+			ref = ref_value(L, b, vstk);
+			bytes = push_data(L, ptr, len, ref);
+			vstk++;
+			break;
+		case LUA_TLIGHTUSERDATA:
+			ptr = lua_touserdata(L, vstk);
+			len = luaL_checkinteger(L, vstk+1);
+			bytes = push_data(L, ptr, len, 0);
+			vstk+=2;
+			break;
+		default:
+			return luaL_error(L, "invalid append argument type");
+		}
 	}
 	lua_pushinteger(L, bytes);
 	return 1;
@@ -469,13 +482,14 @@ static int ldump(lua_State *L)
 SILLY_MOD_API int luaopen_silly_adt_buffer(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "new",    lnew    },
-		{ "append", lappend },
-		{ "read",   lread   },
-		{ "clear",  lclear  },
-		{ "size",   lsize   },
-		{ "dump",   ldump   },
-		{ NULL,     NULL    },
+		{ "new",     lnew    },
+		{ "append",  lappend },
+		{ "read",    lread   },
+		{ "readall", lreadall},
+		{ "clear",   lclear  },
+		{ "size",    lsize   },
+		{ "dump",    ldump   },
+		{ NULL,      NULL    },
 	};
 	luaL_newlib(L, tbl);
 	luaL_newmetatable(L, METANAME);
