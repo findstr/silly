@@ -89,7 +89,7 @@ EAGAIN:           \
 #define STATE_READING (1 << 2)
 #define STATE_WRITING (1 << 3)
 #define STATE_CLOSING (1 << 4)
-#define STATE_MUTECLOSE (1 << 5)
+#define STATE_CLOSEWAIT (1 << 5)
 #define STATE_ZOMBINE (1 << 6)
 
 #define test_state(s, sx) \
@@ -105,14 +105,15 @@ EAGAIN:           \
 #define is_reading(s) test_state(s, STATE_READING)
 #define is_writing(s) test_state(s, STATE_WRITING)
 #define is_closing(s) test_state(s, STATE_CLOSING)
-#define is_muteclose(s) test_state(s, STATE_MUTECLOSE)
+#define is_closewait(s) test_state(s, STATE_CLOSEWAIT)
 #define is_zombine(s) test_state(s, STATE_ZOMBINE)
 
 #define set_connecting(s) set_state(s, STATE_CONNECTING)
 #define set_listening(s) set_state(s, STATE_LISTENING)
 #define set_reading(s) set_state(s, STATE_READING)
 #define set_writing(s) set_state(s, STATE_WRITING)
-#define set_muteclose(s) set_state(s, STATE_MUTECLOSE)
+#define set_closing(s) set_state(s, STATE_CLOSING)
+#define set_closewait(s) set_state(s, STATE_CLOSEWAIT)
 #define set_zombine(s) set_state(s, STATE_ZOMBINE)
 
 #define clr_connecting(s) clr_state(s, STATE_CONNECTING)
@@ -610,9 +611,9 @@ static void report_close(struct socket_manager *ss, struct socket *s, int err)
 {
 	(void)ss;
 	struct message_close *mc;
-	if (is_muteclose(s))
+	if (is_closing(s))
 		return;
-	set_muteclose(s); // Ensure the close event is emitted only once
+	set_closing(s); // Ensure the close event is emitted only once
 	assert(socket_type(s) == SOCKET_CONNECTION);
 	mc = mem_alloc(sizeof(*mc));
 	mc->hdr.type = MESSAGE_SOCKET_CLOSE;
@@ -703,7 +704,7 @@ static inline void free_socket(struct socket_manager *ss, struct socket *s)
 
 static inline void zombine_socket(struct socket *s)
 {
-	if (is_closing(s)) {
+	if (is_closewait(s)) {
 		if (s->type == SOCKET_TCP_CONNECTION) {
 			atomic_sub(&SM->netstat.tcp_connections, 1);
 		}
@@ -1044,7 +1045,7 @@ static int send_msg_tcp(struct socket_manager *ss, struct socket *s)
 		if (w == NULL) { //send ok
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (is_closing(s)) {
+			if (is_closewait(s)) {
 				atomic_sub(&ss->netstat.tcp_connections, 1);
 				free_socket(ss, s);
 				return 0;
@@ -1077,7 +1078,7 @@ static int send_msg_udp(struct socket_manager *ss, struct socket *s)
 		if (w == NULL) { //send all
 			s->wltail = &s->wlhead;
 			write_enable(ss, s, 0);
-			if (is_closing(s)) {
+			if (is_closewait(s)) {
 				free_socket(ss, s);
 				return 0;
 			}
@@ -1420,12 +1421,12 @@ int socket_close(silly_socket_id_t sid)
 	struct op_close op = { 0 };
 	struct socket *s = pool_get(&SM->pool, sid);
 	if (unlikely(s == NULL)) {
-		log_warn("[socket] socket_close already closed sid:%llu\n",
+		log_warn("[socket] socket_close sid:%llu closed\n",
 			 sid);
 		return -EX_CLOSED;
 	}
-	if (is_closing(s)) {
-		log_warn("[socket] socket_close already closing sid:%llu\n",
+	if (is_closewait(s)) {
+		log_warn("[socket] socket_close sid:%llu closewait\n",
 			 sid);
 		return -EX_CLOSING;
 	}
@@ -1436,7 +1437,7 @@ int socket_close(silly_socket_id_t sid)
 		free_socket(SM, s);
 		return 0;
 	}
-	set_state(s, STATE_CLOSING | STATE_MUTECLOSE);
+	set_closing(s);
 	op.hdr.op = OP_CLOSE;
 	op.hdr.sid = sid;
 	op.hdr.size = sizeof(op);
@@ -1444,7 +1445,7 @@ int socket_close(silly_socket_id_t sid)
 	return 0;
 }
 
-static int op_tcp_close(struct socket_manager *ss, struct op_close *op,
+static int op_close(struct socket_manager *ss, struct op_close *op,
 			struct socket *s)
 {
 	int type;
@@ -1461,6 +1462,7 @@ static int op_tcp_close(struct socket_manager *ss, struct op_close *op,
 		free_socket(ss, s);
 		return 0;
 	} else {
+		set_closewait(s);
 		read_enable(ss, s, 0);
 		return -1;
 	}
@@ -1654,7 +1656,7 @@ static int op_process(struct socket_manager *ss)
 			op_udp_connect(ss, &op->connect, s);
 			break;
 		case OP_CLOSE:
-			op_tcp_close(ss, &op->close, s);
+			op_close(ss, &op->close, s);
 			break;
 		case OP_TCP_SEND:
 			op_tcp_send(ss, &op->tcpsend, s);
