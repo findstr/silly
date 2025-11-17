@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local logger = require "silly.logger"
 ---@class silly.sync.waitgroup
 ---@field count integer
@@ -12,7 +13,7 @@ end
 
 function M:fork(func)
 	self.count = self.count +1
-	local co = silly.fork(function()
+	local co = task.fork(function()
 		local ok, err = silly.pcall(func)
 		if not ok then
 			logger.error("[waitgroup] fork err:", err)
@@ -23,7 +24,7 @@ function M:fork(func)
 			local co = self.waitco
 			if co then
 				self.waitco = nil
-				silly.wakeup(co)
+				task.wakeup(co)
 			end
 		end
 	end)
@@ -35,10 +36,9 @@ function M:wait()
 	if n <= 0 then
 		return
 	end
-	local co = silly.running()
+	local co = task.running()
 	self.waitco = co
-	silly.wait()
+	task.wait()
 end
 
 return M
-

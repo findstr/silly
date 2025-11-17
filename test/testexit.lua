@@ -1,12 +1,13 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 
-silly.fork(function()
+task.fork(function()
 	print("-------1")
 	silly.exit(0)
 	print("exit")
 end)
-silly.fork(function()
+task.fork(function()
 	print("-------2")
 	silly.exit(1)
 end)

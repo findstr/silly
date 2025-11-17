@@ -1,13 +1,14 @@
 local silly = require "silly"
+local task = require "silly.task"
 local logger = require "silly.logger.c"
 local c = require "silly.net.c"
 
 local assert = assert
 local smatch = string.match
 
-local task_running = silly.running
-local task_create = silly._task_create
-local task_resume = silly._task_resume
+local task_running = task.running
+local task_create = task._task_create
+local task_resume = task._task_resume
 local log_info = assert(logger.info)
 local log_error = assert(logger.error)
 
@@ -67,7 +68,7 @@ local function listen_wrap(listen)
 		if fd  then
 			assert(socket_pending[fd] == nil)
 			socket_pending[fd] = task_running()
-			err = silly.wait()
+			err = task.wait()
 			socket_pending[fd] = nil
 			if err then
 				return nil, err
@@ -105,7 +106,7 @@ local function connect_wrap(connect)
 		if fd then
 			assert(socket_pending[fd] == nil)
 			socket_pending[fd] = task_running()
-			err = silly.wait()
+			err = task.wait()
 			socket_pending[fd] = nil
 			if err then
 				return nil, err

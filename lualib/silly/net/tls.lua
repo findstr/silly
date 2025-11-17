@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local net = require "silly.net"
 local tls = require "silly.tls.tls"
@@ -11,10 +12,10 @@ local assert = assert
 local concat = table.concat
 local setmetatable = setmetatable
 
-local wait = silly.wait
-local running = silly.running
+local wait = task.wait
+local running = task.running
 local readenable = net.readenable
-local wakeup = silly.wakeup
+local wakeup = task.wakeup
 
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1

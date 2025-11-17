@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local testaux = require "test.testaux"
 local waitgroup = require "silly.sync.waitgroup"
@@ -119,13 +120,13 @@ local function testcase5()
 		local lock = mutex:lock(key)
 		local flag = false
 		lock:unlock()
-		local parent = silly.running()
-		silly.fork(function()
-			silly.wakeup(parent)
+		local parent = task.running()
+		task.fork(function()
+			task.wakeup(parent)
 			local x = mutex:lock(key)
 			flag = true
 		end)
-		silly.wait()
+		task.wait()
 		testaux.asserteq(flag, false, "test lock reentrant")
 	end)
 	wg:wait()
@@ -142,13 +143,13 @@ local function testcase6()
 		local flag = false
 		lock:unlock()
 		lock1:unlock()
-		local parent = silly.running()
-		silly.fork(function()
-			silly.wakeup(parent)
+		local parent = task.running()
+		task.fork(function()
+			task.wakeup(parent)
 			local k = mutex:lock(key)
 			flag = true
 		end)
-		silly.wait()
+		task.wait()
 		testaux.asserteq(flag, true, "test lock reentrant")
 	end)
 	wg:wait()
@@ -162,7 +163,7 @@ local function testcase7()
 	local l1 = mutex:lock(obj)
 	testaux.asserteq(obj.step, 1, "test lock race 1")
 	obj.step = 2
-	silly.fork(function()
+	task.fork(function()
 		print("2")
 		testaux.asserteq(obj.step, 2, "test lock race 2.1")
 		local l2<close> = mutex:lock(obj)

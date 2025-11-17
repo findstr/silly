@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local c = require "silly.metrics.c"
 local gauge = require "silly.metrics.gauge"
 local counter = require "silly.metrics.counter"
@@ -64,7 +65,7 @@ function M.new()
 	local collect = function(_, buf)
 		local worker_backlog = c.workerstat()
 		local timer_pending, timer_scheduled, timer_fired, timer_canceled = c.timerstat()
-		local task_runnable_size = silly.taskstat()
+		local task_runnable_size = task.taskstat()
 		local tcp_connections, sent_bytes, received_bytes,
 			socket_operate_request, socket_operate_processed = c.netstat()
 

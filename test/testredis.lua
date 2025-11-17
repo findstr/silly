@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
 local redis = require "silly.store.redis"
@@ -265,7 +266,7 @@ testaux.case("Test 7: Concurrent requests with disconnect", function()
 
 	-- Launch 10 concurrent requests
 	for i = 1, 10 do
-		silly.fork(function()
+		task.fork(function()
 			local ok, val = db:incr("counter")
 			results[i] = ok
 			if ok then
@@ -857,7 +858,7 @@ testaux.case("Test 18: First reconnect closes, queued coroutines get 'active clo
 		-- Second connection (reconnect): when GET is received, signal close coroutine
 		if connect_count == 2 and cmd == "GET" then
 			if close_co then
-				silly.wakeup(close_co)
+				task.wakeup(close_co)
 			end
 			return "$3\r\nbar\r\n"
 		end
@@ -893,8 +894,8 @@ testaux.case("Test 18: First reconnect closes, queued coroutines get 'active clo
 
 	-- Close coroutine: will wait for signal from server
 	wg:fork(function()
-		close_co = silly.running()
-		silly.wait()  -- Wait for signal from server handler
+		close_co = task.running()
+		task.wait()  -- Wait for signal from server handler
 		db:close()
 	end)
 

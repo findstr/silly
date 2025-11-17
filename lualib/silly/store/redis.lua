@@ -1,4 +1,4 @@
-local silly = require "silly"
+local task = require "silly.task"
 local queue = require "silly.adt.queue"
 local tcp = require "silly.net.tcp"
 local mutex = require "silly.sync.mutex"
@@ -217,7 +217,7 @@ local function close_socket(redis, err)
 	end
 	-- close_socket must be called by redis.readco
 	-- so just directly set readco to nil
-	assert(redis.readco == silly.running())
+	assert(redis.readco == task.running())
 	redis.readco = false
 	local waitq = redis.waitq
 	while true do
@@ -225,16 +225,16 @@ local function close_socket(redis, err)
 		if not wco then
 			break
 		end
-		silly.wakeup(wco, err)
+		task.wakeup(wco, err)
 	end
 end
 
 ---@param redis silly.store.redis
 local function wait_for_read(redis)
-	local co = silly.running()
+	local co = task.running()
 	if redis.readco then -- already exist readco, enqueue for wait
 		qpush(redis.waitq, co)
-		local err = silly.wait()
+		local err = task.wait()
 		if err then
 			-- The socket is not closed here.
 			-- because the waker handles errors and closes socket.
@@ -251,7 +251,7 @@ local function wakeup_next_reader(redis)
 	local co = qpop(redis.waitq)
 	if co then
 		redis.readco = co
-		silly.wakeup(co)
+		task.wakeup(co)
 	else
 		redis.readco = false
 	end

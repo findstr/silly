@@ -1,4 +1,4 @@
-local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local net = require "silly.net"
 local queue = require "silly.adt.queue"
@@ -7,9 +7,9 @@ local setmetatable = setmetatable
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
-local wait = silly.wait
-local running = silly.running
-local wakeup = silly.wakeup
+local wait = task.wait
+local running = task.running
+local wakeup = task.wakeup
 local TIMEOUT<const> = {}
 
 ---@class silly.net.udp
@@ -220,4 +220,3 @@ udp.isalive = conn.isalive
 udp.sendto = conn.sendto
 
 return udp
-

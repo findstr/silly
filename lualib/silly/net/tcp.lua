@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local net = require "silly.net"
 local logger = require "silly.logger"
@@ -12,9 +13,9 @@ local bappend = buffer.append
 local bread = buffer.read
 local bsize = buffer.size
 local readenable = net.readenable
-local running = silly.running
-local wait = silly.wait
-local wakeup = silly.wakeup
+local running = task.running
+local wait = task.wait
+local wakeup = task.wakeup
 local TIMEOUT<const> = {}
 
 ---@class silly.net.tcp
@@ -338,4 +339,3 @@ M.recvsize = conn.unreadbytes
 M.sendsize = conn.unsentbytes
 
 return M
-

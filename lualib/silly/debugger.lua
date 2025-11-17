@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local logger = require "silly.logger"
 local helper = require "silly.debugger.helper"
 local sethook = helper.hook
@@ -128,11 +129,11 @@ local function checkhit(info, runline)
 end
 
 local function breakin(info, runline)
-	assert(coroutine.running() == silly.running())
+	assert(coroutine.running() == task.running())
 	local source = info.source
 	lastfile = source
 	lastline = runline
-	lockthread = silly.running()
+	lockthread = task.running()
 	prompt = format("\ndebugger %s %s:%s> ", lockthread, source, runline)
 	cwrite(prompt)
 	return "PAUSE"
@@ -276,11 +277,11 @@ local function dumptbl(tbl, out, breakloop)
 				dumptbl(v, out, breakloop)
 				out[#out + 1] = ","
 			end
-		elseif typ == "string" then
-			out[#out + 1] = format("[%s] = '%s',", key, dumpstr(v))
-		else
-			out[#out + 1] = format("[%s] = %s,", key, v)
-		end
+	elseif typ == "string" then
+		out[#out + 1] = format("[%s] = '%s',", key, dumpstr(v))
+	else
+		out[#out + 1] = format("[%s] = %s,", key, v)
+	end
 	end
 	out[#out + 1] = "}"
 end
@@ -555,9 +556,9 @@ start = function(read, write)
 	enter()
 	cread = read
 	cwrite = write
-	coresume, _ = silly.task_hook(hook_create, hook_term)
+	coresume, _ = task.task_hook(hook_create, hook_term)
 	local ok, err = silly.pcall(cmdline)
-	silly.task_hook()
+	task.task_hook()
 	CMD.q()
 	if not ok then
 		logger.error(err)
@@ -568,4 +569,3 @@ end,
 }
 
 return M
-

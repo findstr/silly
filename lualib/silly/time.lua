@@ -1,12 +1,13 @@
 local silly = require "silly"
+local task = require "silly.task"
 local c = require "silly.time.c"
 
 local assert = assert
 local type = type
-local task_running = silly.running
-local task_create = silly._task_create
-local task_resume = silly._task_resume
-local task_yield = silly._task_yield
+local task_running = task.running
+local task_create = task._task_create
+local task_resume = task._task_resume
+local task_yield = task._task_yield
 local timeout = c.timeout
 local timercancel = c.timercancel
 

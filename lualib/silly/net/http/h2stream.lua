@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local logger = require "silly.logger"
 local helper = require "silly.net.http.helper"
@@ -8,7 +9,7 @@ local builder = require "silly.http2.framebuilder"
 local assert = assert
 local pairs = pairs
 local tonumber = tonumber
-local wakeup = silly.wakeup
+local wakeup = task.wakeup
 local move = table.move
 local remove = table.remove
 local concat = table.concat
@@ -519,7 +520,7 @@ local function frame_header_server(ch, id, flag, dat)
 		end
 		ch.streams[id] = s
 		server_stream_q[#server_stream_q + 1] = s
-		silly.fork(ch.handler)
+		task.fork(ch.handler)
 	else
 		-- RFC 7540 Section 8.1: Trailing header blocks MUST have END_STREAM flag
 		if flag & END_STREAM ~= END_STREAM then
@@ -989,7 +990,7 @@ local function handshake_as_client(ch, transport)
 			break
 		end
 	end
-	ch.dispatchco = silly.fork(client_dispatch(ch))
+	ch.dispatchco = task.fork(client_dispatch(ch))
 	return true, "ok"
 end
 
@@ -1077,8 +1078,8 @@ end
 function C.open_stream(ch)
 	if ch.stream_count >= ch.stream_max then
 		local t = ch.wait_for_conn
-		t[#t + 1] = silly.running()
-		local reason = silly.wait()
+		t[#t + 1] = task.running()
+		local reason = task.wait()
 		if reason ~= "ok" then
 			return nil, reason
 		end
@@ -1190,12 +1191,12 @@ local function wait(s, expire)
 	local reason
 	if expire then
 		local timer = time.after(expire, read_timer, s)
-		reason = silly.wait()
+		reason = task.wait()
 		if reason ~= "timeout" then
 			time.cancel(timer)
 		end
 	else
-		reason = silly.wait()
+		reason = task.wait()
 	end
 	return reason
 end
@@ -1210,7 +1211,7 @@ local function read_header(s, expire)
 		if s.remotestate >= STATE_CLOSE then
 			return nil, s.remoteerror
 		end
-		s.readco = silly.running()
+		s.readco = task.running()
 		local reason = wait(s, expire)
 		if reason ~= "ok" then
 			return nil, reason
@@ -1309,13 +1310,13 @@ local function write_func(close)
 			local stream_win = s.send_window
 			if conn_win <= 0 or stream_win <= 0 then
 				assert(not s.writeco, "[silly.net.http.h2stream] write can't be called in race")
-				local co = silly.running()
+				local co = task.running()
 				s.writeco = co
 				if conn_win <= 0 then
 					local wait = ch.wait_for_write
 					wait[#wait + 1] = s
 				end
-				local reason = silly.wait()
+				local reason = task.wait()
 				if reason ~= "ok" then
 					ok = false
 					err = reason
@@ -1383,7 +1384,7 @@ local function read(s, expire)
 	if s.remotestate >= STATE_TRAILER then
 		return "", s.remoteerror or "end of stream"
 	end
-	s.readco = silly.running()
+	s.readco = task.running()
 	local reason = wait(s, expire)
 	if reason ~= "ok" then
 		return nil, reason

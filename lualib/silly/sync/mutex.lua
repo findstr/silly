@@ -1,10 +1,10 @@
-local silly = require "silly"
+local task = require "silly.task"
 local queue = require "silly.adt.queue"
 local assert = assert
 local setmetatable = setmetatable
 local remove = table.remove
-local running = silly.running
-local wakeup = silly.wakeup
+local running = task.running
+local wakeup = task.wakeup
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
@@ -85,7 +85,7 @@ function M:lock(key)
 			l.refn = l.refn + 1
 		else
 			qpush(l.waitq, co)
-			silly.wait()
+			task.wait()
 		end
 	else
 		l = new_lock(key, co)
@@ -105,4 +105,3 @@ function M:lock(key)
 end
 
 return M
-

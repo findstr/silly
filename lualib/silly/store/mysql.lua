@@ -1,6 +1,6 @@
 -- protocol detail: https://mariadb.com/kb/en/clientserver-protocol/
 
-local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local hash = require "silly.crypto.hash"
 local tcp = require "silly.net.tcp"
@@ -994,7 +994,7 @@ local function conn_close(conn)
 		if #waiting_for_conn > 0 then
 			local co = tremove(waiting_for_conn)
 			if co then
-				silly.wakeup(co, conn)
+				task.wakeup(co, conn)
 			end
 			return
 		end
@@ -1037,10 +1037,10 @@ local function conn_new(pool)
 	end
 	local max_open_conns = pool.max_open_conns
 	if max_open_conns > 0 and pool.open_count >= max_open_conns then
-		local co = silly.running()
+		local co = task.running()
 		local waiting_for_conn = pool.waiting_for_conn
 		waiting_for_conn[#waiting_for_conn + 1] = co
-		local conn = silly.wait()
+		local conn = task.wait()
 		if conn then
 			return conn
 		end
@@ -1131,7 +1131,7 @@ local function pool_close(self)
 	for i = 1, #waiting_for_conn do
 		local co = waiting_for_conn[i]
 		waiting_for_conn[i] = nil
-		silly.wakeup(co)
+		task.wakeup(co)
 	end
 end
 

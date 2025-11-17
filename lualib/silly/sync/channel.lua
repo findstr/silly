@@ -1,8 +1,8 @@
-local silly = require "silly"
+local task = require "silly.task"
 local queue = require "silly.adt.queue"
 local assert = assert
 local setmetatable = setmetatable
-local wakeup = silly.wakeup
+local wakeup = task.wakeup
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
@@ -54,8 +54,8 @@ function channel.pop(self)
 			return nil, "channel closed"
 		end
 		assert(not self.co)
-		self.co = silly.running()
-		local dat = silly.wait()
+		self.co = task.running()
+		local dat = task.wait()
 		if not dat then
 			return nil, "channel closed"
 		end
@@ -73,9 +73,8 @@ function channel.close(self)
 	local co = self.co
 	if co then
 		self.co = nil
-		silly.wakeup(co)
+		task.wakeup(co)
 	end
 end
 
 return channel
-

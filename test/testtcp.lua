@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local metrics = require "silly.metrics.c"
 local json = require "silly.encoding.json"
@@ -177,7 +178,7 @@ local function test_read(port)
 			recv_sum = testaux.checksum(recv_sum, n)
 			if recv_nr == send_nr then
 				if WAIT then
-					silly.wakeup(WAIT)
+					task.wakeup(WAIT)
 					break
 				end
 			end
@@ -210,8 +211,8 @@ local function test_read(port)
 		end
 	end
 	print("all data sent, wait recv")
-	WAIT = silly.running()
-	silly.wait()
+	WAIT = task.running()
+	task.wait()
 	testaux.asserteq(recv_nr, send_nr, "tcp send type count")
 	testaux.asserteq(recv_sum, send_sum, "tcp send checksum")
 	IO.close(fd)
@@ -351,7 +352,7 @@ local function test_close(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	silly.fork(function()
+	task.fork(function()
 		print("fork close")
 		IO.close(fd)
 	end)
@@ -378,7 +379,7 @@ local function test_close(port)
 	end
 	local fd = IO.connect("127.0.0.1" .. port)
 	testaux.assertneq(fd, nil, "client connect")
-	silly.fork(function()
+	task.fork(function()
 		time.sleep(1)
 		IO.close(fd)
 		print("fork close")

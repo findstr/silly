@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local lock = require "silly.sync.mutex"
 local time = require "silly.time"
 local net = require "silly.net"
@@ -55,8 +56,8 @@ local function process()
 	if not fd then
 		return
 	end
-	local otrace = silly.traceset(traceid)
-	silly.fork(process)
+	local otrace = task.traceset(traceid)
+	task.fork(process)
 	while true do
 		if cmd then	--rpc request
 			local body, err = unmarshal("request", cmd, buf)
@@ -83,16 +84,16 @@ local function process()
 		else	-- rpc response
 			local co = wait_pool[session]
 			wait_pool[session] = nil
-			silly.wakeup(co, buf)
+			task.wakeup(co, buf)
 		end
 		--next
 		fd, buf, session, cmd, traceid = c.pop(ctx)
 		if not fd then
 			return
 		end
-		silly.traceset(traceid)
+		task.traceset(traceid)
 	end
-	silly.traceset(otrace)
+	task.traceset(otrace)
 end
 
 ---@type silly.net.event
@@ -214,14 +215,14 @@ local timer_func = function(session)
 		return
 	end
 	wait_pool[session] = nil
-	silly.wakeup(co, nil)
+	task.wakeup(co, nil)
 end
 
 local waitfor = function(session, cmd)
-	local co = silly.running()
+	local co = task.running()
 	local timer_id = after(expire, timer_func, session)
 	wait_pool[session] = co
-	local body = silly.wait()
+	local body = task.wait()
 	if body then
 		cancel(timer_id)
 		local obj, err = unmarshal("response", cmd, body)
@@ -254,7 +255,7 @@ local function callx(is_send)
 		if not cmdn then
 			return nil, dat
 		end
-		local traceid = silly.tracepropagate()
+		local traceid = task.tracepropagate()
 		local session, body = c.request(cmdn, traceid, dat)
 		local ok, err = tcp_send(fd, body)
 		if not ok then

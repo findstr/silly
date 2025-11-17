@@ -1,4 +1,4 @@
-local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local env = require "silly.env"
 local logger = require "silly.logger"
@@ -249,18 +249,18 @@ do --parse hosts
 end
 
 local function suspend(session, timeout)
-	local co = silly.running()
+	local co = task.running()
 	wait_coroutine[session] = co
-	silly.fork(function()
+	task.fork(function()
 		time.sleep(timeout)
 		local co = wait_coroutine[session]
 		if not co then
 			return
 		end
 		wait_coroutine[session] = nil
-		silly.wakeup(co, false)
+		task.wakeup(co, false)
 	end)
-	return silly.wait()
+	return task.wait()
 end
 
 local function find_dns_server()
@@ -291,7 +291,7 @@ local function connectserver()
 	logger.info("[dns] server ip:", dns_server)
 	local fd = udp.connect(dns_server)
 	connectfd = fd
-	silly.fork(function()
+	task.fork(function()
 		while true do
 			local msg, err = udp.recvfrom(fd)
 			if not msg then
@@ -309,11 +309,11 @@ local function connectserver()
 				return
 			end
 			wait_coroutine[ID] = nil
-			silly.wakeup(co, ANCOUNT > 0)
+			task.wakeup(co, ANCOUNT > 0)
 		end
 		-- udp error, wakeup all
 		for k, co in pairs(wait_coroutine) do
-			silly.wakeup(co, false)
+			task.wakeup(co, false)
 			wait_coroutine[k] = nil
 		end
 		udp.close(connectfd)
@@ -449,4 +449,3 @@ function dns.isname(name)
 end
 
 return dns
-

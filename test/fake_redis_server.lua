@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
 ---@class FakeRedisServer
@@ -24,7 +25,7 @@ function M:start()
 		addr = "127.0.0.1:" .. self.port,
 		accept = function(client)
 			self.clients[client] = true
-			silly.fork(function()
+			task.fork(function()
 				self:handle_client(client)
 			end)
 		end

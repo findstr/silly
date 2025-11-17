@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local c = require "silly.hive.c"
 local mutex = require "silly.sync.mutex"
@@ -7,9 +8,9 @@ local error = error
 local pack = table.pack
 local unpack = table.unpack
 
-local task_running = silly.running
-local task_yield = silly._task_yield
-local task_resume = silly._task_resume
+local task_running = task.running
+local task_yield = task._task_yield
+local task_resume = task._task_resume
 
 local M = {}
 local working = {}

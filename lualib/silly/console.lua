@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local metrics = require "silly.metrics.c"
 local prometheus = require "silly.metrics.prometheus"
 local logger = require "silly.logger"
@@ -54,7 +55,7 @@ end
 
 function console.task(fd)
 	local buf = {}
-	local tasks = silly.tasks()
+	local tasks = task.tasks()
 	local i, j = 0, 1
 	for co, info in pairs(tasks) do
 		i = i + 1
@@ -218,4 +219,3 @@ tcp.listen {
 }
 
 end
-
