@@ -181,6 +181,7 @@ local channel_mt = {
 --- stream
 --- @field id integer
 --- @field active boolean
+--- @field closed boolean
 --- @field errstr string?
 --- @field localstate silly.net.http.h2.state
 --- @field remotestate silly.net.http.h2.state
@@ -442,6 +443,7 @@ local function channel_newstream(ch, id, active, method, path, header)
 		-- stream
 		id = id,
 		active = active,
+		closed = false,
 		localstate = STATE_NONE,
 		remotestate = STATE_NONE,
 		errstr = nil,
@@ -541,6 +543,7 @@ local function channel_clearstream(ch)
 	for k, v in pairs(t) do
 		t[k] = nil
 		-- Set state before waking up coroutines to ensure consistent state
+		v.closed = true
 		v.channel = nil
 		v.errstr = "channel goaway"
 		v.localstate = STATE_RST
@@ -981,10 +984,11 @@ end
 
 ---@param s silly.net.http.h2.stream
 function S.close(s)
-	local ch = s.channel
-	if not ch then
+	if s.closed then
 		return
 	end
+	s.closed = true
+	local ch = s.channel
 	local localstate = s.localstate
 	local remotestate = s.remotestate
 	-- If localstate < STATE_CLOSE, we haven't sent END_STREAM or RST yet
@@ -1006,8 +1010,8 @@ function S.close(s)
 		s.localstate = STATE_RST
 		s.remotestate = STATE_RST
 		s.errstr = "local closed"
-		s.channel = nil
 		ch.streams[s.id] = nil
+		s.channel = nil
 		stream_readwakeup(s, nil)
 		stream_writewakeup(s, "local closed")
 	end

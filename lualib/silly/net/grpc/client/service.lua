@@ -90,12 +90,7 @@ end
 
 ---@param s silly.net.grpc.client.cstream | silly.net.grpc.client.bstream | silly.net.grpc.client.sstream
 local function stream_close(s)
-	local h2stream = s.h2stream
-	if not h2stream then
-		return
-	end
-	s.h2stream = nil
-	h2stream:close()
+	s.h2stream:close()
 end
 
 ---@class silly.net.grpc.client.cstream
