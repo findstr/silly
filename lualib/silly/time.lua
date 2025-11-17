@@ -30,7 +30,7 @@ function M.sleep(ms)
 end
 
 ---@param ms integer
----@param func function
+---@param func async fun(any)
 ---@param ud any
 function M.after(ms, func, ud)
 	local userid

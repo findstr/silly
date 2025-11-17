@@ -2961,6 +2961,62 @@ message AuthRoleRevokePermissionResponse {
 
   ResponseHeader header = 1;
 }
-]], "rpc.proto"))
+]], "etcdv3.proto"))
+
+---@class silly.store.etcd.ResponseHeader
+---@field cluster_id integer
+---@field member_id integer
+---@field revision integer
+---@field raft_term integer
+
+---@class silly.store.etcd.KeyValue
+---@field key string
+---@field create_revision integer
+---@field mod_revision integer
+---@field version integer
+---@field value string
+---@field lease integer
+
+---@class silly.store.etcd.Event
+---@field type integer
+---@field kv silly.store.etcd.KeyValue
+---@field prev_kv silly.store.etcd.KeyValue
+
+
+---@class silly.store.etcd.LeaseKeepAliveResponse
+---@field header silly.store.etcd.ResponseHeader
+---@field ID integer
+---@field TTL integer
+
+---@class silly.store.etcd.WatchCreateRequest
+---@field key string
+---@field range_end string?
+---@field start_revision integer?
+---@field progress_notify boolean?
+---@field filters silly.store.etcd.WatchFilterType[]?
+---@field prev_kv boolean?
+---@field watch_id integer
+---@field fragment boolean?
+
+---@class silly.store.etcd.WatchCancelRequest
+---@field watch_id integer
+
+---@class silly.store.etcd.WatchProgressRequest
+---@field progress_request boolean
+
+---@class silly.store.etcd.WatchRequest
+---@field create_request silly.store.etcd.WatchCreateRequest?
+---@field cancel_request silly.store.etcd.WatchCancelRequest?
+---@field progress_request silly.store.etcd.WatchProgressRequest?
+
+---@class silly.store.etcd.WatchResponse
+---@field header silly.store.etcd.ResponseHeader
+---@field watch_id integer
+---@field created boolean
+---@field canceled boolean
+---@field compact_revision integer
+---@field cancel_reason string
+---@field fragment boolean
+---@field events silly.store.etcd.Event[]
 
 return p

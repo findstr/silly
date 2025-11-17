@@ -2,6 +2,11 @@ local http = require "silly.net.http"
 local base64 = require "silly.encoding.base64"
 local sha1 = require "silly.crypto.hash".new("sha1")
 local utils = require "silly.crypto.utils"
+local helper = require "silly.net.http.helper"
+local dns = require "silly.net.dns"
+local tcp = require "silly.net.tcp"
+local tls = require "silly.net.tls"
+local h1 = require "silly.net.http.h1"
 
 local pairs = pairs
 local tostring = tostring
@@ -13,15 +18,12 @@ local unpack = string.unpack
 local format = string.format
 local xor = utils.xor
 local randomkey = utils.randomkey
+local parseurl = helper.parseurl
 
 ---@class silly.net.websocket
 local M = {}
 local NIL = ""
 local guid = [[258EAFA5-E914-47DA-95CA-C5AB0DC85B11]]
-local func_mask_cache = {
-	[0] = setmetatable({}, {__mode="kv"}),
-	[1] = setmetatable({}, {__mode="kv"}),
-}
 
 local checklist = {
 	["upgrade"] = "websocket",
@@ -44,10 +46,10 @@ local data_type = {
 	["pong"] = 10,
 }
 
-
-local function read_frame(fd, r, needmask)
+---@param conn silly.net.tcp.conn|silly.net.tls.conn
+local function read_frame(conn, needmask)
 	local dat
-	local tmp, err = r(fd, 2)
+	local tmp, err = conn:read(2)
 	if err then -- the frame header is not read, treat as EOF
 		return nil, err, ""
 	end
@@ -60,30 +62,30 @@ local function read_frame(fd, r, needmask)
 		return nil, needmask == 1 and "need mask but got none" or "got mask but need none"
 	end
 	if payload == 126 then
-		tmp, err = r(fd, 2)
+		tmp, err = conn:read(2)
 		if err then
 			return nil, err, ""
 		end
 		payload = unpack(">I2", tmp)
 	elseif payload == 127 then
-		tmp, err = r(fd, 8)
+		tmp, err = conn:read(8)
 		if err then
 			return nil, err, ""
 		end
 		payload = unpack(">I8", tmp)
 	end
 	if mask == 1 then
-		masking_key, err = r(fd, 4)
+		masking_key, err = conn:read(4)
 		if not masking_key then
 			return nil, err, ""
 		end
-		dat, err = r(fd, payload)
+		dat, err = conn:read(payload)
 		if err then
 			return nil, err, ""
 		end
 		dat = xor(masking_key, dat)
 	else
-		dat, err = r(fd, payload)
+		dat, err = conn:read(payload)
 		if err then
 			return nil, err, ""
 		end
@@ -91,9 +93,13 @@ local function read_frame(fd, r, needmask)
 	return fin, op, dat
 end
 
----@param w fun(fd:integer, data:string):boolean, string?
+---@param conn silly.net.tcp.conn|silly.net.tls.conn
+---@param fin integer
+---@param op integer
+---@param mask integer
+---@param dat string
 ---@return boolean, string?
-local function write_frame(w, fd, fin, op, mask, dat)
+local function write_frame(conn, fin, op, mask, dat)
 	local hdr
 	local len = #dat
 	if len < 125 then
@@ -113,138 +119,132 @@ local function write_frame(w, fd, fin, op, mask, dat)
 	if mask == 1 then
 		local masking_key = randomkey(4)
 		dat = xor(masking_key, dat)
-		return w(fd, hdr .. masking_key .. dat)
+		return conn:write(hdr .. masking_key .. dat)
 	else
-		return w(fd, hdr .. dat)
+		return conn:write(hdr .. dat)
 	end
 end
 
----@param r async fun(fd:integer, n:integer):string?, string?
-local function wrap_read(r, mask)
-	local f = func_mask_cache[mask][r]
-	if f then
-		return f
-	end
-	f = function(sock)
-		local stashbuf = sock.stashbuf
-		local fd = sock.fd
-		if not stashbuf then -- read first frame
-			local fin, op, dat = read_frame(fd, r, mask)
-			if not fin then
-				return nil, op, ""
-			end
-			local format = data_type[op]
-			if not format then
-				return nil, "unknown frame type:" .. tostring(op), ""
-			end
-			if fin ~= 0 then
-				return dat, format
-			end
-			stashbuf = {dat}
-			sock.stashtype = format
-			sock.stashbuf = stashbuf
+---@class silly.net.websocket.socket
+---@field conn silly.net.tcp.conn|silly.net.tls.conn
+---@field stream silly.net.http.h1.stream.client|silly.net.http.h1.stream.client
+---@field rmask integer
+---@field wmask integer
+---@field stashtype string|nil
+---@field stashbuf string[]|nil
+local s = {}
+
+---@param sock silly.net.websocket.socket
+function s.read(sock)
+	local conn = sock.conn
+	local rmask = sock.rmask
+	local stashbuf = sock.stashbuf
+	if not stashbuf then -- read first frame
+		local fin, op, dat = read_frame(conn, rmask)
+		if not fin then
+			return nil, op, ""
 		end
+		local format = data_type[op]
+		if not format then
+			return nil, "unknown frame type:" .. tostring(op), ""
+		end
+		if fin ~= 0 then
+			return dat, format
+		end
+		stashbuf = {dat}
+		sock.stashtype = format
+		sock.stashbuf = stashbuf
+	end
+	local fin = 0
+	while fin == 0 do
+		local op, dat, err
+		fin, op, dat = read_frame(conn, rmask)
+		if not fin then
+			return nil, op, ""
+		end
+		if op ~= 0 then
+			return dat, data_type[op]
+		end
+		stashbuf[#stashbuf + 1] = dat
+	end
+	local dat = concat(stashbuf)
+	local format = sock.stashtype
+	sock.stashbuf = nil
+	sock.stashtype = nil
+	return dat, format
+end
+
+---@param sock silly.net.websocket.socket
+---@param dat string?
+---@param typ string
+function s.write(sock, dat, typ)
+	typ = typ or "binary"
+	dat = dat or NIL
+	if #dat > 125 and typ ~= "text" and typ ~= "binary" then
+		return false, "all control frames MUST have a payload length of 125 bytes or less"
+	end
+	local ok, err
+	local conn = sock.conn
+	local wmask = sock.wmask
+	local len = #dat
+	local op = assert(data_type[typ], typ)
+	if len >= 2^16 then
+		local off = 1
+		local nxt = 1
 		local fin = 0
 		while fin == 0 do
-			local op, dat, err
-			fin, op, dat = read_frame(fd, r, mask)
-			if not fin then
-				return nil, op, ""
+			nxt = off + 2^16 - 1
+			local tmp = dat:sub(off, nxt)
+			if nxt >= len then
+				fin = 1
 			end
-			if op ~= 0 then
-				return dat, data_type[op]
+			off = nxt + 1
+			ok, err = write_frame(conn, fin, op, wmask, tmp)
+			if not ok then
+				break
 			end
-			stashbuf[#stashbuf + 1] = dat
+			op = 0
 		end
-		local dat = concat(stashbuf)
-		local format = sock.stashtype
-		sock.stashbuf = nil
-		sock.stashtype = nil
-		return dat, format
+	else
+		ok, err = write_frame(conn, 1, op, wmask, dat)
 	end
-	func_mask_cache[mask][r] = f
-	return f
+	return ok, err
 end
 
-
-local function wrap_write(w, mask)
-	local f = func_mask_cache[mask][w]
-	if f then
-		return f
-	end
-	--local MAX_FRAGMENT = 64*1024-1
-	f = function(sock, dat, typ)
-		typ = typ or "binary"
-		dat = dat or NIL
-		if #dat > 125 and typ ~= "text" and typ ~= "binary" then
-			return false, "all control frames MUST have a payload length of 125 bytes or less"
-		end
-		local ok, err
-		local fd = sock.fd
-		local len = #dat
-		local op = assert(data_type[typ], typ)
-		if len >= 2^16 then
-			local off = 1
-			local nxt = 1
-			local fin = 0
-			while fin == 0 do
-				nxt = off + 2^16 - 1
-				local tmp = dat:sub(off, nxt)
-				if nxt >= len then
-					fin = 1
-				end
-				off = nxt + 1
-				ok, err = write_frame(w, fd, fin, op, mask, tmp)
-				if not ok then
-					break
-				end
-				op = 0
-			end
-		else
-			ok, err = write_frame(w, fd, 1, op, mask, dat)
-		end
-		return ok, err
-	end
-	func_mask_cache[mask][w] = f
-	return f
+---@param sock silly.net.websocket.socket
+---@return boolean, string?
+function s.close(sock)
+	sock:write("", "close")
+	local conn = sock.conn
+	local ok, err = conn:close()
+	sock.conn = nil
+	return ok, err
 end
 
-local function wrap_close(c)
-	local f = func_mask_cache[0][c]
-	if f then
-		return f
-	end
-	---@param sock silly.net.websocket.socket
-	f = function(sock)
-		sock:write(nil, "close")
-		return c(sock.fd)
-	end
-	func_mask_cache[0][c] = f
-	return f
-end
-
+---@param stream silly.net.http.h1.stream.server
+---@return boolean, string? error
 local function handshake(stream)
-	local write = stream.respond
+	local respond = stream.respond
 	if stream.method ~= "GET" then
-		write(stream, 400)
-		return
+		respond(stream, 400, {})
+		return false, "method not GET"
 	end
 	local header = stream.header
 	if not header then
-		write(stream, 400)
-		return
+		respond(stream, 400, {})
+		return false, "header not found"
 	end
 	for k, v in pairs(checklist) do
 		local verify = header[k]
 		if verify and verify ~= v then
-			write(stream, 400)
-			return
+			respond(stream, 400, {})
+			return false, "header " .. k .. " mismatch"
 		end
 	end
 	local key = header["sec-websocket-key"]
 	if not key then
-		write(stream, 400)
-		return
+		respond(stream, 400, {})
+		return false, "sec-websocket-key not found"
 	end
 	key = base64.encode(sha1:digest(key .. guid))
 	local ack = {
@@ -252,73 +252,89 @@ local function handshake(stream)
 		["upgrade"] = "websocket",
 		["sec-websocket-accept"] = key,
 	}
-	return write(stream, 101, ack)
+	respond(stream, 101, ack)
+	return true, nil
 end
 
----@param stream silly.net.http.h1stream
+local s_mt = {
+	__index = s,
+	__close = s.close,
+}
+
+---@param stream silly.net.http.h1.stream.client|silly.net.http.h1.stream.server
 ---@param isclient boolean
 ---@return silly.net.websocket.socket
-local function upgrade(stream, isclient)
-	local transport = stream.transport
-	local read = transport.read
-	local write = transport.write
-	local close = transport.close
+local function newsocket(stream, isclient)
 	local rmask = isclient and 0 or 1
 	local wmask = isclient and 1 or 0
 	---@class silly.net.websocket.socket
 	local sock = {
-		fd = stream.fd,
+		conn = stream.conn,
 		stream = stream,
-		read = wrap_read(read, rmask),
-		write = wrap_write(write, wmask),
-		close = wrap_close(close),
+		rmask = rmask,
+		wmask = wmask,
 		stashtype = nil,
 		stashbuf = nil,
 	}
+	setmetatable(sock, s_mt)
 	return sock
-end
-
-local function wrap_handshake(handler)
-	---@param stream silly.net.http.h1stream
-	return function(stream)
-		if handshake(stream) then
-			local sock = upgrade(stream, false)
-			handler(sock)
-		else
-			stream:close()
-		end
-	end
-end
-
----@class silly.net.websocket.listen.conf:silly.net.http.transport.listen.conf
----@field handler fun(sock: silly.net.websocket.socket)
-
----@param conf silly.net.websocket.listen.conf
-function M.listen(conf)
-	conf.handler = wrap_handshake(conf.handler)
-	return http.listen(conf)
 end
 
 ---@param url string
 ---@param header table|nil
 ---@return silly.net.websocket.socket|nil, string|nil
 function M.connect(url, header)
-	url = url:gsub("^ws", "http")
+	local conn, err
+	local scheme, host, port, path = parseurl(url)
+	local ip = dns.lookup(host, dns.A)
+	if not ip then
+		return nil, "dns lookup failed"
+	end
+	assert(ip, host)
+	local addr = format("%s:%s", ip, port)
+	if scheme == "wss" then
+		conn, err = tls.connect(addr, {hostname = host})
+	else
+		conn, err = tcp.connect(addr)
+	end
+	if not conn then
+		return nil, err
+	end
 	header = header or {}
 	header["connection"] = "Upgrade"
+	header["host"] = host
 	header["upgrade"] = "websocket"
 	header["sec-websocket-version"] = 13
 	header["sec-websocket-key"] = base64.encode(randomkey(16))
-	local stream, err = http.request("GET", url, header)
-	if not stream then
+	local stream = h1.newstream(scheme, conn)
+	local ok, err = stream:request("GET", path, header)
+	if not ok then
+		stream:close()
 		return nil, err
 	end
-	local status, err = stream:readheader()
+	stream:closewrite()
+	local ok, err = stream:waitresponse()
+	if not ok then
+		stream:close()
+		return nil, err
+	end
+	local status = stream.status
 	if not status or status ~= 101 then
 		stream:close()
 		return nil, format("websocket.connect fail:%s", status or err)
 	end
-	return upgrade(stream, true), nil
+	return newsocket(stream, true), nil
+end
+
+---@param stream silly.net.http.h1.stream.server
+function M.upgrade(stream)
+	local ok, err = handshake(stream)
+	if not ok then
+		return nil, err
+	end
+	local sock = newsocket(stream, false)
+	stream:closewrite()
+	return sock, nil
 end
 
 return M

@@ -781,7 +781,7 @@ testaux.case("Test 33: Invalid argument type for read", function()
 
 	local ok, err = pcall(function() buffer.read(b, {}) end)
 	testaux.asserteq(ok, false, "invalid read type throws")
-	testaux.asserteq(not not err:find("invalid"), true, "error message mentions invalid")
+	testaux.asserteq(not not err:find("bad argument #2 to 'read'"), true, "error message mentions invalid")
 end)
 
 -- Test 34: Invalid argument type for append

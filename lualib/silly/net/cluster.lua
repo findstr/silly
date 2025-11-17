@@ -24,7 +24,7 @@ local cancel = time.cancel
 ---@class silly.net.cluster.listener
 ---@field fd integer
 
----@alias silly.net.cluster.marshal fun(typ:"request"|"response", cmd:string, obj:table):integer, string
+---@alias silly.net.cluster.marshal fun(typ:"request"|"response", cmd:integer|string, obj:table):integer, string
 ---@alias silly.net.cluster.unmarshal fun(typ:"request"|"response", cmd:integer|string, dat:string):table?, string? error
 ---@alias silly.net.cluster.call fun(peer:silly.net.cluster.peer, cmd:integer, obj:table):table?
 ---@alias silly.net.cluster.accept fun(peer:silly.net.cluster.peer, addr:string)

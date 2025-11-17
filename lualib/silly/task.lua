@@ -12,7 +12,6 @@ local task = {}
 local error = error
 local pairs = pairs
 local assert = assert
-local xpcall = xpcall
 local tostring = tostring
 local setmetatable = setmetatable
 local tremove = table.remove
@@ -69,14 +68,6 @@ local function task_resume(t, ...)
 	end
 end
 
-local function errmsg(msg)
-	return traceback("error: " .. tostring(msg), 2)
-end
-
-local function silly_pcall(f, ...)
-	return xpcall(f, errmsg, ...)
-end
-
 local trace_node_id = 0
 
 ---@param nodeid integer
@@ -110,8 +101,6 @@ function task.error(errmsg)
 	log_error(errmsg)
 	log_error(traceback())
 end
-
-task.pcall = silly_pcall
 
 ---@return thread
 function task.running()
@@ -213,9 +202,13 @@ function task._exit(status)
 end
 
 ---@param func async fun()
-function task.fork(func)
+---@param ud any
+function task.fork(func, ud)
 	local t = task_create(func)
 	task_status[t] = "READY"
+	if ud then
+		wakeup_task_param[t] = ud
+	end
 	qpush(wakeup_task_queue, t)
 	return t
 end
@@ -242,7 +235,9 @@ function task.wakeup(t, res)
 		error("BUG: wakeup on task stat:" .. tostring(status))
 	end
 	task_status[t] = "READY"
-	wakeup_task_param[t] = res
+	if res then
+		wakeup_task_param[t] = res
+	end
 	qpush(wakeup_task_queue, t)
 end
 

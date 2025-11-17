@@ -1,6 +1,8 @@
 local silly = require "silly"
+local logger = require "silly.logger"
 local time = require "silly.time"
 local tcp = require "silly.net.tcp"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
@@ -17,22 +19,32 @@ local server_handler = nop
 ---@async
 local tls_server_handler = nop
 
-local server, err = websocket.listen {
+local server, err = http.listen {
 	addr = TEST_HOST .. ":" .. TEST_PORT,
-	handler = function(sock)
+	handler = function(stream)
+		local sock, err = websocket.upgrade(stream)
+		if not sock then
+			logger.error("websocket upgrade failed: %s", err)
+			return
+		end
 		server_handler(sock)
 		server_handler = nop
 	end,
 }
 testaux.asserteq(not not server, true, "start websocket server")
 
-local tls_server, err = websocket.listen {
+local tls_server, err = http.listen {
 	tls = true,
 	addr = TEST_HOST .. ":" .. TLS_PORT,
 	certs = {
 		{cert = testaux.CERT_DEFAULT, key = testaux.KEY_DEFAULT}
 	},
-	handler = function(sock)
+	handler = function(stream)
+		local sock, err = websocket.upgrade(stream)
+		if not sock then
+			logger.error("websocket upgrade failed: %s", err)
+			return
+		end
 		tls_server_handler(sock)
 		tls_server_handler = nop
 	end,
@@ -49,14 +61,18 @@ local function wait_done()
 end
 
 testaux.case("Test 1: Basic connection establishment", function()
+	---@param sock silly.net.websocket.socket
 	server_handler = function(sock)
 		sock:close()
 	end
 	local sock, err = websocket.connect("ws://" .. TEST_HOST .. ":" .. TEST_PORT)
+	print("connect:", sock, err)
 	testaux.asserteq(not not sock, true, "Basic connection succeeds")
 	testaux.asserteq(err, nil, "No connection error")
 	assert(sock)
+	print("-----------1")
 	sock:close()
+	print("-----------2")
 	wait_done()
 end)
 
@@ -168,7 +184,7 @@ testaux.case("Test 4: Error condition - abrupt connection close", function()
 	local sock = websocket.connect("ws://" .. TEST_HOST .. ":" .. TEST_PORT)
 	testaux.assertneq(sock, nil, "Client connected")
 	assert(sock)
-	tcp.close(sock.fd)
+	sock.conn:close()
 	wait_done()
 end)
 
@@ -186,10 +202,9 @@ testaux.case("Test 5: TLS encrypted connection", function()
 	testaux.asserteq(data, "secure", "TLS data content correct")
 	sock:close()
 
-	print("connect tls", sock)
 	local sock2, err = websocket.connect("wss://" .. TEST_HOST .. ":" .. TEST_PORT)
 	testaux.asserteq(sock2, nil, "wss can't connect to non-TLS server")
-	testaux.asserteq(err, "websocket.connect fail:end of file", "wss connection error correct")
+	testaux.asserteq(err, "end of file", "wss connection error correct")
 	wait_done()
 end)
 

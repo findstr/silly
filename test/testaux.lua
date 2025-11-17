@@ -227,6 +227,7 @@ function testaux.case(name, fn)
 		print(string.format("-----Skipping %s (filtered)-----", name))
 		return
 	end
+	print(format('\27[32m%sCASE:\t"%s"\27[0m', m, name))
 	fn()
 end
 

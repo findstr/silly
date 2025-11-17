@@ -97,13 +97,13 @@ do
 	testaux.asserteq(success, true, "Case4: Push to open channel succeeded")
 
 	-- Close the channel
-	ch:close()
-	testaux.asserteq(ch.closed, true, "Case4: Channel marked as closed")
+	ch:close("abcdefg")
+	testaux.asserteq(ch.reason, "abcdefg", "Case4: Channel marked as closed")
 
 	-- Try to push to closed channel
 	success, err = ch:push("another message")
 	testaux.asserteq(success, false, "Case4: Push to closed channel fails")
-	testaux.asserteq(err, "channel closed", "Case4: Push to closed channel returns error")
+	testaux.asserteq(err, "abcdefg", "Case4: Push to closed channel returns error")
 
 	-- Pop existing message from closed channel
 	local value, err = ch:pop()
@@ -113,7 +113,7 @@ do
 	-- Try to pop from empty closed channel
 	value, err = ch:pop()
 	testaux.asserteq(value, nil, "Case4: Pop from empty closed channel returns nil")
-	testaux.asserteq(err, "channel closed", "Case4: Pop from empty closed channel returns error")
+	testaux.asserteq(err, "abcdefg", "Case4: Pop from empty closed channel returns error")
 
 	-- Test closing a channel with waiting coroutine
 	ch = channel.new()

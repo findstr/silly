@@ -8,9 +8,9 @@ local qpop = queue.pop
 local qpush = queue.push
 local qclear = queue.clear
 
----@class silly.sync.channel
----@field queue userdata
----@field closed boolean
+---@class silly.sync.channel<T>
+---@field queue silly.adt.queue
+---@field reason string?
 ---@field co thread|nil
 local channel = {}
 
@@ -21,21 +21,23 @@ function channel.new()
 	local obj = {
 		queue = qnew(),
 		co = nil,
-		closed = false,
+		reason = nil,
 	}
 	setmetatable(obj, mt)
 	return obj
 end
 
----@param self silly.sync.channel
----@param dat any
+---@generic T
+---@param self silly.sync.channel<T>
+---@param dat T
 ---@return boolean, string? error
 function channel.push(self, dat)
 	if not dat then
 		return false, "nil data"
 	end
-	if self.closed then
-		return false, "channel closed"
+	local reason = self.reason
+	if reason then
+		return false, reason
 	end
 	local co = self.co
 	if co then
@@ -47,29 +49,41 @@ function channel.push(self, dat)
 	return true, nil
 end
 
+---@generic T
+---@param self silly.sync.channel<T>
+---@return T?, string? error
 function channel.pop(self)
 	local dat = qpop(self.queue)
 	if not dat then
-		if self.closed then
-			return nil, "channel closed"
+		local reason = self.reason
+		if reason then
+			return nil, reason
 		end
-		assert(not self.co)
+		local co = self.co
+		if co then
+			return nil, "channel is mpsc"
+		end
 		self.co = task.running()
 		local dat = task.wait()
 		if not dat then
-			return nil, "channel closed"
+			return nil, self.reason
 		end
 		return dat, nil
 	end
 	return dat, nil
 end
 
+---@generic T
+---@param self silly.sync.channel<T>
 function channel.clear(self)
 	qclear(self.queue)
 end
 
-function channel.close(self)
-	self.closed = true
+---@generic T
+---@param self silly.sync.channel<T>
+---@param reason string?
+function channel.close(self, reason)
+	self.reason = reason or "channel closed"
 	local co = self.co
 	if co then
 		self.co = nil

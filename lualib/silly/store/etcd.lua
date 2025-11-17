@@ -1,27 +1,53 @@
-local time = require "silly.time"
 local silly = require "silly"
+local task = require "silly.task"
+local time = require "silly.time"
 local logger = require "silly.logger"
 local grpc = require "silly.net.grpc"
-local proto = require "silly.store.etcd.v3.proto"
+local v3proto = require "silly.store.etcd.v3.proto"
+local channel = require "silly.sync.channel"
 local pb = require "pb"
+
+local DEFAULT_TTL<const> = 5000
+local RETRY_CONN_WAIT<const> = 500
+
+---@class silly.store.etcd.keepalive
+---@field deadline integer
+---@field nextkeepalive integer
+
+---@class silly.store.etcd.watcher
+---@field watchid integer
+---@field canceling boolean
+---@field watchreqc silly.sync.channel<silly.store.etcd.watcher>
+---@field createreq silly.store.etcd.WatchCreateRequest
+---@field outch silly.sync.channel<silly.store.etcd.WatchResponse>
+local watcher = {}
+local watcher_mt = { __index = watcher }
+
 ---@class silly.store.etcd.client
+---@field closed boolean
+---@field dialtimeout integer
+---@field conn silly.net.grpc.client.conn
 ---@field retry integer
 ---@field retry_sleep integer
----@field kv silly.net.grpc.client
----@field lease silly.net.grpc.client
----@field watcher silly.net.grpc.client
----@field lease_list table<integer, boolean>
----@field lease_timer fun(self:silly.store.etcd.client)
+---@field keepalives table<integer, silly.store.etcd.keepalive>
+---@field keepalivetimeout integer
+---@field keepaliveco thread?
+---@field keepstream silly.net.grpc.client.bstream?
+---@field watchidx integer
+---@field watchers table<integer, silly.store.etcd.watcher>
+---@field watchreqc silly.sync.channel<silly.store.etcd.WatchRequest>
+---@field watchco thread?
+---@field watchstream silly.net.grpc.client.bstream?
+---@field kv silly.net.grpc.client.service
+---@field lease silly.net.grpc.client.service
+---@field watch_ silly.net.grpc.client.service
 local M = {}
 
-local next = next
 local pairs = pairs
 local assert = assert
-local sort = table.sort
 local sub = string.sub
 local char = string.char
 local sleep = time.sleep
-local timeout = time.after
 local setmetatable = setmetatable
 
 local no_prefix_end = "\0"
@@ -40,6 +66,7 @@ local sort_target_num <const> = {
 	VALUE = pb.enum(".etcdserverpb.RangeRequest.SortTarget", "VALUE"),
 }
 
+---@enum silly.store.etcd.WatchFilterType
 local watch_filter_type <const> = {
 	NOPUT = pb.enum(".etcdserverpb.WatchCreateRequest.FilterType", "NOPUT"),
 	NODELETE = pb.enum(".etcdserverpb.WatchCreateRequest.FilterType", "NODELETE"),
@@ -113,100 +140,228 @@ local function apply_options(options)
 	end
 end
 
+---@param c silly.store.etcd.client
+---@param resp silly.store.etcd.LeaseKeepAliveResponse
+local function lease_recv_keepalive(c, resp)
+	local keepalives = c.keepalives
+	local ka = keepalives[resp.ID]
+	if not ka then
+		return
+	end
+	if resp.TTL <= 0 then
+		keepalives[resp.ID] = nil
+		return
+	end
+	local ttl = resp.TTL
+	local now = time.now()
+	ka.deadline = now + ttl
+	ka.nextkeepalive = now + ttl // 3
+end
+
+---@param args {c:silly.store.etcd.client, stream:silly.net.grpc.client.bstream}
+local function lease_send_task(args)
+	local c = args.c
+	local stream = args.stream
+	local keepalives = c.keepalives
+	while not c.closed do
+		local tosend = {}
+		local now = time.now()
+		for id, ka in pairs(keepalives) do
+			if ka.nextkeepalive <= now then
+				tosend[#tosend + 1] = id
+			end
+		end
+		for i = 1, #tosend do
+			local id = tosend[i]
+			local ok, err = stream:write {
+				ID = id,
+			}
+			if not ok then
+				logger.warn("[etcd] lease keepalive id:", id, "send error:", err)
+				return
+			end
+		end
+		time.sleep(RETRY_CONN_WAIT)
+	end
+end
+
+---@param c silly.store.etcd.client
+local function lease_recv_task(c)
+	while not c.closed do
+		local stream, err = c.lease:LeaseKeepAlive()
+		if not stream then
+			logger.warn("[etcd] lease keepalive stream error:", err)
+		else
+			c.keepstream = stream
+			task.fork(lease_send_task, {c = c, stream = stream})
+			while true do
+				local res = stream:read()
+				if not res then
+					logger.warn("[etcd] lease keepalive read error:", stream.message)
+					break
+				end
+				---@cast res silly.store.etcd.LeaseKeepAliveResponse
+				lease_recv_keepalive(c, res)
+			end
+		end
+		time.sleep(RETRY_CONN_WAIT)
+	end
+end
+
+local EOS<const> = {}
+---@param args {c:silly.store.etcd.client, stream:silly.net.grpc.client.bstream}
+local function watch_recv_task(args)
+	local c = args.c
+	local stream = args.stream
+	local watchers = c.watchers
+	while true do
+		local res = stream:read()
+		if not res then
+			logger.warn("[etcd] watch stream read error:", stream.message)
+			break
+		end
+		local nstream = c.watchstream
+		if stream ~= nstream then
+			break
+		end
+		local watchid = res.watch_id
+		local w = watchers[watchid]
+		---@cast res silly.store.etcd.WatchResponse
+		if res.canceled then
+			watchers[watchid] = nil
+			w.outch:close("watch canceled")
+		elseif not res.created then
+			local events = res.events
+			local n = #events
+			if n > 0 then
+				w.createreq.start_revision = events[n].kv.mod_revision + 1
+			end
+			w.outch:push(res)
+		end
+	end
+	c.watchreqc:push(EOS)
+end
+
+---@param c silly.store.etcd.client
+local function watch_request_task(c)
+	local stream, err
+	local watchers = c.watchers
+	local watchreqc = c.watchreqc
+	while true do
+		local reqw = watchreqc:pop()
+		if not reqw then --watchreqc closed
+			break
+		end
+		---@cast reqw silly.store.etcd.WatchRequest
+		::reconnect::
+		if c.closed then
+			break
+		end
+		if not stream then
+			stream, err = c.watch_:Watch()
+			if not stream then
+				logger.warn("[etcd] watch stream error:", err)
+				time.sleep(RETRY_CONN_WAIT)
+				goto reconnect
+			end
+			c.watchstream = stream
+			task.fork(watch_recv_task, {c = c, stream = stream})
+			watchreqc:clear()
+			local tosend = {}
+			for k, w in pairs(watchers) do
+				if w.canceling then
+					w.outch:close("watch canceled")
+					watchers[k] = nil
+				else
+					tosend[#tosend + 1] = {
+						create_request = w.createreq,
+					}
+				end
+			end
+			for i = 1, #tosend do
+				local ok, err = stream:write(tosend[i])
+				if not ok then
+					logger.warn("[etcd] watch stream write error:", err)
+					stream:close()
+					stream = nil
+					goto reconnect
+				end
+			end
+		elseif reqw ~= EOS then
+			local ok, err = stream:write(reqw)
+			if not ok then
+				logger.warn("[etcd] watch stream write error:", err)
+				stream:close()
+				stream = nil
+				goto reconnect
+			end
+		else
+			stream:close()
+			stream = nil
+			goto reconnect
+		end
+	end
+end
+
+---@param self silly.store.etcd.watcher
+---@return silly.store.etcd.WatchResponse?, string? error
+function watcher:read()
+	return self.outch:pop()
+end
+
+---@param self silly.store.etcd.watcher
+function watcher:cancel()
+	if self.canceling then
+		return
+	end
+	self.canceling = true
+	self.watchreqc:push {
+		cancel_request = {
+			watch_id = self.watchid,
+		},
+	}
+end
+
 local mt = { __index = M }
----@param conf {
+---@param opts {
 ---	endpoints:string[],	--etcd server address
 ---	retry:integer|nil,	--retry times
 ---	retry_sleep:integer|nil,--retry sleep time(ms)
----	timeout:number|nil,	--timeout
+---	dialtimeout:number|nil, --timeout
 ---}
----@return silly.store.etcd.client
-function M.newclient(conf)
-	local c = setmetatable({
-		retry = conf.retry or 5,
-		retry_sleep = conf.retry_sleep or 1000,
-		kv = assert(grpc.newclient {
-			service = "KV",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		lease = assert(grpc.newclient {
-			service = "Lease",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		watcher = assert(grpc.newclient {
-			service = "Watch",
-			endpoints = conf.endpoints,
-			proto = proto.loaded['rpc.proto'],
-			timeout = conf.timeout,
-		}),
-		lease_list = {},
-		lease_timer = nil,
-		keepalive_stream = nil
-	}, mt)
-	c.lease_timer = function(_)
-		local n = 0
-		local stream = c.keepalive_stream
-		if not stream then
-			stream = c.lease.LeaseKeepAlive()
-			c.keepalive_stream = stream
-		end
-		for lease_id in pairs(c.lease_list) do
-			local ok, err = stream:write {
-				ID = lease_id,
-			}
-			if ok then
-				local res, err = stream:read()
-				if not res then
-					logger.error("[etcd] lease keepalive error:", err)
-				end
-			else
-				logger.error("[etcd] lease keepalive lease:", lease_id, "error:", err)
-			end
-			n = n + 1
-		end
-		if n > 0 then
-			timeout(1000, c.lease_timer)
-		else
-			stream:close()
-			c.keepalive_stream = nil
-		end
+---@return silly.store.etcd.client?, string? error
+function M.newclient(opts)
+	local conn, err = grpc.newclient {
+		targets = opts.endpoints
+	}
+	if not conn then
+		return nil, err
 	end
+	local dialtimeout = opts.dialtimeout or 0
+	local keepalivetimeout = dialtimeout == 0 and DEFAULT_TTL or (dialtimeout + 1000)
+	local proto = v3proto.loaded["etcdv3.proto"]
+	---@type silly.store.etcd.client
+	local c = {
+		closed = false,
+		conn = conn,
+		retry = opts.retry or 5,
+		retry_sleep = opts.retry_sleep or 1000,
+		dialtimeout = dialtimeout,
+		keepalives = {},
+		keepaliveco = nil,
+		keepalivetimeout = keepalivetimeout,
+		keepstream = nil,
+		watchidx = 1,
+		watchers = {},
+		watchstream = nil,
+		watchreqc = channel.new(),
+		kv = assert(grpc.newservice(conn, proto, "KV")),
+		lease = assert(grpc.newservice(conn, proto, "Lease")),
+		watch_ = assert(grpc.newservice(conn, proto, "Watch")),
+	}
+	setmetatable(c, mt)
 	return c
 end
-
----@class etcd.ResponseHeader
----@field cluster_id integer	--cluster_id is the ID of the cluster which sent the response.
----@field member_id integer	--member_id is the ID of the member which sent the response.
----revision is the key-value store revision when the request was applied, and it's
----unset (so 0) in case of calls not interacting with key-value store.
----For watch progress responses, the header.revision indicates progress. All future events
----received in this stream are guaranteed to have a higher revision number than the
----header.revision number.
----@field revision integer
----raft_term is the raft term when the request was applied.
----@field raft_term integer
-
----@class mvccpb.KeyValue
----key is the key in bytes. An empty key is not allowed.
----@field key string\
----create_revision is the revision of last creation on this key.
----@field create_revision integer
----mod_revision is the revision of last modification on this key.
----@field mod_revision integer
----version is the version of the key. A deletion resets
----the version to zero and any modification of the key
----increases its version
----@field version integer
----value is the value held by the key, in bytes.
----@field value string
----lease is the ID of the lease that attached to key.
----When the attached lease expires, the key will be deleted.
----If lease is 0, then no lease is attached to the key.
----@field lease integer
 
 ---@param req {
 ---    key:string,                --The key to store (required)
@@ -217,15 +372,15 @@ end
 ---    ignore_lease:boolean|nil,  --If true, etcd updates the key using its current lease.
 ---}
 ---@return {
----    header:etcd.ResponseHeader, -- The response header
----    prev_kv:mvccpb.KeyValue,    -- If `prev_kv` was set, returns the previous key-value pair
+---    header:silly.store.etcd.ResponseHeader, -- The response header
+---    prev_kv:silly.store.etcd.KeyValue,    -- If `prev_kv` was set, returns the previous key-value pair
 ---}|nil
 --- @return string|nil
 function M.put(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Put(req)
+		res, err = self.kv:Put(req)
 		if res then
 			break
 		end
@@ -250,8 +405,8 @@ end
 ---	max_create_revision:number|nil, --The upper bound for returned key create revisions
 ---}
 ---@return {
----	header:etcd.ResponseHeader, -- The response header
----	kvs:mvccpb.KeyValue[],      -- The key-value pairs
+---	header:silly.store.etcd.ResponseHeader, -- The response header
+---	kvs:silly.store.etcd.KeyValue[],      -- The key-value pairs
 ---	more:boolean,                -- Indicates whether there are more keys to return
 ---	count:number,                -- The number of keys
 --- }|nil
@@ -260,7 +415,7 @@ function M.get(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Range(req)
+		res, err = self.kv:Range(req)
 		if res then
 			break
 		end
@@ -275,16 +430,16 @@ end
 ---	prev_kv:boolean|nil,  -- If true, returns the previous key-value pair
 ---}
 ---@return {
----	header:etcd.ResponseHeader, -- The response header
+---	header:silly.store.etcd.ResponseHeader, -- The response header
 ---     deleted:boolean,            -- Indicates whether the key was deleted
----     prev_kvs:mvccpb.KeyValue[], -- If `prev_kv` was set, the previous key-value pairs will be returned.
+---     prev_kvs:silly.store.etcd.KeyValue[], -- If `prev_kv` was set, the previous key-value pairs will be returned.
 ---}|nil
 ---@return string|nil
 function M.delete(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.DeleteRange(req)
+		res, err = self.kv:DeleteRange(req)
 		if res then
 			return res, err
 		end
@@ -298,14 +453,14 @@ end
 ---     physical:boolean|nil,  -- If true, forces a physical compaction
 --- }
 --- @return {
----	header:etcd.ResponseHeader, -- The response header
+---	header:silly.store.etcd.ResponseHeader, -- The response header
 --- }|nil
 --- @return string|nil
 function M.compact(self, req)
 	local res, err
 	apply_options(req)
 	for i = 1, self.retry do
-		res, err = self.kv.Compact(req)
+		res, err = self.kv:Compact(req)
 		if res then
 			break
 		end
@@ -319,7 +474,7 @@ end
 --- 	ID:integer,     -- The lease ID to grant (optional)
 --- }
 --- @return {
---- 	header:etcd.ResponseHeader, -- The response header
+--- 	header:silly.store.etcd.ResponseHeader, -- The response header
 ---     ID:integer,     -- The lease ID granted
 ---     TTL:integer,    -- The TTL (time-to-live) for the lease
 ---     error:string,
@@ -328,13 +483,8 @@ end
 function M.grant(self, req)
 	local res, err
 	for i = 1, self.retry do
-		res, err = self.lease.LeaseGrant(req)
+		res, err = self.lease:LeaseGrant(req)
 		if res then
-			local lease_list = self.lease_list
-			if not next(lease_list) then
-				timeout(1000, self.lease_timer)
-			end
-			lease_list[res.ID] = true
 			break
 		end
 		sleep(self.retry_sleep)
@@ -346,14 +496,13 @@ end
 ---     ID:integer,  -- The lease ID to revoke (required)
 --- }
 --- @return {
---- 	header:etcd.ResponseHeader, -- The response header
+--- 	header:silly.store.etcd.ResponseHeader, -- The response header
 --- }|nil
 --- @return string|nil
 function M.revoke(self, req)
 	local res, err
-	self.lease_list[req.ID] = nil
 	for i = 1, self.retry do
-		res, err = self.lease.LeaseRevoke(req)
+		res, err = self.lease:LeaseRevoke(req)
 		if res then
 			break
 		end
@@ -367,7 +516,7 @@ end
 ---	keys:boolean, -- If true, queries all keys attached to the lease
 ---}
 ---@return {
----	header:etcd.ResponseHeader, -- The response header
+---	header:silly.store.etcd.ResponseHeader, -- The response header
 ---	ID:integer,  -- The lease ID from the keep alive request
 ---	TTL:integer, -- The remaining TTL in seconds for the lease; the lease will expire in under TTL+1 seconds
 ---	grantedTTL:integer, -- The initial granted time in seconds upon lease creation/renewal
@@ -375,29 +524,34 @@ end
 ---}
 ---@return string|nil
 function M.ttl(self, req)
-	return self.lease.LeaseTimeToLive(req)
+	return self.lease:LeaseTimeToLive(req)
 end
 
 ---@return {
 ---	leases:{
 ---		ID:integer,  -- The lease ID
----	}[],                  -- The list of leases
+---	}[],                 -- The list of leases
 ---}
 function M.leases(self)
-	return self.lease.LeaseLeases()
+	return self.lease:LeaseLeases()
 end
 
----@param req {
----	ID:integer,  -- The lease ID to keep alive (required)
----}
----@return {
----	header:etcd.ResponseHeader, -- The response header
----	ID:integer,  -- The lease ID from the keep alive request
----	TTL:integer, -- The new time-to-live for the lease
----}
----@return string|nil
-function M.keepalive(self, req)
-	return self.lease.LeaseKeepAlive(req)
+---@param id integer
+function M.keepalive(self, id)
+	local keepalives = self.keepalives
+	local ka = keepalives[id]
+	if ka then
+		return
+	end
+	local now = time.now()
+	ka = {
+		nextkeepalive = now,
+		deadline = now + self.keepalivetimeout,
+	}
+	keepalives[id] = ka
+	if not self.keepaliveco then
+		self.keepaliveco = task.fork(lease_recv_task, self)
+	end
 end
 
 --- @param req {
@@ -410,104 +564,61 @@ end
 ---     limit:number|nil,                  -- Limits the number of events returned (optional)
 ---     progress_notify:boolean|nil,       -- If true, sends a progress notification for the watch (optional)
 --- }
---- @return silly.net.grpc.stream|nil, string|nil
+--- @return silly.store.etcd.watcher?, string? error
 function M.watch(self, req)
 	apply_options(req)
 	local filters = {}
 	for k, v in pairs(watch_filter_type) do
 		if req[k] then
+			req[k] = nil
 			filters[#filters + 1] = v
 		end
 	end
 	if #filters > 0 then
 		req.filters = filters
 	end
-	local stream, err = self.watcher.Watch()
-	if not stream then
-		return nil, err
+	local id = self.watchidx
+	self.watchidx = self.watchidx + 1
+	local watchreqc = self.watchreqc
+	---@cast req silly.store.etcd.WatchCreateRequest
+	req.watch_id = id
+	local outch = channel.new()
+	---@type silly.store.etcd.watcher
+	local w = {
+		watchid = id,
+		outch = outch,
+		createreq = req,
+		watchreqc = watchreqc,
+		canceling = false,
+	}
+	setmetatable(w, watcher_mt)
+	watchreqc:push({ create_request = req })
+	self.watchers[id] = w
+	if not self.watchco then
+		self.watchco = task.fork(watch_request_task, self)
 	end
-	local ok, err = stream:write({ create_request = req })
-	if not ok then
-		stream:close()
-		return nil, err
-	end
-	local ack, err = stream:read()
-	if not ack then
-		return nil, err
-	end
-	return stream, nil
+	return w, nil
 end
 
---- @param prefix string
---- @param key string
---- @return boolean, string|nil
-local function wait_for_lock(self, prefix, key)
-	local list, err = self:get {
-		key = prefix,
-		prefix = true
-	}
-	if not list then
-		return false, err
+---@param self silly.store.etcd.client
+function M.close(self)
+	if self.closed then
+		return
 	end
-	local kvs = list.kvs
-	sort(kvs, function(a, b)
-		return a.mod_revision < b.mod_revision
-	end)
-	if kvs[1].key == key then
-		return true, nil
+	self.closed = true
+	local watchstream = self.watchstream
+	if watchstream then
+		watchstream:close()
 	end
-	local last_key = nil
-	for _, kv in pairs(kvs) do
-		if kv.key == key then
-			break
-		end
-		last_key = kv.key
+	local keepstream = self.keepstream
+	if keepstream then
+		keepstream:close()
 	end
-	local stream, err = self:watch {
-		key = last_key,
-		NOPUT = true,
-	}
-	if not stream then
-		return false, err
+	self.conn:close()
+	self.watchreqc:close("client closed")
+	for _, w in pairs(self.watchers) do
+		w.outch:close("client closed")
 	end
-	while true do
-		local res, err = stream:read()
-		if not res then
-			logger.error("[etcd] watch key:", last_key, "err:", err)
-			stream:close()
-			return false, err
-		end
-		for _, event in ipairs(res.events) do
-			if event.kv.key == last_key and event.type == "DELETE" then
-				return true, nil
-			end
-		end
-	end
-end
-
----@param lease_id integer
----@param prefix string
----@param uuid string
----@return boolean|nil, string|nil
-function M.lock(self, lease_id, prefix, uuid)
-	local key = prefix .. "/" .. uuid
-	local res, err = self:put {
-		key = key,
-		value = "1",
-		lease = lease_id,
-	}
-	if not res then
-		return false, err
-	end
-	return wait_for_lock(self, prefix, key)
-end
-
----@param prefix string
----@param uuid string
-function M.unlock(self, prefix, uuid)
-	return self:delete {
-		key = prefix .. "/" .. uuid
-	}
 end
 
 return M

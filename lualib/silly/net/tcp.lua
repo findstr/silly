@@ -337,6 +337,7 @@ end
 M.read = conn.read
 M.write = conn.write
 M.isalive = conn.isalive
+---@deprecated
 M.readline = conn.readline
 M.recvsize = conn.unreadbytes
 M.sendsize = conn.unsentbytes

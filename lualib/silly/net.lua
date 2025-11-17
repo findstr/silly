@@ -27,29 +27,18 @@ local close_callback = {}
 
 local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)$"
 
----@type fun(ip:string, port:string, backlog:integer):integer?, string? error
 local tcp_listen = assert(c.tcp_listen)
----@type fun(ip:string, port:string, bind_ip:string, bind_port:string):integer?, string? error
 local tcp_connect = assert(c.tcp_connect)
----@type fun(ip:string, port:string):integer?, string? error
 local udp_bind = assert(c.udp_bind)
----@type fun(ip:string, port:string, bind_ip:string, bind_port:string):integer?, string? error
 local udp_connect = assert(c.udp_connect)
----@type fun(fd:integer):boolean, string? error
 local socket_close = assert(c.close)
----@type fun(fd:integer, data:string|lightuserdata|table, size:integer|nil):boolean, string? error
 M.tcpsend = assert(c.tcp_send)
----@type fun(fd:integer, data:string|lightuserdata|table, size_or_addr:integer|string|nil, addr:string|nil):boolean, string? error
 M.udpsend = assert(c.udp_send)
----@type fun(fd:integer, data:lightuserdata, size:integer?, addr:string?): boolean, string? error
 M.tcpmulticast = assert(c.tcp_multicast)
----@type fun(fd:integer, enable:boolean)
 M.readenable = assert(c.readenable)
----@type fun(ptr:lightuserdata, size:integer):string
 M.tostring = assert(c.tostring)
 
 M.multipack = assert(c.multipack)
----@type fun(fd:integer):integer
 M.sendsize = assert(c.sendsize)
 local function listen_wrap(listen)
 	---@param addr string
