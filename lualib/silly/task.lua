@@ -21,7 +21,6 @@ local qpop = queue.pop
 local qpush = queue.push
 local qsize = queue.size
 
-local weakkv = {__mode="kv"}
 local weakv = {__mode="v"}
 
 --misc
@@ -38,8 +37,8 @@ task.tostring = c.tostring
 task.register = c.register
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
-local task_status = setmetatable({}, weakkv)
-local task_traceid = setmetatable({}, weakkv)
+local task_status = {}
+local task_traceid = {}
 local task_running = coroutine.running()
 local cocreate = coroutine.create
 local corunning = coroutine.running

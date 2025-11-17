@@ -28,18 +28,14 @@ local udp = {}
 local conn = {}
 local conn_mt = {
 	__index = conn,
-	__gc = function(self)
-		self:close()
-	end,
-	__close = function(self)
-		self:close()
-	end,
+	__gc = nil,
+	__close = nil,
 }
 
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
 ---@type table<integer, silly.net.udp.conn>
-local socket_pool = {}
+local socket_pool = setmetatable({}, {__mode = "v"})
 
 ---@param fd integer
 ---@return silly.net.udp.conn
@@ -212,6 +208,10 @@ function conn.unsentbytes(s)
 	end
 	return net.sendsize(fd)
 end
+
+conn_mt.__gc = conn.close
+conn_mt.__close = conn.close
+
 
 -- for compatibility
 udp.recvfrom = conn.recvfrom

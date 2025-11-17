@@ -40,27 +40,17 @@ local listener = {}
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
 ---@type table<integer, silly.net.tcp.conn|silly.net.tcp.listener>
-local socket_pool = {}
-
-local function gc(s)
-	local fd = s.fd
-	if fd then
-		socket_pool[fd] = nil
-		s.fd = nil
-		return net.close(fd)
-	end
-	return false, "socket closed"
-end
+local socket_pool = setmetatable({}, {__mode = "v"})
 
 local conn_mt = {
 	__index = conn,
-	__gc = gc,
+	__gc = nil,
 	__close = nil,
 }
 
 local listener_mt = {
 	__index = listener,
-	__gc = gc,
+	__gc = nil,
 }
 
 ---@param fd integer
@@ -175,7 +165,17 @@ function M.listen(conf)
 	return s, err
 end
 
-listener.close = gc
+function listener.close(s)
+	local fd = s.fd
+	if not fd then
+		return false, "closed"
+	end
+	s.fd = nil
+	socket_pool[fd] = nil
+	return net.close(fd)
+end
+
+listener_mt.__gc = listener.close
 
 ---@class silly.net.tcp.connect.opts
 ---@field bind string?
@@ -215,6 +215,8 @@ function conn.close(s)
 	if not fd then
 		return false, "socket closed"
 	end
+	s.fd = nil
+	socket_pool[fd] = nil
 	local co = s.co
 	if co then
 		s.err = "active closed"
@@ -222,8 +224,9 @@ function conn.close(s)
 		s.delim = nil
 		wakeup(co, nil)
 	end
-	return gc(s)
+	return net.close(fd)
 end
+conn_mt.__gc = conn.close
 conn_mt.__close = conn.close
 
 ---@param s silly.net.tcp.conn

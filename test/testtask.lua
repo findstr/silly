@@ -165,7 +165,6 @@ testaux.case("Test 7: concurrent wait tasks", function()
 	end
 end)
 
---[==[
 testaux.case("Test 8: orphaned WAIT tasks (strong reference)", function()
 	local dump = task._dump()
 	local orphans = setmetatable({}, {__mode = "v"})
@@ -199,7 +198,6 @@ testaux.case("Test 8: orphaned WAIT tasks (strong reference)", function()
 			"Test 8.2." .. i .. ": cleaned after wakeup")
 	end
 end)
-]==]
 
 testaux.case("Test 9: value types through wait/wakeup", function()
 	-- Test passing different value types
