@@ -9,6 +9,7 @@ local queue = require "silly.adt.queue"
 local logger = require "silly.logger.c"
 
 local silly = {}
+local error = error
 local pairs = pairs
 local assert = assert
 local xpcall = xpcall
@@ -20,7 +21,8 @@ local qpop = queue.pop
 local qpush = queue.push
 local qsize = queue.size
 
-local weakmt = {__mode="kv"}
+local weakkv = {__mode="kv"}
+local weakv = {__mode="v"}
 
 --misc
 local log_error = assert(logger.error)
@@ -36,8 +38,8 @@ silly.tostring = c.tostring
 silly.register = c.register
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
-local task_status = setmetatable({}, weakmt)
-local task_traceid = setmetatable({}, weakmt)
+local task_status = setmetatable({}, weakkv)
+local task_traceid = setmetatable({}, weakkv)
 local task_running = coroutine.running()
 local cocreate = coroutine.create
 local corunning = coroutine.running
@@ -49,13 +51,15 @@ local task_yield = coyield
 ---@param t thread
 local function task_resume(t, ...)
 	local save = task_running
-	task_status[t] = "RUN"
 	task_running = t
+	task_status[t] = "RUN"
 	local traceid = traceset(task_traceid[t], t)
 	local ok, err = coresume(t, ...)
 	traceset(traceid)
 	task_running = save
+	task_status[save] = "RUN"
 	if not ok then
+		task_traceid[t] = nil
 		task_status[t] = nil
 		local ret = traceback(t, tostring(err), 1)
 		log_error("[silly] task resume", ret)
@@ -63,8 +67,6 @@ local function task_resume(t, ...)
 		if not ok then
 			log_error("[silly] task close", err)
 		end
-	else
-		task_status[t] = err
 	end
 end
 
@@ -120,7 +122,7 @@ end
 --coroutine pool will be dynamic size
 --so use the weaktable
 local copool = {}
-setmetatable(copool, weakmt)
+setmetatable(copool, weakv)
 local NIL = function() end
 ---@param f async fun(...)
 ---@return thread
@@ -132,11 +134,12 @@ local function task_create(f)
 	end
 	co = cocreate(function(...)
 		f(...)
+		local running = corunning()
 		while true do
 			local ret
 			f = NIL
-			local running = corunning()
 			task_traceid[running] = nil
+			task_status[running] = nil
 			copool[#copool + 1] = running
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
@@ -200,8 +203,10 @@ end
 
 ---@type fun(status:integer)
 function silly.exit(status)
-	queue.clear(wakeup_task_queue)
+	wakeup_task_queue = queue.new()
 	wakeup_task_param = {}
+	task_status = {}
+	task_traceid = {}
 	silly.wakeup = function()end
 	silly.fork = function()end
 	c.exit(status)
@@ -223,7 +228,10 @@ end
 function silly.wait()
 	local t = task_running
 	local status = task_status[t]
-	assert(status == "RUN", status)
+	if status ~= "RUN" then
+		error("BUG: wait on task stat:" .. status)
+	end
+	task_status[t] = "WAIT"
 	return task_yield("WAIT")
 end
 
@@ -231,7 +239,9 @@ end
 ---@param res any
 function silly.wakeup(t, res)
 	local status = task_status[t]
-	assert(status == "WAIT", status)
+	if status ~= "WAIT" then
+		error("BUG: wakeup on task stat:" .. tostring(status))
+	end
 	task_status[t] = "READY"
 	wakeup_task_param[t] = res
 	qpush(wakeup_task_queue, t)
@@ -258,6 +268,14 @@ function silly.tasks()
 		}
 	end
 	return tasks
+end
+
+function silly._dump()
+	return {
+		copool = copool,
+		task_status = task_status,
+		task_traceid = task_traceid,
+	}
 end
 
 return silly
