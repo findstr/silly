@@ -29,7 +29,7 @@ end
 ---@param self silly.metrics.gaugesub
 ---@param v number
 function M:add(v)
-	self.value = self.value + 1
+	self.value = self.value + v
 end
 
 ---@param self silly.metrics.gaugesub

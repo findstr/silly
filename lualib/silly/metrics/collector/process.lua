@@ -23,10 +23,18 @@ function M.new()
 		"process_heap_bytes",
 		"Process heap size in bytes allocated by application."
 	)
+	local last_cpu_usr = 0
+	local last_cpu_sys = 0
 	local collect = function(_, buf)
 		local sys, usr = c.cpustat()
-		cpu_seconds_usr:add(usr - cpu_seconds_usr.value)
-		cpu_seconds_sys:add(sys - cpu_seconds_sys.value)
+		if usr > last_cpu_usr then
+			cpu_seconds_usr:add(usr - last_cpu_usr)
+		end
+		if sys > last_cpu_sys then
+			cpu_seconds_sys:add(sys - last_cpu_sys)
+		end
+		last_cpu_usr = usr
+		last_cpu_sys = sys
 
 		local vmrss, heap = c.memstat()
 

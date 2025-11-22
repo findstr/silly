@@ -26,19 +26,24 @@ end
 
 function M.key(lcache, lnames, values)
 	local n = #values
+	if n == 0 then
+		return ""
+	end
+	local cache = lcache
 	for i = 1, n - 1 do
-		local t = lcache[i]
+		local key = values[i]
+		local t = cache[key]
 		if not t then
 			t = {}
-			lcache[i] = t
+			cache[key] = t
 		end
-		lcache[i] = t
+		cache = t
 	end
-	local value = values[n]
-	local t = lcache[value]
+	local last = values[n]
+	local t = cache[last]
 	if not t then
 		t = compose(lnames, values)
-		lcache[value] = t
+		cache[last] = t
 	end
 	return t
 end
