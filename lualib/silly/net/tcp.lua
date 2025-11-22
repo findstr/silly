@@ -39,8 +39,10 @@ local listener = {}
 
 --when luaVM destroyed, all process will be exit
 --so no need to clear socket connection
----@type table<integer, silly.net.tcp.conn|silly.net.tcp.listener>
-local socket_pool = setmetatable({}, {__mode = "v"})
+---@type table<integer, silly.net.tcp.conn>
+local conn_pool = setmetatable({}, {__mode = "v"})
+---@type table<integer, silly.net.tcp.listener>
+local listener_pool = {}
 
 local conn_mt = {
 	__index = conn,
@@ -50,7 +52,6 @@ local conn_mt = {
 
 local listener_mt = {
 	__index = listener,
-	__gc = nil,
 }
 
 ---@param fd integer
@@ -68,8 +69,8 @@ local function new_socket(fd, addr)
 		buf = bnew(),
 		buflimit = nil,
 	}, conn_mt)
-	assert(not socket_pool[fd])
-	socket_pool[fd] = s
+	assert(not conn_pool[fd])
+	conn_pool[fd] = s
 	return s
 end
 
@@ -91,7 +92,7 @@ end
 local EVENT = {
 
 accept = function(fd, listenid, addr)
-	local lc = socket_pool[listenid];
+	local lc = listener_pool[listenid];
 	local s = new_socket(fd, addr)
 	local ok, err = silly.pcall(lc.accept, s)
 	if not ok then
@@ -101,7 +102,7 @@ accept = function(fd, listenid, addr)
 end,
 
 close = function(fd, errno)
-	local s = socket_pool[fd]
+	local s = conn_pool[fd]
 	if s == nil then
 		return
 	end
@@ -115,7 +116,7 @@ close = function(fd, errno)
 end,
 
 data = function(fd, ptr, chunk_size)
-	local s = socket_pool[fd]
+	local s = conn_pool[fd]
 	if not s then
 		return
 	end
@@ -161,7 +162,7 @@ function M.listen(conf)
 		accept = accept,
 	}
 	setmetatable(s, listener_mt)
-	socket_pool[listenid] = s
+	listener_pool[listenid] = s
 	return s, err
 end
 
@@ -171,11 +172,9 @@ function listener.close(s)
 		return false, "closed"
 	end
 	s.fd = nil
-	socket_pool[fd] = nil
+	listener_pool[fd] = nil
 	return net.close(fd)
 end
-
-listener_mt.__gc = listener.close
 
 ---@class silly.net.tcp.connect.opts
 ---@field bind string?
@@ -216,7 +215,7 @@ function conn.close(s)
 		return false, "socket closed"
 	end
 	s.fd = nil
-	socket_pool[fd] = nil
+	conn_pool[fd] = nil
 	local co = s.co
 	if co then
 		s.err = "active closed"

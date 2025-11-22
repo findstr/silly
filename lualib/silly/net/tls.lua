@@ -51,8 +51,10 @@ local conn = {}
 ---@field conf silly.net.tls.conf
 local listener = {}
 
----@type table<integer, silly.net.tls.conn|silly.net.tls.listener>
-local socket_pool = setmetatable({}, {__mode = "v"})
+---@type table<integer, silly.net.tls.conn>
+local conn_pool = setmetatable({}, {__mode = "v"})
+---@type table<integer, silly.net.tls.listener>
+local listener_pool = {}
 
 ---@alias silly.net.tls.alpn_proto "http/1.1" | "h2"
 local char = string.char
@@ -79,7 +81,6 @@ local conn_mt = {
 
 local listener_mt = {
 	__index = listener,
-	__gc = nil,
 }
 
 ---@param fd integer
@@ -104,8 +105,8 @@ local function new_socket(fd, raddr, ctx, hostname, alpnprotos)
 		delim = nil,
 		readpause = false,
 	}, conn_mt)
-	assert(not socket_pool[fd])
-	socket_pool[fd] = s
+	assert(not conn_pool[fd])
+	conn_pool[fd] = s
 	return s
 end
 
@@ -138,8 +139,7 @@ local function new_listener(fd, ctx, conf, accept)
 		accept = accept,
 	}
 	setmetatable(s, listener_mt)
-	assert(not socket_pool[fd])
-	socket_pool[fd] = s
+	listener_pool[fd] = s
 	return s
 end
 
@@ -199,7 +199,7 @@ end
 
 local EVENT = {
 accept = function(fd, listenid, addr)
-	local lc = socket_pool[listenid]
+	local lc = listener_pool[listenid]
 	local s = new_socket(fd, addr, lc.ctx, nil, nil)
 	local dat, _ = handshake(s)
 	if not dat then
@@ -216,7 +216,7 @@ end,
 ---@param fd integer
 ---@param errno string?
 close = function(fd, errno)
-	local s = socket_pool[fd]
+	local s = conn_pool[fd]
 	if s == nil then
 		return
 	end
@@ -230,7 +230,7 @@ close = function(fd, errno)
 end,
 
 data = function(fd, ptr, size)
-	local s = socket_pool[fd]
+	local s = conn_pool[fd]
 	if not s then
 		return
 	end
@@ -348,11 +348,9 @@ function listener.close(s)
 		return false, "closed"
 	end
 	s.fd = nil
-	socket_pool[fd] = nil
+	listener_pool[fd] = nil
 	return net.close(fd)
 end
-
-listener_mt.__gc = listener.close
 
 ---@param l silly.net.tls.listener
 ---@param conf silly.net.tls.conf?
@@ -394,7 +392,7 @@ function conn.close(s)
 		return false, "socket closed"
 	end
 	s.fd = nil
-	socket_pool[fd] = nil
+	conn_pool[fd] = nil
 	local co = s.co
 	if co then
 		s.err = "active closed"

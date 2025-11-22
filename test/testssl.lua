@@ -125,7 +125,7 @@ testaux.case("Test 3.2: TLS readline interrupted by close", function()
 		ch:pop()
 		-- Try to readline but client will close before sending newline
 		local data, err = conn:readline("\n")
-		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty string on interrupted read")
+		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty string on interrupted read:" .. err)
 		testaux.asserteq(err, "end of file", "Test 3.2.2: TLS readline returns 'end of file' error")
 		conn:close()
 	end

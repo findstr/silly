@@ -2,7 +2,6 @@ local time = require "silly.time"
 local json = require "silly.encoding.json"
 local http = require "silly.net.http"
 local tcp = require "silly.net.tcp"
-local channel = require "silly.sync.channel"
 local gzip = require "silly.compress.gzip"
 local testaux = require "test.testaux"
 
@@ -1080,8 +1079,8 @@ testaux.case("Test 37: GET with Accept-Encoding header check", function()
 	wait_done()
 end)
 
-time.sleep(5000)
-
 if server then
 	server:close()
 end
+
+time.sleep(5000)
