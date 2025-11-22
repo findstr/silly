@@ -40,91 +40,116 @@ local strcache = setmetatable({}, {__index = function(t, v)
 end})
 
 local function format_count(buf, name, label, v)
-	buf[#buf + 1] = name
+	local n = #buf
+	buf[n + 1] = name
+	n = n + 1
 	if label then
-		buf[#buf + 1] = "{"
-		buf[#buf + 1] = label
-		buf[#buf + 1] = ','
-		buf[#buf + 1] = "}"
+		buf[n + 1] = "{"
+		buf[n + 2] = label
+		buf[n + 3] = "}"
+		n = n + 3
 	end
-	buf[#buf + 1] = "\t"
-	buf[#buf + 1] = v.value
-	buf[#buf + 1] = "\n"
+	buf[n + 1] = "\t"
+	buf[n + 2] = v.value
+	buf[n + 3] = "\n"
 end
 
 local function format_histogram(buf, name, label, v)
 	local buckets = v.buckets
 	local bucketcounts = v.bucketcounts
-	local n = #bucketcounts
 	local count = 0
-	for i = 1, n do
-		buf[#buf + 1] = name
-		buf[#buf + 1] = '_bucket'
-		buf[#buf + 1] = '{'
+	local n = #buf
+
+	-- Bucket entries
+	for i = 1, #bucketcounts do
+		buf[n + 1] = name
+		buf[n + 2] = '_bucket'
+		buf[n + 3] = '{'
+		n = n + 3
 		if label then
-			buf[#buf + 1] = label
-			buf[#buf + 1] = ','
+			buf[n + 1] = label
+			buf[n + 2] = ','
+			n = n + 2
 		end
 		local bc = bucketcounts[i]
 		count = count + bc
-		buf[#buf + 1] = 'le="'
-		buf[#buf + 1] = strcache[buckets[i]]
-		buf[#buf + 1] = '"}\t'
-		buf[#buf + 1] = tostring(bc)
-		buf[#buf + 1] = "\n"
+		buf[n + 1] = 'le="'
+		buf[n + 2] = strcache[buckets[i]]
+		buf[n + 3] = '"}\t'
+		buf[n + 4] = tostring(bc)
+		buf[n + 5] = "\n"
+		n = n + 5
 	end
-	buf[#buf + 1] = name
-	buf[#buf + 1] = '_bucket'
-	buf[#buf + 1] = '{'
-	if label then
-		buf[#buf + 1] = label
-		buf[#buf + 1] = ','
-	end
-	buf[#buf + 1] = 'le="+Inf"}\t'
-	buf[#buf + 1] = tostring(v.count - count)
-	buf[#buf + 1] = "\n"
 
-	buf[#buf + 1] = name
-	buf[#buf + 1] = '_count'
+	-- +Inf bucket
+	buf[n + 1] = name
+	buf[n + 2] = '_bucket'
+	buf[n + 3] = '{'
+	n = n + 3
 	if label then
-		buf[#buf + 1] = '{'
-		buf[#buf + 1] = label
-		buf[#buf + 1] = '}'
+		buf[n + 1] = label
+		buf[n + 2] = ','
+		n = n + 2
 	end
-	buf[#buf + 1] = "\t"
-	buf[#buf + 1] = tostring(v.count)
-	buf[#buf + 1] = "\n"
+	buf[n + 1] = 'le="+Inf"}\t'
+	buf[n + 2] = tostring(v.count - count)
+	buf[n + 3] = "\n"
+	n = n + 3
 
-	buf[#buf + 1] = name
-	buf[#buf + 1] = '_sum'
+	-- _count
+	buf[n + 1] = name
+	buf[n + 2] = '_count'
+	n = n + 2
 	if label then
-		buf[#buf + 1] = '{'
-		buf[#buf + 1] = label
-		buf[#buf + 1] = '}'
+		buf[n + 1] = '{'
+		buf[n + 2] = label
+		buf[n + 3] = '}'
+		n = n + 3
 	end
-	buf[#buf + 1] = "\t"
-	buf[#buf + 1] = tostring(v.sum)
-	buf[#buf + 1] = "\n"
+	buf[n + 1] = "\t"
+	buf[n + 2] = tostring(v.count)
+	buf[n + 3] = "\n"
+	n = n + 3
+
+	-- _sum
+	buf[n + 1] = name
+	buf[n + 2] = '_sum'
+	n = n + 2
+	if label then
+		buf[n + 1] = '{'
+		buf[n + 2] = label
+		buf[n + 3] = '}'
+		n = n + 3
+	end
+	buf[n + 1] = "\t"
+	buf[n + 2] = tostring(v.sum)
+	buf[n + 3] = "\n"
 end
 
 local buf = {}
-function M.gather()
-	local collectors = R:collect()
+--- @param r silly.metrics.registry
+function M.gather(r)
+	r = r or R
+	local collectors = r:collect()
 	for i = 1, #collectors do
 		local m = collectors[i]
 		local kind = m.kind
 		local name = m.name
-		buf[#buf + 1] = "# HELP "
-		buf[#buf + 1] = name
-		buf[#buf + 1] = " "
-		buf[#buf + 1] = m.help
-		buf[#buf + 1] = "\n"
 
-		buf[#buf + 1] = "# TYPE "
-		buf[#buf + 1] = name
-		buf[#buf + 1] = " "
-		buf[#buf + 1] = kind
-		buf[#buf + 1] = "\n"
+		-- Write HELP line
+		local n = #buf
+		buf[n + 1] = "# HELP "
+		buf[n + 2] = name
+		buf[n + 3] = " "
+		buf[n + 4] = m.help
+		buf[n + 5] = "\n"
+
+		-- Write TYPE line
+		buf[n + 6] = "# TYPE "
+		buf[n + 7] = name
+		buf[n + 8] = " "
+		buf[n + 9] = kind
+		buf[n + 10] = "\n"
 
 		local fmt = kind == "histogram" and format_histogram or format_count
 		local metrics = m.metrics

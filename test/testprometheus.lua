@@ -441,5 +441,62 @@ testaux.case("Test 19: Process collector robustness", function()
 	testaux.asserteq(status, true, "Test 19.1: Should NOT crash when CPU usage decreases")
 end)
 
+-- Test 20: Prometheus output format verification (Regression test for trailing comma bug)
+testaux.case("Test 20: Prometheus format_count trailing comma bug", function()
+	-- This test reproduces the bug fixed in commit bf65ddd905c6ab3e4b2913f61370e2c3e0d06099
+	-- Bug: Old code appended ',' after label in format_count, producing {label,}
+
+	local prometheus = require "silly.metrics.prometheus"
+
+	-- Create isolated registry for testing
+	local r = registry.new()
+	local c = counter("trailing_comma_test", "Test for trailing comma bug", {"method"})
+	c:labels("GET"):add(100)
+	r:register(c)
+
+	-- Gather prometheus output using the custom registry
+	local output = prometheus.gather(r)
+
+	-- Split output into lines for verification
+	local lines = {}
+	for line in output:gmatch("[^\n]+") do
+		table.insert(lines, line)
+	end
+
+	-- Test 20.1: Check for bug pattern {label,}
+	local found_bug = false
+	local bug_line = nil
+	for _, line in ipairs(lines) do
+		if line:match('%{[^}]+,%s*%}') then
+			found_bug = true
+			bug_line = line
+			break
+		end
+	end
+
+	if found_bug then
+		print("BUG DETECTED: Line with trailing comma:", bug_line)
+	end
+	testaux.asserteq(found_bug, false, "Test 20.1: No trailing comma pattern {label,}")
+
+	-- Test 20.2: Verify correct format exists
+	local found_metric = false
+	local metric_line = nil
+	for _, line in ipairs(lines) do
+		if line:match('trailing_comma_test%{method="GET"%}%s+%d+') then
+			found_metric = true
+			metric_line = line
+			break
+		end
+	end
+
+	testaux.asserteq(found_metric, true, "Test 20.2: Correct format {method=\"GET\"} exists")
+
+	if metric_line then
+		-- Test 20.3: Verify the line doesn't end with comma before }
+		testaux.asserteq(metric_line:match(',%s*%}'), nil, "Test 20.3: No trailing comma in metric line")
+	end
+end)
+
 silly.exit(0)
 
