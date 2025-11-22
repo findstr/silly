@@ -28,10 +28,10 @@ local function start_prometheus_server()
                     ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
                     ["content-length"] = #metrics_data,
                 })
-                stream:close(metrics_data)
+                stream:closewrite(metrics_data)
             else
                 stream:respond(404, {["content-type"] = "text/plain"})
-                stream:close("Not Found")
+                stream:closewrite("Not Found")
             end
         end
     }

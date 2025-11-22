@@ -57,9 +57,10 @@ HTTP 模块使用 stream 对象表示 HTTP 连接：
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local server, err = http.listen {
         addr = "127.0.0.1:8080",
         handler = function(stream)
@@ -68,7 +69,7 @@ silly.fork(function()
                 ["content-type"] = "text/plain",
                 ["content-length"] = #"Hello, World!",
             })
-            stream:close("Hello, World!")
+            stream:closewrite("Hello, World!")
         end
     }
 
@@ -91,14 +92,15 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local server = http.listen {
         addr = ":8080",
         handler = function(stream)
             stream:respond(200, {})
-            stream:close("OK")
+            stream:closewrite("OK")
         end
     }
 
@@ -145,11 +147,11 @@ local function handler(stream)
         ["content-type"] = "application/json",
         ["content-length"] = #'{"status":"ok"}',
     })
-    stream:close('{"status":"ok"}')
+    stream:closewrite('{"status":"ok"}')
 end
 ```
 
-### stream:close([body])
+### stream:closewrite([body])
 
 发送响应体并关闭连接。
 
@@ -168,7 +170,7 @@ local function handler(stream)
         ["content-type"] = "text/html",
         ["content-length"] = #"<h1>Hello</h1>",
     })
-    stream:close("<h1>Hello</h1>")
+    stream:closewrite("<h1>Hello</h1>")
 end
 ```
 
@@ -185,9 +187,10 @@ end
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     http.listen {
         addr = ":8080",
         handler = function(stream)
@@ -199,14 +202,14 @@ silly.fork(function()
                         ["content-type"] = "text/plain",
                         ["content-length"] = #"Received",
                     })
-                    stream:close("Received")
+                    stream:closewrite("Received")
                 else
                     stream:respond(500, {})
-                    stream:close("Read error: " .. (err or "unknown"))
+                    stream:closewrite("Read error: " .. (err or "unknown"))
                 end
             else
                 stream:respond(200, {})
-                stream:close("OK")
+                stream:closewrite("OK")
             end
         end
     }
@@ -227,9 +230,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     http.listen {
         addr = ":8080",
         handler = function(stream)
@@ -240,7 +244,7 @@ silly.fork(function()
                 })
                 stream:write("Chunk 1\n")
                 stream:write("Chunk 2\n")
-                stream:close()
+                stream:closewrite()
             end
         end
     }
@@ -251,7 +255,7 @@ end)
 
 ## 客户端 API
 
-### http.GET(url [, headers])
+### http.get(url [, headers])
 
 发送 HTTP GET 请求（异步）。
 
@@ -269,10 +273,11 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
-    local response, err = http.GET("http://www.example.com")
+task.fork(function()
+    local response, err = http.get("http://www.example.com")
     if response then
         print("Status:", response.status)
         print("Body length:", #response.body)
@@ -283,7 +288,7 @@ silly.fork(function()
 end)
 ```
 
-### http.POST(url [, headers [, body]])
+### http.post(url [, headers [, body]])
 
 发送 HTTP POST 请求（异步）。
 
@@ -299,16 +304,17 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 
-silly.fork(function()
+task.fork(function()
     local request_data = json.encode({
         name = "Alice",
         age = 30
     })
 
-    local response, err = http.POST(
+    local response, err = http.post(
         "http://api.example.com/users",
         {
             ["content-type"] = "application/json",
@@ -343,9 +349,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local stream<close>, err = http.request(
         "PUT",
         "http://api.example.com/data",
@@ -363,7 +370,7 @@ silly.fork(function()
     end
 
     if stream.version == "HTTP/2" then
-        stream:close("Updated data")
+        stream:closewrite("Updated data")
     else
         stream:write("Updated data")
     end
@@ -385,9 +392,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local server = http.listen {
         addr = "127.0.0.1:8080",
         handler = function(stream)
@@ -403,7 +411,7 @@ silly.fork(function()
                     ["content-type"] = "text/plain",
                     ["content-length"] = #"Not Found",
                 })
-                stream:close("Not Found")
+                stream:closewrite("Not Found")
                 return
             end
 
@@ -411,7 +419,7 @@ silly.fork(function()
                 ["content-type"] = "text/plain",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         end
     }
 
@@ -425,10 +433,11 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 
-silly.fork(function()
+task.fork(function()
     local users = {
         {id = 1, name = "Alice", age = 30},
         {id = 2, name = "Bob", age = 25},
@@ -444,14 +453,14 @@ silly.fork(function()
                     ["content-type"] = "application/json",
                     ["content-length"] = #response_body,
                 })
-                stream:close(response_body)
+                stream:closewrite(response_body)
 
             elseif stream.method == "POST" and stream.path == "/api/users" then
                 -- 创建新用户
                 local body, err = stream:readall()
                 if not body then
                     stream:respond(400, {})
-                    stream:close("Bad Request")
+                    stream:closewrite("Bad Request")
                     return
                 end
 
@@ -465,15 +474,15 @@ silly.fork(function()
                         ["content-type"] = "application/json",
                         ["content-length"] = #response_body,
                     })
-                    stream:close(response_body)
+                    stream:closewrite(response_body)
                 else
                     stream:respond(400, {})
-                    stream:close("Invalid user data")
+                    stream:closewrite("Invalid user data")
                 end
 
             else
                 stream:respond(404, {})
-                stream:close("Not Found")
+                stream:closewrite("Not Found")
             end
         end
     }
@@ -488,9 +497,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local server = http.listen {
         addr = ":8080",
         handler = function(stream)
@@ -507,7 +517,7 @@ silly.fork(function()
                 ["content-type"] = "text/plain",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         end
     }
 
@@ -522,9 +532,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local cert_pem = [[-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUPc2faaWEjGh1RklF9XPAgYS5WSMwDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI1MTAwOTA5NDc1M1oXDTM1MTAw
@@ -589,7 +600,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
                 ["content-type"] = "text/plain",
                 ["content-length"] = #"Hello, HTTPS!",
             })
-            stream:close("Hello, HTTPS!")
+            stream:closewrite("Hello, HTTPS!")
         end
     }
 
@@ -603,26 +614,27 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 
-silly.fork(function()
+task.fork(function()
     -- GET 请求
-    local response, err = http.GET("http://www.example.com")
+    local response, err = http.get("http://www.example.com")
     if response then
         print("GET Status:", response.status)
         print("Body length:", #response.body)
     end
 
     -- 带请求头的 GET 请求
-    local response2, err = http.GET("http://api.example.com/data", {
+    local response2, err = http.get("http://api.example.com/data", {
         ["user-agent"] = "Silly HTTP Client",
         ["accept"] = "application/json",
     })
 
     -- POST 请求
     local post_data = json.encode({action = "create", value = 42})
-    local response3, err = http.POST(
+    local response3, err = http.post(
         "http://api.example.com/action",
         {["content-type"] = "application/json"},
         post_data
@@ -642,9 +654,10 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     local server = http.listen {
         addr = ":8080",
         handler = function(stream)
@@ -664,18 +677,18 @@ silly.fork(function()
                             ["content-type"] = "text/plain",
                             ["content-length"] = #"Upload successful",
                         })
-                        stream:close("Upload successful")
+                        stream:closewrite("Upload successful")
                     else
                         stream:respond(500, {})
-                        stream:close("Upload failed")
+                        stream:closewrite("Upload failed")
                     end
                 else
                     stream:respond(400, {})
-                    stream:close("Invalid content type")
+                    stream:closewrite("Invalid content type")
                 end
             else
                 stream:respond(404, {})
-                stream:close("Not Found")
+                stream:closewrite("Not Found")
             end
         end
     }
@@ -697,11 +710,11 @@ local silly = require "silly"
 local http = require "silly.net.http"
 
 -- 错误：不能在主线程调用
--- local response = http.GET("http://example.com")  -- 会失败
+-- local response = http.get("http://example.com")  -- 会失败
 
 -- 正确：在协程中调用
-silly.fork(function()
-    local response = http.GET("http://example.com")
+task.fork(function()
+    local response = http.get("http://example.com")
     -- ...
 end)
 ```
@@ -722,7 +735,7 @@ local function handler(stream)
         ["content-type"] = "text/plain",
         ["content-length"] = #body,
     })
-    stream:close(body)
+    stream:closewrite(body)
 end
 ```
 
@@ -739,12 +752,12 @@ local function handler(stream)
 
     if stream.version == "HTTP/2" then
         -- HTTP/2: 使用 close 发送body
-        stream:close("Hello, HTTP/2!")
+        stream:closewrite("Hello, HTTP/2!")
     else
         -- HTTP/1.1: 可以使用 write 或 close
         stream:write("Hello, ")
         stream:write("HTTP/1.1!")
-        stream:close()
+        stream:closewrite()
     end
 end
 ```
@@ -790,10 +803,11 @@ end
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
-    local response, err = http.GET("http://example.com")
+task.fork(function()
+    local response, err = http.get("http://example.com")
     if not response then
         print("Request failed:", err)
         return
@@ -820,11 +834,12 @@ HTTP/1.1 和 HTTP/2 都支持连接复用，避免频繁创建连接：
 ```lua validate
 local silly = require "silly"
 local http = require "silly.net.http"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- HTTP 模块会自动复用连接（针对同一主机）
     for i = 1, 10 do
-        local response = http.GET("http://example.com/api/data?id=" .. i)
+        local response = http.get("http://example.com/api/data?id=" .. i)
         if response then
             print("Request", i, "status:", response.status)
         end
@@ -840,8 +855,9 @@ end)
 local silly = require "silly"
 local http = require "silly.net.http"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local urls = {
         "http://api1.example.com/data",
@@ -851,7 +867,7 @@ silly.fork(function()
 
     for i, url in ipairs(urls) do
         wg:fork(function()
-            local response = http.GET(url)
+            local response = http.get(url)
             if response then
                 print("URL", i, "status:", response.status)
             end
@@ -870,8 +886,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local http = require "silly.net.http"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     http.listen {
         addr = ":8080",
         handler = function(stream)
@@ -884,7 +901,7 @@ silly.fork(function()
                 -- 处理 body...
 
                 stream:respond(200, {})
-                stream:close("OK")
+                stream:closewrite("OK")
             end
         end
     }
@@ -895,7 +912,7 @@ end)
 
 ## 参见
 
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.net.tcp](./tcp.md) - TCP 协议
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.encoding.json](../encoding/json.md) - JSON 编解码

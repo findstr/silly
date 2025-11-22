@@ -217,9 +217,10 @@ Silly的定时器系统特性：
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 
-silly.fork(function()
+task.fork(function()
     print("Task started")
     time.sleep(1000)  -- 协程睡眠，不阻塞其他任务
     print("Task resumed after 1 second")
@@ -231,5 +232,5 @@ print("Main logic continues")
 
 ## 参见
 
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块
 - [silly.sync.waitgroup](./sync/waitgroup.md) - 协程等待组

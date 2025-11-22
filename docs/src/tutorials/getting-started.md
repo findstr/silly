@@ -114,17 +114,6 @@ git submodule update --init --recursive
 make
 ```
 
-编译完成后，你将看到：
-
-```
-[BUILD] Silly framework
-[CC] src/worker.c
-[CC] src/socket.c
-...
-[LINK] silly
-Build complete!
-```
-
 ::: details 高级编译选项
 
 ```bash
@@ -197,7 +186,7 @@ Hello, Silly!
 ```
 
 ::: tip 发生了什么？
-1. `require "silly"` 加载核心调度器模块并自动启动事件循环
+1. `require "silly"` 加载核心模块并自动启动事件循环
 2. `print()` 输出信息到控制台
 3. `silly.exit(0)` 优雅退出进程
 :::
@@ -232,14 +221,15 @@ end)
 ```lua
 -- Silly 的协程方式
 local tcp = require "silly.net.tcp"
+local task = require "silly.task"
 
-silly.fork(function()
-    local fd = tcp.connect("127.0.0.1:8080")
-    local data1 = tcp.read(fd, 1024)
-    tcp.write(fd, data1)
-    local data2 = tcp.read(fd, 1024)
-    tcp.write(fd, data2)
-    tcp.close(fd)
+task.fork(function()
+    local conn = tcp.connect("127.0.0.1:8080")
+    local data1 = conn:read(1024)
+    conn:write(data1)
+    local data2 = conn:read(1024)
+    conn:write(data2)
+    conn:close()
 end)
 ```
 
@@ -269,23 +259,24 @@ Silly 使用单线程事件循环处理所有业务逻辑：
 单线程模型避免了锁、竞态条件等多线程复杂问题，同时通过异步 I/O 和协程实现高并发。这是 Node.js、Redis 等高性能系统采用的成熟模式。
 :::
 
-### 3. silly.fork() - 创建并发任务
+### 3. task.fork() - 创建并发任务
 
-`silly.fork()` 用于创建新的协程任务，实现并发处理：
+`task.fork()` 用于创建新的协程任务，实现并发处理：
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 
 print("主任务开始")
 
 -- 创建两个并发任务
-silly.fork(function()
+task.fork(function()
     time.sleep(1000)  -- 睡眠 1 秒
     print("任务 1 完成")
 end)
 
-silly.fork(function()
+task.fork(function()
     time.sleep(500)   -- 睡眠 0.5 秒
     print("任务 2 完成")
 end)
@@ -309,12 +300,13 @@ print("主任务继续执行")
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 
 print("定时器演示开始")
 
 -- 任务 1: 每秒打印一次
-silly.fork(function()
+task.fork(function()
     for i = 1, 5 do
         print(string.format("[任务1] 第 %d 秒", i))
         time.sleep(1000)
@@ -322,7 +314,7 @@ silly.fork(function()
 end)
 
 -- 任务 2: 每 0.5 秒打印一次
-silly.fork(function()
+task.fork(function()
     for i = 1, 10 do
         print(string.format("  [任务2] 第 %d 次 (%.1f秒)", i, i * 0.5))
         time.sleep(500)
@@ -330,7 +322,7 @@ silly.fork(function()
 end)
 
 -- 主任务: 等待 6 秒后退出
-silly.fork(function()
+task.fork(function()
     time.sleep(6000)
     print("演示结束")
     silly.exit(0)
@@ -351,7 +343,7 @@ end)
 
 ✅ 成功安装并运行 Silly
 ✅ 理解了协程和事件循环的基本概念
-✅ 学会了使用 `silly.fork()` 创建并发任务
+✅ 学会了使用 `task.fork()` 创建并发任务
 ✅ 创建了第一个定时器程序
 
 ### 推荐学习路径

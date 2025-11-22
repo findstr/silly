@@ -246,18 +246,21 @@ print("Debugger listening on 127.0.0.1:9999")
 
 ```lua
 local time = require "silly.time"
+local task = require "silly.task"
 
 local function timer_task()
     local count = 0
-    while true do
+    for i = 1, 3 do  -- 运行 3 次用于演示
         count = count + 1
         print("Timer tick:", count)
-        time.sleep(1000)
+        if i < 3 then
+            time.sleep(1000)
+        end
         -- 想在这里设置断点
     end
 end
 
-silly.fork(timer_task)
+task.fork(timer_task)
 ```
 
 调试步骤：
@@ -351,7 +354,7 @@ debugger handler.lua handler.lua:5> s
 - 调试器会hook所有活跃的协程
 - 当创建新协程时，自动添加hook
 - 当协程结束时，自动移除hook
-- 使用 `silly.task_hook()` 实现协程生命周期监听
+- 使用 `task.task_hook()` 实现协程生命周期监听
 
 ### 锁定线程
 

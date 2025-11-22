@@ -637,6 +637,7 @@ local silly = require "silly"
 local http = require "silly.net.http"
 local histogram = require "silly.metrics.histogram"
 local prometheus = require "silly.metrics.prometheus"
+local task = require "silly.task"
 
 -- 通过 prometheus 创建并自动注册
 local request_duration = prometheus.histogram(
@@ -652,7 +653,7 @@ local response_size = prometheus.histogram(
     {100, 500, 1000, 5000, 10000, 50000, 100000}
 )
 
-silly.fork(function()
+task.fork(function()
     -- 启动业务服务器
     local server = http.listen {
         addr = "0.0.0.0:8080",
@@ -841,25 +842,28 @@ http_request_duration_seconds_count 100
 
 **常用 PromQL 查询**：
 
+```promql
+# 这些 PromQL 查询在 Prometheus 服务器中执行
+
+# 1. 计算 P95 延迟
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+
+# 2. 计算 P99 延迟
+histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+
+# 3. 计算平均延迟
+rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
+
+# 4. 计算 QPS
+rate(http_request_duration_seconds_count[5m])
+
+# 5. 按 endpoint 分组的 P95 延迟
+histogram_quantile(0.95, sum by (endpoint, le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
+示例代码：
+
 ```lua validate
--- 这些 PromQL 查询在 Prometheus 服务器中执行
-
--- 1. 计算 P95 延迟
--- histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
-
--- 2. 计算 P99 延迟
--- histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
-
--- 3. 计算平均延迟
--- rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
-
--- 4. 计算 QPS
--- rate(http_request_duration_seconds_count[5m])
-
--- 5. 按 endpoint 分组的 P95 延迟
--- histogram_quantile(0.95, sum by (endpoint, le) (rate(http_request_duration_seconds_bucket[5m])))
-
--- 示例代码（用于文档）
 local histogram = require "silly.metrics.histogram"
 local h = histogram("example_metric", "Example metric")
 h:observe(1.0)

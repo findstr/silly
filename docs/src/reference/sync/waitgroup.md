@@ -73,8 +73,9 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
 
     for i = 1, 3 do
@@ -98,8 +99,9 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local results = {}
 
@@ -131,8 +133,9 @@ waitgroup 自动处理协程中的错误，不会因为单个任务失败而影�
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local success_count = 0
 
@@ -160,8 +163,9 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
 
     -- 模拟处理函数
@@ -200,8 +204,9 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local max_concurrent = 3
     local semaphore = 0
@@ -241,8 +246,9 @@ waitgroup 可以嵌套使用，实现层次化的并发控制：
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local main_wg = waitgroup.new()
 
     -- 第一组任务
@@ -291,8 +297,9 @@ waitgroup 的 `wait()` 方法会挂起当前协程，因此必须在协程中调
 ```lua validate
 local silly = require "silly"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     -- 正确：在协程中调用 wait()
     wg:wait()
@@ -317,8 +324,9 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local errors = {}
 
@@ -356,8 +364,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
 
     wg:fork(function()
@@ -386,5 +395,5 @@ waitgroup 常与以下模块配合使用：
 
 ## 参见
 
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.time](../time.md) - 定时器模块

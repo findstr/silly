@@ -78,7 +78,7 @@ http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 
@@ -90,7 +90,7 @@ print("HTTP server listening on http://127.0.0.1:8080")
 1. `http.listen` 创建 HTTP 服务器并监听地址
 2. `handler` 函数处理每个 HTTP 请求
 3. `stream:respond(status, headers)` 发送状态码和响应头
-4. `stream:close(body)` 发送响应体并关闭连接
+4. `stream:closewrite(body)` 发送响应体并关闭连接
 
 **测试服务器**：
 
@@ -133,7 +133,7 @@ http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 
@@ -182,14 +182,14 @@ http.listen {
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
 
         -- POST /api/users - 创建新用户
         elseif method == "POST" and path == "/api/users" then
             local body, err = stream:readall()
             if not body then
                 stream:respond(400, {})
-                stream:close("Bad Request: Cannot read body")
+                stream:closewrite("Bad Request: Cannot read body")
                 return
             end
 
@@ -203,10 +203,10 @@ http.listen {
                     ["content-type"] = "application/json",
                     ["content-length"] = #response_body,
                 })
-                stream:close(response_body)
+                stream:closewrite(response_body)
             else
                 stream:respond(400, {})
-                stream:close("Bad Request: Invalid user data")
+                stream:closewrite("Bad Request: Invalid user data")
             end
 
         -- GET /api/users?name=Alice - 查询参数
@@ -225,11 +225,11 @@ http.listen {
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
 
         else
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
         end
     end
 }
@@ -296,7 +296,7 @@ http.listen {
                 ["content-type"] = "text/html; charset=utf-8",
                 ["content-length"] = #html,
             })
-            stream:close(html)
+            stream:closewrite(html)
 
         elseif path == "/about" then
             local html = [[
@@ -317,7 +317,7 @@ http.listen {
                 ["content-type"] = "text/html; charset=utf-8",
                 ["content-length"] = #html,
             })
-            stream:close(html)
+            stream:closewrite(html)
 
         elseif path == "/api/status" then
             local json = require "silly.encoding.json"
@@ -331,13 +331,13 @@ http.listen {
                 ["content-type"] = "application/json",
                 ["content-length"] = #body,
             })
-            stream:close(body)
+            stream:closewrite(body)
 
         else
             stream:respond(404, {
                 ["content-type"] = "text/html",
             })
-            stream:close("<h1>404 Not Found</h1>")
+            stream:closewrite("<h1>404 Not Found</h1>")
         end
     end
 }
@@ -428,7 +428,7 @@ local function handle_request(stream)
             ["content-type"] = "text/html; charset=utf-8",
             ["content-length"] = #html,
         })
-        stream:close(html)
+        stream:closewrite(html)
         return
     end
 
@@ -453,7 +453,7 @@ local function handle_request(stream)
             ["content-type"] = "text/html; charset=utf-8",
             ["content-length"] = #html,
         })
-        stream:close(html)
+        stream:closewrite(html)
         return
     end
 
@@ -477,7 +477,7 @@ local function handle_request(stream)
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
         return
     end
 
@@ -488,7 +488,7 @@ local function handle_request(stream)
             stream:respond(400, {
                 ["content-type"] = "application/json",
             })
-            stream:close(json.encode({error = "Cannot read request body"}))
+            stream:closewrite(json.encode({error = "Cannot read request body"}))
             return
         end
 
@@ -497,7 +497,7 @@ local function handle_request(stream)
             stream:respond(400, {
                 ["content-type"] = "application/json",
             })
-            stream:close(json.encode({error = "Invalid user data. Required fields: name, age"}))
+            stream:closewrite(json.encode({error = "Invalid user data. Required fields: name, age"}))
             return
         end
 
@@ -511,7 +511,7 @@ local function handle_request(stream)
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
         return
     end
 
@@ -529,7 +529,7 @@ local function handle_request(stream)
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
         return
     end
 
@@ -544,7 +544,7 @@ local function handle_request(stream)
         ["content-type"] = "application/json",
         ["content-length"] = #response_body,
     })
-    stream:close(response_body)
+    stream:closewrite(response_body)
 end
 
 -- 启动 HTTP 服务器
@@ -561,8 +561,9 @@ print("  Press Ctrl+C to stop")
 print("===========================================")
 
 -- 可选：启动一个客户端测试
-silly.fork(function()
-    local response, err = http.GET("http://127.0.0.1:8080/api/status")
+local task = require "silly.task"
+task.fork(function()
+    local response, err = http.get("http://127.0.0.1:8080/api/status")
     if response then
         print("Self-test successful! Server status:", response.body)
     else
@@ -647,7 +648,7 @@ curl http://127.0.0.1:8080/about
 ### 响应方法
 
 - `stream:respond(status, headers)`：发送状态码和响应头
-- `stream:close(body)`：发送响应体并关闭连接
+- `stream:closewrite(body)`：发送响应体并关闭连接
 - `stream:readall()`：读取完整请求体（异步）
 
 ### 最佳实践
@@ -694,7 +695,7 @@ end
 local ok, err = auth_middleware(stream)
 if not ok then
     stream:respond(401, {})
-    stream:close(err)
+    stream:closewrite(err)
     return
 end
 ```
@@ -707,7 +708,7 @@ end
 local content_length = tonumber(stream.header["content-length"])
 if content_length and content_length > 1024 * 1024 then  -- 1MB limit
     stream:respond(413, {})  -- Payload Too Large
-    stream:close("Request body too large")
+    stream:closewrite("Request body too large")
     return
 end
 ```
@@ -731,7 +732,7 @@ if method == "OPTIONS" then
     local headers = cors_headers()
     headers["content-length"] = 0
     stream:respond(204, headers)
-    stream:close()
+    stream:closewrite()
     return
 end
 ```

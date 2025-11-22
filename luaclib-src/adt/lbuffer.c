@@ -360,6 +360,7 @@ static void read_line(lua_State *L, struct buffer *b, int delim)
 //	read byte count/delimiter
 //@return
 //	string or nil
+//	integer
 static int lread(lua_State *L)
 {
 	int vstk;

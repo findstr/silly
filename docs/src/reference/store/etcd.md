@@ -11,7 +11,7 @@ tag:
 
 # silly.store.etcd
 
-`silly.store.etcd` 模块提供了一个用于与 etcd v3 API 交互的客户端。它基于 gRPC 实现，并提供了对 etcd 核心功能（如键值存储、租约、监视和分布式锁）的封装。etcd 是一个分布式、可靠的键值存储系统，常用于配置管理、服务发现和分布式协调。
+`silly.store.etcd` 模块提供了一个用于与 etcd v3 API 交互的客户端。它基于 gRPC 实现，并提供了对 etcd 核心功能（如键值存储、租约、监视）的封装。etcd 是一个分布式、可靠的键值存储系统，常用于配置管理、服务发现和分布式协调。
 
 ## 模块导入
 
@@ -30,13 +30,6 @@ etcd v3 API 基于 gRPC，提供以下核心功能：
 - **监视（Watch）**: 监听键的变化事件，支持历史版本回放
 - **事务（Transaction）**: 原子性执行多个操作
 
-### 分布式锁
-
-模块提供了基于租约的分布式锁实现：
-
-- 使用租约确保锁在持有者崩溃后自动释放
-- 通过监视机制实现公平排队
-- 支持自定义锁前缀和 UUID
 
 ### 租约保活
 
@@ -77,8 +70,9 @@ etcd v3 API 基于 gRPC，提供以下核心功能：
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
         timeout = 5,
@@ -117,8 +111,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -183,8 +178,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -257,8 +253,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -309,8 +306,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -365,8 +363,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -418,8 +417,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -477,8 +477,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -524,8 +525,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -565,8 +567,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -620,14 +623,15 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
 
     -- 启动监视协程
-    silly.fork(function()
+    task.fork(function()
         local stream, err = client:watch {
             key = "config/",
             prefix = true,
@@ -675,122 +679,6 @@ end)
 
 ---
 
-## 分布式锁 API
-
-### client:lock(lease_id, prefix, uuid)
-
-获取一个分布式锁。使用租约确保锁在持有者崩溃后自动释放。
-
-- **参数**:
-  - `lease_id`: `integer` (必需) - 用于锁的租约 ID（必须先创建租约）
-  - `prefix`: `string` (必需) - 锁的前缀，用于标识锁的命名空间
-  - `uuid`: `string` (必需) - 锁的唯一标识符（通常使用客户端 ID）
-- **返回值**:
-  - 成功: `true` - 成功获取锁
-  - 失败: `false, string` - 失败和错误信息
-- **异步**: 是（如果锁被其他客户端持有，会等待直到获取锁）
-- **注意**:
-  - 锁实现基于 etcd 的 MVCC 版本号和监视机制
-  - 如果锁已被占用，会等待前一个锁释放
-  - 租约到期后锁会自动释放
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local etcd = require "silly.store.etcd"
-
-silly.fork(function()
-    local client = etcd.newclient {
-        endpoints = {"127.0.0.1:2379"},
-    }
-
-    -- 创建租约
-    local lease_res = client:grant {TTL = 30}
-    if not lease_res then
-        print("Failed to create lease")
-        return
-    end
-
-    local lease_id = lease_res.ID
-    local lock_prefix = "/locks/myservice"
-    local client_id = "client-" .. os.time()
-
-    -- 尝试获取锁
-    print("Trying to acquire lock...")
-    local ok, err = client:lock(lease_id, lock_prefix, client_id)
-
-    if not ok then
-        print("Failed to acquire lock:", err)
-        return
-    end
-
-    print("Lock acquired!")
-
-    -- 执行临界区操作
-    print("Doing critical work...")
-    silly.sleep(5000)
-
-    -- 释放锁
-    local unlock_res, err = client:unlock(lock_prefix, client_id)
-    if unlock_res then
-        print("Lock released")
-    end
-
-    -- 撤销租约
-    client:revoke {ID = lease_id}
-end)
-```
-
-### client:unlock(prefix, uuid)
-
-释放一个分布式锁。
-
-- **参数**:
-  - `prefix`: `string` (必需) - 锁的前缀（必须与 `lock()` 时使用的前缀相同）
-  - `uuid`: `string` (必需) - 锁的唯一标识符（必须与 `lock()` 时使用的 UUID 相同）
-- **返回值**:
-  - 成功: `table` - 删除操作的响应对象
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 是
-- **注意**: 释放锁后，其他等待该锁的客户端会被唤醒
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local etcd = require "silly.store.etcd"
-
-silly.fork(function()
-    local client = etcd.newclient {
-        endpoints = {"127.0.0.1:2379"},
-    }
-
-    local lease_res = client:grant {TTL = 30}
-    local lease_id = lease_res.ID
-    local prefix = "/locks/resource"
-    local uuid = "worker-1"
-
-    -- 获取锁
-    if client:lock(lease_id, prefix, uuid) then
-        print("Lock acquired, doing work...")
-
-        -- 模拟工作
-        silly.sleep(2000)
-
-        -- 释放锁
-        local res, err = client:unlock(prefix, uuid)
-        if res then
-            print("Lock released successfully")
-        else
-            print("Failed to release lock:", err)
-        end
-    end
-
-    client:revoke {ID = lease_id}
-end)
-```
-
----
-
 ## 使用示例
 
 ### 示例1：配置管理
@@ -801,8 +689,9 @@ end)
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
 local json = require "silly.encoding.json"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -856,8 +745,9 @@ end)
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
 local json = require "silly.encoding.json"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -925,8 +815,9 @@ end)
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
 local json = require "silly.encoding.json"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -935,7 +826,7 @@ silly.fork(function()
     local current_config = {}
 
     -- 启动监听协程
-    silly.fork(function()
+    task.fork(function()
         local stream = client:watch {
             key = "/config/app/",
             prefix = true,
@@ -1011,74 +902,16 @@ silly.fork(function()
 end)
 ```
 
-### 示例4：分布式协调
-
-使用分布式锁实现跨节点的任务协调：
-
-```lua validate
-local silly = require "silly"
-local etcd = require "silly.store.etcd"
-
-silly.fork(function()
-    local client = etcd.newclient {
-        endpoints = {"127.0.0.1:2379"},
-    }
-
-    -- 模拟多个工作节点竞争同一个任务
-    local workers = {}
-    for i = 1, 3 do
-        workers[i] = silly.fork(function()
-            local worker_id = "worker-" .. i
-            print(worker_id, "started")
-
-            -- 创建租约
-            local lease = client:grant {TTL = 20}
-            local lease_id = lease.ID
-
-            -- 尝试获取锁
-            print(worker_id, "trying to acquire lock...")
-            local ok, err = client:lock(
-                lease_id,
-                "/locks/batch-job",
-                worker_id
-            )
-
-            if not ok then
-                print(worker_id, "failed to acquire lock:", err)
-                client:revoke {ID = lease_id}
-                return
-            end
-
-            print(worker_id, "acquired lock, executing task...")
-
-            -- 执行任务（只有一个worker能执行）
-            silly.sleep(2000)
-            print(worker_id, "task completed")
-
-            -- 释放锁
-            client:unlock("/locks/batch-job", worker_id)
-            print(worker_id, "released lock")
-
-            -- 清理租约
-            client:revoke {ID = lease_id}
-        end)
-    end
-
-    -- 等待所有worker完成
-    silly.sleep(10000)
-    print("All workers finished")
-end)
-```
-
-### 示例5：键值版本控制
+### 示例4：键值版本控制
 
 利用 etcd 的 MVCC 特性实现版本控制：
 
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1131,15 +964,16 @@ silly.fork(function()
 end)
 ```
 
-### 示例6：事务性操作
+### 示例5：事务性操作
 
 使用 etcd 进行原子性的多键操作（注意：需要通过底层 gRPC 客户端）：
 
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1180,15 +1014,16 @@ silly.fork(function()
 end)
 ```
 
-### 示例7：健康检查与心跳
+### 示例6：健康检查与心跳
 
 使用租约实现服务健康检查：
 
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1208,7 +1043,7 @@ silly.fork(function()
     print("Heartbeat registered with", lease_id)
 
     -- 监控协程
-    silly.fork(function()
+    task.fork(function()
         local stream = client:watch {
             key = heartbeat_key,
         }
@@ -1250,15 +1085,16 @@ silly.fork(function()
 end)
 ```
 
-### 示例8：优雅关闭与资源清理
+### 示例7：优雅关闭与资源清理
 
 正确处理 etcd 客户端的生命周期：
 
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1334,7 +1170,7 @@ local etcd = require "silly.store.etcd"
 -- local res = client:get({key = "foo"})  -- 会阻塞或失败
 
 -- 正确：在协程中调用
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1351,8 +1187,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1386,8 +1223,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
         retry = 3,
@@ -1426,8 +1264,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1442,7 +1281,7 @@ silly.fork(function()
     end
 
     -- 在独立协程中读取事件
-    silly.fork(function()
+    task.fork(function()
         while true do
             local res, err = stream:read()
 
@@ -1473,8 +1312,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1506,8 +1346,9 @@ etcd 使用 MVCC，每次修改都会增加版本号。定期压缩避免空间�
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1539,50 +1380,6 @@ silly.fork(function()
 end)
 ```
 
-### 7. 分布式锁超时
-
-使用分布式锁时，确保租约 TTL 足够长以完成任务：
-
-```lua validate
-local silly = require "silly"
-local etcd = require "silly.store.etcd"
-
-silly.fork(function()
-    local client = etcd.newclient {
-        endpoints = {"127.0.0.1:2379"},
-    }
-
-    -- 根据任务预期时长设置租约 TTL
-    local task_timeout = 60  -- 任务预计60秒完成
-    local lease = client:grant {
-        TTL = task_timeout + 10,  -- 额外10秒缓冲
-    }
-
-    local lease_id = lease.ID
-
-    -- 获取锁
-    local ok = client:lock(
-        lease_id,
-        "/locks/long-task",
-        "worker-1"
-    )
-
-    if ok then
-        print("Lock acquired, starting long task...")
-
-        -- 执行长任务
-        silly.sleep(task_timeout * 1000)
-
-        print("Task completed")
-
-        -- 释放锁
-        client:unlock("/locks/long-task", "worker-1")
-    end
-
-    client:revoke {ID = lease_id}
-end)
-```
-
 ---
 
 ## 性能建议
@@ -1595,8 +1392,9 @@ end)
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1626,8 +1424,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1662,8 +1461,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1700,8 +1500,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local client = etcd.newclient {
         endpoints = {"127.0.0.1:2379"},
     }
@@ -1741,8 +1542,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local etcd = require "silly.store.etcd"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 局域网环境：快速失败
     local client_lan = etcd.newclient {
         endpoints = {"192.168.1.100:2379"},

@@ -305,4 +305,4 @@ logger.info("Count:", count, "Ratio:", ratio)
 ## 参见
 
 - [silly.signal](./signal.md) - 信号处理（用于日志轮转）
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块

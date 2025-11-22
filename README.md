@@ -49,18 +49,19 @@ Create a file `hello.lua`:
 ```lua
 local tcp = require "silly.net.tcp"
 
-tcp.listen("127.0.0.1:8888", function(fd, addr)
-    print("New connection from", addr)
+tcp.listen("127.0.0.1:8888", function(conn)
+    print("New connection from", conn:remoteaddr())
 
     while true do
-        local data = tcp.readline(fd, "\n")
+        local data = conn:read("\n")
         if not data then
             print("Client disconnected")
             break
         end
 
-        tcp.write(fd, "Echo: " .. data)
+        conn:write("Echo: " .. data)
     end
+    conn:close()
 end)
 
 print("Server listening on 127.0.0.1:8888")

@@ -24,7 +24,7 @@ local udp = {}
 ---@field co thread?
 ---@field err string?
 ---@field stash_bytes integer
----@field stash_packets userdata
+---@field stash_packets silly.adt.queue<silly.net.udp.packet>
 local conn = {}
 local conn_mt = {
 	__index = conn,

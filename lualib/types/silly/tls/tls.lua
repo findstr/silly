@@ -1,38 +1,36 @@
 --- @meta silly.tls.tls
 
 ---@class silly.tls.tls
-local Tls = {}
+local M = {}
 
 ---Close TLS connection
-function Tls:close() end
+function M:close() end
 
 ---Read data from TLS connection
 ---@param size integer
 ---@return string? data
 ---@return string? error
-function Tls:read(size) end
+function M:read(size) end
 
 ---Write data to TLS connection
 ---@param data string
 ---@return boolean success
 ---@return string? error
-function Tls:write(data) end
+function M:write(data) end
 
 ---Perform TLS handshake
 ---@return boolean success
 ---@return string? error
-function Tls:handshake() end
+function M:handshake() end
 
 ---Push data to TLS buffer
----@param data string
-function Tls:push(data) end
+---@overload fun(self: silly.tls.tls, data: string): nil
+---@overload fun(self: silly.tls.tls, data: lightuserdata, size: integer): nil
+function M:push(data, size) end
 
 ---Get buffer size
 ---@return integer
-function Tls:size() end
-
----@class silly.tls.tls.module
-local M = {}
+function M:size() end
 
 ---Open a new TLS connection
 ---@param CTX silly.tls.CTX TLS context

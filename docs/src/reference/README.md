@@ -14,7 +14,8 @@ category:
 
 框架的核心功能，包括协程调度、定时器、信号处理等。
 
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块
+- [silly.task](./task.md) - 协程任务管理
 - [silly.time](./time.md) - 定时器和时间管理
 - [silly.signal](./signal.md) - Unix信号处理
 - [silly.logger](./logger.md) - 日志系统
@@ -27,6 +28,13 @@ category:
 - [silly.console](./console.md) - 交互式控制台
 - [silly.debugger](./debugger.md) - 交互式调试器
 - [silly.patch](./patch.md) - 模块热更新
+
+## 数据结构模块
+
+高效的数据结构实现，用于处理网络数据流和队列管理。
+
+- [silly.adt.buffer](./adt/buffer.md) - 字节缓冲区
+- [silly.adt.queue](./adt/queue.md) - FIFO队列
 
 ## 加密模块
 
@@ -42,6 +50,7 @@ category:
 数据编码和解码工具。
 
 - [silly.encoding.json](./encoding/json.md) - JSON编码解码
+- [silly.encoding.base64](./encoding/base64.md) - Base64编码解码
 
 ## 同步模块
 

@@ -178,5 +178,5 @@ end)
 
 ## 参见
 
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块
 - [silly.logger](./logger.md) - 日志系统

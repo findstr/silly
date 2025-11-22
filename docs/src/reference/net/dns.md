@@ -106,8 +106,9 @@ IPv6 地址记录类型常量。
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 查询 IPv4 地址
     local ip = dns.lookup("www.example.com", dns.A)
     if ip then
@@ -152,8 +153,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 查询所有 IPv4 地址
     local ips = dns.resolve("cdn.example.com", dns.A)
     if ips then
@@ -241,8 +243,9 @@ print(dns.isname("2001:db8::1"))       -- false
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local domain = "www.example.com"
 
     -- 查询 IPv4 地址
@@ -270,8 +273,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local domain = "cdn.example.com"
 
     -- 获取所有 IPv4 地址
@@ -299,8 +303,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 查询 _service._protocol.domain 格式的 SRV 记录
     local srvs = dns.resolve("_http._tcp.example.com", dns.SRV)
     if not srvs or #srvs == 0 then
@@ -338,8 +343,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 使用阿里云公共 DNS
     dns.server("223.5.5.5:53")
 
@@ -361,8 +367,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local domain = "slow.example.com"
 
     -- 设置 2 秒超时
@@ -388,8 +395,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local inputs = {
         "www.example.com",
         "192.168.1.1",
@@ -421,8 +429,9 @@ end)
 local silly = require "silly"
 local dns = require "silly.net.dns"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local domains = {
         "www.google.com",
         "www.github.com",
@@ -460,8 +469,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local common_domains = {
         "api.example.com",
         "cdn.example.com",
@@ -495,12 +505,13 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
 -- 错误：不能在主线程调用
 -- local ip = dns.lookup("example.com", dns.A)  -- 会失败
 
 -- 正确：在协程中调用
-silly.fork(function()
+task.fork(function()
     local ip = dns.lookup("example.com", dns.A)
     print(ip)
 end)
@@ -513,8 +524,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 正确：在查询前配置
     dns.server("8.8.8.8:53")
     local ip = dns.lookup("example.com", dns.A)
@@ -531,8 +543,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local ip = dns.lookup("nonexistent.example.com", dns.A)
     if not ip then
         print("DNS lookup failed - domain may not exist")
@@ -558,8 +571,9 @@ DNS 响应会被缓存,但会过期:
 local silly = require "silly"
 local dns = require "silly.net.dns"
 local time = require "silly.time"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 第一次查询，从 DNS 服务器获取
     local ip1 = dns.lookup("example.com", dns.A)
     print("First lookup:", ip1)
@@ -584,8 +598,9 @@ CNAME 记录会被自动解析:
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 如果 alias.example.com 是 real.example.com 的 CNAME
     -- lookup 会自动跟随 CNAME 并返回 real.example.com 的 A 记录
     local ip = dns.lookup("alias.example.com", dns.A)
@@ -602,8 +617,9 @@ IPv6 地址使用冒号分隔的十六进制格式:
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local ipv6 = dns.lookup("ipv6.example.com", dns.AAAA)
     if ipv6 then
         -- 格式：xx:xx:xx:xx:xx:xx:xx:xx（不是压缩格式）
@@ -619,8 +635,9 @@ SRV 记录包含多个字段:
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local srv = dns.lookup("_http._tcp.example.com", dns.SRV)
     if srv then
         -- SRV 记录包含:
@@ -639,8 +656,9 @@ DNS 查询有内置的超时和重试机制:
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 默认行为：
     -- - 超时时间：5 秒
     -- - 重试次数：3 次
@@ -667,7 +685,9 @@ end)
 local silly = require "silly"
 local dns = require "silly.net.dns"
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 应用启动时预热缓存
     local critical_domains = {
         "api.service.com",
@@ -692,8 +712,9 @@ end)
 local silly = require "silly"
 local dns = require "silly.net.dns"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local domains = {"site1.com", "site2.com", "site3.com"}
 
@@ -716,8 +737,9 @@ end)
 local silly = require "silly"
 local dns = require "silly.net.dns"
 local tcp = require "silly.net.tcp"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local function connect_to_host(host, port)
         local ip
         if dns.isname(host) then
@@ -764,8 +786,9 @@ dns.server("223.5.5.5:53")        -- 阿里云 DNS
 ```lua validate
 local silly = require "silly"
 local dns = require "silly.net.dns"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 局域网环境：使用较短的超时
     local ip1 = dns.lookup("local.service", dns.A, 1000)  -- 1 秒
 
@@ -785,8 +808,9 @@ end)
 local silly = require "silly"
 local dns = require "silly.net.dns"
 local time = require "silly.time"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local function timed_lookup(domain, qtype)
         local start = time.monotonic()
         local result = dns.lookup(domain, qtype)

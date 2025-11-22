@@ -77,8 +77,9 @@ local mysql = require "silly.store.mysql"
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -114,8 +115,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -145,8 +147,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -186,8 +189,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -250,8 +254,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -310,8 +315,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -354,8 +360,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -395,8 +402,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -440,8 +448,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -489,8 +498,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local pool = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -567,8 +577,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -629,8 +640,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -724,8 +736,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "app_user",
@@ -744,20 +757,22 @@ silly.fork(function()
         max_packet_size = 16 * 1024 * 1024,
     }
 
-    -- 定期健康检查
+    -- 定期健康检查（演示运行 2 次）
     local function health_check()
-        while true do
+        for i = 1, 2 do
             local ok, err = db:ping()
             if ok then
                 print("Database healthy")
             else
                 print("Database unhealthy:", err.message)
             end
-            silly.sleep(30000)  -- 每 30 秒检查一次
+            if i < 2 then
+                silly.sleep(30000)  -- 每 30 秒检查一次
+            end
         end
     end
 
-    silly.fork(health_check)
+    task.fork(health_check)
 
     -- 应用逻辑...
     local res = db:query("SELECT COUNT(*) as count FROM users")
@@ -775,8 +790,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -830,8 +846,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -889,8 +906,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -970,8 +988,9 @@ end)
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1033,8 +1052,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1112,13 +1132,14 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
 -- 错误：不能在主线程调用
 -- local db = mysql.open{...}
 -- db:query("SELECT 1")  -- 会挂起导致死锁
 
 -- 正确：在协程中调用
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1137,9 +1158,10 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
 -- 不推荐：每次查询创建连接池
-silly.fork(function()
+task.fork(function()
     local db = mysql.open{addr = "127.0.0.1:3306", user = "root", password = "root"}
     db:query("SELECT 1")
     db:close()
@@ -1154,12 +1176,12 @@ local db = mysql.open {
     max_idle_conns = 5,
 }
 
-silly.fork(function()
+task.fork(function()
     -- 查询 1
     db:query("SELECT 1")
 end)
 
-silly.fork(function()
+task.fork(function()
     -- 查询 2（复用连接池）
     db:query("SELECT 2")
 end)
@@ -1172,8 +1194,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1210,8 +1233,9 @@ SQL 参数支持以下 Lua 类型：
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1258,8 +1282,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1292,8 +1317,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1336,8 +1362,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1404,7 +1431,9 @@ local db_high = mysql.open {
     max_lifetime = 3600,   -- 1 小时
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 使用相应的连接池...
     db_low:close()
     db_medium:close()
@@ -1423,8 +1452,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1453,8 +1483,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1492,8 +1523,9 @@ end)
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 场景：10 个并发查询
     local db = mysql.open {
         addr = "127.0.0.1:3306",
@@ -1528,8 +1560,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1568,8 +1601,9 @@ end)
 ```lua validate
 local silly = require "silly"
 local mysql = require "silly.store.mysql"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local db = mysql.open {
         addr = "127.0.0.1:3306",
         user = "root",
@@ -1616,7 +1650,7 @@ end)
 
 ## 参见
 
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.store.redis](./redis.md) - Redis 客户端
 - [silly.store.etcd](./etcd.md) - Etcd 客户端
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组

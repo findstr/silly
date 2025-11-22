@@ -53,11 +53,12 @@ local m = mutex.new()
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = "resource_1"
 
-silly.fork(function()
+task.fork(function()
     local lock<close> = m:lock(key)
     print("Lock acquired")
     -- 临界区代码
@@ -78,11 +79,12 @@ end)
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = "resource_1"
 
-silly.fork(function()
+task.fork(function()
     local lock = m:lock(key)
     print("Lock acquired")
     -- 临界区代码
@@ -129,11 +131,12 @@ print("Final counter:", counter)  -- 输出: Final counter: 5
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = {}
 
-silly.fork(function()
+task.fork(function()
     -- 第一次获取锁
     local lock1<close> = m:lock(key)
     print("First lock acquired")
@@ -160,11 +163,12 @@ end)
 local silly = require "silly"
 local time = require "silly.time"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = "database"
 
-silly.fork(function()
+task.fork(function()
     local lock = m:lock(key)
     print("Lock acquired")
 
@@ -220,11 +224,12 @@ wg:wait()
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = {}
 
-silly.fork(function()
+task.fork(function()
     local lock<close> = m:lock(key)
     print("Lock acquired")
 
@@ -292,6 +297,7 @@ wg:wait()
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 
@@ -299,7 +305,7 @@ local m = mutex.new()
 -- local lock = m:lock("key")  -- 这会导致问题
 
 -- 正确：在协程中使用
-silly.fork(function()
+task.fork(function()
     local lock<close> = m:lock("key")
     print("This is correct")
 end)
@@ -312,10 +318,11 @@ end)
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 
-silly.fork(function()
+task.fork(function()
     -- 推荐：使用 <close>
     local lock<close> = m:lock("key")
     -- ... 临界区代码 ...
@@ -366,11 +373,12 @@ end)
 ```lua validate
 local silly = require "silly"
 local mutex = require "silly.sync.mutex"
+local task = require "silly.task"
 
 local m = mutex.new()
 local key = {}
 
-silly.fork(function()
+task.fork(function()
     local lock1 = m:lock(key)  -- 第1次获取
     local lock2 = m:lock(key)  -- 第2次获取（可重入）
     local lock3 = m:lock(key)  -- 第3次获取（可重入）
@@ -412,5 +420,5 @@ local cache_lock = {}
 ## 参见
 
 - [silly.sync.waitgroup](./waitgroup.md) - 协程等待组
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.time](../time.md) - 定时器模块

@@ -144,9 +144,9 @@ local listenfd = tls.listen {
             key = key_pem,
         }
     },
-    disp = function(fd, addr)
-        tls.write(fd, "HTTP/1.1 200 OK\r\n\r\nHello HTTPS!\n")
-        tls.close(fd)
+    accept = function(conn)
+        conn:write( "HTTP/1.1 200 OK\r\n\r\nHello HTTPS!\n")
+        conn:close()
     end
 }
 
@@ -205,7 +205,7 @@ local listenfd = tls.listen {
             key = key_pem,
         }
     },
-    disp = function(fd, addr)
+    accept = function(conn)
         -- 处理 HTTPS 请求
     end
 }
@@ -303,7 +303,8 @@ local server = http.listen {
         -- 发送响应
         stream:respond(200, {
             ["content-type"] = "text/plain",
-        }, "Hello HTTPS!\n")
+        })
+        stream:closewrite("Hello HTTPS!\n")
     end
 }
 
@@ -332,7 +333,8 @@ local http_server = http.listen {
         local redirect_url = "https://" .. host .. stream.uri
         stream:respond(301, {
             ["location"] = redirect_url,
-        }, "")
+        })
+        stream:closewrite("")
     end
 }
 
@@ -382,10 +384,10 @@ local listenfd = tls.listen {
             key = key_test_com,
         }
     },
-    disp = function(fd, addr)
+    accept = function(conn)
         -- OpenSSL 会根据客户端的 SNI 请求自动选择正确的证书
-        tls.write(fd, "HTTP/1.1 200 OK\r\n\r\nHello!\n")
-        tls.close(fd)
+        conn:write( "HTTP/1.1 200 OK\r\n\r\nHello!\n")
+        conn:close()
     end
 }
 
@@ -413,7 +415,7 @@ local listenfd = tls.listen {
     certs = {{cert = cert_pem, key = key_pem}},
     -- 声明支持的 ALPN 协议
     alpnprotos = {"h2", "http/1.1"},  -- 优先 HTTP/2，回退到 HTTP/1.1
-    disp = function(fd, addr)
+    accept = function(conn)
         -- 检查协商结果
         local protocol = tls.alpnproto(fd)
         print("协商的协议:", protocol or "none")
@@ -429,7 +431,7 @@ local listenfd = tls.listen {
             print("使用默认协议")
         end
 
-        tls.close(fd)
+        conn:close()
     end
 }
 
@@ -465,8 +467,8 @@ local listenfd = tls.listen {
         "ECDHE-RSA-AES256-GCM-SHA384",
         "ECDHE-RSA-CHACHA20-POLY1305",
     }, ":"),
-    disp = function(fd, addr)
-        tls.close(fd)
+    accept = function(conn)
+        conn:close()
     end
 }
 
@@ -499,8 +501,8 @@ local listenfd = tls.listen {
     -- "!TLSv1" 禁用 TLS 1.0
     -- "!TLSv1.1" 禁用 TLS 1.1
     ciphers = "DEFAULT:!SSLv3:!TLSv1:!TLSv1.1",
-    disp = function(fd, addr)
-        tls.close(fd)
+    accept = function(conn)
+        conn:close()
     end
 }
 
@@ -548,13 +550,13 @@ local cert_pem, key_pem = load_certs()
 local listenfd = tls.listen {
     addr = "0.0.0.0:443",
     certs = {{cert = cert_pem, key = key_pem}},
-    disp = function(fd, addr)
-        tls.write(fd, "HTTP/1.1 200 OK\r\n\r\nHello!\n")
-        tls.close(fd)
+    accept = function(conn)
+        conn:write( "HTTP/1.1 200 OK\r\n\r\nHello!\n")
+        conn:close()
     end
 }
 
-print("HTTPS 服务器启动，PID:", silly.getpid())
+print("HTTPS 服务器启动，PID:", silly.pid)
 
 -- 注册 SIGUSR1 信号处理器，用于触发证书重载
 signal.register("SIGUSR1", function()
@@ -582,7 +584,7 @@ signal.register("SIGUSR1", function()
     end
 end)
 
-print("发送 'kill -USR1 " .. silly.getpid() .. "' 来重载证书")
+print("发送 'kill -USR1 " .. silly.pid .. "' 来重载证书")
 ```
 
 **触发证书重载**：
@@ -604,6 +606,7 @@ kill -USR1 $(cat /var/run/silly.pid)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local logger = require "silly.logger"
 
@@ -632,7 +635,7 @@ end
 local function monitor_cert_expiry(cert_pem, alert_days)
     alert_days = alert_days or 30  -- 默认提前 30 天告警
 
-    silly.fork(function()
+    task.fork(function()
         while true do
             local expiry_str = get_cert_expiry(cert_pem)
             logger.info("证书过期时间:", expiry_str)
@@ -701,8 +704,8 @@ local listenfd = tls.listen {
             key = key_pem,
         }
     },
-    disp = function(fd, addr)
-        tls.close(fd)
+    accept = function(conn)
+        conn:close()
     end
 }
 
@@ -767,37 +770,40 @@ local connection_pool = {}
 -- 获取或创建连接
 local function get_connection(host, port)
     local key = host .. ":" .. port
-    local fd = connection_pool[key]
+    local conn = connection_pool[key]
 
     -- 检查连接是否仍然有效
-    if fd and tls.isalive(fd) then
-        return fd
+    if conn and conn:isalive() then
+        return conn
     end
 
     -- 创建新连接
     local ip = dns.lookup(host, dns.A)
-    fd = tls.connect(ip .. ":" .. port, nil, host, {"http/1.1"})
+    conn = tls.connect(ip .. ":" .. port, nil, host, {"http/1.1"})
 
-    if fd then
-        connection_pool[key] = fd
+    if conn then
+        connection_pool[key] = conn
     end
 
-    return fd
+    return conn
 end
 
 -- 发送请求（复用连接）
 local function send_request(host, port, request)
-    local fd = get_connection(host, port)
-    if not fd then
+    local conn = get_connection(host, port)
+    if not conn then
         return nil, "connection failed"
     end
 
-    tls.write(fd, request)
-    local response = tls.readline(fd)
+    conn:write(request)
+    local response = conn:read("\r\n")
     return response
 end
 
-silly.fork(function()
+local silly = require "silly"
+local task = require "silly.task"
+
+task.fork(function()
     -- 发送多个请求，复用同一个连接
     for i = 1, 10 do
         local response = send_request("example.com", 443, "GET / HTTP/1.1\r\n\r\n")
@@ -839,7 +845,7 @@ local tls_handshake_errors_total = metrics.counter(
 local function handle_connection(fd, addr)
     local start_time = silly.time.now()
 
-    -- TLS 握手在 tls.listen 的 disp 回调时已经完成
+    -- TLS 握手在 tls.listen 的 accept 回调时已经完成
     local handshake_duration = (silly.time.now() - start_time) / 1000.0
     tls_handshake_duration:observe(handshake_duration)
     tls_connections_total:inc()
@@ -1056,7 +1062,8 @@ echo "*.key" >> .gitignore
 -- 在 HTTP 响应中添加 HSTS 头
 stream:respond(200, {
     ["strict-transport-security"] = "max-age=31536000; includeSubDomains; preload",
-}, body)
+})
+stream:closewrite(body)
 ```
 
 HSTS 强制浏览器只通过 HTTPS 访问网站，防止中间人攻击。
@@ -1124,7 +1131,8 @@ local http_server = http.listen {
         stream:respond(301, {
             ["location"] = redirect_url,
             ["content-type"] = "text/plain",
-        }, "Redirecting to HTTPS...\n")
+        })
+        stream:closewrite("Redirecting to HTTPS...\n")
     end
 }
 
@@ -1148,7 +1156,8 @@ local https_server = http.listen {
             stream:respond(200, {
                 ["content-type"] = "text/html; charset=utf-8",
                 ["strict-transport-security"] = "max-age=31536000; includeSubDomains",
-            }, [[
+            })
+            stream:closewrite([[
 <!DOCTYPE html>
 <html>
 <head><title>Silly HTTPS Server</title></head>
@@ -1161,7 +1170,8 @@ local https_server = http.listen {
         else
             stream:respond(404, {
                 ["content-type"] = "text/plain",
-            }, "404 Not Found\n")
+            })
+            stream:closewrite("404 Not Found\n")
         end
     end
 }

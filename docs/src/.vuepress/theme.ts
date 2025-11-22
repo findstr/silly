@@ -1,7 +1,9 @@
 import { hopeTheme } from "vuepress-theme-hope";
 
-import navbar from "./navbar.js";
-import sidebar from "./sidebar.js";
+import navbarZh from "./navbar.js";
+import sidebarZh from "./sidebar.js";
+import navbarEn from "./navbar.en.js";
+import sidebarEn from "./sidebar.en.js";
 
 export default hopeTheme({
   hostname: "https://gotocoding.com",
@@ -17,15 +19,34 @@ export default hopeTheme({
 
   docsDir: "src",
 
-  // 导航栏
-  navbar,
-
-  // 侧边栏
-  sidebar,
-
-  // 页脚
-  footer: "默认页脚",
-  displayFooter: true,
+  locales: {
+    "/": {
+      // 导航栏
+      navbar: navbarZh,
+      // 侧边栏
+      sidebar: sidebarZh,
+      // 页脚
+      footer: "默认页脚",
+      displayFooter: true,
+      // 多语言配置
+      metaLocales: {
+        editLink: "在 GitHub 上编辑此页",
+      },
+    },
+    "/en/": {
+      // navbar
+      navbar: navbarEn,
+      // sidebar
+      sidebar: sidebarEn,
+      // footer
+      footer: "Default footer",
+      displayFooter: true,
+      // i18n
+      metaLocales: {
+        editLink: "Edit this page on GitHub",
+      },
+    },
+  },
 
   // 加密配置
   encrypt: {
@@ -37,12 +58,7 @@ export default hopeTheme({
     },
   },
 
-  // 多语言配置
-  metaLocales: {
-    editLink: "在 GitHub 上编辑此页",
-  },
-
-  // 如果想要实时查看任何改变，启用它。注: 这对更新性能有很大负面影响
+  // 如果想要实时查看任何改变,启用它。注: 这对更新性能有很大负面影响
   // hotReload: true,
 
   // 此处开启了很多功能用于演示，你应仅保留用到的功能。

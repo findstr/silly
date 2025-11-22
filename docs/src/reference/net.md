@@ -58,6 +58,7 @@ local net = require "silly.net"
 **示例**:
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local net = require "silly.net"
 
 local listenfd = net.tcplisten("[::]:8080", {
@@ -300,7 +301,7 @@ end
 - `addr` (string): 客户端地址
 
 ::: warning 回调限制
-事件回调函数**不能 yield**（调用会挂起的异步函数）。如果需要执行异步操作，应使用 `silly.fork()` 创建新协程。
+事件回调函数虽然在协程中执行，但 `ptr` 指针仅在回调同步执行期间有效。一旦回调 yield 或返回，`ptr` 指向的内存可能被释放。因此，**必须在 yield 之前将数据复制为字符串**。
 :::
 
 ### data 回调
@@ -338,6 +339,7 @@ end
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local net = require "silly.net"
 
 -- 错误：回调中不能 yield
@@ -350,12 +352,12 @@ local fd = net.tcplisten("[::]:8080", {
     close = function(fd, errno) end,
 })
 
--- 正确：使用 fork 创建新协程处理异步操作
+-- 正确：先复制数据，再在 fork 中处理
 local fd2 = net.tcplisten("[::]:8081", {
     data = function(fd, ptr, size)
-        silly.fork(function()
-            local data = silly.tostring(ptr, size)
-            -- 现在可以使用异步函数了
+        local data = silly.tostring(ptr, size) -- 立即复制数据
+        task.fork(function()
+            -- 现在可以使用异步函数处理 data (string)
             -- process_async(data)
             net.tcpsend(fd, "OK\n")
         end)
@@ -374,8 +376,8 @@ data = function(fd, ptr, size)
     local str = silly.tostring(ptr, size)
 
     -- ❌ 错误：ptr 离开回调后失效
-    silly.fork(function()
-        local str = silly.tostring(ptr, size) -- ptr 已失效
+    task.fork(function()
+        local str = silly.tostring(ptr, size) -- ptr 已失效！
     end)
 end
 ```
@@ -407,28 +409,28 @@ net.tcpsend(saved_fd, "data") -- saved_fd 可能已指向其他连接
 
 ### 自定义协议解析
 
-结合 `silly.netstream` 和 `silly.netpacket` 实现自定义协议：
+由于 `net` 模块的 `data` 回调接收的是原始数据指针，需要使用 `silly.adt.buffer` 来管理接收缓冲区：
 
 ```lua validate
 local silly = require "silly"
 local net = require "silly.net"
-local netstream = require "silly.netstream"
+local buffer = require "silly.adt.buffer"
 
-local streams = {}
+local buffers = {}
 
 local listenfd = net.tcplisten("[::]:8080", {
     accept = function(fd, listenid, addr)
-        streams[fd] = netstream.new(fd)
+        buffers[fd] = buffer.new()
     end,
     data = function(fd, ptr, size)
-        local stream = streams[fd]
-        if not stream then return end
+        local buf = buffers[fd]
+        if not buf then return end
 
-        netstream.push(stream, ptr, size)
+        buffer.append(buf, ptr, size)
 
         -- 解析行协议
         while true do
-            local line = netstream.readline(stream, "\n")
+            local line = buffer.read(buf, "\n")
             if not line then break end
 
             -- 处理一行数据
@@ -436,13 +438,17 @@ local listenfd = net.tcplisten("[::]:8080", {
         end
     end,
     close = function(fd, errno)
-        if streams[fd] then
-            netstream.free(streams[fd])
-            streams[fd] = nil
+        if buffers[fd] then
+            buffer.clear(buffers[fd])
+            buffers[fd] = nil
         end
     end,
 })
 ```
+
+::: tip
+如果需要更方便的高级 API（如 `read(n)` 或 `read("\n")`），推荐使用 [silly.net.tcp](./net/tcp.md) 或 [silly.net.tls](./net/tls.md) 模块，它们内置了缓冲区管理。
+:::
 
 ## 性能考虑
 
@@ -467,4 +473,4 @@ net.tcpsend(fd, {
 
 - [silly.net.tcp](./net/tcp.md) - 高级 TCP API（推荐使用）
 - [silly.net.udp](./net/udp.md) - 高级 UDP API（推荐使用）
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块

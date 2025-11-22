@@ -603,14 +603,16 @@ local db_query_duration = prometheus.histogram(
 
 -- 模拟连接池管理
 local ConnectionPool = {}
+local ConnectionPool_mt = {__index = ConnectionPool}
 
 function ConnectionPool.new(name, size)
-  return {
+  local pool = {
     name = name,
     idle = size,
     active = 0,
     total = size,
   }
+  return setmetatable(pool, ConnectionPool_mt)
 end
 
 function ConnectionPool:acquire()
@@ -706,16 +708,18 @@ local cache_operation_duration = prometheus.histogram(
 
 -- 简单缓存实现
 local Cache = {}
+local Cache_mt = {__index = Cache}
 
 function Cache.new(name)
   cache_size:labels(name):set(0)
   cache_memory:labels(name):set(0)
 
-  return {
+  local c = {
     name = name,
     data = {},
     size = 0,
   }
+  return setmetatable(c, Cache_mt)
 end
 
 function Cache:get(key)
@@ -813,16 +817,18 @@ local queue_wait_duration = prometheus.histogram(
 
 -- 简单队列实现
 local Queue = {}
+local Queue_mt = {__index = Queue}
 
 function Queue.new(name)
   queue_depth:labels(name):set(0)
 
-  return {
+  local q = {
     name = name,
     messages = {},
     head = 1,
     tail = 0,
   }
+  return setmetatable(q, Queue_mt)
 end
 
 function Queue:enqueue(message)
@@ -925,14 +931,14 @@ local service_dependencies = prometheus.gauge(
 
 -- 服务抽象
 local Service = {}
-
+local service_mt = { __index = Service }
 function Service.new(name)
   service_health:labels(name):set(1)
 
-  return {
+  return setmetatable({
     name = name,
     dependencies = {},
-  }
+  }, service_mt)
 end
 
 function Service:add_dependency(dep_name, check_func)

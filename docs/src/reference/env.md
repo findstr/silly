@@ -397,7 +397,8 @@ local workers = tonumber(env.get("server.workers")) or 1
 http.listen {
     addr = "0.0.0.0:" .. port,
     handler = function(stream)
-        stream:respond(200, {["content-type"] = "text/plain"}, "Hello!")
+        stream:respond(200, {["content-type"] = "text/plain"})
+        stream:closewrite("Hello!")
     end
 }
 
@@ -449,6 +450,6 @@ end
 
 ## 参见
 
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块
 - [silly.logger](./logger.md) - 日志系统（使用 `logpath` 环境变量）
 - [快速开始](/tutorials/) - 使用配置文件的完整示例

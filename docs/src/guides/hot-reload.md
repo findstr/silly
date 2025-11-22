@@ -735,7 +735,14 @@ end
 
 -- 启动定时器
 local time = require "silly.time"
-time.repeat_call(1000, M.timer_func)  -- 定时器持有 timer_func 的引用
+local function repeat_call(ms, func)
+    local function loop()
+        func()
+        time.after(ms, loop)
+    end
+    loop()
+end
+repeat_call(1000, M.timer_func)  -- 定时器持有 timer_func 的引用
 ```
 
 解决方案 1：使用间接调用
@@ -758,7 +765,7 @@ end
 M.timer_func = timer_func
 
 -- 启动定时器
-time.repeat_call(1000, M.timer_wrapper)
+repeat_call(1000, M.timer_wrapper)
 
 -- 热更新时，timer_func 是 timer_wrapper 的 upvalue
 -- 通过 patch 可以正确更新
@@ -775,7 +782,7 @@ end
 -- 执行热更新...
 
 -- 启动新定时器
-M.timer_handle = time.repeat_call(1000, M.timer_func)
+M.timer_handle = repeat_call(1000, M.timer_func)
 ```
 
 ### 7. 测试热更新

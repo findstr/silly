@@ -29,7 +29,7 @@ local write = tcp.write
 
 local listenfd = tcp.listen("127.0.0.1:6379", function(fd, addr)
     while true do
-        local l = readline(fd)
+        local l = readline(fd, "\r\n")
         if not l then
             break
         end

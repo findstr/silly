@@ -26,7 +26,7 @@ local M = {}
 ---@field raddr string
 ---@field co thread?
 ---@field err string?
----@field buf userdata
+---@field buf silly.adt.buffer
 ---@field buflimit integer?
 ---@field delim string|integer|nil
 ---@field readpause boolean

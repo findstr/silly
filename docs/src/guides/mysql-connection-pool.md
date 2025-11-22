@@ -348,6 +348,7 @@ SET GLOBAL max_connections = 500;
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local mysql = require "silly.store.mysql"
 
 local pool = mysql.open {
@@ -357,7 +358,7 @@ local pool = mysql.open {
     max_open_conns = 10,
 }
 
-silly.fork(function()
+task.fork(function()
     -- ❌ 错误示例：事务连接未关闭
     local tx = pool:begin()
     tx:query("SELECT 1")
@@ -365,7 +366,7 @@ silly.fork(function()
     -- 连接泄漏！
 end)
 
-silly.fork(function()
+task.fork(function()
     -- ✅ 正确示例：使用 <close> 自动管理
     local tx<close> = pool:begin()
     tx:query("SELECT 1")
@@ -403,6 +404,8 @@ local pool = mysql.open {
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
+local time = require "silly.time"
 local mysql = require "silly.store.mysql"
 
 local pool = mysql.open {
@@ -413,7 +416,7 @@ local pool = mysql.open {
 }
 
 -- 定期检查连接数
-silly.fork(function()
+task.fork(function()
     while true do
         local res = pool:query("SHOW PROCESSLIST")
         local conn_count = #res
@@ -425,7 +428,7 @@ silly.fork(function()
             print("⚠️ 警告：连接数过高，可能存在连接泄漏！")
         end
 
-        silly.sleep(10000)  -- 每 10 秒检查一次
+        time.sleep(10000)  -- 每 10 秒检查一次
     end
 end)
 ```
@@ -465,7 +468,7 @@ end
 
 ```lua
 -- ✅ 推荐
-silly.fork(function()
+task.fork(function()
     local tx<close> = pool:begin()
     -- 无论是否出错，tx 都会自动关闭
     tx:query("UPDATE users SET age = 30 WHERE id = 1")
@@ -476,7 +479,7 @@ end)
 **2. 使用 pcall 保护**
 
 ```lua
-silly.fork(function()
+task.fork(function()
     local tx<close> = pool:begin()
 
     local ok, err = pcall(function()
@@ -535,6 +538,7 @@ SET GLOBAL interactive_timeout = 28800;
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local mysql = require "silly.store.mysql"
 
 local pool = mysql.open {
@@ -544,7 +548,7 @@ local pool = mysql.open {
 }
 
 -- 查询前先 ping
-silly.fork(function()
+task.fork(function()
     local ok, err = pool:ping()
     if not ok then
         print("连接已断开:", err.message)
@@ -615,7 +619,7 @@ function DBPool:query(sql, ...)
             local ok = self:reconnect()
             if ok then
                 -- 重试查询
-                silly.sleep(retry_delay)
+                time.sleep(retry_delay)
             else
                 break
             end
@@ -670,7 +674,7 @@ local db = DBPool.new {
     database = "test",
 }
 
-silly.fork(function()
+task.fork(function()
     -- 自动处理重连
     local res, err = db:query("SELECT * FROM users")
     if res then
@@ -749,11 +753,12 @@ print("应用已启动，按 Ctrl+C 退出")
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local mysql = require "silly.store.mysql"
 
 local pool = mysql.open {...}
 
-silly.fork(function()
+task.fork(function()
     -- 使用 <close> 确保事务连接被关闭
     local tx<close> = pool:begin()
 
@@ -825,7 +830,7 @@ end
 
 ```lua
 -- ❌ 错误：长事务
-silly.fork(function()
+task.fork(function()
     local tx<close> = pool:begin()
 
     -- 大量查询（占用连接很久）
@@ -843,7 +848,7 @@ end)
 
 ```lua
 -- ✅ 正确：分批处理
-silly.fork(function()
+task.fork(function()
     local batch_size = 100
 
     for batch = 1, 100 do
@@ -865,7 +870,7 @@ end)
 
 ```lua
 -- ✅ 正确：批量插入
-silly.fork(function()
+task.fork(function()
     local values = {}
     for i = 1, 10000 do
         table.insert(values, string.format("(%d, 'log message')", i))
@@ -899,7 +904,7 @@ local function warmup_pool(count)
 
     local tasks = {}
     for i = 1, count do
-        table.insert(tasks, silly.fork(function()
+        table.insert(tasks, task.fork(function()
             local ok, err = pool:ping()
             if ok then
                 print(string.format("连接 #%d 就绪", i))
@@ -936,7 +941,7 @@ local mysql = require "silly.store.mysql"
 local pool = mysql.open {...}
 
 -- 监控活跃连接
-silly.fork(function()
+task.fork(function()
     while true do
         local res = pool:query([[
             SELECT COUNT(*) as count
@@ -990,7 +995,7 @@ local function timed_query(pool, sql, ...)
 end
 
 -- 使用
-silly.fork(function()
+task.fork(function()
     local res, err = timed_query(pool, "SELECT * FROM users WHERE id = ?", 1)
 end)
 ```
@@ -1022,7 +1027,7 @@ local function tracked_query(pool, sql, ...)
 end
 
 -- 定期输出统计
-silly.fork(function()
+task.fork(function()
     while true do
         silly.sleep(60000)  -- 每分钟
 
@@ -1100,7 +1105,7 @@ local function average(tbl)
 end
 
 -- 定期输出监控报告
-silly.fork(function()
+task.fork(function()
     while true do
         silly.sleep(60000)  -- 每分钟
 
@@ -1244,7 +1249,7 @@ local mysql = require "silly.store.mysql"
 
 local pool = mysql.open {...}
 
-silly.fork(function()
+task.fork(function()
     -- 第一次执行：准备语句
     pool:query("SELECT * FROM users WHERE id = ?", 1)
 
@@ -1279,7 +1284,7 @@ local mysql = require "silly.store.mysql"
 local pool = mysql.open {...}
 
 -- 使用 EXPLAIN 分析查询
-silly.fork(function()
+task.fork(function()
     local sql = "SELECT * FROM users WHERE email = ?"
     local res = pool:query("EXPLAIN " .. sql, "user@example.com")
 

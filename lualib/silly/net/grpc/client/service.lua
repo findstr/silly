@@ -64,7 +64,7 @@ local function stream_readfinal(s)
 end
 
 ---@param s silly.net.grpc.client.sstream | silly.net.grpc.client.bstream
----@param data string
+---@param data string?
 local function stream_closewrite(s, data)
 	local h2stream = s.h2stream
 	return h2stream:closewrite(data)

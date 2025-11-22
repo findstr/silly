@@ -168,8 +168,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -225,8 +226,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local registrar = require "silly.net.grpc.registrar"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -283,8 +285,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -342,8 +345,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -395,8 +399,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -460,8 +465,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -520,8 +526,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -579,8 +586,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -630,8 +638,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     -- 定义 proto
     local p = protoc:new()
     p:load([[
@@ -698,8 +707,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -779,8 +789,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -863,8 +874,9 @@ local time = require "silly.time"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -934,8 +946,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1059,8 +1072,9 @@ local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1133,8 +1147,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1208,8 +1223,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1314,12 +1330,13 @@ end)
 ```lua validate
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
+local task = require "silly.task"
 
 -- 错误：不能在主线程调用
 -- local client = grpc.newclient(...)  -- 会失败
 
 -- 正确：在协程中调用
-silly.fork(function()
+task.fork(function()
     local client = grpc.newclient({
         -- ...
     })
@@ -1359,8 +1376,9 @@ package myapp;
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1412,8 +1430,9 @@ local MAX_LEN = 4*1024*1024  -- 4MB
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1448,8 +1467,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1485,8 +1505,9 @@ end)
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1528,8 +1549,9 @@ gRPC 基于 HTTP/2，自动复用连接：
 local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1568,8 +1590,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local waitgroup = require "silly.sync.waitgroup"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1657,8 +1680,9 @@ local silly = require "silly"
 local grpc = require "silly.net.grpc"
 local protoc = require "protoc"
 local registrar = require "silly.net.grpc.registrar"
+local task = require "silly.task"
 
-silly.fork(function()
+task.fork(function()
     local p = protoc:new()
     p:load([[
     syntax = "proto3";
@@ -1731,7 +1755,7 @@ service DataService {
 
 ## 参见
 
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.net.http](./http.md) - HTTP 协议（gRPC 的传输层）
 - [silly.net.tcp](./tcp.md) - TCP 协议
 - [silly.net.tls](./tls.md) - TLS/SSL 加密

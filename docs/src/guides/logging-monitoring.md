@@ -69,7 +69,7 @@ logger.error("数据库连接失败")       -- 会输出
 
 ```lua
 -- ❌ 错误：不要显式打印 trace ID
-local trace_id = silly.tracepropagate()
+local trace_id = task.tracepropagate()
 logger.info("[" .. trace_id .. "] Processing request")
 
 -- ✅ 正确：框架会自动打印 trace ID
@@ -245,11 +245,11 @@ local server = http.listen {
             stream:respond(200, {
                 ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
             })
-            stream:close(metrics)
+            stream:closewrite(metrics)
         else
             -- 业务逻辑
             stream:respond(200, {["content-type"] = "text/plain"})
-            stream:close("Hello World")
+            stream:closewrite("Hello World")
         end
     end
 }
@@ -403,20 +403,20 @@ local function handle_request(stream)
         stream:respond(200, {
             ["content-type"] = "text/plain; version=0.0.4",
         })
-        stream:close(metrics)
+        stream:closewrite(metrics)
     elseif stream.path == "/api/users" then
         -- 业务 API
         logger.info("处理用户 API 请求:", stream.method)
 
         response_body = '{"users": []}'
         stream:respond(200, {["content-type"] = "application/json"})
-        stream:close(response_body)
+        stream:closewrite(response_body)
     else
         -- 404
         status_code = 404
         response_body = "Not Found"
         stream:respond(404, {["content-type"] = "text/plain"})
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 
     -- 记录指标
@@ -438,7 +438,7 @@ local server = http.listen {
         if not ok then
             logger.error("请求处理失败:", err)
             stream:respond(500, {["content-type"] = "text/plain"})
-            stream:close("Internal Server Error")
+            stream:closewrite("Internal Server Error")
         end
     end
 }
@@ -498,14 +498,15 @@ Silly 提供了分布式追踪 ID 系统，每个协程都有独立的 trace ID�
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local logger = require "silly.logger"
 
-silly.fork(function()
+task.fork(function()
     -- 创建新的 trace ID（如果当前协程没有）
-    local old_trace_id = silly.tracespawn()
+    local old_trace_id = task.tracespawn()
     logger.infof("开始处理请求")
     logger.infof("请求处理完成")
-    silly.traceset(old_trace_id)
+    task.traceset(old_trace_id)
 end)
 ```
 
@@ -521,7 +522,7 @@ local logger = require "silly.logger"
 -- 服务 A：发起 HTTP 请求
 local function call_service_b()
     -- 生成传播用的 trace ID
-    local trace_id = silly.tracepropagate()
+    local trace_id = task.tracepropagate()
     logger.info("调用服务 B")
 
     -- 通过 HTTP Header 传递 trace ID
@@ -544,14 +545,14 @@ local server = http.listen {
         -- 提取并设置 trace ID
         local trace_id = tonumber(stream.headers["x-trace-id"])
         if trace_id then
-            silly.traceset(trace_id)
+            task.traceset(trace_id)
         else
-            trace_id = silly.tracespawn()
+            trace_id = task.tracespawn()
         end
         logger.info("服务 B 收到请求")
         -- 处理业务逻辑
         stream:respond(200, {["content-type"] = "application/json"})
-        stream:close('{"status": "ok"}')
+        stream:closewrite('{"status": "ok"}')
     end
 }
 ```
@@ -837,7 +838,7 @@ local function check_alerts()
 end
 
 -- 每 60 秒检查一次
-silly.fork(function()
+task.fork(function()
     while true do
         time.sleep(60000)
         check_alerts()
@@ -992,7 +993,7 @@ local function handle_request(stream)
         stream:respond(200, {
             ["content-type"] = "text/plain; version=0.0.4",
         })
-        stream:close(metrics)
+        stream:closewrite(metrics)
         status_code = 200
         response_body = metrics
     elseif stream.path == "/api/users" then
@@ -1010,19 +1011,19 @@ local function handle_request(stream)
             ["content-type"] = "application/json",
             ["x-trace-id"] = tostring(trace_id),
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     elseif stream.path == "/health" then
         -- 健康检查
         status_code = 200
         response_body = json.encode({status = "healthy"})
         stream:respond(status_code, {["content-type"] = "application/json"})
-        stream:close(response_body)
+        stream:closewrite(response_body)
     else
         -- 404
         status_code = 404
         response_body = json.encode({error = "Not Found"})
         stream:respond(status_code, {["content-type"] = "application/json"})
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 
     -- 记录指标
@@ -1047,7 +1048,7 @@ local server = http.listen {
             logger.error("请求处理失败:", err)
 
             stream:respond(500, {["content-type"] = "application/json"})
-            stream:close(json.encode({error = "Internal Server Error"}))
+            stream:closewrite(json.encode({error = "Internal Server Error"}))
 
             http_requests_total:labels(stream.method, stream.path, "500"):inc()
         end
@@ -1161,5 +1162,5 @@ logger.info("========================================")
 
 - [silly.logger](../reference/logger.md) - 日志系统 API 参考
 - [silly.metrics.prometheus](../reference/metrics/prometheus.md) - Prometheus 指标 API 参考
-- [silly](../reference/silly.md) - 核心调度器和追踪 API
+- [silly](../reference/silly.md) - 核心模块
 - [silly.signal](../reference/signal.md) - 信号处理

@@ -202,11 +202,12 @@ udp.sendto(client_fd, {"Header: ", "Value\n", "Body"})
 - **示例**:
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 
 local fd = udp.bind(":9002")
 
-silly.fork(function()
+task.fork(function()
     while true do
         local data, addr = udp.recvfrom(fd)
         if not data then
@@ -281,12 +282,13 @@ print("Socket alive:", udp.isalive(fd))
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 
 local fd = udp.bind(":8989")
 print("UDP server listening on port 8989")
 
-silly.fork(function()
+task.fork(function()
     while true do
         local data, addr = udp.recvfrom(fd)
         if not data then
@@ -304,6 +306,7 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 local time = require "silly.time"
 
@@ -313,7 +316,7 @@ if not fd then
     return
 end
 
-silly.fork(function()
+task.fork(function()
     -- 发送多条消息
     for i = 1, 5 do
         local msg = "Message " .. i
@@ -443,11 +446,12 @@ UDP 不保证数据包顺序和到达，需要应用层处理：
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 
 local fd = udp.bind(":9021")
 
-silly.fork(function()
+task.fork(function()
     local sequence = {}
     for i = 1, 10 do
         local data, addr = udp.recvfrom(fd)
@@ -503,9 +507,10 @@ local fd3 = udp.bind(":8082")           -- 所有接口 (IPv4)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 
-silly.fork(function()
+task.fork(function()
     local fd = udp.bind(":9030")
     -- ... 使用套接字 ...
     udp.close(fd)  -- 确保清理
@@ -558,12 +563,13 @@ end
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
 local time = require "silly.time"
 
 local function recv_with_timeout(fd, timeout_ms)
     local result = nil
-    local task = silly.fork(function()
+    local task = task.fork(function()
         result = {udp.recvfrom(fd)}
     end)
 

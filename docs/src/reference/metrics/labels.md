@@ -331,7 +331,7 @@ for i = 1, user_count do
 end
 
 print(string.format("Created %d time series", user_count))
-print(string.format("Estimated label cache memory: ~%d KB", memory_estimate / 1024))
+print(string.format("Estimated label cache memory: ~%f KB", memory_estimate / 1024))
 print("\n⚠️  WARNING: High cardinality labels can cause:")
 print("  - Excessive memory usage")
 print("  - Slow Prometheus queries")

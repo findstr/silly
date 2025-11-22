@@ -374,6 +374,7 @@ print(buf[1].kind)  -- "gauge"
 local silly = require "silly"
 local http = require "silly.net.http"
 local gauge = require "silly.metrics.gauge"
+local task = require "silly.task"
 
 -- 创建活跃连接计数器
 local active_connections = gauge(
@@ -381,7 +382,7 @@ local active_connections = gauge(
     "Current number of active HTTP connections"
 )
 
-silly.fork(function()
+task.fork(function()
     local server = http.listen {
         addr = "0.0.0.0:8080",
         handler = function(stream)
@@ -391,7 +392,7 @@ silly.fork(function()
 
             -- 处理请求
             stream:respond(200, {["content-type"] = "text/plain"})
-            stream:close("Hello World")
+            stream:closewrite("Hello World")
 
             -- 连接关闭，减少计数
             active_connections:dec()
@@ -408,6 +409,8 @@ end)
 ```lua validate
 local silly = require "silly"
 local gauge = require "silly.metrics.gauge"
+local task = require "silly.task"
+local time = require "silly.time"
 
 -- 创建系统资源 Gauge
 local memory_usage = gauge(
@@ -427,9 +430,9 @@ local disk_free = gauge(
     {"mount"}
 )
 
-silly.fork(function()
-    -- 模拟定期收集系统指标
-    while true do
+task.fork(function()
+    -- 模拟定期收集系统指标（运行 2 次）
+    for i = 1, 2 do
         -- 更新内存使用量
         memory_usage:labels("heap"):set(collectgarbage("count") * 1024)
         memory_usage:labels("rss"):set(1024 * 1024 * 50)  -- 模拟 RSS
@@ -445,7 +448,9 @@ silly.fork(function()
         print("CPU usage:", cpu_usage.value, "%")
         print("Disk free (/):", disk_free:labels("/").value)
 
-        silly.time.sleep(5000)  -- 每 5 秒更新一次
+        if i < 2 then
+            time.sleep(5000)  -- 每 5 秒更新一次
+        end
     end
 end)
 ```
@@ -498,6 +503,8 @@ print("Orders (high) after dequeue:", queue_depth:labels("orders", "high").value
 ```lua validate
 local silly = require "silly"
 local gauge = require "silly.metrics.gauge"
+local task = require "silly.task"
+local time = require "silly.time"
 
 -- 创建温度传感器 Gauge
 local temperature = gauge(
@@ -506,7 +513,7 @@ local temperature = gauge(
     {"location", "sensor"}
 )
 
-silly.fork(function()
+task.fork(function()
     -- 模拟多个传感器读数
     local locations = {
         {location = "server_room", sensor = "front", base = 22},
@@ -514,8 +521,7 @@ silly.fork(function()
         {location = "office", sensor = "desk1", base = 20},
         {location = "office", sensor = "desk2", base = 21},
     }
-
-    while true do
+    for i = 1, 5 do
         -- 更新所有传感器读数
         for _, sensor in ipairs(locations) do
             local temp = sensor.base + math.random(-2, 2) + math.random()
@@ -528,8 +534,7 @@ silly.fork(function()
                 temperature:labels(sensor.location, sensor.sensor).value
             ))
         end
-
-        silly.time.sleep(2000)  -- 每 2 秒读取一次
+        time.sleep(2000)  -- 每 2 秒读取一次
     end
 end)
 ```
@@ -713,6 +718,8 @@ print("USD balance:", wallet_balance:labels("USD").value, "cents")
 ```lua validate
 local silly = require "silly"
 local gauge = require "silly.metrics.gauge"
+local task = require "silly.task"
+local time = require "silly.time"
 
 -- 任务调度器监控
 local tasks_pending = gauge(
@@ -732,7 +739,7 @@ local scheduler_queue_depth = gauge(
     "Scheduler queue depth"
 )
 
-silly.fork(function()
+task.fork(function()
     -- 初始化任务状态
     local task_types = {"backup", "cleanup", "report", "sync"}
     local priorities = {"high", "normal", "low"}
@@ -763,7 +770,7 @@ silly.fork(function()
             scheduler_queue_depth.value
         ))
 
-        silly.time.sleep(100)
+        time.sleep(100)
 
         -- 任务开始执行
         if math.random() > 0.3 then
@@ -778,7 +785,7 @@ silly.fork(function()
             ))
 
             -- 任务完成
-            silly.time.sleep(math.random(200, 1000))
+            time.sleep(math.random(200, 1000))
             tasks_running:labels(task_type):dec()
 
             print(string.format(

@@ -55,7 +55,7 @@ cluster 模块不绑定特定的序列化格式，通过配置回调函数支持
     - `type`："request" 或 "response"
     - `cmd`：命令标识（字符串或数字）
     - `body`：要编码的 Lua 数据
-    - 返回：命令数字、数据字符串
+    - 返回：命令数字、数据字符串（若返回 nil 则表示不发送数据，例如不发送响应）
   - `unmarshal` (function) - **必需**，解码函数：`function(type, cmd, data) -> body, err?`
     - `type`："request" 或 "response"
     - `cmd`：命令标识
@@ -105,6 +105,10 @@ pong 0x02 {
 -- 编码函数
 local function marshal(typ, cmd, body)
     if typ == "response" then
+        -- 如果 body 为 nil，表示不需要发送响应
+        if not body then
+            return nil
+        end
         -- 响应时将 ping 转换为 pong
         if cmd == "ping" or cmd == 0x01 then
             cmd = "pong"
@@ -154,8 +158,15 @@ cluster.serve {
 local listener = cluster.listen("127.0.0.1:8888")
 print("服务器监听: 127.0.0.1:8888")
 
+local silly = require "silly"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 -- 创建客户端并测试
-silly.fork(function()
+task.fork(function()
     local peer = cluster.connect("127.0.0.1:8888")
 
     local resp = cluster.call(peer, "ping", {msg = "Hello"})
@@ -202,6 +213,9 @@ echo 0x01 {
 
 cluster.serve {
     marshal = function(typ, cmd, body)
+        if typ == "response" and not body then
+            return nil
+        end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
@@ -247,7 +261,7 @@ print("监听端口: 8888, 8889")
 
 **注意：**
 
-- 必须在 `silly.fork()` 创建的协程中调用
+- 必须在 `task.fork()` 创建的协程中调用
 - 支持域名解析（自动调用 DNS 查询）
 - 总是返回 peer handle，即使首次连接失败
 - peer handle 保存了地址信息，`cluster.call()` 会在需要时自动重连
@@ -268,6 +282,9 @@ request 0x01 {
 
 cluster.serve {
     marshal = function(typ, cmd, body)
+        if typ == "response" and not body then
+            return nil
+        end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
@@ -283,7 +300,14 @@ cluster.serve {
     close = function() end,
 }
 
-silly.fork(function()
+local silly = require "silly"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
+task.fork(function()
     -- 生成对端 handle
     local peer1 = cluster.connect("127.0.0.1:8888")
     local peer2 = cluster.connect("example.com:80")
@@ -318,7 +342,7 @@ end)
 
 **注意：**
 
-- 必须在 `silly.fork()` 创建的协程中调用
+- 必须在 `task.fork()` 创建的协程中调用
 - 如果超时，返回 `nil, "timeout"`
 - 如果连接已关闭但 peer 有 addr，会自动重连
 - 如果 peer 无 addr（accept 产生的），连接断开后返回 `nil, "peer closed"`
@@ -346,8 +370,13 @@ sum 0x02 {
 cluster.serve {
     timeout = 2000,
     marshal = function(typ, cmd, body)
-        if typ == "response" and cmd == "add" then
-            cmd = "sum"
+        if typ == "response" then
+            if not body then
+                return nil
+            end
+            if cmd == "add" then
+                cmd = "sum"
+            end
         end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
@@ -373,8 +402,16 @@ cluster.serve {
 
 cluster.listen("127.0.0.1:9999")
 
+local silly = require "silly"
+local time = require "silly.time"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 -- 客户端测试
-silly.fork(function()
+task.fork(function()
     time.sleep(100)
     local peer = cluster.connect("127.0.0.1:9999")
 
@@ -409,7 +446,7 @@ end)
 
 **注意：**
 
-- 必须在 `silly.fork()` 创建的协程中调用
+- 必须在 `task.fork()` 创建的协程中调用
 - 与 `call` 不同，send 不等待响应
 - 适用于通知、日志推送等无需响应的场景
 - 如果连接断开但 peer 有 addr，会自动重连
@@ -431,6 +468,9 @@ notify 0x10 {
 -- 服务器接收通知
 cluster.serve {
     marshal = function(typ, cmd, body)
+        if typ == "response" and not body then
+            return nil
+        end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
@@ -453,8 +493,16 @@ cluster.serve {
 
 cluster.listen("127.0.0.1:7777")
 
+local silly = require "silly"
+local time = require "silly.time"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 -- 客户端发送通知
-silly.fork(function()
+task.fork(function()
     time.sleep(100)
     local peer = cluster.connect("127.0.0.1:7777")
 
@@ -509,6 +557,9 @@ test 0x01 {
 
 cluster.serve {
     marshal = function(typ, cmd, body)
+        if typ == "response" and not body then
+            return nil
+        end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
         end
@@ -527,9 +578,16 @@ cluster.serve {
     end,
 }
 
+local silly = require "silly"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 local listener = cluster.listen("127.0.0.1:6666")
 
-silly.fork(function()
+task.fork(function()
     local peer = cluster.connect("127.0.0.1:6666")
 
     -- 主动关闭连接
@@ -562,8 +620,13 @@ pong 0x02 {
 ]]
 
 local function marshal(typ, cmd, body)
-    if typ == "response" and (cmd == "ping" or cmd == 0x01) then
-        cmd = "pong"
+    if typ == "response" then
+        if not body then
+            return nil
+        end
+        if cmd == "ping" or cmd == 0x01 then
+            cmd = "pong"
+        end
     end
     if type(cmd) == "string" then
         cmd = proto:tag(cmd)
@@ -595,9 +658,16 @@ cluster.serve {
     end,
 }
 
+local silly = require "silly"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 cluster.listen("127.0.0.1:8888")
 
-silly.fork(function()
+task.fork(function()
     local peer = cluster.connect("127.0.0.1:8888")
     local resp = cluster.call(peer, "ping", {msg = "ping"})
     print("响应:", resp.msg)
@@ -631,6 +701,9 @@ forward 0x03 {
 ]]
 
 local function marshal(typ, cmd, body)
+    if typ == "response" and not body then
+        return nil
+    end
     if type(cmd) == "string" then
         cmd = proto:tag(cmd)
     end
@@ -684,8 +757,16 @@ local node1 = create_node("node1", 10001)
 local node2 = create_node("node2", 10002)
 local node3 = create_node("node3", 10003)
 
+local silly = require "silly"
+local time = require "silly.time"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
 -- 节点互联
-silly.fork(function()
+task.fork(function()
     time.sleep(100)
 
     -- node2 连接到 node1
@@ -742,8 +823,13 @@ ack 0x21 {
 cluster.serve {
     timeout = 1000,
     marshal = function(typ, cmd, body)
-        if typ == "response" and cmd == "broadcast" then
-            cmd = "ack"
+        if typ == "response" then
+            if not body then
+                return nil
+            end
+            if cmd == "broadcast" then
+                cmd = "ack"
+            end
         end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
@@ -776,7 +862,16 @@ for _, port in ipairs(ports) do
 end
 
 -- 广播客户端
-silly.fork(function()
+local silly = require "silly"
+local time = require "silly.time"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
+-- 广播客户端
+task.fork(function()
     time.sleep(200)
 
     -- 连接所有节点
@@ -791,7 +886,7 @@ silly.fork(function()
     local acks = {}
 
     for _, peer in ipairs(peers) do
-        silly.fork(function()
+        task.fork(function()
             local resp = cluster.call(peer, "broadcast", {
                 message = message
             })
@@ -838,8 +933,13 @@ result 0x31 {
 cluster.serve {
     timeout = 3000,
     marshal = function(typ, cmd, body)
-        if typ == "response" and cmd == "work" then
-            cmd = "result"
+        if typ == "response" then
+            if not body then
+                return nil
+            end
+            if cmd == "work" then
+                cmd = "result"
+            end
         end
         if type(cmd) == "string" then
             cmd = proto:tag(cmd)
@@ -879,7 +979,16 @@ for _, port in ipairs(ports) do
 end
 
 -- 负载均衡器客户端
-silly.fork(function()
+local silly = require "silly"
+local time = require "silly.time"
+local cluster = require "silly.net.cluster"
+local zproto = require "zproto"
+local task = require "silly.task"
+
+-- ... (省略中间代码)
+
+-- 负载均衡器客户端
+task.fork(function()
     time.sleep(200)
 
     -- 连接所有工作节点
@@ -894,7 +1003,7 @@ silly.fork(function()
     for task_id = 1, 10 do
         local peer = worker_peers[current]
 
-        silly.fork(function()
+        task.fork(function()
             local resp = cluster.call(peer, "work", {
                 task_id = task_id,
                 data = "任务数据 " .. task_id
@@ -918,14 +1027,14 @@ end)
 
 ### 协程要求
 
-所有异步操作（`connect`、`call`、`send`）必须在 `silly.fork()` 创建的协程中调用：
+所有异步操作（`connect`、`call`、`send`）必须在 `task.fork()` 创建的协程中调用：
 
 ```lua
 -- ❌ 错误：直接调用会报错
 local peer = cluster.connect("127.0.0.1:8888")
 
 -- ✅ 正确：在协程中调用
-silly.fork(function()
+task.fork(function()
     local peer = cluster.connect("127.0.0.1:8888")
 end)
 ```
@@ -982,7 +1091,7 @@ end
 ### 性能建议
 
 1. **复用连接**：建立长连接，避免频繁连接断开
-2. **批量操作**：使用 `silly.fork()` 并发发送多个请求
+2. **批量操作**：使用 `task.fork()` 并发发送多个请求
 3. **合理超时**：根据业务设置合适的超时时间
 4. **序列化选择**：优先使用二进制协议（zproto、protobuf）
 5. **连接池**：对于高并发场景，可以维护连接池
@@ -990,7 +1099,7 @@ end
 ### 错误处理
 
 ```lua
-silly.fork(function()
+task.fork(function()
     -- cluster.connect 总是返回 peer handle
     local peer = cluster.connect(addr)
 

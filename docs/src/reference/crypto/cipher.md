@@ -82,8 +82,8 @@ local cipher = require "silly.crypto.cipher"
 
 **生成随机 IV**：
 ```lua
-local random = require "silly.crypto.random"
-local iv = random.random(16)  -- AES 的 IV 长度为 16 字节
+local utils = require "silly.crypto.utils"
+local iv = utils.randomkey(16)  -- AES 的 IV 长度为 16 字节
 ```
 
 ### 填充（Padding）
@@ -668,7 +668,7 @@ local function batch_encrypt_messages(messages)
 
     for i, msg in ipairs(messages) do
         -- 每条消息使用不同的 IV
-        local iv = string.format("iv%013d", i)  -- 生成唯一 IV
+        local iv = string.format("iv%014d", i)  -- 生成唯一 IV (2+14=16字节)
         enc:reset(key, iv)
 
         encrypted_list[i] = {
@@ -711,7 +711,7 @@ end
 ### 安全性考虑
 
 1. **密钥管理**
-   - 密钥应使用安全的随机数生成器生成（使用 `silly.crypto.random`）
+   - 密钥应使用安全的随机数生成器生成（使用 `silly.crypto.utils.randomkey()`）
    - 密钥应安全存储，避免硬编码在代码中
    - 建议使用密钥派生函数（KDF）从密码生成密钥
    - 定期轮换密钥以降低安全风险
@@ -824,7 +824,7 @@ local enc = cipher.encryptor("aes-256-gcm", key, string.rep("i", 12))
 
 ```lua
 local cipher = require "silly.crypto.cipher"
-local random = require "silly.crypto.random"
+local utils = require "silly.crypto.utils"
 
 local crypto_util = {}
 
@@ -832,7 +832,7 @@ local crypto_util = {}
 function crypto_util.encrypt(plaintext, key, algorithm)
     algorithm = algorithm or "aes-256-gcm"
     local iv_len = algorithm:match("gcm") and 12 or 16
-    local iv = random.random(iv_len)
+    local iv = utils.randomkey(iv_len)
 
     local enc = cipher.encryptor(algorithm, key, iv)
     local ciphertext = enc:final(plaintext)
@@ -880,8 +880,8 @@ local db_crypto = {}
 local master_key = string.rep("k", 32)  -- 从配置文件读取
 
 function db_crypto.encrypt_field(plaintext)
-    local random = require "silly.crypto.random"
-    local iv = random.random(12)
+    local utils = require "silly.crypto.utils"
+    local iv = utils.randomkey(12)
 
     local enc = cipher.encryptor("aes-256-gcm", master_key, iv)
     local ciphertext = enc:final(plaintext)
@@ -912,9 +912,9 @@ local cipher = require "silly.crypto.cipher"
 
 -- 使用临时会话密钥加密数据
 local function create_session(user_id)
-    local random = require "silly.crypto.random"
-    local session_key = random.random(32)  -- 随机会话密钥
-    local session_id = random.random(16)
+    local utils = require "silly.crypto.utils"
+    local session_key = utils.randomkey(32)  -- 随机会话密钥
+    local session_id = utils.randomkey(16)
 
     return {
         id = session_id,
@@ -925,8 +925,8 @@ local function create_session(user_id)
 end
 
 local function encrypt_session_data(session, data)
-    local random = require "silly.crypto.random"
-    local iv = random.random(12)
+    local utils = require "silly.crypto.utils"
+    local iv = utils.randomkey(12)
 
     local enc = cipher.encryptor("aes-256-gcm", session.key, iv)
     local ciphertext = enc:final(data)

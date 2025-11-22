@@ -13,7 +13,7 @@ function M.append(self, ...) end
 
 ---@param self silly.adt.buffer
 ---@param n integer|string
----@return string?
+---@return string?, integer
 function M.read(self, n) end
 
 ---@param self silly.adt.buffer

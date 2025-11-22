@@ -113,6 +113,7 @@ INSERT INTO users (name, email, age) VALUES
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local mysql = require "silly.store.mysql"
 
 -- 创建 MySQL 连接池
@@ -128,7 +129,7 @@ local db = mysql.open {
     max_lifetime = 3600,    -- 连接最大生命周期 (1 小时)
 }
 
-silly.fork(function()
+task.fork(function()
     -- 测试连接
     local ok, err = db:ping()
     if ok then
@@ -158,7 +159,7 @@ end)
 - `mysql.open()` 创建连接池（不会立即连接）
 - 首次查询时才会建立实际连接
 - `db:ping()` 用于验证连接是否有效
-- 所有数据库操作必须在协程中执行（使用 `silly.fork()` 创建协程）
+- 所有数据库操作必须在协程中执行（使用 `task.fork()` 创建协程）
 
 ### Step 2: 实现用户 CRUD 操作
 
@@ -246,7 +247,8 @@ function User.delete(id)
 end
 
 -- 测试代码
-silly.fork(function()
+local task = require "silly.task"
+task.fork(function()
     print("=== 测试用户 CRUD 操作 ===\n")
 
     -- 1. 创建用户
@@ -427,7 +429,8 @@ function User.delete(id)
 end
 
 -- 测试代码
-silly.fork(function()
+local task = require "silly.task"
+task.fork(function()
     print("=== 测试 Redis 缓存 ===\n")
 
     -- 创建测试用户
@@ -1013,7 +1016,8 @@ function update_user(id, data)
     cache:setex("user:" .. id, 300, json.encode(data))
 
     -- 2. 异步写入数据库
-    silly.fork(function()
+    local task = require "silly.task"
+    task.fork(function()
         db:query("UPDATE users SET name = ? WHERE id = ?", data.name, id)
     end)
 end
@@ -1141,7 +1145,8 @@ function User.warmup_cache()
 end
 
 -- 在启动时调用
-silly.fork(function()
+local task = require "silly.task"
+task.fork(function()
     User.warmup_cache()
     -- ...
 end)

@@ -224,14 +224,16 @@ local line = hive.invoke(stdin_worker, "read", "*l")
 ```lua
 local worker = hive.spawn([[ return function() os.execute("sleep 1") end ]])
 
+local task = require "silly.task"
+
 -- 两个协程同时调用同一worker
-silly.fork(function()
+task.fork(function()
     print("Task 1 start")
     hive.invoke(worker)  -- 立即执行
     print("Task 1 done")
 end)
 
-silly.fork(function()
+task.fork(function()
     print("Task 2 start")
     hive.invoke(worker)  -- 等待Task 1完成
     print("Task 2 done")
@@ -306,4 +308,4 @@ Hive的目的是处理**必须阻塞**的操作。不要用它来：
 
 - [silly.sync.mutex](./sync/mutex.md) - 互斥锁（hive内部使用）
 - [silly.sync.waitgroup](./sync/waitgroup.md) - 协程等待组
-- [silly](./silly.md) - 核心调度器
+- [silly](./silly.md) - 核心模块

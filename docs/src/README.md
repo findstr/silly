@@ -97,6 +97,11 @@ highlights:
         details: 提供热更新支持
         link: ./reference/
 
+      - title: silly.adt
+        icon: fa6-solid:box
+        details: 提供高效的数据结构（缓冲区、队列等）
+        link: ./reference/adt/
+
       - title: zproto
         icon: fa6-solid:code
         details: 提供协议编解码支持
@@ -108,5 +113,5 @@ highlights:
         link: https://github.com/starwing/lua-protobuf
 
 copyright: false
-footer: 版权所有 © 2015-至今 重归混沌
+footer: 版权所有 © 2015-至今 重归混沌 | 基于 <a href="https://github.com/findstr/silly/tree/063cd2ce">063cd2ce</a>
 ---

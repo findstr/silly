@@ -15,8 +15,10 @@ local db = redis.new {
     db = 0,             -- 可选，数据库索引
 }
 
+local task = require "silly.task"
+
 -- 使用 Redis 客户端
-silly.fork(function()
+task.fork(function()
     local ok, res = db:ping()
     assert(ok and res == "PONG")
     db:close()
@@ -88,7 +90,9 @@ local db2 = redis.new {
     db = 1,
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local ok = db1:ping()
     assert(ok)
     local ok = db2:ping()
@@ -115,7 +119,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     db:set("temp", "value")
     db:close()  -- 关闭连接
 end)
@@ -142,7 +148,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 使用 call 方法
     local ok, res = db:call("set", "key1", "value1")
     assert(ok and res == "OK")
@@ -179,7 +187,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 不获取结果的 pipeline
     local ok, res = db:pipeline({
         {"SET", "p1", "v1"},
@@ -226,7 +236,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- SET/GET
     db:set("mykey", "myvalue")
     local ok, val = db:get("mykey")
@@ -254,7 +266,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- HSET/HGET
     db:hset("user:1", "name", "Alice")
     local ok, name = db:hget("user:1", "name")
@@ -281,7 +295,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- LPUSH/RPUSH
     db:del("mylist")
     db:lpush("mylist", "a")
@@ -308,7 +324,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- SADD/SMEMBERS
     db:del("myset")
     db:sadd("myset", "a", "b", "c")
@@ -331,7 +349,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- ZADD
     db:del("leaderboard")
     db:zadd("leaderboard", 100, "player1", 200, "player2")
@@ -356,7 +376,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- EXISTS
     db:set("testkey", "value")
     local ok, exists = db:exists("testkey")
@@ -390,7 +412,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- PING
     local ok, res = db:ping()
     assert(ok and res == "PONG")
@@ -424,7 +448,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 设置和获取
     db:set("username", "alice")
     local ok, name = db:get("username")
@@ -452,7 +478,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 存储用户信息
     local user_id = "user:1001"
     db:hmset(user_id,
@@ -489,7 +517,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 批量设置多个键（无需返回值）
     db:pipeline({
         {"SET", "batch:1", "value1"},
@@ -528,7 +558,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local counter_key = "page:views"
 
     -- 初始化计数器
@@ -560,7 +592,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local leaderboard = "game:leaderboard"
 
     -- 添加玩家分数
@@ -596,7 +630,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local lock_key = "lock:resource"
     local lock_value = "unique_token_123"
     local ttl = 30  -- 锁过期时间
@@ -643,7 +679,9 @@ local publisher = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 注意：subscribe 会阻塞连接，实际使用需要独立连接
     -- 这里仅作为示例展示命令调用方式
 
@@ -666,7 +704,9 @@ local db = redis.new {
     addr = "127.0.0.1:6379",
 }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 使用 EVAL 执行 Lua 脚本
     local script = [[
         local key = KEYS[1]
@@ -702,7 +742,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 正确的错误处理
     local ok, result = db:get("somekey")
     if not ok then
@@ -717,7 +759,7 @@ end)
 
 ### 协程安全
 
-- 所有 Redis 命令必须在 `silly.fork()` 创建的协程中调用
+- 所有 Redis 命令必须在 `task.fork()` 创建的协程中调用
 - 多个协程可以安全地共享同一个 Redis 客户端实例
 - 连接池会自动处理并发请求的排队
 
@@ -731,7 +773,9 @@ local redis = require "silly.store.redis"
 
 local db = redis.new { addr = "127.0.0.1:6379" }
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     db:del("nonexist")
     local ok, val = db:get("nonexist")
     assert(ok == true)      -- 命令成功执行

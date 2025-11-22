@@ -11,7 +11,7 @@ tag:
 
 # silly
 
-核心调度器模块，提供协程管理、任务调度和分布式追踪功能。
+核心模块，提供基础工具函数和进程管理功能。
 
 ## 模块导入
 
@@ -62,81 +62,7 @@ local id = silly.genid()
 
 ## 协程管理
 
-### silly.running()
-获取当前正在运行的协程。
-
-- **返回值**: `thread` - 当前协程
-- **示例**:
-```lua validate
-local silly = require "silly"
-
-local current_task = silly.running()
-```
-
-### silly.fork(func)
-创建并调度一个新协程执行异步任务。
-
-- **参数**:
-  - `func`: `async fun()` - 异步函数
-- **返回值**: `thread` - 新创建的协程
-- **示例**:
-```lua validate
-local silly = require "silly"
-
-silly.fork(function()
-    print("Hello from forked task")
-end)
-```
-
-### silly.wait()
-挂起当前协程，等待被唤醒。
-
-- **返回值**: `any` - 唤醒时传入的数据
-- **注意**: 必须在协程中调用，且协程状态必须为 "RUN"
-- **示例**:
-```lua validate
-local silly = require "silly"
-
-silly.fork(function()
-    local data = silly.wait()
-    print("Woken up with data:", data)
-end)
-```
-
-### silly.wakeup(task, result)
-唤醒一个正在等待的协程。
-
-- **参数**:
-  - `task`: `thread` - 要唤醒的协程
-  - `result`: `any` - 传递给协程的数据
-- **注意**: 目标协程状态必须为 "WAIT"
-- **示例**:
-```lua validate
-local silly = require "silly"
-local time = require "silly.time"
-local task
-silly.fork(function()
-    task = silly.wait()
-    print("Got:", task)
-end)
--- 延迟唤醒，确保协程已经进入wait状态
-time.after(10, function()
-    silly.wakeup(task, "hello")
-end)
-```
-
-### silly.status(task)
-获取协程的当前状态。
-
-- **参数**:
-  - `task`: `thread` - 目标协程
-- **返回值**: `string|nil` - 状态字符串，可能的值：
-  - `"RUN"` - 正在运行
-  - `"WAIT"` - 等待中
-  - `"READY"` - 就绪队列中
-  - `"SLEEP"` - 睡眠中
-  - `"EXIT"` - 已退出
-  - `nil` - 协程已销毁
+请参考 [silly.task](./task.md) 模块。
 
 ### silly.exit(status)
 退出Silly进程。
@@ -152,73 +78,11 @@ silly.exit(0)  -- 正常退出
 
 ## 任务统计
 
-### silly.taskstat()
-获取当前就绪队列中等待执行的任务数量。
-
-- **返回值**: `integer` - 任务数量
-
-### silly.tasks()
-获取所有协程的状态信息（用于调试）。
-
-- **返回值**: `table` - 协程状态表，格式：
-```lua
-{
-    [thread] = {
-        traceback = "stack trace string",
-        status = "RUN|WAIT|READY|..."
-    }
-}
-```
+请参考 [silly.task](./task.md) 模块。
 
 ## 分布式追踪
 
-### silly.tracenode(nodeid)
-设置当前节点的节点ID（用于trace ID生成）。
-
-- **参数**:
-  - `nodeid`: `integer` - 节点ID（16位，0-65535）
-- **示例**:
-```lua validate
-local silly = require "silly"
-
--- 在服务启动时设置节点ID
-silly.tracenode(1)  -- 设置为节点1
-```
-
-### silly.tracespawn()
-创建新的根追踪ID并设置为当前协程的追踪ID。
-
-- **返回值**: `integer` - 之前的追踪ID（可用于后续恢复）
-- **示例**:
-```lua validate
-local silly = require "silly"
-
--- 处理新的HTTP请求时创建新的trace ID
-local old_trace = silly.tracespawn()
--- ... 处理请求 ...
--- 如需恢复旧的trace context
-silly.traceset(old_trace)
-```
-
-### silly.traceset(id)
-设置当前协程的追踪ID。
-
-- **参数**:
-  - `id`: `integer` - 追踪ID
-- **返回值**: `integer` - 之前的追踪ID
-
-### silly.tracepropagate()
-获取用于跨服务传播的追踪ID（保留root trace，替换node ID为当前节点）。
-
-- **返回值**: `integer` - 传播用的追踪ID
-- **示例**:
-```lua validate
-local silly = require "silly"
-
--- 在 RPC 调用时传播 trace ID
-local trace_id = silly.tracepropagate()
--- 将 trace_id 发送到远程服务
-```
+请参考 [silly.task](./task.md) 模块。
 
 ## 错误处理
 
@@ -244,31 +108,15 @@ local trace_id = silly.tracepropagate()
 以下函数以 `_` 开头，属于内部实现细节，**不应在业务代码中使用**。
 :::
 
-### silly._task_create(f)
-创建协程（内部API）。
-
-### silly._task_resume(t, ...)
-恢复协程执行（内部API）。
-
-### silly._task_yield(...)
-挂起当前协程（内部API）。
+### silly._start(func)
+启动主协程（内部API）。
 
 ### silly._dispatch_wakeup()
 调度就绪队列中的任务（内部API）。
 
-### silly._start(func)
-启动主协程（内部API）。
-
-### silly.task_hook(create, term)
-设置协程创建和终止的钩子函数（高级用法）。
-
-- **参数**:
-  - `create`: `function|nil` - 创建钩子
-  - `term`: `function|nil` - 终止钩子
-- **返回值**: `function, function` - 当前的resume和yield函数
-
 ## 参见
 
+- [silly.task](./task.md) - 协程管理和任务调度
 - [silly.time](./time.md) - 定时器和时间管理
 - [silly.hive](./hive.md) - 工作线程池
 - [silly.sync.*](../sync/) - 同步原语

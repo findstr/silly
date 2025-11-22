@@ -26,18 +26,24 @@ function M:set(v)
 	self.value = v
 end
 
----@param self silly.metrics.gauge
+---@param self silly.metrics.gaugesub
 ---@param v number
 function M:add(v)
 	self.value = self.value + 1
 end
+
+---@param self silly.metrics.gaugesub
 function M:inc()
 	self.value = self.value + 1
 end
+
+---@param self silly.metrics.gaugesub
 ---@param v number
 function M:sub(v)
 	self.value = self.value - v
 end
+
+---@param self silly.metrics.gaugesub
 function M:dec()
 	self.value = self.value - 1
 end

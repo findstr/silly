@@ -40,6 +40,10 @@ TLS (Transport Layer Security) 是一种加密协议，用于在网络通信中�
 
 与 `silly.net.tcp` 类似，TLS 模块的读取操作是异步的，会在数据不可用时暂停协程，在数据到达后自动恢复。
 
+### API 变更说明
+
+TLS 模块现在使用面向对象（OO）的接口。`tls.listen` 和 `tls.connect` 返回连接对象或监听器对象，而不是文件描述符。所有操作（如 `read`, `write`, `close`）都作为对象的方法调用。
+
 ---
 
 ## 使用示例
@@ -50,10 +54,11 @@ TLS (Transport Layer Security) 是一种加密协议，用于在网络通信中�
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 local waitgroup = require "silly.sync.waitgroup"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
 
     -- 服务器证书和私钥（PEM 格式）
@@ -109,7 +114,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
 ]]
 
     -- 启动 TLS 服务器
-    local listenfd = tls.listen {
+    local listener, err = tls.listen {
         addr = "127.0.0.1:8443",
         certs = {
             {
@@ -117,15 +122,15 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
                 key = key_pem,
             }
         },
-        disp = function(fd, addr)
+        accept = function(conn)
             wg:fork(function()
-                print("客户端已连接:", addr)
+                print("客户端已连接:", conn:remoteaddr())
 
                 -- 读取 HTTP 请求
-                local request, err = tls.readline(fd)
+                local request, err = conn:read("\n")
                 if not request then
                     print("读取错误:", err)
-                    tls.close(fd)
+                    conn:close()
                     return
                 end
 
@@ -141,8 +146,8 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
                     #body, body
                 )
 
-                tls.write(fd, response)
-                tls.close(fd)
+                conn:write(response)
+                conn:close()
                 print("连接已关闭")
             end)
         end
@@ -167,10 +172,11 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 local dns = require "silly.net.dns"
 
-silly.fork(function()
+task.fork(function()
     -- 解析域名
     local ip = dns.lookup("www.example.com", dns.A)
     if not ip then
@@ -179,14 +185,16 @@ silly.fork(function()
     end
 
     -- 连接到 HTTPS 服务器 (端口 443)
-    local fd, err = tls.connect(
+    local conn, err = tls.connect(
         ip .. ":443",       -- 服务器地址
-        nil,                -- 不绑定本地地址
-        "www.example.com",  -- SNI hostname
-        {"http/1.1"}        -- ALPN 协议
+        {
+            bind = nil,         -- 不绑定本地地址
+            server = "www.example.com", -- SNI hostname
+            alpn = {"http/1.1"} -- ALPN 协议
+        }
     )
 
-    if not fd then
+    if not conn then
         print("连接失败:", err)
         return
     end
@@ -194,7 +202,7 @@ silly.fork(function()
     print("已连接到服务器")
 
     -- 检查协商的 ALPN 协议
-    local alpn = tls.alpnproto(fd)
+    local alpn = conn:alpnproto()
     if alpn then
         print("ALPN 协议:", alpn)
     end
@@ -205,25 +213,25 @@ silly.fork(function()
                    "User-Agent: silly-tls-client\r\n" ..
                    "Connection: close\r\n\r\n"
 
-    local ok, write_err = tls.write(fd, request)
+    local ok, write_err = conn:write(request)
     if not ok then
         print("写入失败:", write_err)
-        tls.close(fd)
+        conn:close()
         return
     end
 
     -- 读取响应头
-    local line, read_err = tls.readline(fd)
+    local line, read_err = conn:read("\r\n")
     if not line then
         print("读取失败:", read_err)
-        tls.close(fd)
+        conn:close()
         return
     end
 
     print("响应:", line)
 
     -- 关闭连接
-    tls.close(fd)
+    conn:close()
     print("连接已关闭")
 end)
 ```
@@ -234,125 +242,44 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 local signal = require "silly.signal"
 local waitgroup = require "silly.sync.waitgroup"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
 
     -- 初始证书
     local cert_v1 = [[-----BEGIN CERTIFICATE-----
-MIIDCTCCAfGgAwIBAgIUPc2faaWEjGh1RklF9XPAgYS5WSMwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI1MTAwOTA5NDc1M1oXDTM1MTAw
-NzA5NDc1M1owFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEApmUl+7J8zeWdOH6aiNwRSOcFePTxuAyYsAEewVtBCAEv
-LVGxQtrsVvd6UosEd0aO/Qz3hvV32wYzI0ZzjGGfy0lCCx9YB05SyYY+KpDwe/os
-Mf4RtBS/jN1dVX7TiRQ3KsngMFSXp2aC6IpI5ngF0PS/o2qbwkU19FCELE6G5WnA
-fniUaf7XEwrhAkMAczJovqOu4BAhBColr7cQK7CQK6VNEhQBzM/N/hGmIniPbC7k
-TjqyohWoLGPT+xQAe8WB39zbIHl+xEDoGAYaaI8I7TlcQWwCOIxdm+w67CQmC/Fy
-GTX5fPoK96drushzwvAKphQrpQwT5MxTDvoE9xgbhQIDAQABo1MwUTAdBgNVHQ4E
-FgQUsjX1LC+0rS4Ls5lcE8yg5P85LqQwHwYDVR0jBBgwFoAUsjX1LC+0rS4Ls5lc
-E8yg5P85LqQwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEADqDJ
-HQxRjFPSxIk5EMrxkqxE30LoWKJeW9vqublQU/qHfMo7dVTwfsAvFpTJfL7Zhhqw
-l20ijbQVxPtDwPB8alQ/ScP5VRqC2032KTi9CqUqTj+y58oDxgjnm06vr5d8Xkmm
-nR2xhUecGkzFYlDoXo1w8XttMUefyHS6HWLXvu94V7Y/8YB4lBCEnwFnhgkYB9CG
-RsleiOiZDsaHhnNQsnM+Xl1UJVxJlMStl+Av2rCTAj/LMHniXQ+9QKI/7pNDUeCL
-qSdxZephYkeRF8C/i9R5G/gAL40kUFz0sgyXuv/kss3rrxsshKKTRbxnRm1k/J73
-9ZiztVOeqpcxFxmf7Q==
+...
 -----END CERTIFICATE-----
 ]]
 
     local key_v1 = [[-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCmZSX7snzN5Z04
-fpqI3BFI5wV49PG4DJiwAR7BW0EIAS8tUbFC2uxW93pSiwR3Ro79DPeG9XfbBjMj
-RnOMYZ/LSUILH1gHTlLJhj4qkPB7+iwx/hG0FL+M3V1VftOJFDcqyeAwVJenZoLo
-ikjmeAXQ9L+japvCRTX0UIQsToblacB+eJRp/tcTCuECQwBzMmi+o67gECEEKiWv
-txArsJArpU0SFAHMz83+EaYieI9sLuROOrKiFagsY9P7FAB7xYHf3NsgeX7EQOgY
-BhpojwjtOVxBbAI4jF2b7DrsJCYL8XIZNfl8+gr3p2u6yHPC8AqmFCulDBPkzFMO
-+gT3GBuFAgMBAAECggEAD5uyVetWuKuetVNu5IKcHnYJNeDoIacQ1YWtYF7SeVE/
-HyWoFojZnYjGUSLYLuYP+J20RFUXQpTQzDDKGvN3XUbIaqmshLbsnhm5EB4baM29
-Qo0+FOHTW//RxvjIF/Ys/JcGMBJnTV0Yz35VO0Ur6n9i0I3qAW2jk4DP/SX6kl9T
-4iJj2Y+69y0bHjesfO71nCUUH6Ym2CHJRd6A4tCeYQr3U/CXOWggpUuPTXFWptt7
-uSJjbTQgwUF5H83ih1CUdto1G5LPBUXVD5x2XZshgwZsL1au9kH2l/83BAHKK8io
-LQ8FekLN6FLD83mvEwFPyrVhfipbeUz3bKrgEzvOmwKBgQDUbrAgRYCLxxpmguiN
-0aPV85xc+VPL+dh865QHhJ0pH/f3fah/U7van/ayfG45aIA+DI7qohGzf03xFnO4
-O51RHcRhnjDbXWY5l0ZpOIpvHLLCm8gqIAkX9bt7UyE+PxRSNvUt3kVFT3ZYnYCx
-Wb1kiV1oRAzTf1l0X0qamFPqdwKBgQDIhV8OWTBrsuC0U3hmvNB+DPEHnyPWBHvI
-+HMflas5gJiZ+3KvrS3vBOXFB3qfTD1LQwUPqeqY0Q41Svvsq2IQAkKedJDdMuPU
-RoKaV/Qln85nmibscNcwVGQNUKTeSCJQ43ktrWT01UinamsSEOYTceMqwW10LDaF
-Ff1MbKNs4wKBgQDMEPiIR7vQipdF2oNjmPt1z+tpNOnWjE/20KcHAdGna9pcmQ2A
-IwPWZMwrcXTBGS34bT/tDXtLnwNUkWjglgPtpFa+H6R3ViWZNUSiV3pEeqEOaW/D
-Z7rUlW5gbd8FWLtAryKfyWFpz4e0YLj7pWVWas6cFqLrmO5p6BBWqfYSyQKBgHyp
-rjcVa+0JAHobircUm+pB0XeTkIv1rZ98FtaEDjdpo3XXxa1CVVRMDy03QRzYISMx
-P2xFjvwCvHqVa5nv0r9xKEmq3oUmpk3KqFecZsUdXQ074QcOADqjvLAqetVWsz7m
-rOeg7SrpjonGt1o7904Pd9OU/Z9D/YEv8pIY2GFRAoGASEf3+igRFSECUxLh9LZC
-scAxCHh9sz15swDD/rdtEqLKGcxlu74YKkBnyQ/yWA4d/enPnvdP98ThXdXnX0X4
-v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
-125zQzr/ESlTL+5IWeNf2sM=
+...
 -----END PRIVATE KEY-----
 ]]
 
     -- 新版本证书（CN=localhost2）
     local cert_v2 = [[-----BEGIN CERTIFICATE-----
-MIIDCzCCAfOgAwIBAgIUNM6HmOKmFaJkmLlF4P0l/xzct70wDQYJKoZIhvcNAQEL
-BQAwFTETMBEGA1UEAwwKbG9jYWxob3N0MjAeFw0yNTEwMDkwOTQ3NDNaFw0zNTEw
-MDcwOTQ3NDNaMBUxEzARBgNVBAMMCmxvY2FsaG9zdDIwggEiMA0GCSqGSIb3DQEB
-AQUAA4IBDwAwggEKAoIBAQDBrp7hSCfkAacYHDhLdhw5QJGNaYABM197uh2l9DDB
-+3PBXCDlE3jt2fcu+sxcApYQrxNsl7xjf9+N1cEaYQdzxMb4k4Do7Q0b7nDbFZVy
-qFSZ8qPdGFf+kzYWsjNnQp4FWjRWxFrgLOXIBjSH6LvLkDvBez7D+CvB3dpm3Y7+
-7daofyq7kcjM6efuYg0OemHz1sh/6ruKtMPgO8v47vcNRQXliScJRFGOeuv02Rxg
-LK6LoB+PZitVYuYjJwO9WDnQTPRUYEF9VTu7AWVqkGPKZ9404m+SIyfOZqpQlHPW
-gxxV0v7Hf26bmTTwq08Y7AxJQ9GcHjOuAlj2envzlzHHAgMBAAGjUzBRMB0GA1Ud
-DgQWBBRo5n9FzjMGPciEl4w59X43Rjp7yjAfBgNVHSMEGDAWgBRo5n9FzjMGPciE
-l4w59X43Rjp7yjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQCx
-AZGPtv8dDUqBBtsg4lyZ4fW6LGQgPnPy22YyBEEbcDcl52fQryz1+KqLH125PePF
-/CYhXZzRvzm3MpqD8Tcn3GKH8OKzpu0rursFEnK+vfbzLxK65u04rTZXRa1iODSK
-Z+/nk64HbrQGq+9RnMNr8qW0QjLRGxajMTU1Z4/87oGmRYwuViHNE5vs6LE+U30w
-h22oN5ZhgpZ0hOCKhVHMrYe8lCHkdN14BktdoVDbyZZczhlW6D0WRerRYJcDmAOc
-ae/yNoyHweiGsnfX6sK5xWWPwMhI9DyOzKfLTZlXszrygyC5Krt9QJGZyGvwIUIw
-dzJJDoKUFQzV+u/yU4OO
+...
 -----END CERTIFICATE-----
 ]]
 
     local key_v2 = [[-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDBrp7hSCfkAacY
-HDhLdhw5QJGNaYABM197uh2l9DDB+3PBXCDlE3jt2fcu+sxcApYQrxNsl7xjf9+N
-1cEaYQdzxMb4k4Do7Q0b7nDbFZVyqFSZ8qPdGFf+kzYWsjNnQp4FWjRWxFrgLOXI
-BjSH6LvLkDvBez7D+CvB3dpm3Y7+7daofyq7kcjM6efuYg0OemHz1sh/6ruKtMPg
-O8v47vcNRQXliScJRFGOeuv02RxgLK6LoB+PZitVYuYjJwO9WDnQTPRUYEF9VTu7
-AWVqkGPKZ9404m+SIyfOZqpQlHPWgxxV0v7Hf26bmTTwq08Y7AxJQ9GcHjOuAlj2
-envzlzHHAgMBAAECggEAOw5SlaCZwTUbzQc1xxShcHeWqgbEKBmRALn0Nljp0Qwp
-9Ihx40d3tRaj/ygrzdZgCYBIrPDrWW9xK99EfRWe3xbeEIdxZBR7zct7j+HZ6tcW
-zMYmXtEAa7hZYrw9Xjv60Oj7UoWWrAokmkQCGnrFYEF/ZvR8Y+a0+Oz7nifqZSJ5
-GLCIQX8jIQdl0P8As1KqbSJA1ZIsB/RVKvYN9sOj4Y2GeHZJ7SAyI5NV0an59S5X
-IduHPx9kU496AEXyd1c4Ps0Ucytk5bfU2KDvVp9y3JSU8Te0z8+bQWBkcORDehmB
-1f5CI/DU1QzZl2LhisO+Nw8bud4bNWOvmky6Ruk0mQKBgQD/57rDEl4g/9l7rpfn
-QG8lRLQLEJN+lSbj62t/bTGMb2EANCMmcrplI96tsKr8UI9FsA7kgyQypwIig+my
-0X2lbhe2Z4IgBNxqdmJx87p2Uu5ZHWNjoSBIAWqdpP36joSeek0bLNvEDbwBUJZ2
-U5rh20ALcsvYG27MYGkmsFZ4GwKBgQDBwP1gKoxc5MU2TCeK/nBRdAE229lTMoD1
-uyYlTvUSTw9jBTxpxd+ZbjD4/Cw77DOm1ZA3nnkXRjCGIgoTbOOd2cFJjepWsspj
-1N/TZ3pmgOxmuEB3DzoMxGSZ+8mpTfoccy1Wp/aHq+9vp3RXDV/pTT2HP1iEzfGB
-G5qr1JyfxQKBgCN8fumOIn9w+zerfmUTClagsFbYdZuYE0yH2OBSxAw1Zb4hfL5Y
-KoDb+IUdepiCk1uWjnohtWNQxXsDz+R8KHBIVAF3WRQXmHkq8Xvb0H+YAHVbHe0y
-6scRazdxKccU/E79prOeBNurC+cixbqi3Vd0j+0Gfj35j+PHes1ippsBAoGAYo4A
-VEJQU5AqoIvsMU9rYoNXesgpq6As6NHhfWjEUCPW989aA5ObQThDwOLEvVZQj7Ri
-P2hkv+n8FL6L0YW54jk5kGiXorIfMNi/YZFpOWqq1TUz1Vvxcz0SzyC8W1pGtuH/
-VezqAej7ShgrnXw4JTwc6AbYx/TZu4qHCpCDeuECgYEArkANYWWzmuUUgJ6Ozdk5
-yqCwaMU2D/FgwCojunc+AorOVe8mG935NbQsCsk1CVYJAoKgYsr3gJNGQVD84pXz
-iiGTFMMf2FOAZkUSzsbWOVyD02zaO8nPHzFI5/EUHRiI5v0ucxG2uEUCYFWQqs21
-2THXCcOrfT8C487VGOFIGYw=
+...
 -----END PRIVATE KEY-----
 ]]
 
     -- 启动服务器
-    local listenfd = tls.listen {
+    local listener, err = tls.listen {
         addr = "127.0.0.1:8443",
         certs = {{cert = cert_v1, key = key_v1}},
-        disp = function(fd, addr)
+        accept = function(conn)
             wg:fork(function()
-                tls.write(fd, "HTTP/1.1 200 OK\r\n\r\nHello!\n")
-                tls.close(fd)
+                conn:write("HTTP/1.1 200 OK\r\n\r\nHello!\n")
+                conn:close()
             end)
         end
     }
@@ -361,10 +288,9 @@ iiGTFMMf2FOAZkUSzsbWOVyD02zaO8nPHzFI5/EUHRiI5v0ucxG2uEUCYFWQqs21
 
     -- 注册 SIGUSR1 信号处理器，用于触发证书重载
     signal.register("SIGUSR1", function()
-        print("收到 SIGUSR1 信号，重载证书...")
-        local ok, err = tls.reload(listenfd, {
+        local ok, err = listener:reload {
             certs = {{cert = cert_v2, key = key_v2}}
-        })
+        }
         if ok then
             print("证书重载成功 (CN=localhost2)")
         else
@@ -394,7 +320,7 @@ end)
       - `cert`: `string` - PEM 格式的证书内容
       - `key`: `string` - PEM 格式的私钥内容
     - `backlog`: `integer|nil` (可选) - 等待连接队列的最大长度
-    - `disp`: `fun(fd: integer, addr: string)` (必需) - 连接处理器，为每个新连接调用
+    - `accept`: `fun(fd: integer, addr: string)` (必需) - 连接处理器，为每个新连接调用
     - `ciphers`: `string|nil` (可选) - 允许的加密套件，使用 OpenSSL 格式
     - `alpnprotos`: `string[]|nil` (可选) - 支持的 ALPN 协议列表，例如 `{"http/1.1", "h2"}`
 - **返回值**:
@@ -404,244 +330,18 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "0.0.0.0:8443",
-        certs = {
-            {
-                cert = "-----BEGIN CERTIFICATE-----\n...",
-                key = "-----BEGIN PRIVATE KEY-----\n...",
-            }
-        },
-        alpnprotos = {"http/1.1", "h2"},
-        disp = function(fd, addr)
-            print("新连接:", addr)
-            local alpn = tls.alpnproto(fd)
-            print("协商的协议:", alpn or "none")
-            tls.close(fd)
-        end
-    }
-
-    if listenfd then
-        print("服务器启动成功")
-    end
-end)
-```
-
-### tls.connect(address [, bind_address] [, hostname] [, alpnprotos])
-
-建立到 TLS 服务器的加密连接（异步）。
-
-- **参数**:
-  - `address`: `string` - 服务器地址，例如 `"192.168.1.100:8443"`
-  - `bind_address`: `string|nil` (可选) - 用于绑定客户端套接字的本地地址
-  - `hostname`: `string|nil` (可选) - 用于 SNI 的主机名
-  - `alpnprotos`: `string[]|nil` (可选) - 支持的 ALPN 协议列表
-- **返回值**:
-  - 成功: `integer` - 连接的文件描述符
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 此函数是异步的，会等待 TLS 握手完成
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local fd, err = tls.connect(
-        "93.184.216.34:443",
-        nil,
-        "www.example.com",
-        {"http/1.1", "h2"}
-    )
-
-    if not fd then
-        print("连接失败:", err)
-        return
-    end
-
-    print("连接成功, 协议:", tls.alpnproto(fd) or "未协商")
-    tls.close(fd)
-end)
-```
-
-### tls.read(fd, n)
-
-从 TLS 连接精确读取 `n` 个字节（异步）。
-
-- **参数**:
-  - `fd`: `integer` - 文件描述符
-  - `n`: `integer` - 要读取的字节数
-- **返回值**:
-  - 成功: `string` - 包含 `n` 字节的字符串
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 如果数据不足，会挂起协程直到数据到达
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "127.0.0.1:8443",
+task.fork(function()
+    local listener = tls.listen {
         certs = {{
             cert = "-----BEGIN CERTIFICATE-----\n...",
             key = "-----BEGIN PRIVATE KEY-----\n...",
         }},
-        disp = function(fd, addr)
-            local data, err = tls.read(fd, 100)
-            if data then
-                print("读取到 100 字节")
-            else
-                print("读取失败:", err)
-            end
-            tls.close(fd)
-        end
-    }
-end)
-```
-
-### tls.readline(fd)
-
-从 TLS 连接读取一行数据，直到遇到换行符 `\n`（异步）。
-
-- **参数**:
-  - `fd`: `integer` - 文件描述符
-- **返回值**:
-  - 成功: `string` - 一行文本（包括 `\n`）
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 如果换行符未找到，会挂起协程直到收到完整的行
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "127.0.0.1:8443",
-        certs = {{
-            cert = "-----BEGIN CERTIFICATE-----\n...",
-            key = "-----BEGIN PRIVATE KEY-----\n...",
-        }},
-        disp = function(fd, addr)
-            local line, err = tls.readline(fd)
-            if line then
-                print("请求行:", line)
-                tls.write(fd, "HTTP/1.1 200 OK\r\n\r\nOK\n")
-            else
-                print("读取失败:", err)
-            end
-            tls.close(fd)
-        end
-    }
-end)
-```
-
-### tls.readall(fd)
-
-读取 TLS 连接接收缓冲区中当前可用的所有数据。此函数**不是**异步的，会立即返回。
-
-- **参数**:
-  - `fd`: `integer` - 文件描述符
-- **返回值**:
-  - 成功: `string` - 包含可用数据的字符串
-  - 失败: `nil, string` - nil 和错误信息
-- **非异步**: 立即返回，不会挂起协程
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "127.0.0.1:8443",
-        certs = {{
-            cert = "-----BEGIN CERTIFICATE-----\n...",
-            key = "-----BEGIN PRIVATE KEY-----\n...",
-        }},
-        disp = function(fd, addr)
-            local data, err = tls.readall(fd)
-            if data then
-                print("读取到:", #data, "字节")
-            else
-                print("无数据或错误:", err)
-            end
-            tls.close(fd)
-        end
-    }
-end)
-```
-
-### tls.write(fd, data)
-
-将数据写入 TLS 连接。数据会被加密后发送。
-
-- **参数**:
-  - `fd`: `integer` - 文件描述符
-  - `data`: `string` - 要发送的数据
-- **返回值**:
-  - 成功: `true`
-  - 失败: `false, string` - false 和错误信息
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "127.0.0.1:8443",
-        certs = {{
-            cert = "-----BEGIN CERTIFICATE-----\n...",
-            key = "-----BEGIN PRIVATE KEY-----\n...",
-        }},
-        disp = function(fd, addr)
-            local body = "Hello, TLS!"
-            local response = string.format(
-                "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s",
-                #body, body
-            )
-
-            local ok, err = tls.write(fd, response)
-            if not ok then
-                print("写入失败:", err)
-            end
-            tls.close(fd)
-        end
-    }
-end)
-```
-
-### tls.close(fd)
-
-关闭一个 TLS 连接或监听器。
-
-- **参数**:
-  - `fd`: `integer` - 要关闭的套接字文件描述符
-- **返回值**:
-  - 成功: `true`
-  - 失败: `false, string` - false 和错误信息
-- **示例**:
-
-```lua validate
-local silly = require "silly"
-local tls = require "silly.net.tls"
-
-silly.fork(function()
-    local listenfd = tls.listen {
-        addr = "127.0.0.1:8443",
-        certs = {{
-            cert = "-----BEGIN CERTIFICATE-----\n...",
-            key = "-----BEGIN PRIVATE KEY-----\n...",
-        }},
-        disp = function(fd, addr)
-            tls.write(fd, "Goodbye!\n")
-            local ok, err = tls.close(fd)
+        accept = function(conn)
+            conn:write("Goodbye!\n")
+            local ok, err = conn:close()
             if not ok then
                 print("关闭失败:", err)
             end
@@ -650,12 +350,11 @@ silly.fork(function()
 end)
 ```
 
-### tls.reload(fd [, conf])
+### listener:reload([conf])
 
 热重载 TLS 服务器的证书配置，无需重启服务。
 
 - **参数**:
-  - `fd`: `integer` - 监听器文件描述符
   - `conf`: `table|nil` (可选) - 新的配置
     - `certs`: `table[]` - 新的证书配置
     - `ciphers`: `string` - 新的加密套件
@@ -667,22 +366,23 @@ end)
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 
-silly.fork(function()
-    local listenfd = tls.listen {
+task.fork(function()
+    local listener = tls.listen {
         addr = "127.0.0.1:8443",
         certs = {{
             cert = "-----BEGIN CERTIFICATE-----\n...",
             key = "-----BEGIN PRIVATE KEY-----\n...",
         }},
-        disp = function(fd, addr)
-            tls.close(fd)
+        accept = function(conn)
+            conn:close()
         end
     }
 
     -- 重新加载证书
-    local ok, err = tls.reload(listenfd, {
+    local ok, err = listener:reload({
         certs = {{
             cert = "-----BEGIN CERTIFICATE-----\n... new ...",
             key = "-----BEGIN PRIVATE KEY-----\n... new ...",
@@ -697,62 +397,60 @@ silly.fork(function()
 end)
 ```
 
-### tls.isalive(fd)
+### conn:isalive()
 
 检查 TLS 连接是否仍然活动。
 
-- **参数**:
-  - `fd`: `integer` - 文件描述符
 - **返回值**: `boolean` - 连接活动返回 `true`，否则返回 `false`
 - **示例**:
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 
-silly.fork(function()
-    local listenfd = tls.listen {
+task.fork(function()
+    local listener = tls.listen {
         addr = "127.0.0.1:8443",
         certs = {{
             cert = "-----BEGIN CERTIFICATE-----\n...",
             key = "-----BEGIN PRIVATE KEY-----\n...",
         }},
-        disp = function(fd, addr)
-            if tls.isalive(fd) then
+        accept = function(conn)
+            if conn:isalive() then
                 print("连接活动中")
-                tls.write(fd, "Status: OK\n")
+                conn:write("Status: OK\n")
             else
                 print("连接已断开")
             end
-            tls.close(fd)
+            conn:close()
         end
     }
 end)
 ```
 
-### tls.alpnproto(fd)
+### conn:alpnproto()
 
 获取通过 ALPN 协商的协议。
 
-- **参数**:
-  - `fd`: `integer` - 文件描述符
 - **返回值**: `string|nil` - 协商的协议（如 `"http/1.1"`, `"h2"`），未协商则返回 `nil`
 - **示例**:
 
 ```lua validate
 local silly = require "silly"
+local task = require "silly.task"
 local tls = require "silly.net.tls"
 
-silly.fork(function()
-    local listenfd = tls.listen {
+task.fork(function()
+    local listener = tls.listen {
         addr = "127.0.0.1:8443",
         certs = {{
             cert = "-----BEGIN CERTIFICATE-----\n...",
             key = "-----BEGIN PRIVATE KEY-----\n...",
         }},
         alpnprotos = {"http/1.1", "h2"},
-        disp = function(fd, addr)
-            local proto = tls.alpnproto(fd)
+        accept = function(conn)
+            local proto = conn:alpnproto()
             if proto == "h2" then
                 print("使用 HTTP/2")
             elseif proto == "http/1.1" then
@@ -760,11 +458,36 @@ silly.fork(function()
             else
                 print("未协商 ALPN")
             end
-            tls.close(fd)
+            conn:close()
         end
     }
 end)
 ```
+
+### conn:limit(size)
+
+设置读取缓冲区限制。当缓冲区大小超过限制时，暂停读取。
+
+- **参数**:
+  - `size`: `integer` - 限制大小（字节）
+
+### conn:unreadbytes()
+
+获取当前读取缓冲区中未读取的字节数。
+
+- **返回值**: `integer` - 字节数
+
+### conn:unsentbytes()
+
+获取当前发送缓冲区中未发送的字节数。
+
+- **返回值**: `integer` - 字节数
+
+### conn:remoteaddr()
+
+获取远程地址。
+
+- **返回值**: `string` - 远程地址 (IP:Port)
 
 ---
 
@@ -813,7 +536,7 @@ make OPENSSL=ON
 
 ## 参见
 
-- [silly](../silly.md) - 核心调度器
+- [silly](../silly.md) - 核心模块
 - [silly.net.tcp](./tcp.md) - TCP 协议支持
 - [silly.net.udp](./udp.md) - UDP 协议支持
 - [silly.net.dns](./dns.md) - DNS 解析器

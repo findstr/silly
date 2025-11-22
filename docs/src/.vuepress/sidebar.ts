@@ -3,6 +3,7 @@ import { sidebar } from "vuepress-theme-hope";
 export default sidebar({
   "/": [
     "",
+    "benchmark",
     {
       text: "教程",
       icon: "graduation-cap",
@@ -15,7 +16,14 @@ export default sidebar({
       icon: "book",
       prefix: "guides/",
       link: "guides/",
-      children: "structure",
+      children: [
+        "error-handling",
+        "hot-reload",
+        "http-best-practices",
+        "logging-monitoring",
+        "mysql-connection-pool",
+        "tls-configuration",
+      ],
     },
     {
       text: "API参考",
@@ -25,6 +33,7 @@ export default sidebar({
       children: [
         { text: "silly", icon: "microchip", link: "silly" },
         { text: "silly.env", icon: "gear", link: "env" },
+        { text: "silly.task", icon: "list-check", link: "task" },
         { text: "silly.time", icon: "clock", link: "time" },
         { text: "silly.signal", icon: "wave-square", link: "signal" },
         { text: "silly.logger", icon: "file-lines", link: "logger" },
@@ -32,6 +41,16 @@ export default sidebar({
         { text: "silly.console", icon: "terminal", link: "console" },
         { text: "silly.debugger", icon: "bug", link: "debugger" },
         { text: "silly.patch", icon: "wrench", link: "patch" },
+        {
+          text: "silly.adt",
+          icon: "box",
+          prefix: "adt/",
+          collapsible: true,
+          children: [
+            { text: "silly.adt.buffer", icon: "box", link: "buffer" },
+            { text: "silly.adt.queue", icon: "layer-group", link: "queue" },
+          ],
+        },
         {
           text: "silly.crypto",
           icon: "lock",

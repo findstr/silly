@@ -70,18 +70,31 @@ WebSocket 是一种在单个 TCP 连接上进行全双工通信的协议（RFC 6
 
 ```lua
 local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 
-websocket.listen {
+http.listen {
     addr = "127.0.0.1:8080",
-    handler = function(sock)
-        print("New client connected:", sock.fd)
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            print("Upgrade failed:", err)
+            return
+        end
+
+        print("New client connected")
 
         while true do
+            -- 读取客户端消息
             local data, typ = sock:read()
-
             if not data then
-                print("Client disconnected:", sock.fd)
+                print("客户端断开:", sock.fd, typ)  -- typ is error message when data is nil
                 break
             end
 
@@ -103,7 +116,7 @@ print("WebSocket Echo server listening on ws://127.0.0.1:8080")
 
 **代码解析**：
 
-1. `websocket.listen`：创建 WebSocket 服务器
+1. `http.listen` 和 `websocket.upgrade`：创建 WebSocket 服务器
 2. `handler` 函数：处理每个客户端连接（在独立协程中运行）
 3. `sock:read()`：异步读取消息，返回数据和帧类型
 4. `sock:write(data, type)`：发送消息（text 或 binary）
@@ -131,15 +144,27 @@ ws.onmessage = (event) => console.log('Received:', event.data);
 
 ```lua
 local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 
 -- 全局客户端列表
 local clients = {}
 local next_id = 1
 
-websocket.listen {
+http.listen {
     addr = "127.0.0.1:8080",
-    handler = function(sock)
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            return
+        end
+
         -- 为客户端分配唯一 ID
         local client_id = next_id
         next_id = next_id + 1
@@ -194,6 +219,7 @@ print("WebSocket server with connection management on ws://127.0.0.1:8080")
 
 ```lua
 local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 
 local clients = {}
@@ -217,9 +243,20 @@ local function broadcast(sender_id, message)
     return success_count
 end
 
-websocket.listen {
+http.listen {
     addr = "127.0.0.1:8080",
-    handler = function(sock)
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            return
+        end
+
         local client_id = next_id
         next_id = next_id + 1
 
@@ -285,6 +322,7 @@ print("Open multiple browser tabs to test!")
 
 ```lua
 local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 local json = require "silly.encoding.json"
 
@@ -334,9 +372,20 @@ local function send_to_client(client_id, msg_type, content)
     return false
 end
 
-websocket.listen {
+http.listen {
     addr = "127.0.0.1:8080",
-    handler = function(sock)
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            return
+        end
+
         local client_id = next_id
         next_id = next_id + 1
 
@@ -517,6 +566,7 @@ end
 
 ```lua
 local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 local json = require "silly.encoding.json"
 local time = require "silly.time"
@@ -660,9 +710,20 @@ local function get_server_stats()
 end
 
 -- WebSocket 服务器
-websocket.listen {
+http.listen {
     addr = "127.0.0.1:8080",
-    handler = function(sock)
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            return
+        end
+
         local client_id = next_id
         next_id = next_id + 1
 
@@ -1808,10 +1869,11 @@ end
 
 ```lua
 local channel = require "silly.sync.channel"
+local task = require "silly.task"
 local broadcast_chan = channel.new()
 
 -- 广播协程
-silly.fork(function()
+task.fork(function()
     while true do
         local msg = broadcast_chan:recv()
         broadcast(msg.sender_id, msg.type, msg.content)

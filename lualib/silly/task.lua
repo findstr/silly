@@ -189,7 +189,7 @@ function task._dispatch_wakeup()
 	end
 end
 
----@type fun(status:integer)
+---@type fun(status:integer?)
 function task._exit(status)
 	wakeup_task_queue = queue.new()
 	wakeup_task_param = {}

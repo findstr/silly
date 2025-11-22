@@ -57,7 +57,7 @@ http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = #"Hello, HTTP/2!",
         })
-        stream:close("Hello, HTTP/2!")
+        stream:closewrite("Hello, HTTP/2!")
     end
 }
 ```
@@ -82,12 +82,13 @@ HTTP/1.1 默认启用 Keep-Alive，但 Silly 的 HTTP 客户端当前不支持�
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 
-silly.fork(function()
+task.fork(function()
     -- 每次请求创建新连接
     for i = 1, 100 do
-        local response = http.GET("http://api.example.com/data/" .. i)
+        local response = http.get("http://api.example.com/data/" .. i)
         if response then
             print("Request", i, "completed")
         end
@@ -141,14 +142,14 @@ http.listen {
                 ["content-length"] = #compressed,
                 ["vary"] = "Accept-Encoding",
             })
-            stream:close(compressed)
+            stream:closewrite(compressed)
         else
             -- 未压缩响应
             stream:respond(200, {
                 ["content-type"] = content_type,
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         end
     end
 }
@@ -186,7 +187,7 @@ http.listen {
                 silly.sleep(100) -- 模拟实时生成
             end
 
-            stream:close() -- 发送结束标记
+            stream:closewrite() -- 发送结束标记
         else
             -- HTTP/2 不支持 write()，使用 close() 一次性发送
             local data = {}
@@ -199,7 +200,7 @@ http.listen {
                 ["content-type"] = "text/plain",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         end
     end
 }
@@ -217,17 +218,18 @@ http.listen {
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 local waitgroup = require "silly.sync.waitgroup"
 
-silly.fork(function()
+task.fork(function()
     local wg = waitgroup.new()
     local results = {}
 
     -- 并发发起 10 个请求
     for i = 1, 10 do
         wg:fork(function()
-            local response = http.GET("http://api.example.com/data/" .. i)
+            local response = http.get("http://api.example.com/data/" .. i)
             if response then
                 results[i] = response.body
             end
@@ -256,7 +258,7 @@ http.listen {
             ["content-type"] = "application/json",
             ["content-length"] = #data,
         })
-        stream:close(data)
+        stream:closewrite(data)
     end
 }
 ```
@@ -319,10 +321,10 @@ http.listen {
                 local headers = add_cors_headers(stream, origin)
                 headers["content-length"] = "0"
                 stream:respond(204, headers)
-                stream:close()
+                stream:closewrite()
             else
                 stream:respond(403, {["content-length"] = "0"})
-                stream:close()
+                stream:closewrite()
             end
             return
         end
@@ -343,7 +345,7 @@ http.listen {
         end
 
         stream:respond(200, headers)
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 ```
@@ -397,7 +399,7 @@ local function check_rate_limit(ip)
 end
 
 -- 清理过期记录（定期执行）
-silly.timeout(300000, function() -- 每 5 分钟
+time.after(300000, function() -- 每 5 分钟
     local now = os.time()
     for ip, record in pairs(request_counts) do
         if now - record.window_start > WINDOW_SIZE * 2 then
@@ -423,7 +425,7 @@ http.listen {
                 ["x-ratelimit-limit"] = tostring(RATE_LIMIT),
                 ["x-ratelimit-remaining"] = "0",
             })
-            stream:close(error_body)
+            stream:closewrite(error_body)
             return
         end
 
@@ -435,7 +437,7 @@ http.listen {
             ["x-ratelimit-limit"] = tostring(RATE_LIMIT),
             ["x-ratelimit-remaining"] = tostring(remaining),
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 ```
@@ -470,7 +472,7 @@ http.listen {
                 ["content-type"] = "application/json",
                 ["content-length"] = #error_body,
             })
-            stream:close(error_body)
+            stream:closewrite(error_body)
             return
         end
 
@@ -479,7 +481,7 @@ http.listen {
             local body, err = stream:readall()
             if not body then
                 stream:respond(400, {})
-                stream:close("Bad Request")
+                stream:closewrite("Bad Request")
                 return
             end
 
@@ -488,7 +490,7 @@ http.listen {
         end
 
         stream:respond(200, {})
-        stream:close("OK")
+        stream:closewrite("OK")
     end
 }
 ```
@@ -515,13 +517,13 @@ local function with_timeout(timeout_ms, func)
     local timer_id
 
     -- 启动任务协程
-    silly.fork(function()
+    task.fork(function()
         local ok, result = pcall(func)
         channel:push({success = ok, result = result, completed = true})
     end)
 
     -- 启动超时定时器
-    timer_id = silly.timeout(timeout_ms, function()
+    timer_id = time.after(timeout_ms, function()
         channel:push({success = false, result = "timeout", completed = false})
     end)
 
@@ -529,7 +531,7 @@ local function with_timeout(timeout_ms, func)
     local result = channel:pop()
 
     if result.completed then
-        silly.cancel(timer_id) -- 取消定时器
+        time.cancel(timer_id) -- 取消定时器
     end
 
     if not result.success then
@@ -548,20 +550,20 @@ http.listen {
                 local body = stream:readall()
 
                 -- 模拟慢速操作
-                silly.sleep(1000)
+                time.sleep(1000)
 
                 stream:respond(200, {})
-                stream:close("OK")
+                stream:closewrite("OK")
             end)
         end)
 
         if not ok then
             if err == "timeout" then
                 stream:respond(408, {}) -- 408 Request Timeout
-                stream:close("Request Timeout")
+                stream:closewrite("Request Timeout")
             else
                 stream:respond(500, {})
-                stream:close("Internal Server Error")
+                stream:closewrite("Internal Server Error")
             end
         end
     end
@@ -602,7 +604,7 @@ local function send_error(stream, status, code, message, details)
         ["content-length"] = #error_body,
         ["cache-control"] = "no-store",
     })
-    stream:close(error_body)
+    stream:closewrite(error_body)
 end
 
 -- 使用示例
@@ -635,7 +637,7 @@ http.listen {
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 ```
@@ -694,7 +696,7 @@ local function send_error_code(stream, error_code, details)
         ["content-type"] = "application/json",
         ["content-length"] = #error_body,
     })
-    stream:close(error_body)
+    stream:closewrite(error_body)
 end
 
 -- 使用示例
@@ -752,7 +754,7 @@ local function safe_handler(handler)
                     ["content-type"] = "application/json",
                     ["content-length"] = #error_body,
                 })
-                stream:close(error_body)
+                stream:closewrite(error_body)
             end)
         end
     end
@@ -768,7 +770,7 @@ local function my_handler(stream)
         ["content-type"] = "application/json",
         ["content-length"] = #response_body,
     })
-    stream:close(response_body)
+    stream:closewrite(response_body)
 end
 
 -- 使用安全包装器
@@ -809,7 +811,7 @@ local routes = {
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end},
 
     -- GET /api/users/:id - 获取单个用户
@@ -830,7 +832,7 @@ local routes = {
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         else
             send_error(stream, 404, "NOT_FOUND", "User not found")
         end
@@ -856,7 +858,7 @@ local routes = {
             ["content-length"] = #response_body,
             ["location"] = "/api/users/" .. user.id,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end},
 
     -- PUT /api/users/:id - 更新用户
@@ -875,7 +877,7 @@ local routes = {
                     ["content-type"] = "application/json",
                     ["content-length"] = #response_body,
                 })
-                stream:close(response_body)
+                stream:closewrite(response_body)
                 return
             end
         end
@@ -891,7 +893,7 @@ local routes = {
             if user.id == user_id then
                 table.remove(users, i)
                 stream:respond(204, {}) -- 204 No Content
-                stream:close()
+                stream:closewrite()
                 return
             end
         end
@@ -954,7 +956,7 @@ function UserRoutes.list(stream)
         ["content-type"] = "application/json",
         ["content-length"] = #response_body,
     })
-    stream:close(response_body)
+    stream:closewrite(response_body)
 end
 
 function UserRoutes.get(stream, user_id)
@@ -966,7 +968,7 @@ function UserRoutes.get(stream, user_id)
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     else
         send_error(stream, 404, "NOT_FOUND", "User not found")
     end
@@ -984,7 +986,7 @@ function UserRoutes.create(stream)
         ["content-length"] = #response_body,
         ["location"] = "/api/users/" .. created.id,
     })
-    stream:close(response_body)
+    stream:closewrite(response_body)
 end
 
 return UserRoutes
@@ -1091,7 +1093,7 @@ local function cors_middleware(stream, next)
             ["access-control-allow-headers"] = "Content-Type, Authorization",
             ["content-length"] = "0",
         })
-        stream:close()
+        stream:closewrite()
         return
     end
 
@@ -1110,7 +1112,7 @@ local function my_handler(stream)
         ["content-length"] = #response_body,
         ["access-control-allow-origin"] = stream.cors_origin or "*",
     })
-    stream:close(response_body)
+    stream:closewrite(response_body)
 end
 
 -- 组合中间件
@@ -1171,7 +1173,7 @@ http.listen {
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
 
         -- 记录访问日志
         local duration = os.clock() - start
@@ -1247,7 +1249,7 @@ http.listen {
                 ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
                 ["content-length"] = #metrics,
             })
-            stream:close(metrics)
+            stream:closewrite(metrics)
             http_requests_in_flight:dec()
             return
         end
@@ -1258,7 +1260,7 @@ http.listen {
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
 
         -- 记录指标
         local duration = os.clock() - start
@@ -1323,13 +1325,13 @@ http.listen {
                 ["content-length"] = #response_body,
                 ["x-trace-id"] = tostring(trace_id), -- 返回 Trace ID
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         end)
 
         if not ok then
             logger.error("Request failed:", err)
             stream:respond(500, {["x-trace-id"] = tostring(trace_id)})
-            stream:close("Internal Server Error")
+            stream:closewrite("Internal Server Error")
         end
 
         logger.info("Request completed")
@@ -1339,7 +1341,7 @@ http.listen {
 -- 调用外部服务时自动传递当前 Trace ID
 function call_external_service()
     local trace_id = silly.tracepropagate()
-    local response = http.GET("http://other-service/api", {
+    local response = http.get("http://other-service/api", {
         ["x-trace-id"] = tostring(trace_id),
     })
     return response
@@ -1583,10 +1585,10 @@ http.listen {
             -- 简单健康检查（快速响应）
             if health_status.healthy then
                 stream:respond(200, {})
-                stream:close("OK")
+                stream:closewrite("OK")
             else
                 stream:respond(503, {})
-                stream:close("Unhealthy")
+                stream:closewrite("Unhealthy")
             end
         elseif stream.path == "/health/detailed" then
             -- 详细健康检查（包含依赖状态）
@@ -1604,7 +1606,7 @@ http.listen {
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body,
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
         else
             -- 其他请求
         end
@@ -1715,7 +1717,7 @@ local function send_error(stream, error_code, details)
         ["content-type"] = "application/json",
         ["content-length"] = #error_body,
     })
-    stream:close(error_body)
+    stream:closewrite(error_body)
 end
 
 -- 中间件：日志
@@ -1751,7 +1753,7 @@ local function body_size_middleware(stream, next)
 
     if content_length > CONFIG.max_body_size then
         stream:respond(413, {})
-        stream:close("Payload Too Large")
+        stream:closewrite("Payload Too Large")
         return
     end
 
@@ -1767,12 +1769,12 @@ local routes = {
             ["content-type"] = "application/json",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end},
 
     {method = "GET", pattern = "^/health$", handler = function(stream)
         stream:respond(200, {})
-        stream:close("OK")
+        stream:closewrite("OK")
     end},
 
     {method = "GET", pattern = "^/metrics$", handler = function(stream)
@@ -1781,7 +1783,7 @@ local routes = {
             ["content-type"] = "text/plain; version=0.0.4",
             ["content-length"] = #metrics_data,
         })
-        stream:close(metrics_data)
+        stream:closewrite(metrics_data)
     end},
 }
 
@@ -1810,7 +1812,7 @@ local function main_handler(stream)
         end
     else
         stream:respond(404, {})
-        stream:close("Not Found")
+        stream:closewrite("Not Found")
     end
 
     local duration = os.clock() - start

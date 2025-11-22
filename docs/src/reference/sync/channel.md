@@ -11,7 +11,7 @@ tag:
 
 # silly.sync.channel
 
-`silly.sync.channel` 模块提供了用于协程间通信的通道（Channel）实现。通道是一个线程安全的队列，允许多个协程之间传递消息，类似于 Go 语言中的 channel 概念。
+`silly.sync.channel` 模块提供了用于协程间通信的通道（Channel）实现。通道是一个线程安全的队列，支持多生产者单消费者（MPSC）模型。
 
 ## 模块导入
 
@@ -23,7 +23,7 @@ local channel = require "silly.sync.channel"
 
 Channel 是一个 FIFO（先进先出）队列，支持以下特性：
 
-- **协程安全**: 多个协程可以同时读写同一个通道
+- **MPSC 模型**: 支持多个生产者同时写入，但同一时刻只能有一个消费者读取
 - **阻塞语义**: 当通道为空时，`pop` 操作会阻塞当前协程，直到有数据可读
 - **直接传递**: 如果有协程正在等待数据，`push` 操作会直接唤醒等待的协程，而不经过队列
 - **关闭机制**: 通道可以被关闭，关闭后不能再写入，但可以读取剩余数据
@@ -90,8 +90,10 @@ local channel = require "silly.sync.channel"
 
 local ch = channel.new()
 
+local task = require "silly.task"
+
 -- 在另一个协程中推送数据
-silly.fork(function()
+task.fork(function()
     ch:push("world")
 end)
 
@@ -153,8 +155,10 @@ ch:push("msg3")
 -- 清空通道
 ch:clear()
 
+local task = require "silly.task"
+
 -- 通道现在为空,pop 会阻塞
-silly.fork(function()
+task.fork(function()
     ch:push("new message")
 end)
 
@@ -201,50 +205,7 @@ end)
 wg:wait()
 ```
 
-### 多生产者多消费者
 
-通道支持多个生产者和消费者同时工作。
-
-```lua validate
-local channel = require "silly.sync.channel"
-local waitgroup = require "silly.sync.waitgroup"
-
-local ch = channel.new()
-local wg = waitgroup.new()
-local producer_count = 3
-local finished_producers = 0
-
--- 启动多个生产者
-for i = 1, producer_count do
-    wg:fork(function()
-        for j = 1, 3 do
-            local msg = string.format("P%d-M%d", i, j)
-            ch:push(msg)
-            print("Producer", i, "sent:", msg)
-        end
-        finished_producers = finished_producers + 1
-        if finished_producers == producer_count then
-            ch:close()
-        end
-    end)
-end
-
--- 启动多个消费者
-for i = 1, 2 do
-    wg:fork(function()
-        while true do
-            local data, err = ch:pop()
-            if err == "channel closed" then
-                print("Consumer", i, "exiting")
-                break
-            end
-            print("Consumer", i, "received:", data)
-        end
-    end)
-end
-
-wg:wait()
-```
 
 ### 带缓冲的任务队列
 
@@ -295,14 +256,16 @@ local time = require "silly.time"
 local ch = channel.new()
 local timeout = false
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 等待数据或超时
-    local current_co = silly.running()
+    local current_co = task.running()
 
     -- 设置超时定时器
     local timer = time.after(500, function()
         timeout = true
-        silly.wakeup(current_co)
+        task.wakeup(current_co)
     end)
 
     -- 尝试读取数据
@@ -330,7 +293,7 @@ end)
 
 3. **协程阻塞**: `pop` 操作是阻塞的，必须在协程中调用。在主线程或 C 函数中调用会导致错误。
 
-4. **单一等待者**: 通道设计上同一时刻只允许一个协程在 `pop` 上阻塞。如果多个协程同时调用 `pop`，只有一个会获得数据。
+4. **单消费者**: 通道设计为 MPSC 模型，同一时刻只允许一个协程在 `pop` 上阻塞。如果多个协程同时调用 `pop`，行为是未定义的（可能会导致断言失败或数据竞争）。
 
 5. **关闭顺序**: 关闭通道后，队列中的数据仍然可以被读取。只有当队列为空时，`pop` 才会返回 "channel closed" 错误。
 
@@ -354,6 +317,6 @@ end)
 
 ## 参见
 
-- [silly](../silly.md) - 核心协程调度器
+- [silly](../silly.md) - 核心模块
 - [silly.sync.waitgroup](./waitgroup.md) - 协程等待组
 - [silly.time](../time.md) - 定时器管理

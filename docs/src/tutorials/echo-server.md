@@ -53,10 +53,9 @@ Echo 服务器是一个简单的网络服务器,它会将客户端发送的数�
 ```lua
 local socket = require "silly.net.tcp"
 
-socket.listen("127.0.0.1:9999", function(fd, addr)
-    -- fd: 客户端连接的文件描述符
-    -- addr: 客户端地址
-    print("新客户端连接:", fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
+    -- conn: 客户端连接对象
+    print("新客户端连接:", conn:remoteaddr())
 end)
 ```
 
@@ -70,24 +69,27 @@ end)
 在回调函数中,我们需要循环读取客户端数据并回显:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(fd, addr)
-    print("新客户端连接:", fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
+    print("新客户端连接:", conn:remoteaddr())
 
     while true do
         -- 读取一行数据
-        local data, err = socket.readline(fd)
-        if not data then
-            print("读取错误:", err or "连接关闭")
+        local data, err = conn:read("\n")
+        if err then
+            print("读取错误:", err)
             break
         end
 
         -- 回显数据
-        local ok, werr = socket.write(fd, data)
+        local ok, werr = conn:write(data)
         if not ok then
             print("写入错误:", werr)
             break
         end
     end
+
+    -- 关闭连接
+    conn:close()
 end)
 ```
 
@@ -95,22 +97,22 @@ end)
 
 Silly 提供了多种读取方式:
 
-- `socket.readline(fd, delim)`: 读取一行(默认分隔符为 `\n`)
-- `socket.read(fd, n)`: 读取指定字节数
-- `socket.readall(fd, max)`: 读取所有可用数据
+- `conn:read(delim)`: 读取直到遇到分隔符(如 `"\n"`)
+- `conn:read(n)`: 读取指定字节数
+- `conn:read(conn:unreadbytes())`: 读取所有可用数据
 
-对于 Echo 服务器,我们使用 `readline()` 按行读取:
+对于 Echo 服务器,我们使用 `read()` 按行读取:
 
 ```lua
-local line, err = socket.readline(fd)  -- 读取一行(包含 \n)
-if not line then
+local line, err = conn:read("\n")  -- 读取一行(包含 \n)
+if err then
     -- 读取失败,可能是连接关闭或网络错误
     print("读取失败:", err)
     break
 end
 
 -- 回显数据
-local ok, werr = socket.write(fd, line)
+local ok, werr = conn:write(line)
 if not ok then
     print("写入失败:", werr)
     break
@@ -123,22 +125,22 @@ end
 
 ```lua
 while true do
-    local data, err = socket.readline(fd)
-    if not data then
-        print("连接关闭:", fd, err or "客户端断开")
+    local data, err = conn:read("\n")
+    if err then
+        print("连接关闭:", conn:remoteaddr(), err)
         break
     end
 
-    local ok, werr = socket.write(fd, data)
+    local ok, werr = conn:write(data)
     if not ok then
-        print("写入失败:", fd, werr)
+        print("写入失败:", conn:remoteaddr(), werr)
         break
     end
 end
 
 -- 关闭连接
-socket.close(fd)
-print("已关闭连接:", fd)
+conn:close()
+print("已关闭连接:", conn:remoteaddr())
 ```
 
 ## 完整代码
@@ -147,69 +149,70 @@ print("已关闭连接:", fd)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local time = require "silly.time"
 local crypto = require "silly.crypto.utils"
 local socket = require "silly.net.tcp"
 
 -- 启动 Echo 服务器
-socket.listen("127.0.0.1:9999", function(fd, addr)
-    print("接受连接", fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
+    print("接受连接", conn:remoteaddr())
 
     while true do
         -- 读取一行数据
-        local line, err = socket.readline(fd)
-        if not line then
-            print("读取错误 [fd:", fd, "] ->", err or "连接关闭")
+        local line, err = conn:read("\n")
+        if err then
+            print("读取错误 [", conn:remoteaddr(), "] ->", err)
             break
         end
 
         -- 回显数据
-        local ok, werr = socket.write(fd, line)
+        local ok, werr = conn:write(line)
         if not ok then
-            print("写入错误 [fd:", fd, "] ->", werr)
+            print("写入错误 [", conn:remoteaddr(), "] ->", werr)
             break
         end
     end
 
     -- 关闭连接
-    print("关闭连接", fd)
-    socket.close(fd)
+    print("关闭连接", conn:remoteaddr())
+    conn:close()
 end)
 
 -- 启动测试客户端
 -- 创建 3 个客户端进行测试
 for i = 1, 3 do
-    silly.fork(function()
+    task.fork(function()
         -- 连接服务器
-        local fd, err = socket.connect("127.0.0.1:9999")
-        if not fd then
+        local conn, err = socket.connect("127.0.0.1:9999")
+        if not conn then
             print("连接失败:", err)
             return
         end
 
-        print("客户端", i, "已连接, fd:", fd)
+        print("客户端", i, "已连接:", conn:remoteaddr())
 
         -- 发送 5 条测试消息
         for j = 1, 5 do
             -- 生成随机数据
             local msg = crypto.randomkey(5) .. "\n"
-            print("发送 [fd:", fd, "] ->", msg)
+            print("发送 [", conn:remoteaddr(), "] ->", msg)
 
             -- 发送数据
-            local ok, werr = socket.write(fd, msg)
+            local ok, werr = conn:write(msg)
             if not ok then
-                print("发送失败 [fd:", fd, "] ->", werr)
+                print("发送失败 [", conn:remoteaddr(), "] ->", werr)
                 break
             end
 
             -- 接收回显数据
-            local recv, rerr = socket.readline(fd)
+            local recv, rerr = conn:read("\n")
             if not recv then
-                print("接收失败 [fd:", fd, "] ->", rerr or "连接关闭")
+                print("接收失败 [", conn:remoteaddr(), "] ->", rerr)
                 break
             end
 
-            print("接收 [fd:", fd, "] ->", recv)
+            print("接收 [", conn:remoteaddr(), "] ->", recv)
 
             -- 验证回显数据正确性
             assert(recv == msg, "回显数据不匹配!")
@@ -219,8 +222,8 @@ for i = 1, 3 do
         end
 
         -- 关闭连接
-        print("客户端关闭连接", fd)
-        socket.close(fd)
+        print("客户端关闭连接", conn:remoteaddr())
+        conn:close()
     end)
 end
 ```
@@ -278,23 +281,24 @@ This is a test
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local socket = require "silly.net.tcp"
 
-silly.fork(function()
+task.fork(function()
     -- 连接服务器
-    local fd, err = socket.connect("127.0.0.1:9999")
-    if not fd then
+    local conn, err = socket.connect("127.0.0.1:9999")
+    if not conn then
         print("连接失败:", err)
         return
     end
 
-    print("已连接到服务器, fd:", fd)
+    print("已连接到服务器:", conn:remoteaddr())
 
     -- 发送消息
-    socket.write(fd, "Hello from client\n")
+    conn:write("Hello from client\n")
 
     -- 接收回显
-    local msg, rerr = socket.readline(fd)
+    local msg, rerr = conn:read("\n")
     if msg then
         print("收到回显:", msg)
     else
@@ -302,7 +306,7 @@ silly.fork(function()
     end
 
     -- 关闭连接
-    socket.close(fd)
+    conn:close()
 end)
 ```
 
@@ -316,13 +320,12 @@ socket.listen(addr, callback, backlog)
 
 **参数**:
 - `addr`: 监听地址,格式为 `"IP:端口"`,例如 `"127.0.0.1:9999"` 或 `"0.0.0.0:8080"`
-- `callback`: 客户端连接回调函数,签名为 `function(fd, addr)`
-  - `fd`: 客户端连接的文件描述符
-  - `addr`: 客户端地址字符串
+- `callback`: 客户端连接回调函数,签名为 `function(conn)`
+  - `conn`: 客户端连接对象
 - `backlog`: (可选) 监听队列长度,默认为 128
 
 **返回值**:
-- 成功: 返回监听套接字的文件描述符
+- 成功: 返回监听器对象
 - 失败: 返回 `nil` 和错误信息
 
 **重要特性**:
@@ -336,12 +339,14 @@ Silly 使用 Lua 协程实现异步 I/O:
 
 ```lua
 -- 每个客户端连接运行在独立协程中
-socket.listen("127.0.0.1:9999", function(fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
     -- 这里的代码在独立协程中运行
     while true do
-        local data = socket.readline(fd)  -- 异步读取,不阻塞其他连接
-        socket.write(fd, data)            -- 异步写入
+        local data = conn:read("\n")  -- 异步读取,不阻塞其他连接
+        if err then break end
+        conn:write(data)              -- 异步写入
     end
+    conn:close()
 end)
 ```
 
@@ -356,13 +361,13 @@ end)
 
 ```lua
 -- 读取一行(阻塞直到收到 \n)
-local line, err = socket.readline(fd, "\n")
+local line, err = conn:read("\n")
 
 -- 读取指定字节数(阻塞直到收到 n 字节)
-local data, err = socket.read(fd, 1024)
+local data, err = conn:read(1024)
 
--- 读取所有可用数据(立即返回,不阻塞)
-local data, err = socket.readall(fd)
+-- 读取所有可用数据
+local data, err = conn:read(conn:unreadbytes())
 ```
 
 **返回值**:
@@ -372,7 +377,7 @@ local data, err = socket.readall(fd)
 ### 写入操作
 
 ```lua
-local ok, err = socket.write(fd, data)
+local ok, err = conn:write(data)
 ```
 
 **特性**:
@@ -390,22 +395,22 @@ local ok, err = socket.write(fd, data)
 
 ```lua
 -- 读取错误
-local data, err = socket.readline(fd)
-if not data then
+local data, err = conn:read("\n")
+if err then
     if err then
         print("网络错误:", err)
     else
         print("客户端正常关闭连接")
     end
-    socket.close(fd)
+    conn:close()
     return
 end
 
 -- 写入错误
-local ok, werr = socket.write(fd, data)
+local ok, werr = conn:write(data)
 if not ok then
     print("写入失败:", werr)
-    socket.close(fd)
+    conn:close()
     return
 end
 ```
@@ -425,56 +430,56 @@ end
 -- 添加连接计数
 local connections = 0
 
-socket.listen("127.0.0.1:9999", function(fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
     connections = connections + 1
-    print(string.format("新连接 [%d] 来自 %s, 当前连接数: %d",
-        fd, addr, connections))
+    print(string.format("新连接来自 %s, 当前连接数: %d",
+        conn:remoteaddr(), connections))
 
     while true do
-        local line, err = socket.readline(fd)
-        if not line then break end
-        socket.write(fd, line)
+        local line, err = conn:read("\n")
+        if err then break end
+        conn:write(line)
     end
 
     connections = connections - 1
-    socket.close(fd)
-    print(string.format("连接关闭 [%d], 剩余连接数: %d",
-        fd, connections))
+    conn:close()
+    print(string.format("连接关闭 %s, 剩余连接数: %d",
+        conn:remoteaddr(), connections))
 end)
 ```
 
 ### 2. 添加超时处理
 
-使用 `silly.timeout()` 添加超时机制:
+使用 `time.after()` 添加超时机制:
 
 ```lua
 local time = require "silly.time"
 
-socket.listen("127.0.0.1:9999", function(fd, addr)
-    print("新连接:", fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
+    print("新连接:", conn:remoteaddr())
 
     -- 设置 30 秒超时
     local timeout_timer = time.after(30000, function()
-        print("连接超时:", fd)
-        socket.close(fd)
+        print("连接超时:", conn:remoteaddr())
+        conn:close()
     end)
 
     while true do
-        local line, err = socket.readline(fd)
-        if not line then break end
+        local line, err = conn:read("\n")
+        if err then break end
 
         -- 有数据活动,重置超时
         time.cancel(timeout_timer)
         timeout_timer = time.after(30000, function()
-            print("连接超时:", fd)
-            socket.close(fd)
+            print("连接超时:", conn:remoteaddr())
+            conn:close()
         end)
 
-        socket.write(fd, line)
+        conn:write(line)
     end
 
     time.cancel(timeout_timer)
-    socket.close(fd)
+    conn:close()
 end)
 ```
 
@@ -483,21 +488,21 @@ end)
 记录每个连接的数据传输量:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(fd, addr)
+socket.listen("127.0.0.1:9999", function(conn)
     local bytes_recv = 0
     local bytes_sent = 0
     local msg_count = 0
 
-    print("新连接:", fd, addr)
+    print("新连接:", conn:remoteaddr())
 
     while true do
-        local line, err = socket.readline(fd)
-        if not line then break end
+        local line, err = conn:read("\n")
+        if err then break end
 
         bytes_recv = bytes_recv + #line
         msg_count = msg_count + 1
 
-        local ok = socket.write(fd, line)
+        local ok = conn:write(line)
         if ok then
             bytes_sent = bytes_sent + #line
         else
@@ -505,9 +510,9 @@ socket.listen("127.0.0.1:9999", function(fd, addr)
         end
     end
 
-    socket.close(fd)
-    print(string.format("连接 [%d] 统计: 接收 %d 字节, 发送 %d 字节, 消息数 %d",
-        fd, bytes_recv, bytes_sent, msg_count))
+    conn:close()
+    print(string.format("连接 %s 统计: 接收 %d 字节, 发送 %d 字节, 消息数 %d",
+        conn:remoteaddr(), bytes_recv, bytes_sent, msg_count))
 end)
 ```
 
@@ -516,33 +521,33 @@ end)
 让 Echo 服务器支持简单的命令:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(fd, addr)
-    socket.write(fd, "欢迎使用 Silly Echo 服务器!\n")
-    socket.write(fd, "输入 'help' 查看命令\n")
+socket.listen("127.0.0.1:9999", function(conn)
+    conn:write("欢迎使用 Silly Echo 服务器!\n")
+    conn:write("输入 'help' 查看命令\n")
 
     while true do
-        socket.write(fd, "> ")
-        local line, err = socket.readline(fd)
-        if not line then break end
+        conn:write("> ")
+        local line, err = conn:read("\n")
+        if err then break end
 
         local cmd = line:match("^%s*(.-)%s*$")  -- 去除空白
 
         if cmd == "help" then
-            socket.write(fd, "命令列表:\n")
-            socket.write(fd, "  help  - 显示此帮助\n")
-            socket.write(fd, "  time  - 显示服务器时间\n")
-            socket.write(fd, "  quit  - 断开连接\n")
+            conn:write("命令列表:\n")
+            conn:write("  help  - 显示此帮助\n")
+            conn:write("  time  - 显示服务器时间\n")
+            conn:write("  quit  - 断开连接\n")
         elseif cmd == "time" then
-            socket.write(fd, os.date() .. "\n")
+            conn:write(os.date() .. "\n")
         elseif cmd == "quit" then
-            socket.write(fd, "再见!\n")
+            conn:write("再见!\n")
             break
         else
-            socket.write(fd, "回显: " .. line)
+            conn:write("回显: " .. line)
         end
     end
 
-    socket.close(fd)
+    conn:close()
 end)
 ```
 
@@ -552,6 +557,7 @@ end)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local socket = require "silly.net.tcp"
 
 local client_count = 100  -- 100 个并发客户端
@@ -561,19 +567,19 @@ local start_time = os.time()
 local total_messages = 0
 
 for i = 1, client_count do
-    silly.fork(function()
-        local fd = socket.connect("127.0.0.1:9999")
-        if not fd then return end
+    task.fork(function()
+        local conn = socket.connect("127.0.0.1:9999")
+        if not conn then return end
 
         for j = 1, msg_per_client do
-            socket.write(fd, "test message\n")
-            local msg = socket.readline(fd)
+            conn:write("test message\n")
+            local msg = conn:read("\n")
             if msg then
                 total_messages = total_messages + 1
             end
         end
 
-        socket.close(fd)
+        conn:close()
 
         if i == client_count then
             local elapsed = os.time() - start_time

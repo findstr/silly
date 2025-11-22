@@ -51,28 +51,29 @@ Silly 采用 Lua 的错误处理机制：
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
-silly.fork(function()
-    -- 网络连接可能失败
-    local fd, err = tcp.connect("192.0.2.1:9999")  -- 不支持超时参数
-    if not fd then
+task.fork(function()
+    -- 连接可能失败
+    local conn, err = tcp.connect("127.0.0.1:8080")
+    if not conn then
         print("连接失败:", err)
         -- 处理错误：记录日志、重试、返回错误响应等
         return
     end
 
     -- 读取数据可能失败
-    local data, err = tcp.read(fd, 1024)
-    if not data then
+    local data, err = conn:read(1024)
+    if err then
         print("读取失败:", err)
-        tcp.close(fd)
+        conn:close()
         return
     end
 
     -- 成功处理
     print("接收数据:", data)
-    tcp.close(fd)
+    conn:close()
 end)
 ```
 
@@ -101,7 +102,7 @@ local db = mysql.open {
     database = "test",
 }
 
-silly.fork(function()
+task.fork(function()
     -- 查询可能失败
     local res, err = db:query("SELECT * FROM users WHERE id = ?", 123)
     if not res then
@@ -160,8 +161,10 @@ local function transfer_money(from_id, to_id, amount)
     return true
 end
 
+local task = require "silly.task"
+
 -- 使用
-silly.fork(function()
+task.fork(function()
     local ok, err = transfer_money(1, 2, 100)
     if not ok then
         print("转账失败:", err)
@@ -185,10 +188,11 @@ end)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local http = require "silly.net.http"
 local time = require "silly.time"
 
-silly.fork(function()
+task.fork(function()
     -- 设置超时
     local timeout = 5000  -- 5秒
 
@@ -196,7 +200,7 @@ silly.fork(function()
         print("HTTP 请求超时")
     end)
 
-    local response, err = http.GET("http://slow-api.example.com/data")
+    local response, err = http.get("http://slow-api.example.com/data")
 
     -- 取消超时定时器
     time.cancel(timer)
@@ -225,6 +229,7 @@ end)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 local mysql = require "silly.store.mysql"
 
 local db = mysql.open {
@@ -234,7 +239,7 @@ local db = mysql.open {
     database = "test",
 }
 
-silly.fork(function()
+task.fork(function()
     -- 基本检查
     local res, err = db:query("SELECT * FROM users")
     if not res then
@@ -286,7 +291,9 @@ end
 ```lua
 local silly = require "silly"
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     -- 使用 silly.pcall 捕获错误并生成堆栈跟踪
     local ok, result = silly.pcall(function()
         local data = parse_json('{"invalid json}')
@@ -309,8 +316,10 @@ end)
 local silly = require "silly"
 local json = require "silly.encoding.json"
 
+local task = require "silly.task"
+
 -- 1. 保护关键操作
-silly.fork(function()
+task.fork(function()
     local ok, err = silly.pcall(function()
         -- 可能抛出异常的代码
         local data = json.decode(user_input)
@@ -323,7 +332,7 @@ silly.fork(function()
 end)
 
 -- 2. 保护协程主循环
-silly.fork(function()
+task.fork(function()
     while true do
         local ok, err = silly.pcall(function()
             handle_message()
@@ -351,7 +360,9 @@ local function error_handler(err)
     return err
 end
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local ok, result = xpcall(function()
         return risky_operation()
     end, error_handler)
@@ -407,8 +418,10 @@ local function get_user_email(id)
     return user.email
 end
 
+local task = require "silly.task"
+
 -- 顶层函数：处理错误
-silly.fork(function()
+task.fork(function()
     local email, err = get_user_email(123)
     if not email then
         print("错误:", err)  -- 包含完整的错误链
@@ -456,7 +469,9 @@ local function connect_with_retry(addr, max_retries, retry_delay)
     return nil, "连接失败，已达到最大重试次数"
 end
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local fd, err = connect_with_retry("127.0.0.1:8080", 5, 1000)
     if not fd then
         print("无法连接:", err)
@@ -506,7 +521,9 @@ local function safe_query(sql, ...)
     return nil, {message = "查询失败，连接无法恢复"}
 end
 
-silly.fork(function()
+local task = require "silly.task"
+
+task.fork(function()
     local res, err = safe_query("SELECT * FROM users")
     if not res then
         print("查询失败:", err.message)
@@ -519,7 +536,7 @@ end)
 
 ## 协程错误处理
 
-### silly.fork 中的错误
+### task.fork 中的错误
 
 协程中的错误不会影响其他协程，但需要妥善处理。
 
@@ -527,16 +544,17 @@ end)
 
 ```lua
 local silly = require "silly"
+local task = require "silly.task"
 
-silly.start(function()
+task._start(function()
     print("主协程开始")
 
     -- 子协程中的错误不会传播到主协程
-    silly.fork(function()
+    task.fork(function()
         error("子协程中的错误")  -- 这会导致子协程崩溃
     end)
 
-    silly.fork(function()
+    task.fork(function()
         print("其他协程正常运行")  -- 这个协程不受影响
     end)
 
@@ -549,9 +567,11 @@ end)
 ```lua
 local silly = require "silly"
 
+local task = require "silly.task"
+
 -- 包装函数：捕获协程中的所有错误
 local function safe_fork(func)
-    silly.fork(function()
+    task.fork(function()
         local ok, err = silly.pcall(func)
         if not ok then
             print("协程错误:", err)
@@ -578,7 +598,7 @@ end)
 ```lua
 local silly = require "silly"
 
-silly.fork(function()
+task.fork(function()
     local ok, err = silly.pcall(function()
         -- 可能出错的代码
         local result = risky_operation()
@@ -620,7 +640,9 @@ local function worker_loop()
     end
 end
 
-silly.fork(worker_loop)
+local task = require "silly.task"
+
+task.fork(worker_loop)
 print("工作协程已启动")
 ```
 
@@ -661,7 +683,7 @@ local function send_json(stream, status, data)
         ["content-type"] = "application/json",
         ["content-length"] = #body,
     })
-    stream:close(body)
+    stream:closewrite(body)
 end
 
 http.listen {
@@ -871,7 +893,7 @@ local function safe_query(sql, ...)
     return nil, err
 end
 
-silly.fork(function()
+task.fork(function()
     local res, err = safe_query("SELECT * FROM users")
     if not res then
         print("无法查询用户表")
@@ -957,7 +979,7 @@ local db = mysql.open {
 }
 
 -- 创建测试表
-silly.fork(function()
+task.fork(function()
     db:query([[
         CREATE TEMPORARY TABLE accounts (
             id INT PRIMARY KEY,
@@ -1040,7 +1062,7 @@ local function transfer(from_id, to_id, amount)
 end
 
 -- 测试
-silly.fork(function()
+task.fork(function()
     print("=== 测试转账功能 ===\n")
 
     -- 1. 成功转账
@@ -1100,7 +1122,7 @@ local function send_json(stream, status, data)
         ["content-type"] = "application/json",
         ["content-length"] = #body,
     })
-    stream:close(body)
+    stream:closewrite(body)
 end
 
 local function success_response(data)
