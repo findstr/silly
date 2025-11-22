@@ -62,6 +62,26 @@ $(ZLIB_LIB): $(ZLIB_DIR)/Makefile
 $(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
 	cd $(ZLIB_DIR) && ./configure
 
+#####snappy
+SNAPPY_DIR=deps/snappy
+SNAPPY_INC=$(SNAPPY_DIR)
+SNAPPY_BUILD_DIR=$(SNAPPY_DIR)/build
+SNAPPY_LIB=$(SNAPPY_BUILD_DIR)/libsnappy.a
+
+$(SNAPPY_LIB): $(SNAPPY_BUILD_DIR)/Makefile
+	make -C $(SNAPPY_BUILD_DIR)
+
+$(SNAPPY_BUILD_DIR)/Makefile: $(SNAPPY_DIR)/CMakeLists.txt
+	mkdir -p $(SNAPPY_BUILD_DIR) && \
+		cd $(SNAPPY_BUILD_DIR) && \
+		cmake .. -DCMAKE_BUILD_TYPE=Release \
+			-DSNAPPY_BUILD_TESTS=OFF \
+			-DSNAPPY_BUILD_BENCHMARKS=OFF \
+			-DBUILD_SHARED_LIBS=OFF
+
+$(SNAPPY_DIR)/CMakeLists.txt:
+	git submodule update --init
+
 #-----------project
 # Platform directory mapping
 ifeq ($(LUA_PLAT),mingw)
@@ -70,7 +90,7 @@ else
 PLAT_DIR = unix
 endif
 
-INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR) -I $(SRC_PATH)/$(PLAT_DIR)
+INCLUDE += -I $(LUA_INC) -I $(SRC_PATH) -I $(ZLIB_DIR) -I $(SNAPPY_INC) -I $(SRC_PATH)/$(PLAT_DIR)
 SRC_FILE = \
       main.c \
       api.c \
@@ -125,8 +145,8 @@ all: \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
 
-$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB)
-	$(LD) -o $@ $^ $(LDFLAGS)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB) $(SNAPPY_LIB)
+	$(LD) -o $@ $^ $(LDFLAGS) -lstdc++
 
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
@@ -173,6 +193,7 @@ endif
 	-rm $(ZLIB_DIR)/example64
 	-rm $(ZLIB_DIR)/minigzip
 	-rm $(ZLIB_DIR)/minigzip64
+	-rm -rf $(SNAPPY_BUILD_DIR)
 
 fmt:
 	-clang-format -style=file -i $(SRC_PATH)/*.h

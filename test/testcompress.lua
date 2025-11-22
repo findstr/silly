@@ -1,4 +1,5 @@
 local gzip = require "silly.compress.gzip"
+local snappy = require "silly.compress.snappy"
 local testaux = require "test.testaux"
 
 -- Test 1: Basic functionality - compress and decompress
@@ -53,4 +54,48 @@ do
 	)
 	local output = gzip.decompress(gzip_data)
 	testaux.asserteq(output, "hello world\n", "Case 5.1: Decompress standard gzip binary data")
+end
+
+-- Test 6: Snappy basic functionality - compress and decompress
+do
+	local test_strings = {
+		"hello world", -- 简单字符串
+		"", -- 空字符串
+		"a", -- 单个字符
+		string.rep("a", 1000), -- 重复字符
+		"你好世界", -- 非ASCII字符
+		string.char(0, 1, 2, 3, 255) -- 二进制数据
+	}
+
+	for i, str in ipairs(test_strings) do
+		local compressed = snappy.compress(str)
+		local decompressed = snappy.decompress(compressed)
+		testaux.asserteq(decompressed, str, string.format("Case 6.%d: Snappy basic compress/decompress test", i))
+	end
+end
+
+-- Test 7: Snappy large data compression
+do
+	local data = string.rep("S", 1024 * 1024) -- 1MB
+	local compressed = snappy.compress(data)
+	local decompressed = snappy.decompress(compressed)
+
+	testaux.asserteq(decompressed, data, "Case 7.1: Snappy large data compress/decompress test")
+	testaux.assertlt(#compressed, #data, "Case 7.2: Snappy compressed size should be smaller than original")
+end
+
+-- Test 8: Snappy invalid input for decompression (error handling)
+do
+	local dat, err = snappy.decompress("not a snappy stream")
+	testaux.asserteq(dat, nil, "Case 8.1: Snappy decompressing invalid data should raise error")
+end
+
+-- Test 9: Snappy compression efficiency test
+do
+	local data = "aaaaaabbbbbbccccccdddddd" -- 重复数据，应该压缩效果好
+	local compressed = snappy.compress(data)
+	local decompressed = snappy.decompress(compressed)
+
+	testaux.asserteq(decompressed, data, "Case 9.1: Snappy compress/decompress repeated data")
+	testaux.assertlt(#compressed, #data, "Case 9.2: Snappy should compress repeated data efficiently")
 end
