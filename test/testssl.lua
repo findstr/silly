@@ -1,4 +1,5 @@
 local silly = require "silly"
+local task = require "silly.task"
 local hive = require "silly.hive"
 local time = require "silly.time"
 local dns = require "silly.net.dns"
@@ -121,12 +122,16 @@ end)
 
 -- Test 3.2: TLS readline interrupted by close
 testaux.case("Test 3.2: TLS readline interrupted by close", function()
+	local waitrl = channel.new()
 	listen_cb = function(conn)
-		ch:pop()
 		-- Try to readline but client will close before sending newline
+		task.fork(function()
+			time.sleep(1000)
+			waitrl:push("ready")
+		end)
 		local data, err = conn:readline("\n")
-		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty string on interrupted read:" .. err)
-		testaux.asserteq(err, "end of file", "Test 3.2.2: TLS readline returns 'end of file' error")
+		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty data")
+		testaux.asserteq(err, "end of file", "Test 3.2.2: TLS readline returns `end of file` error")
 		conn:close()
 	end
 
@@ -134,11 +139,10 @@ testaux.case("Test 3.2: TLS readline interrupted by close", function()
 	testaux.assertneq(cfd, nil, "Test 3.2.3: Client connected to TLS server")
 	local ok, err = cfd:write("incomplete")
 	testaux.asserteq(ok, true, "Test 3.2.4: Client wrote incomplete line")
-	time.sleep(50) -- Give server time to start readline
+	waitrl:pop() -- Wait until server is in readline
 	cfd:close() -- Close before sending newline
-	ch:push("done")
-	testaux.success("Test 3.2 passed")
 	waitdone()
+	testaux.success("Test 3.2 passed")
 end)
 
 -- Test 3.3: TLS abrupt close

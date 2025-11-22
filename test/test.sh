@@ -127,10 +127,17 @@ if [ $JOBS -eq 1 ]; then
     FAILED=0
     # Combine all tests (parallel-eligible and serial tests)
     all_tests="$FILTERED_TESTS $SERIAL_TESTS"
+
     for base in $all_tests; do
         echo "🔹 Running test: $base"
         $SILLY "$TEST_SCRIPT" --set="$base" $ARGS
         rc=$?
+
+        # On mingw, add delay between tests to let Windows clean up resources
+        if [ "$PLATFORM" = "mingw" ]; then
+            sleep 0.5
+        fi
+
         TOTAL=$((TOTAL + 1))
         if [ $rc -eq 0 ]; then
             echo "✅ Passed: $base"

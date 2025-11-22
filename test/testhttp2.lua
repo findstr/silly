@@ -929,6 +929,164 @@ testaux.case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", 
 	testaux.asserteq(ch.conn, nil, "Test 27.19: channel connection should be closed after graceful close completes")
 end)
 
+-- Test 28: HPACK encoder state corruption from interleaved streams
+-- Bug: When stream1 calls request() (hpack_pack adds headers to dynamic table),
+-- then stream2 uses IDENTICAL headers (HPACK encodes as indexed reference),
+-- if stream2 sends first, the server's decoder fails (dynamic table entry doesn't exist)
+testaux.case("Test 28: HPACK encoder state corruption", function()
+	set_nil = false
+	server_handler = function(stream)
+		-- Return received headers as JSON in body for verification
+		local h = stream.header
+		local body = json.encode({
+			["x-shared-header"] = h["x-shared-header"],
+			["x-common-value"] = h["x-common-value"],
+		})
+		stream:respond(200, {
+			["content-type"] = "application/json",
+		})
+		stream:closewrite(body)
+	end
+
+	-- Use manual connection to ensure both streams are on the same connection
+	local conn = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
+	testaux.assertneq(conn, nil, "Test 28.1: Connect should succeed")
+	local ch = h2.newchannel("https", conn)
+	testaux.assertneq(ch, nil, "Test 28.2: New channel should succeed")
+
+	-- Stream 1: Call request() with custom headers
+	-- HPACK encoder adds these headers to its dynamic table (literal with indexing)
+	local stream1 = ch:openstream()
+	testaux.assertneq(stream1, nil, "Test 28.3: Stream 1 should be created")
+	stream1:request("POST", "/stream1", {
+		["x-shared-header"] = "identical-value-for-both-streams",
+		["x-common-value"] = "this-is-shared-too",
+	})
+	-- stream1 headers are hpack_pack'd but NOT sent yet!
+	-- The encoder's dynamic table now has these headers
+
+	-- Stream 2: Call request() with IDENTICAL headers (same name AND value)
+	-- HPACK encoder recognizes these are already in dynamic table
+	-- It encodes them as indexed references (tiny 1-byte encoding)
+	local stream2 = ch:openstream()
+	testaux.assertneq(stream2, nil, "Test 28.4: Stream 2 should be created")
+	stream2:request("POST", "/stream2", {
+		["x-shared-header"] = "identical-value-for-both-streams",
+		["x-common-value"] = "this-is-shared-too",
+	})
+
+	-- Send stream2 FIRST - BUG TRIGGER!
+	-- stream2's encoded headers contain indexed references to dynamic table entries
+	-- But those entries were added by stream1 which hasn't been sent yet!
+	-- When server decodes stream2, its dynamic table doesn't have these entries
+	stream2:closewrite()
+
+	-- Now send stream1 (contains literal encodings that add to decoder's table)
+	stream1:closewrite()
+
+	-- Try to read responses - stream2 should have failed to decode on server
+	stream2:waitresponse()
+	local body2 = stream2:readall()
+	-- If bug exists: body2 will be nil (decode failed) or headers wrong
+	-- If fixed: both streams decode correctly
+
+	stream1:waitresponse()
+	local body1 = stream1:readall()
+
+	-- Check if we got valid responses
+	local h1_received = body1 and json.decode(body1)
+	local h2_received = body2 and json.decode(body2)
+
+	-- Both streams should have received correct headers
+	-- If HPACK state is corrupted, stream2 will fail or have wrong values
+	testaux.assertneq(body1, nil, "Test 28.5: Stream 1 body should not be nil")
+	testaux.assertneq(h1_received, nil, "Test 28.6: Stream 1 body should be valid JSON")
+	testaux.assertneq(body2, nil, "Test 28.7: Stream 2 body should not be nil")
+	testaux.assertneq(h2_received, nil, "Test 28.8: Stream 2 body should be valid JSON")
+
+	-- Verify headers were received correctly
+	testaux.asserteq(h1_received["x-shared-header"], "identical-value-for-both-streams",
+		"Test 28.9: Stream 1 x-shared-header")
+	testaux.asserteq(h1_received["x-common-value"], "this-is-shared-too",
+		"Test 28.10: Stream 1 x-common-value")
+	testaux.asserteq(h2_received["x-shared-header"], "identical-value-for-both-streams",
+		"Test 28.11: Stream 2 x-shared-header")
+	testaux.asserteq(h2_received["x-common-value"], "this-is-shared-too",
+		"Test 28.12: Stream 2 x-common-value")
+
+	stream1:close()
+	stream2:close()
+	ch:close()
+	set_nil = true
+end)
+
+-- Test 29: Stream close before sending any data (IDLE state close)
+-- Bug: If stream.request() sets localstate=STATE_HEADER, then close() would send RST_STREAM
+-- even though no HEADERS frame was sent yet (stream is still IDLE).
+-- According to HTTP/2 spec, sending RST_STREAM in IDLE state causes PROTOCOL_ERROR.
+testaux.case("Test 29: Stream close in IDLE state (no data sent)", function()
+	set_nil = false
+	local sync_ch = channel.new()
+	local call_count = 0
+	server_handler = function(stream)
+		call_count = call_count + 1
+		sync_ch:push(call_count)
+		stream:respond(200, {})
+		stream:closewrite("OK")
+	end
+
+	local conn = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
+	testaux.assertneq(conn, nil, "Test 29.1: Connect should succeed")
+	local ch = h2.newchannel("https", conn)
+	testaux.assertneq(ch, nil, "Test 29.2: New channel should succeed")
+
+	-- Scenario 1: openstream → close (no request at all)
+	local s1 = ch:openstream()
+	testaux.assertneq(s1, nil, "Test 29.3: Stream 1 should be created")
+	s1:close()
+	-- No sync needed - if server is wrongly called, call_count will be wrong
+
+	-- Scenario 2: openstream → request → close (request called but no data sent)
+	-- This is the KEY scenario that the bug fix addresses
+	local s2 = ch:openstream()
+	testaux.assertneq(s2, nil, "Test 29.5: Stream 2 should be created")
+	local ok, err = s2:request("GET", "/test", {
+		["x-test-header"] = "test-value"
+	})
+	testaux.asserteq(ok, true, "Test 29.6: request should succeed")
+	testaux.asserteq(err, nil, "Test 29.7: request should not return error")
+
+	-- Close immediately without calling write/closewrite
+	-- BUG (before fix): Would send RST_STREAM because localstate=STATE_HEADER
+	-- FIX: Should NOT send RST_STREAM because writeheader is not nil (headers not sent yet)
+	s2:close()
+	-- No sync needed - if server is wrongly called, call_count will be wrong
+
+	-- Verify no server calls happened yet
+	testaux.asserteq(call_count, 0, "Test 29.8: Server should not be called for stream1 and stream2")
+
+	-- Verify channel is still healthy (no PROTOCOL_ERROR)
+	-- If RST_STREAM was incorrectly sent in IDLE state, the connection might be closed
+	testaux.assertneq(ch.conn, nil, "Test 29.9: Channel connection should still be alive")
+	testaux.asserteq(ch.goaway, false, "Test 29.10: Channel should not have received GOAWAY")
+
+	-- Scenario 3: openstream → request → write → close (should send RST_STREAM)
+	-- This is the normal case - stream has sent HEADERS, so RST_STREAM is valid
+	local s3 = ch:openstream()
+	testaux.assertneq(s3, nil, "Test 29.11: Stream 3 should be created")
+	s3:request("POST", "/test", {})
+	s3:write("some data") -- This sends HEADERS + DATA
+
+	-- Wait for server to be called (blocking wait)
+	local count = sync_ch:pop()
+	testaux.asserteq(count, 1, "Test 29.12: Server should be called exactly once for stream3")
+
+	s3:close() -- Should send RST_STREAM (stream has left IDLE state)
+
+	ch:close()
+	set_nil = true
+end)
+
 time.sleep(2000)
 
 if server then
@@ -950,3 +1108,5 @@ for key, entries in pairs(httpc.h2pool) do
 		channel:close()
 	end
 end
+
+print("All tests completed!")

@@ -1,9 +1,7 @@
-local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
 local buffer = require "silly.adt.buffer"
 local queue = require "silly.adt.queue"
-local list = require "silly.adt.list"
 local logger = require "silly.logger"
 local helper = require "silly.net.http.helper"
 local hpack = require "silly.http2.hpack"
@@ -14,6 +12,7 @@ local error = error
 local pairs = pairs
 local assert = assert
 local tonumber = tonumber
+local sub = string.sub
 local format = string.format
 local wakeup = task.wakeup
 local pack = string.pack
@@ -200,7 +199,7 @@ local channel_mt = {
 --- @field writeoffset integer
 --- @field writelength integer
 --- @field writeeoffset boolean
---- @field writeheader string?
+--- @field writeheader table?
 --- @field sendwindow integer
 local S = {}
 local stream_mt = {
@@ -260,6 +259,7 @@ local channel_goaway
 local function read_frame(conn, ch)
 	local x9, err = conn:read(9)
 	if err then
+		ch.goaway = true
 		return nil, nil, nil, nil
 	end
 	local n, t, f, id = unpack(">I3I1I1I4", x9)
@@ -269,11 +269,25 @@ local function read_frame(conn, ch)
 	if n > 0 then
 		if n > ch.recvframemaxsize then
 			channel_goaway(ch, FRAME_SIZE_ERROR)
-			return nil, nil, err, nil
+			return nil, nil, nil, nil
 		end
 		dat, err = conn:read(n)
 		if err then
-			return nil, nil, err, nil
+			ch.goaway = true
+			return nil, nil, nil, nil
+		end
+		if f & PADDED == PADDED then
+			if #dat < 1 then
+				channel_goaway(ch, PROTOCOL_ERROR)
+				return nil, nil, nil, nil
+			end
+			local pad_length = unpack(">I1", dat)
+			if pad_length >= #dat then
+				channel_goaway(ch, PROTOCOL_ERROR)
+				return nil, nil, nil, nil
+			end
+			-- Remove pad length byte and padding
+			dat = sub(dat, 2, -(pad_length + 1))
 		end
 	else
 		dat = ""
@@ -611,7 +625,7 @@ end
 ---@param ch silly.net.http.h2.channel
 function C.isalive(ch)
 	local conn = ch.conn
-	return conn and conn:isalive() and ch.laststreamid < MAX_STREAM_ID
+	return conn and conn:isalive() and ch.streamidx + ch.streamcount < MAX_STREAM_ID
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -622,7 +636,8 @@ end
 ---@return silly.net.http.h2.stream?, string?
 function C.openstream(ch)
 	local add = 1
-	if ch.streamcount >= ch.streammax then
+	local streamcount = ch.streamcount
+	if streamcount >= ch.streammax then
 		local co = task.running()
 		ch.openwaitq:push(co)
 		local err = task.wait()
@@ -637,7 +652,7 @@ function C.openstream(ch)
 	-- RFC 7540: Stream identifiers cannot be reused
 	-- If we've exhausted the stream ID space, the connection must be closed
 	local id = ch.streamidx
-	if id >= MAX_STREAM_ID then
+	if id + streamcount >= MAX_STREAM_ID then
 		return nil, "stream id exhausted"
 	end
 	id = id + 2
@@ -672,6 +687,38 @@ end
 ---------------------------stream
 
 ---@param s silly.net.http.h2.stream
+---@param header table
+---@param endstream boolean
+local function stream_writeheader(s, header, endstream)
+	local hdat
+	local ch = s.channel
+	local id = s.id
+	if s.active then --client request stream
+		local idx = ch.streamidx
+		if id ~= idx then
+			local streams = ch.streams
+			streams[id] = nil
+			id = idx + 2
+			ch.streamidx = id
+			s.id = id
+			streams[id] = s
+		end
+		local host = header["host"]
+		header["host"] = nil
+		hdat = hpack_pack(ch.sendhpack, header,
+			":authority", host,
+			":method", s.method,
+			":path", s.path,
+			":scheme", ch.scheme)
+	else --server response stream
+		hdat = hpack_pack(ch.sendhpack, header, ":status", s.status)
+	end
+	s.localstate = STATE_HEADER
+	local dat = build_header(id, ch.sendframemaxsize, hdat, endstream)
+	channel_write(ch, dat)
+end
+
+---@param s silly.net.http.h2.stream
 ---@param dat string|table|nil
 local function stream_readwakeup(s, dat)
 	local co = s.readco
@@ -696,8 +743,7 @@ local function stream_flush(s)
 	local header = s.writeheader
 	if header then
 		s.writeheader = nil
-		local dat = build_header(s.id, ch.sendframemaxsize, header, false)
-		channel_write(ch, dat)
+		stream_writeheader(s, header, false)
 	end
 	local recvwindebt = s.recvwindebt
 	if recvwindebt > 0 then
@@ -875,17 +921,9 @@ function S.request(s, method, path, header)
 	if err then
 		return false, err
 	end
-	local ch = s.channel
 	s.method = method
 	s.path = path
-	s.localstate = STATE_HEADER
-	local host = header["host"]
-	header["host"] = nil
-	s.writeheader = hpack_pack(ch.sendhpack, header,
-		":authority", host,
-		":method", s.method,
-		":path", s.path,
-		":scheme", ch.scheme)
+	s.writeheader = header
 	return true, nil
 end
 
@@ -898,9 +936,8 @@ function S.respond(s, status, header)
 	if not ch then
 		return false, s.errstr
 	end
-	s.localstate = STATE_HEADER
 	s.status = status
-	s.writeheader = hpack_pack(ch.sendhpack, header, ":status", s.status)
+	s.writeheader = header
 	return true, nil
 end
 
@@ -923,9 +960,9 @@ function S.write(s, data)
 	local header = s.writeheader
 	if header then
 		s.writeheader = nil
-		local dat = build_header(s.id, ch.sendframemaxsize, header, false)
-		channel_write(ch, dat)
+		stream_writeheader(s, header, false)
 	end
+	s.localstate = STATE_DATA
 	return stream_writewait(s, data, false)
 end
 
@@ -940,19 +977,19 @@ function S.closewrite(s, data, trailer)
 	if s.writeco then
 		error("[h2] closewrite can't be called while write is pending", 2)
 	end
-	s.localstate = STATE_END
 	local ch = s.channel
-	local none = not (data or trailer)
+	local nopayload = not (data or trailer)
 	local header = s.writeheader
 	if header then
 		s.writeheader = nil
-		local dat = build_header(s.id, ch.sendframemaxsize, header, none)
-		channel_write(s.channel, dat)
-		if none then
+		stream_writeheader(s, header, nopayload)
+		if nopayload then
+			s.localstate = STATE_END
 			return true, nil
 		end
 	end
-	if none then
+	s.localstate = STATE_END
+	if nopayload then
 		data = ""
 	end
 	if data then
@@ -1372,23 +1409,6 @@ local function common_dispatch(args)
 		if not t then
 			ch.goaway = true
 			break
-		end
-		-- RFC 7540 Section 6.1: Validate padding
-		if f & PADDED == PADDED then
-			if #d < 1 then
-				-- Frame too small to contain pad length
-				channel_goaway(ch, PROTOCOL_ERROR)
-				break
-			end
-			local pad_length = unpack(">I1", d)
-			-- Padding length must be less than frame payload length
-			if pad_length >= #d then
-				-- Invalid pad length
-				channel_goaway(ch, PROTOCOL_ERROR)
-				break
-			end
-			-- Remove pad length byte and padding
-			d = d:sub(2, -(pad_length + 1))
 		end
 		local func = frame_process[t]
 		if func then
