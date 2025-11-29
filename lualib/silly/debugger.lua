@@ -556,9 +556,9 @@ start = function(read, write)
 	enter()
 	cread = read
 	cwrite = write
-	coresume, _ = task.task_hook(hook_create, hook_term)
+	coresume, _ = task.hook(hook_create, hook_term)
 	local ok, err = silly.pcall(cmdline)
-	task.task_hook()
+	task.hook()
 	CMD.q()
 	if not ok then
 		logger.error(err)

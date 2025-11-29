@@ -153,17 +153,13 @@ SILLY_API uint64_t silly_monotonic()
 {
 	return timer_monotonic();
 }
-SILLY_API void silly_trace_node(silly_tracenode_t id)
+SILLY_API void silly_trace_set_node(silly_tracenode_t id)
 {
-	trace_node(id);
+	trace_set_node(id);
 }
-SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id)
+SILLY_API silly_traceid_t silly_trace_exchange(silly_traceid_t id)
 {
-	return trace_set(id);
-}
-SILLY_API silly_traceid_t silly_trace_get()
-{
-	return trace_get();
+	return trace_exchange(id);
 }
 SILLY_API silly_traceid_t silly_trace_new()
 {

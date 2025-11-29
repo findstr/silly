@@ -9,7 +9,7 @@ We welcome contributions to the Silly framework. To maintain code quality and co
 All public-facing APIs should be named using one or two words, without underscores. The preferred style is all lowercase.
 
 - **GOOD:** `silly.fork`, `silly.net.connect`
-- **BAD:** `silly.task_hook`, `silly.socket_close`
+- **BAD:** `silly.socket_close`
 
 ### 2. Internal Functions
 

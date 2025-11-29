@@ -7,8 +7,8 @@ local assert = assert
 local smatch = string.match
 
 local task_running = task.running
-local task_create = task._task_create
-local task_resume = task._task_resume
+local task_create = task._create
+local task_resume = task._resume
 local log_info = assert(logger.info)
 local log_error = assert(logger.error)
 

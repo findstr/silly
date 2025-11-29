@@ -55,7 +55,7 @@ end
 
 function console.task(fd)
 	local buf = {}
-	local tasks = task.tasks()
+	local tasks = task.inspect()
 	local i, j = 0, 1
 	for co, info in pairs(tasks) do
 		i = i + 1

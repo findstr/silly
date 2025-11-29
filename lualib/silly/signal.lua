@@ -4,8 +4,8 @@ local c = require "silly.signal.c"
 local logger = require "silly.logger.c"
 
 local assert = assert
-local task_create = task._task_create
-local task_resume = task._task_resume
+local task_create = task._create
+local task_resume = task._resume
 
 --signal
 local c_signal = c.signal

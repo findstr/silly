@@ -19,19 +19,19 @@ void trace_init()
 {
 }
 
-void trace_node(silly_tracenode_t id)
+void trace_set_node(silly_tracenode_t id)
 {
 	nodeid = id;
 }
 
-silly_traceid_t trace_set(silly_traceid_t id)
+silly_traceid_t trace_exchange(silly_traceid_t id)
 {
 	silly_traceid_t old = trace_ctx;
 	trace_ctx = id;
 	return old;
 }
 
-silly_traceid_t trace_get()
+silly_traceid_t trace_current()
 {
 	return trace_ctx;
 }

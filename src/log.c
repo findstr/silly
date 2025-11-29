@@ -88,7 +88,7 @@ static inline void fmttime()
 	struct tm tm;
 	uint64_t now = timer_now();
 	time_t sec = now / 1000;
-	silly_traceid_t traceid = trace_get();
+	silly_traceid_t traceid = trace_current();
 	int build_step;
 	if (head_cache.sstr == NULL) {
 		build_step = BUILD_SEC;

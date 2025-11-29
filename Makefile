@@ -94,7 +94,7 @@ PLAT_SRC = $(wildcard $(SRC_PATH)/$(PLAT_DIR)/*.c)
 SRC = $(COMMON_SRC) $(PLAT_SRC)
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
-LIB_SRC = lualib-silly.c \
+LIB_SRC = lsilly.c \
 	lualib-env.c \
 	lualib-time.c \
 	lualib-metrics.c \
@@ -102,6 +102,7 @@ LIB_SRC = lualib-silly.c \
 	lualib-profiler.c \
 	lualib-tls.c \
 	lualib-debugger.c \
+	ltrace.c\
 	lcluster.c \
 	lencoding.c \
 	lhive.c \

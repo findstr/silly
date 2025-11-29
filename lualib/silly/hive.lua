@@ -9,8 +9,8 @@ local pack = table.pack
 local unpack = table.unpack
 
 local task_running = task.running
-local task_yield = task._task_yield
-local task_resume = task._task_resume
+local task_yield = task._yield
+local task_resume = task._resume
 
 local M = {}
 local working = {}

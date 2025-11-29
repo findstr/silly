@@ -255,6 +255,7 @@ void worker_start(const struct boot_args *config)
 	W->argc = config->argc;
 	W->argv = config->argv;
 	W->L = L;
+	W->running = L;
 #if LUA_GC_MODE == LUA_GC_INC
 	lua_gc(L, LUA_GCINC, 0, 0, 0);
 #else

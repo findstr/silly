@@ -65,7 +65,7 @@ function M.new()
 	local collect = function(_, buf)
 		local worker_backlog = c.workerstat()
 		local timer_pending, timer_scheduled, timer_fired, timer_canceled = c.timerstat()
-		local task_runnable_size = task.taskstat()
+		local task_runnable_size = task.readycount()
 		local tcp_connections, sent_bytes, received_bytes,
 			socket_operate_request, socket_operate_processed = c.netstat()
 

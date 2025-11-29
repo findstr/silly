@@ -48,23 +48,4 @@ function M.strerror(errno) end
 ---@param status integer?
 function M.exit(status) end
 
----Set trace node ID for distributed tracing
----@param node integer
-function M.tracenode(node) end
-
----Spawn a new trace ID and return both new and old trace IDs
----@return integer new_traceid
----@return integer old_traceid
-function M.tracespawn() end
-
----Set trace ID for current coroutine
----@param traceid integer?
----@param co thread?
----@return integer old_traceid
-function M.traceset(traceid, co) end
-
----Get current trace ID
----@return integer traceid
-function M.traceget() end
-
 return M

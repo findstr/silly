@@ -138,9 +138,9 @@ SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud);
 SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud);
 SILLY_API void silly_timerstat(struct silly_timerstat *stat);
 
-SILLY_API void silly_trace_node(silly_tracenode_t id);
-SILLY_API silly_traceid_t silly_trace_set(silly_traceid_t id);
-SILLY_API silly_traceid_t silly_trace_get();
+SILLY_API void silly_trace_set_node(silly_tracenode_t id);
+SILLY_API silly_traceid_t silly_trace_exchange(silly_traceid_t id);
+SILLY_API silly_traceid_t silly_trace_current();
 SILLY_API silly_traceid_t silly_trace_new();
 
 SILLY_API void silly_push(struct silly_message *msg);

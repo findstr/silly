@@ -1,5 +1,6 @@
 local silly = require "silly"
 local task = require "silly.task"
+local trace = require "silly.trace"
 local lock = require "silly.sync.mutex"
 local time = require "silly.time"
 local net = require "silly.net"
@@ -16,6 +17,8 @@ local tcp_listen = net.tcplisten
 local pcall = silly.pcall
 local after = time.after
 local cancel = time.cancel
+local trace_propagate = trace.propagate
+local trace_attach = trace.attach
 
 ---@class silly.net.cluster.peer
 ---@field fd integer
@@ -56,7 +59,7 @@ local function process()
 	if not fd then
 		return
 	end
-	local otrace = task.traceset(traceid)
+	local otrace = trace_attach(traceid)
 	task.fork(process)
 	while true do
 		if cmd then	--rpc request
@@ -78,7 +81,7 @@ local function process()
 			end
 			local id, res_data = marshal("response", cmd, res)
 			if not id then
-				return
+				break
 			end
 			tcp_send(fd, c.response(session, res_data))
 		else	-- rpc response
@@ -89,11 +92,11 @@ local function process()
 		--next
 		fd, buf, session, cmd, traceid = c.pop(ctx)
 		if not fd then
-			return
+			break
 		end
-		task.traceset(traceid)
+		trace_attach(traceid)
 	end
-	task.traceset(otrace)
+	trace_attach(otrace)
 end
 
 ---@type silly.net.event
@@ -255,7 +258,7 @@ local function callx(is_send)
 		if not cmdn then
 			return nil, dat
 		end
-		local traceid = task.tracepropagate()
+		local traceid = trace_propagate()
 		local session, body = c.request(cmdn, traceid, dat)
 		local ok, err = tcp_send(fd, body)
 		if not ok then
