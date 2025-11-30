@@ -1512,9 +1512,7 @@ http.listen {
     end
 }
 
-silly.start(function()
-    print("Server started on port", port)
-end)
+print("Server started on port", port)
 ```
 
 **Run Servers**:
@@ -1850,9 +1848,7 @@ http.listen {
     handler = handler
 }
 
-silly.start(function()
-    logger.info("HTTP server started on port", CONFIG.port)
-end)
+logger.info("HTTP server started on port", CONFIG.port)
 ```
 
 ---

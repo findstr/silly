@@ -125,6 +125,134 @@ C modules in `luaclib-src/` expose APIs to Lua:
 - `lualib-time.c`: Timer operations
 - `crypto/*.c`: Cryptographic functions (AES, RSA, HMAC, etc.)
 
+## API Usage Patterns
+
+### Network APIs
+
+#### TCP Server and Client
+
+```lua
+local tcp = require "silly.net.tcp"
+
+-- Server: listen accepts a table with addr and accept callback
+local server = tcp.listen {
+    addr = "127.0.0.1:8080",
+    accept = function(conn)
+        -- Handle connection
+        local data = conn:read(100)
+        conn:write("response")
+        conn:close()
+    end
+}
+
+-- Client: connect accepts a string address
+local conn = tcp.connect("127.0.0.1:8080")
+conn:write("request")
+local response = conn:read(100)
+conn:close()
+```
+
+#### HTTP Server and Client
+
+```lua
+local http = require "silly.net.http"
+
+-- Server: listen accepts a table with addr and handler callback
+local server = http.listen {
+    addr = "0.0.0.0:8080",
+    handler = function(stream)
+        -- Access request properties
+        local method = stream.method
+        local path = stream.path
+        local headers = stream.header
+        local query = stream.query
+
+        -- Read request body
+        local body = stream:readall()
+
+        -- Send response (Method 1: separate write and close)
+        stream:respond(200, {
+            ["content-type"] = "application/json",
+            ["content-length"] = #response_data,
+        })
+        stream:write(response_data)
+
+        -- Send response (Method 2: closewrite with data - RECOMMENDED)
+        -- Reduces function calls and for HTTP/2 can reduce packet count
+        stream:respond(200, {
+            ["content-type"] = "application/json",
+            ["content-length"] = #response_data,
+        })
+        stream:closewrite(response_data)
+
+        -- For chunked with trailers
+        stream:respond(200, {
+            ["transfer-encoding"] = "chunked",
+        })
+        stream:write("data1")
+        stream:closewrite(nil, {  -- nil for no final data, table for trailer headers
+            ["x-checksum"] = "abc123",
+        })
+    end
+}
+
+-- Client: create client with newclient(), then use methods
+local httpc = http.newclient({
+    max_idle_per_host = 10,
+    idle_timeout = 30000,
+})
+
+-- Simple GET/POST
+local response = httpc:get("http://example.com/api")
+local response = httpc:post("http://example.com/api", headers, body)
+
+-- Streaming request/response
+local stream = httpc:request("POST", "http://example.com/api", {
+    ["content-length"] = 1024,
+})
+stream:write("part1")
+stream:write("part2")
+stream:closewrite()  -- Close write side
+local response_body = stream:readall()
+
+-- Or send all data with closewrite (more efficient)
+local stream = httpc:request("POST", "http://example.com/api", {
+    ["content-length"] = 1024,
+})
+stream:closewrite(request_data)  -- Write data and close in one call
+local response_body = stream:readall()
+```
+
+#### TLS Server and Client
+
+```lua
+local tls = require "silly.net.tls"
+
+-- Server: similar to tcp.listen but with certs
+local server = tls.listen {
+    addr = "0.0.0.0:443",
+    certs = {
+        {
+            cert = cert_pem_string,
+            key = key_pem_string,
+        },
+    },
+    accept = function(conn)
+        -- Handle TLS connection
+    end
+}
+
+-- Client: connect accepts address string, optional verify parameter
+local conn = tls.connect("example.com:443", true)  -- true = verify certificate
+```
+
+### Important Notes
+
+- **No `silly.start()` required**: The framework automatically starts the event loop when you run `./silly main.lua`
+- **listen() returns immediately**: Network listeners are non-blocking and accept connections in the background
+- **All I/O is coroutine-based**: Network operations automatically yield and resume using the coroutine scheduler
+- **Connection objects are tables**: Use method call syntax like `conn:read()`, `stream:respond()`
+
 ## Code Patterns
 
 ### Adding Timeout to Network Operations

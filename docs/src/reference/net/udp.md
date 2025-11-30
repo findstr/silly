@@ -125,49 +125,50 @@ udp.close(server_fd) -- 清理服务器
   - `address` (`string`): 要绑定的地址，格式：`"IP:PORT"`
     - IPv4: `"127.0.0.1:8080"` 或 `":8080"` (监听所有接口)
     - IPv6: `"[::1]:8080"` 或 `"[::]:8080"` (监听所有接口)
-- **返回值**: 成功时返回文件描述符 (`fd`)，失败时返回 `nil, error`
+- **返回值**: 成功时返回 UDP 连接对象 (`conn`)，失败时返回 `nil, error`
 - **示例**:
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd, err = udp.bind("127.0.0.1:8989")
-if not fd then
+local conn, err = udp.bind("127.0.0.1:8989")
+if not conn then
     print("Bind failed:", err)
 else
-    print("Bound to port 8989, fd:", fd)
+    print("Bound to port 8989")
 end
 ```
 
-#### `udp.connect(address, [bind_address])`
+#### `udp.connect(address, [opts])`
 创建一个 UDP 套接字并为出站数据包设置默认目标地址。这通常用于客户端。
 
 - **参数**:
   - `address` (`string`): 默认目标地址，例如 `"127.0.0.1:8080"`
-  - `bind_address` (`string`, 可选): 用于绑定客户端套接字的本地地址
-- **返回值**: 成功时返回文件描述符 (`fd`)，失败时返回 `nil, error`
+  - `opts` (`table`, 可选): 配置选项
+    - `bindaddr` (`string`): 用于绑定客户端套接字的本地地址
+- **返回值**: 成功时返回 UDP 连接对象 (`conn`)，失败时返回 `nil, error`
 - **注意**: "连接"的 UDP 套接字仍然是无连接的，只是设置了默认目标地址
 - **示例**:
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd, err = udp.connect("127.0.0.1:8989")
-if not fd then
+local conn, err = udp.connect("127.0.0.1:8989", {
+    bindaddr = "127.0.0.1:9000" -- 可选：绑定本地端口
+})
+if not conn then
     print("Connect failed:", err)
 else
-    print("Connected to server, fd:", fd)
+    print("Connected to server")
+    conn:close()
 end
 ```
 
 ### 发送和接收
 
-#### `udp.sendto(fd, data, [address])`
+#### `conn:sendto(data, [address])`
 发送一个数据报。
 
 - **参数**:
-  - `fd` (`integer`): UDP 套接字的文件描述符
-  - `data` (`string | table`): 要发送的数据包内容
-    - `string`: 直接发送字符串
-    - `table`: 多个字符串片段的数组，会自动拼接
+  - `data` (`string`): 要发送的数据包内容
   - `address` (`string`, 可选): 目标地址
     - 对于 `bind` 创建的套接字：**必需**
     - 对于 `connect` 创建的套接字：可选（省略则使用默认地址）
@@ -177,101 +178,67 @@ end
 local udp = require "silly.net.udp"
 
 -- bind 套接字需要指定地址
-local server_fd = udp.bind(":9001")
-udp.sendto(server_fd, "Hello", "127.0.0.1:8080")
+local server_conn = udp.bind(":9001")
+server_conn:sendto("Hello", "127.0.0.1:8080")
 
 -- connect 套接字可以省略地址
-local client_fd = udp.connect("127.0.0.1:9001")
-udp.sendto(client_fd, "Hi there")
+local client_conn = udp.connect("127.0.0.1:9001")
+client_conn:sendto("Hi there")
 
--- 发送多个片段
-udp.sendto(client_fd, {"Header: ", "Value\n", "Body"})
+server_conn:close()
+client_conn:close()
 ```
 
-#### `udp.recvfrom(fd)`
+#### `conn:recvfrom([timeout])`
 异步等待并接收单个数据报。
 
 - **参数**:
-  - `fd` (`integer`): 文件描述符
+  - `timeout` (`integer`, 可选): 超时时间（毫秒）
 - **返回值**:
-  - 成功时: `data, address`
-    - `data` (`string`): 数据包内容
-    - `address` (`string`): 发送方的地址（格式：`"IP:PORT"`）
-  - 失败时: `nil, error`
-- **注意**: 这是一个异步函数，会暂停当前协程直到收到数据
-- **示例**:
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-
-local fd = udp.bind(":9002")
-
-task.fork(function()
-    while true do
-        local data, addr = udp.recvfrom(fd)
-        if not data then
-            print("Recv error:", addr)
-            break
-        end
-        print("Received", #data, "bytes from", addr)
-        -- 回显数据
-        udp.sendto(fd, data, addr)
-    end
-end)
-```
-
-### 管理
-
-#### `udp.close(fd)`
-关闭一个 UDP 套接字。
-
-- **参数**:
-  - `fd` (`integer`): 要关闭的套接字的文件描述符
-- **返回值**: 成功时返回 `true`，如果套接字已关闭则返回 `false, error`
-- **注意**: 关闭套接字会唤醒所有等待 `recvfrom` 的协程，并返回错误
+  - 成功: `data, address`
+    - `data` (`string`): 接收到的数据内容
+    - `address` (`string`): 发送方的地址
+  - 失败: `nil, error`
 - **示例**:
 ```lua validate
 local udp = require "silly.net.udp"
-
-local fd = udp.bind(":9003")
-local ok, err = udp.close(fd)
-if not ok then
-    print("Close failed:", err)
+local conn = udp.bind(":0") -- 绑定到任意端口
+local data, addr = conn:recvfrom(100) -- 等待100毫秒
+if data then
+    print("Received from", addr, ":", data)
+else
+    print("No data received or error:", addr)
 end
+conn:close()
 ```
 
-#### `udp.sendsize(fd)`
-获取当前发送缓冲区中保存的数据量。
+#### `conn:unreadbytes()`
+获取接收缓冲区中当前可用但尚未读取的数据量。
 
-- **参数**:
-  - `fd` (`integer`): 文件描述符
-- **返回值**: `integer` - 发送缓冲区中的字节数
-- **用途**: 监控网络拥塞，实现流控
+- **返回值**: `integer` - 接收缓冲区中的字节数
+
+#### `conn:close()`
+关闭 UDP 套接字。
+
+- **返回值**: 成功时返回 `true`，失败时返回 `false, error`
 - **示例**:
 ```lua validate
 local udp = require "silly.net.udp"
-
-local fd = udp.connect("127.0.0.1:9004")
-udp.sendto(fd, "data")
-local pending = udp.sendsize(fd)
-print("Pending bytes:", pending)
+local conn = udp.bind(":0")
+conn:close()
 ```
 
-#### `udp.isalive(fd)`
-检查套接字是否仍被认为是活动的。
+#### `conn:isalive()`
+检查套接字是否有效。
 
-- **参数**:
-  - `fd` (`integer`): 文件描述符
-- **返回值**: `boolean` - 如果套接字已打开且未遇到错误，则返回 `true`，否则返回 `false`
+- **返回值**: `boolean`
 - **示例**:
 ```lua validate
 local udp = require "silly.net.udp"
-
-local fd = udp.bind(":9005")
-print("Socket alive:", udp.isalive(fd))
-udp.close(fd)
-print("Socket alive:", udp.isalive(fd))
+local conn = udp.bind(":0")
+print("Socket alive:", conn:isalive())
+conn:close()
+print("Socket alive:", conn:isalive())
 ```
 
 ---
@@ -290,14 +257,12 @@ print("UDP server listening on port 8989")
 
 task.fork(function()
     while true do
-        local data, addr = udp.recvfrom(fd)
+        local data, addr = fd:recvfrom()
         if not data then
             print("Server error:", addr)
             break
         end
         print("From", addr, ":", data)
-        udp.sendto(fd, "ACK: " .. data, addr)
-    end
     udp.close(fd)
 end)
 ```
@@ -431,13 +396,13 @@ UDP 数据包受 MTU（最大传输单元）限制：
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd = udp.bind(":9020")
+local conn = udp.bind(":9020")
 
 -- 好的做法：小数据包
-udp.sendto(fd, string.rep("x", 1000), "127.0.0.1:9020")
+conn:sendto(string.rep("x", 1000), "127.0.0.1:9020")
 
 -- 不推荐：大数据包（可能分片）
-udp.sendto(fd, string.rep("x", 10000), "127.0.0.1:9020")
+conn:sendto(string.rep("x", 10000), "127.0.0.1:9020")
 ```
 
 ### 2. 无序和丢包
@@ -449,12 +414,12 @@ local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
 
-local fd = udp.bind(":9021")
+local conn = udp.bind(":9021")
 
 task.fork(function()
     local sequence = {}
     for i = 1, 10 do
-        local data, addr = udp.recvfrom(fd)
+        local data, addr = conn:recvfrom()
         if data then
             local seq = tonumber(data:match("SEQ:(%d+)"))
             sequence[#sequence + 1] = seq
@@ -472,13 +437,13 @@ end)
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd = udp.connect("127.0.0.1:9022")
+local conn = udp.connect("127.0.0.1:9022")
 
 for i = 1, 1000 do
-    local ok, err = udp.sendto(fd, "data " .. i)
+    local ok, err = conn:sendto("data " .. i)
     if not ok then
         print("Send failed at", i, ":", err)
-        print("Buffer size:", udp.sendsize(fd))
+        print("Buffer size:", conn:unsentbytes())
         break
     end
 end
@@ -511,9 +476,9 @@ local task = require "silly.task"
 local udp = require "silly.net.udp"
 
 task.fork(function()
-    local fd = udp.bind(":9030")
+    local conn = udp.bind(":9030")
     -- ... 使用套接字 ...
-    udp.close(fd)  -- 确保清理
+    conn:close()  -- 确保清理
 end)
 ```
 
@@ -521,43 +486,28 @@ end)
 
 ## 性能建议
 
-### 1. 批量发送
 
-减少系统调用次数：
 
-```lua validate
-local udp = require "silly.net.udp"
-
-local fd = udp.connect("127.0.0.1:9040")
-
--- 使用表批量发送
-udp.sendto(fd, {
-    "header1\n",
-    "header2\n",
-    "body content"
-})
-```
-
-### 2. 监控缓冲区
+### 1. 监控缓冲区
 
 避免发送缓冲区溢出：
 
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd = udp.connect("127.0.0.1:9041")
+local conn = udp.connect("127.0.0.1:9041")
 
 local function safe_send(data)
-    local buffer_size = udp.sendsize(fd)
+    local buffer_size = conn:unsentbytes()
     if buffer_size > 1024 * 1024 then  -- 1MB 阈值
         print("Warning: send buffer is", buffer_size, "bytes")
         return false
     end
-    return udp.sendto(fd, data)
+    return conn:sendto(data)
 end
 ```
 
-### 3. 合理的超时
+### 2. 合理的超时
 
 实现应用层超时机制：
 
@@ -567,10 +517,10 @@ local task = require "silly.task"
 local udp = require "silly.net.udp"
 local time = require "silly.time"
 
-local function recv_with_timeout(fd, timeout_ms)
+local function recv_with_timeout(conn, timeout_ms)
     local result = nil
     local task = task.fork(function()
-        result = {udp.recvfrom(fd)}
+        result = {conn:recvfrom()}
     end)
 
     time.sleep(timeout_ms)

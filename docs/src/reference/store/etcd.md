@@ -547,21 +547,15 @@ task.fork(function()
 end)
 ```
 
-### client:keepalive(req)
+### client:keepalive(id)
 
 手动发送一次租约保活请求（通常不需要手动调用，客户端会自动保活）。
 
 - **参数**:
-  - `req`: `table` - 请求参数
-    - `ID`: `integer` (必需) - 要保活的租约 ID
-- **返回值**:
-  - 成功: `table` - 响应对象
-    - `header`: `etcd.ResponseHeader` - 响应头
-    - `ID`: `integer` - 租约 ID
-    - `TTL`: `integer` - 续期后的新 TTL
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 是
-- **注意**: 此方法返回的是 gRPC stream 对象，需要调用 `write()` 和 `read()` 方法
+  - `id`: `integer` (必需) - 要保活的租约 ID
+- **返回值**: 无
+- **异步**: 否 (只是启动后台保活任务或发送一次请求)
+- **注意**: 此方法在实现中通常用于触发后台保活逻辑
 - **示例**:
 
 ```lua validate
@@ -577,22 +571,8 @@ task.fork(function()
     local lease_res = client:grant {TTL = 60}
     local lease_id = lease_res.ID
 
-    -- 获取保活流
-    local stream = client:keepalive {ID = lease_id}
-    if stream then
-        -- 发送保活请求
-        stream:write {ID = lease_id}
-
-        -- 读取响应
-        local ka_res = stream:read()
-        if ka_res then
-            print("Keepalive success, new TTL:", ka_res.TTL)
-        end
-
-        stream:close()
-    end
-
-    -- 注意：通常不需要手动保活，客户端会自动处理
+    -- 手动触发保活（通常不需要）
+    client:keepalive(lease_id)
 end)
 ```
 

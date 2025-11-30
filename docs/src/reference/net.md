@@ -87,6 +87,7 @@ end
 - `addr` (string): 服务器地址
 - `event` (table): 事件处理器表（同 `tcplisten`，但不需要 `accept`）
 - `bind` (string, 可选): 本地绑定地址
+- `timeout` (integer, 可选): 连接超时（毫秒）
 
 **返回值**:
 - `fd` (integer): 连接的文件描述符

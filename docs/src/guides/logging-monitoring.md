@@ -69,7 +69,7 @@ logger.error("数据库连接失败")       -- 会输出
 
 ```lua
 -- ❌ 错误：不要显式打印 trace ID
-local trace_id = task.tracepropagate()
+local trace_id = trace.propagate()
 logger.info("[" .. trace_id .. "] Processing request")
 
 -- ✅ 正确：框架会自动打印 trace ID
@@ -503,10 +503,10 @@ local logger = require "silly.logger"
 
 task.fork(function()
     -- 创建新的 trace ID（如果当前协程没有）
-    local old_trace_id = task.tracespawn()
+    local old_trace_id = trace.spawn()
     logger.infof("开始处理请求")
     logger.infof("请求处理完成")
-    task.traceset(old_trace_id)
+    trace.attach(old_trace_id)
 end)
 ```
 
@@ -518,11 +518,10 @@ end)
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
-
 -- 服务 A：发起 HTTP 请求
 local function call_service_b()
     -- 生成传播用的 trace ID
-    local trace_id = task.tracepropagate()
+    local trace_id = trace.propagate()
     logger.info("调用服务 B")
 
     -- 通过 HTTP Header 传递 trace ID
@@ -545,9 +544,9 @@ local server = http.listen {
         -- 提取并设置 trace ID
         local trace_id = tonumber(stream.headers["x-trace-id"])
         if trace_id then
-            task.traceset(trace_id)
+            trace.attach(trace_id)
         else
-            trace_id = task.tracespawn()
+            trace_id = trace.spawn()
         end
         logger.info("服务 B 收到请求")
         -- 处理业务逻辑
@@ -779,9 +778,8 @@ local function send_alert(alert_name, message)
     logger.errorf("[ALERT] %s: %s", alert_name, message)
 
     -- 这里可以集成告警渠道，如 HTTP 回调、邮件等
-    -- http.request {
-    --     method = "POST",
-    --     url = "http://alert-service/webhook",
+    -- http.post("http://alert-service/webhook",
+    --     {},
     --     body = json.encode({
     --         alert = alert_name,
     --         message = message,

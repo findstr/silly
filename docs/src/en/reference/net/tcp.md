@@ -71,11 +71,11 @@ Establishes a connection to a TCP server (asynchronous).
   - `addr`: `string` - Server address to connect to, e.g., `"127.0.0.1:8080"`
   - `opts`: `table|nil` (optional) - Configuration options
     - `bind`: `string|nil` - Local address to bind client socket to
+    - `timeout`: `integer|nil` - Connection timeout in milliseconds, no timeout if not set
 - **Returns**:
   - Success: `silly.net.tcp.conn` - Connection object
-  - Failure: `nil, string` - nil and error message
-- **Async**: This function is asynchronous and waits for connection establishment
-- **Note**: This function does not support timeout parameter. Use `silly.time.after()` for timeout control
+  - Failure: `nil, string` - nil and error message ("connect timeout" if timed out)
+- **Async**: This function is asynchronous and waits for connection or timeout
 - **Example**:
 
 ```lua validate

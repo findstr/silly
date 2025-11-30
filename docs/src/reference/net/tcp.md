@@ -71,11 +71,11 @@ end
   - `addr`: `string` - 要连接的服务器地址，例如 `"127.0.0.1:8080"`
   - `opts`: `table|nil` (可选) - 配置选项
     - `bind`: `string|nil` - 用于绑定客户端套接字的本地地址
+    - `timeout`: `integer|nil` - 连接超时时间（毫秒），如果未设置则无超时限制
 - **返回值**:
   - 成功: `silly.net.tcp.conn` - 连接对象
-  - 失败: `nil, string` - nil 和错误信息
-- **异步**: 此函数是异步的，会等待连接建立
-- **注意**: 此函数不支持超时参数，如需超时控制，请使用 `silly.time.after()` 配合使用
+  - 失败: `nil, string` - nil 和错误信息（"connect timeout" 表示连接超时）
+- **异步**: 此函数是异步的，会等待连接建立或超时
 - **示例**:
 
 ```lua validate
@@ -84,6 +84,7 @@ local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
 task.fork(function()
+    -- 基本连接
     local conn, err = tcp.connect("127.0.0.1:8080")
     if not conn then
         print("Connect failed:", err)
@@ -91,6 +92,14 @@ task.fork(function()
     end
     print("Connected! Remote addr:", conn:remoteaddr())
     conn:close()
+
+    -- 带超时的连接（1秒超时）
+    local conn2, err2 = tcp.connect("192.0.2.1:80", {timeout = 1000})
+    if not conn2 then
+        print("Connect failed:", err2)  -- 可能输出 "connect timeout"
+        return
+    end
+    conn2:close()
 end)
 ```
 
@@ -368,7 +377,9 @@ task.fork(function()
     local wg = waitgroup.new()
 
     -- 启动服务器
-    local listenfd = tcp.listen("127.0.0.1:9988", function(fd, addr)
+    local listenfd = tcp.listen {
+        addr = "127.0.0.1:9988",
+        accept = function(fd, addr)
         wg:fork(function()
             print("Client connected:", addr)
 
@@ -386,7 +397,7 @@ task.fork(function()
 
             conn:close()
         end)
-    end)
+    end }
 
     print("Echo server listening on 127.0.0.1:9988")
 

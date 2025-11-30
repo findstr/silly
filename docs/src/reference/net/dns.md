@@ -500,7 +500,7 @@ end)
 
 ### 1. 协程要求
 
-所有 DNS 查询函数（`lookup` 和 `resolve`）都是异步的,必须在协程中调用:
+所有 DNS 查询函数（`lookup` 和 `resolve`）都是异步的, 必须在协程中调用:
 
 ```lua validate
 local silly = require "silly"

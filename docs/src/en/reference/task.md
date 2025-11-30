@@ -17,6 +17,7 @@ Coroutine management and task scheduling module, providing coroutine creation, s
 
 ```lua validate
 local task = require "silly.task"
+local trace = require "silly.trace"
 ```
 
 ## Coroutine Management
@@ -103,12 +104,12 @@ Get the current status of a coroutine.
 
 ## Task Statistics
 
-### task.taskstat()
+### task.readycount()
 Get the number of tasks waiting to execute in the ready queue.
 
 - **Returns**: `integer` - Task count
 
-### task.tasks()
+### task.inspect()
 Get status information of all coroutines (for debugging).
 
 - **Returns**: `table` - Coroutine status table, format:
@@ -123,53 +124,33 @@ Get status information of all coroutines (for debugging).
 
 ## Distributed Tracing
 
-### task.tracenode(nodeid)
-Set the node ID of the current node (for trace ID generation).
+The task module supports associating distributed trace IDs with each coroutine for cross-service request chain tracing.
 
-- **Parameters**:
-  - `nodeid`: `integer` - Node ID (16-bit, 0-65535)
-- **Example**:
+> 📖 **Full Documentation**: For detailed distributed tracing API and usage guide, please see the **[silly.trace](./trace.md)** module documentation.
+
+**Quick Example**:
+
 ```lua validate
-local task = require "silly.task"
+local trace = require "silly.trace"
 
--- Set node ID at service startup
-task.tracenode(1)  -- Set as node 1
+-- Set node ID (at service startup)
+trace.setnode(1)
+
+-- Create new trace (when handling new request)
+trace.spawn()
+
+-- Propagate trace to downstream (when calling other services)
+local traceid = trace.propagate()
+
+-- Attach upstream trace (when receiving request)
+trace.attach(upstream_traceid)
 ```
 
-### task.tracespawn()
-Create a new root trace ID and set it as the current coroutine's trace ID.
-
-- **Returns**: `integer` - Previous trace ID (can be used for later restoration)
-- **Example**:
-```lua validate
-local task = require "silly.task"
-
--- Create new trace ID when handling new HTTP request
-local old_trace = task.tracespawn()
--- ... process request ...
--- Restore old trace context if needed
-task.traceset(old_trace)
-```
-
-### task.traceset(id)
-Set the trace ID of the current coroutine.
-
-- **Parameters**:
-  - `id`: `integer` - Trace ID
-- **Returns**: `integer` - Previous trace ID
-
-### task.tracepropagate()
-Get trace ID for cross-service propagation (preserves root trace, replaces node ID with current node).
-
-- **Returns**: `integer` - Trace ID for propagation
-- **Example**:
-```lua validate
-local task = require "silly.task"
-
--- Propagate trace ID in RPC call
-local trace_id = task.tracepropagate()
--- Send trace_id to remote service
-```
+**Related APIs**:
+- [trace.setnode()](./trace.md#tracesetnodenodeid) - Set node ID
+- [trace.spawn()](./trace.md#tracespawn) - Create new trace
+- [trace.attach()](./trace.md#traceattachid) - Attach trace
+- [trace.propagate()](./trace.md#tracepropagate) - Propagate trace
 
 ## Advanced API
 
@@ -177,13 +158,13 @@ local trace_id = task.tracepropagate()
 The following functions start with `_` and are internal implementation details. **They should not be used in business code**.
 :::
 
-### task._task_create(f)
+### task._create(f)
 Create coroutine (internal API).
 
-### task._task_resume(t, ...)
+### task._resume(t, ...)
 Resume coroutine execution (internal API).
 
-### task._task_yield(...)
+### task._yield(...)
 Suspend current coroutine (internal API).
 
 ### task._dispatch_wakeup()
@@ -195,7 +176,7 @@ Start main coroutine (internal API).
 ### task._exit(status)
 Exit process (internal API, use `silly.exit` instead).
 
-### task.task_hook(create, term)
+### task.hook(create, term)
 Set hooks for coroutine creation and termination (advanced usage).
 
 - **Parameters**:

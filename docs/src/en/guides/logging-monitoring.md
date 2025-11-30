@@ -69,7 +69,7 @@ The framework automatically prints the current coroutine's Trace ID before each 
 
 ```lua
 -- ❌ Wrong: Don't explicitly print trace ID
-local trace_id = task.tracepropagate()
+local trace_id = trace.propagate()
 logger.info("[" .. trace_id .. "] Processing request")
 
 -- ✅ Correct: Framework automatically prints trace ID
@@ -503,10 +503,10 @@ local logger = require "silly.logger"
 
 task.fork(function()
     -- Create new trace ID (if current coroutine doesn't have one)
-    local old_trace_id = task.tracespawn()
+    local old_trace_id = trace.spawn()
     logger.infof("Start processing request")
     logger.infof("Request processing completed")
-    task.traceset(old_trace_id)
+    trace.attach(old_trace_id)
 end)
 ```
 
@@ -518,15 +518,15 @@ In microservice architecture, trace IDs need to be propagated to downstream serv
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
-
+local httpc = http.newclient()
 -- Service A: Initiate HTTP request
 local function call_service_b()
     -- Generate trace ID for propagation
-    local trace_id = task.tracepropagate()
+    local trace_id = trace.propagate()
     logger.info("Calling service B")
 
     -- Pass trace ID via HTTP Header
-    local response = http.request {
+    local response = httpc:request {
         method = "POST",
         url = "http://service-b:8080/api/process",
         headers = {
@@ -545,9 +545,9 @@ local server = http.listen {
         -- Extract and set trace ID
         local trace_id = tonumber(stream.headers["x-trace-id"])
         if trace_id then
-            task.traceset(trace_id)
+            trace.attach(trace_id)
         else
-            trace_id = task.tracespawn()
+            trace_id = trace.spawn()
         end
         logger.info("Service B received request")
         -- Process business logic
@@ -779,9 +779,9 @@ local function send_alert(alert_name, message)
     logger.errorf("[ALERT] %s: %s", alert_name, message)
 
     -- You can integrate alert channels here, such as HTTP callbacks, email, etc.
-    -- http.request {
-    --     method = "POST",
-    --     url = "http://alert-service/webhook",
+    -- http.post(
+    --    "http://alert-service/webhook",
+    --    {},
     --     body = json.encode({
     --         alert = alert_name,
     --         message = message,

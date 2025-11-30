@@ -354,7 +354,7 @@ Breakpoints detected through:
 - Debugger hooks all active coroutines
 - When new coroutine created, automatically adds hook
 - When coroutine ends, automatically removes hook
-- Uses `task.task_hook()` to listen to coroutine lifecycle
+- Uses `task.hook()` to listen to coroutine lifecycle
 
 ### Thread Locking
 

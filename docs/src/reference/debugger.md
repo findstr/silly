@@ -354,7 +354,7 @@ debugger handler.lua handler.lua:5> s
 - 调试器会hook所有活跃的协程
 - 当创建新协程时，自动添加hook
 - 当协程结束时，自动移除hook
-- 使用 `task.task_hook()` 实现协程生命周期监听
+- 使用 `task.hook()` 实现协程生命周期监听
 
 ### 锁定线程
 

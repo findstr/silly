@@ -60,26 +60,25 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    local server, err = http.listen {
-        addr = "127.0.0.1:8080",
-        handler = function(stream)
-            -- 处理请求
-            stream:respond(200, {
-                ["content-type"] = "text/plain",
-                ["content-length"] = #"Hello, World!",
-            })
-            stream:closewrite("Hello, World!")
-        end
-    }
 
-    if not server then
-        print("Server start failed:", err)
-        return
+local server, err = http.listen {
+    addr = "127.0.0.1:8080",
+    handler = function(stream)
+        -- 处理请求
+        stream:respond(200, {
+            ["content-type"] = "text/plain",
+            ["content-length"] = #"Hello, World!",
+        })
+        stream:closewrite("Hello, World!")
     end
+}
 
-    print("HTTP server listening on 127.0.0.1:8080")
-end)
+if not server then
+    print("Server start failed:", err)
+    return
+end
+
+print("HTTP server listening on 127.0.0.1:8080")
 ```
 
 ### server:close()
@@ -95,19 +94,18 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    local server = http.listen {
-        addr = ":8080",
-        handler = function(stream)
-            stream:respond(200, {})
-            stream:closewrite("OK")
-        end
-    }
 
-    -- 稍后关闭服务器
-    server:close()
-    print("Server closed")
-end)
+local server = http.listen {
+    addr = ":8080",
+    handler = function(stream)
+        stream:respond(200, {})
+        stream:closewrite("OK")
+    end
+}
+
+-- 稍后关闭服务器
+server:close()
+print("Server closed")
 ```
 
 ---
@@ -190,30 +188,28 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    http.listen {
-        addr = ":8080",
-        handler = function(stream)
-            if stream.method == "POST" then
-                local body, err = stream:readall()
-                if body then
-                    print("Received POST data:", body)
-                    stream:respond(200, {
-                        ["content-type"] = "text/plain",
-                        ["content-length"] = #"Received",
-                    })
-                    stream:closewrite("Received")
-                else
-                    stream:respond(500, {})
-                    stream:closewrite("Read error: " .. (err or "unknown"))
-                end
+http.listen {
+    addr = ":8080",
+    handler = function(stream)
+        if stream.method == "POST" then
+            local body, err = stream:readall()
+            if body then
+                print("Received POST data:", body)
+                stream:respond(200, {
+                    ["content-type"] = "text/plain",
+                    ["content-length"] = #"Received",
+                })
+                stream:closewrite("Received")
             else
-                stream:respond(200, {})
-                stream:closewrite("OK")
+                stream:respond(500, {})
+                stream:closewrite("Read error: " .. (err or "unknown"))
             end
+        else
+            stream:respond(200, {})
+            stream:closewrite("OK")
         end
-    }
-end)
+    end
+}
 ```
 
 ### stream:write(data)
@@ -233,27 +229,45 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    http.listen {
-        addr = ":8080",
-        handler = function(stream)
-            if stream.version == "HTTP/1.1" then
-                stream:respond(200, {
-                    ["content-type"] = "text/plain",
-                    ["transfer-encoding"] = "chunked",
-                })
-                stream:write("Chunk 1\n")
-                stream:write("Chunk 2\n")
-                stream:closewrite()
-            end
+http.listen {
+    addr = ":8080",
+    handler = function(stream)
+        if stream.version == "HTTP/1.1" then
+            stream:respond(200, {
+                ["content-type"] = "text/plain",
+                ["transfer-encoding"] = "chunked",
+            })
+            stream:write("Chunk 1\n")
+            stream:write("Chunk 2\n")
+            stream:closewrite()
         end
-    }
-end)
+    end
+}
 ```
 
 ---
 
 ## 客户端 API
+
+### http.newclient(conf)
+
+创建一个新的 HTTP 客户端实例，支持连接池。
+
+- **参数**:
+  - `conf`: `table|nil` (可选) - 配置表
+    - `max_idle_per_host`: `integer` (可选) - 每个主机的最大空闲连接数 (默认: 10)
+    - `idle_timeout`: `integer` (可选) - 空闲连接超时时间(ms) (默认: 30000)
+    - `read_timeout`: `integer` (可选) - 读超时时间(ms) (默认: 5000)
+    - `alpnprotos`: `string[]` (可选) - ALPN 协议列表 (默认: `{"http/1.1", "h2"}`)
+- **返回值**: `silly.net.http.client` - 客户端对象
+- **示例**:
+```lua validate
+local http = require "silly.net.http"
+local client = http.newclient {
+    max_idle_per_host = 20,
+    idle_timeout = 60000,
+}
+```
 
 ### http.get(url [, headers])
 
@@ -276,16 +290,14 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    local response, err = http.get("http://www.example.com")
-    if response then
-        print("Status:", response.status)
-        print("Body length:", #response.body)
-        print("Content-Type:", response.header["content-type"])
-    else
-        print("GET failed:", err)
-    end
-end)
+local response, err = http.get("http://www.example.com")
+if response then
+    print("Status:", response.status)
+    print("Body length:", #response.body)
+    print("Content-Type:", response.header["content-type"])
+else
+    print("GET failed:", err)
+end
 ```
 
 ### http.post(url [, headers [, body]])
@@ -308,27 +320,25 @@ local task = require "silly.task"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 
-task.fork(function()
-    local request_data = json.encode({
-        name = "Alice",
-        age = 30
-    })
+local request_data = json.encode({
+    name = "Alice",
+    age = 30
+})
 
-    local response, err = http.post(
-        "http://api.example.com/users",
-        {
-            ["content-type"] = "application/json",
-        },
-        request_data
-    )
+local response, err = http.post(
+    "http://api.example.com/users",
+    {
+        ["content-type"] = "application/json",
+    },
+    request_data
+)
 
-    if response then
-        print("Status:", response.status)
-        print("Response:", response.body)
-    else
-        print("POST failed:", err)
-    end
-end)
+if response then
+    print("Status:", response.status)
+    print("Response:", response.body)
+else
+    print("POST failed:", err)
+end
 ```
 
 ### http.request(method, url [, headers [, close [, alpn_protos]]])
@@ -351,36 +361,107 @@ end)
 local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
+local stream<close>, err = http.request(
+    "PUT",
+    "http://api.example.com/data",
+    {
+        ["content-type"] = "text/plain",
+        ["content-length"] = #"Updated data",
+    },
+    false,
+    {"http/1.1", "h2"}
+)
 
-task.fork(function()
-    local stream<close>, err = http.request(
-        "PUT",
-        "http://api.example.com/data",
-        {
-            ["content-type"] = "text/plain",
-            ["content-length"] = #"Updated data",
-        },
-        false,
-        {"http/1.1", "h2"}
-    )
+if not stream then
+    print("Request failed:", err)
+    return
+end
 
-    if not stream then
-        print("Request failed:", err)
-        return
-    end
+if stream.version == "HTTP/2" then
+    stream:closewrite("Updated data")
+else
+    stream:write("Updated data")
+end
 
-    if stream.version == "HTTP/2" then
-        stream:closewrite("Updated data")
-    else
-        stream:write("Updated data")
-    end
-
-    local status, header = stream:readheader()
-    if status then
-        print("Status:", status)
-    end
-end)
+local status, header = stream:readheader()
+if status then
+    print("Status:", status)
+end
 ```
+
+---
+
+## Stream 对象 API
+
+Stream 对象用于处理 HTTP 请求和响应。
+
+### 属性
+
+- `stream.method`: `string` - HTTP 方法
+- `stream.path`: `string` - 请求路径
+- `stream.query`: `table` - 查询参数表
+- `stream.header`: `table` - 头表
+- `stream.trailer`: `table` - 尾部头表 (Trailer)
+- `stream.version`: `string` - 协议版本
+- `stream.remoteaddr`: `string` - 远程地址
+- `stream.eof`: `boolean` - 是否已读到 EOF
+
+### stream:read(n [, timeout])
+
+读取数据。
+
+- **参数**:
+  - `n`: `integer` - 读取字节数
+  - `timeout`: `integer` (可选) - 超时时间(ms)
+- **返回值**: `string`, `error`
+
+### stream:readall([timeout])
+
+读取所有剩余数据。
+
+- **参数**:
+  - `timeout`: `integer` (可选) - 超时时间(ms)
+- **返回值**: `string`, `error`
+
+### stream:waitresponse([timeout])
+
+等待响应头（仅客户端）。
+
+- **参数**:
+  - `timeout`: `integer` (可选) - 超时时间(ms)
+- **返回值**: `boolean`, `error`
+
+### stream:flush()
+
+刷新发送缓冲区。
+
+- **返回值**: 无
+
+### stream:respond(status, headers [, close])
+
+发送响应状态行和头部（仅服务器）。
+
+- **参数**:
+  - `status`: `integer` - HTTP 状态码
+  - `headers`: `table` - 响应头表
+  - `close`: `boolean|nil` (可选) - 是否立即关闭连接
+- **返回值**: `true` 或 `false, error`
+
+### stream:closewrite([body])
+
+发送响应体并关闭写端。
+
+- **参数**:
+  - `body`: `string|nil` (可选) - 响应体内容
+- **返回值**: 无
+
+### stream:write(data)
+
+写入数据（仅 HTTP/1.1）。
+
+- **参数**:
+  - `data`: `string` - 要写入的数据
+- **返回值**: `true` 或 `false, error`
 
 ---
 
@@ -395,36 +476,34 @@ local silly = require "silly"
 local task = require "silly.task"
 local http = require "silly.net.http"
 
-task.fork(function()
-    local server = http.listen {
-        addr = "127.0.0.1:8080",
-        handler = function(stream)
-            local path = stream.path
-            local response_body
+local server = http.listen {
+    addr = "127.0.0.1:8080",
+    handler = function(stream)
+        local path = stream.path
+        local response_body
 
-            if path == "/" then
-                response_body = "Welcome to the home page!"
-            elseif path == "/about" then
-                response_body = "This is the about page."
-            else
-                stream:respond(404, {
-                    ["content-type"] = "text/plain",
-                    ["content-length"] = #"Not Found",
-                })
-                stream:closewrite("Not Found")
-                return
-            end
-
-            stream:respond(200, {
+        if path == "/" then
+            response_body = "Welcome to the home page!"
+        elseif path == "/about" then
+            response_body = "This is the about page."
+        else
+            stream:respond(404, {
                 ["content-type"] = "text/plain",
-                ["content-length"] = #response_body,
+                ["content-length"] = #"Not Found",
             })
-            stream:closewrite(response_body)
+            stream:closewrite("Not Found")
+            return
         end
-    }
 
-    print("Server listening on 127.0.0.1:8080")
-end)
+        stream:respond(200, {
+            ["content-type"] = "text/plain",
+            ["content-length"] = #response_body,
+        })
+        stream:closewrite(response_body)
+    end
+}
+
+print("Server listening on 127.0.0.1:8080")
 ```
 
 ### 示例2：JSON API 服务器

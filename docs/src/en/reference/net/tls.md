@@ -350,6 +350,37 @@ task.fork(function()
 end)
 ```
 
+### tls.connect(addr [, opts])
+
+Establishes a connection to a TLS secure server (asynchronous). This function performs both TCP connection and TLS handshake.
+
+- **Parameters**:
+  - `addr`: `string` - Server address, e.g. `"127.0.0.1:443"`
+  - `opts`: `table|nil` (optional) - Configuration options
+    - `bind`: `string|nil` - Local bind address
+    - `hostname`: `string|nil` - Hostname for SNI (recommended)
+    - `alpnprotos`: `string[]|nil` - List of ALPN protocols, e.g. `{"h2", "http/1.1"}`
+    - `timeout`: `integer|nil` - Timeout for connection and handshake (milliseconds)
+- **Return value**:
+  - Success: `silly.net.tls.conn` - TLS connection object
+  - Failure: `nil, string` - nil and error message
+- **Example**:
+
+```lua validate
+local tls = require "silly.net.tls"
+
+local conn, err = tls.connect("127.0.0.1:443", {
+    hostname = "example.com",
+    alpnprotos = {"http/1.1"},
+    timeout = 5000  -- 5 seconds timeout
+})
+
+if not conn then
+    print("Connect failed:", err)
+    return
+end
+```
+
 ### listener:reload([conf])
 
 Hot reload the TLS server's certificate configuration without restarting the service.

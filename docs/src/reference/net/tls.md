@@ -350,6 +350,37 @@ task.fork(function()
 end)
 ```
 
+### tls.connect(addr [, opts])
+
+建立到 TLS 安全服务器的连接（异步）。此函数会进行 TCP 连接和 TLS 握手。
+
+- **参数**:
+  - `addr`: `string` - 服务器地址，例如 `"127.0.0.1:443"`
+  - `opts`: `table|nil` (可选) - 配置选项
+    - `bind`: `string|nil` - 本地绑定地址
+    - `hostname`: `string|nil` - 用于 SNI 的主机名（推荐设置）
+    - `alpnprotos`: `string[]|nil` - ALPN 协议列表，例如 `{"h2", "http/1.1"}`
+    - `timeout`: `integer|nil` - 连接和握手的超时时间（毫秒）
+- **返回值**:
+  - 成功: `silly.net.tls.conn` - TLS 连接对象
+  - 失败: `nil, string` - nil 和错误信息
+- **示例**:
+
+```lua validate
+local tls = require "silly.net.tls"
+
+local conn, err = tls.connect("127.0.0.1:443", {
+    hostname = "example.com",
+    alpnprotos = {"http/1.1"},
+    timeout = 5000  -- 5秒超时
+})
+
+if not conn then
+    print("Connect failed:", err)
+    return
+end
+```
+
 ### listener:reload([conf])
 
 热重载 TLS 服务器的证书配置，无需重启服务。

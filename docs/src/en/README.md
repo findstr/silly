@@ -8,7 +8,7 @@ bgImageStyle:
   background-attachment: fixed
 heroText: Silly
 tagline: |
-  A lightweight, minimalist high-performance Lua server framework.
+  A lightweight, minimalist high-performance Lua network framework.
 actions:
   - text: Getting Started
     icon: rocket
@@ -113,5 +113,5 @@ highlights:
         link: https://github.com/starwing/lua-protobuf
 
 copyright: false
-footer: Copyright © 2015-present 重归混沌 | Based on <a href="https://github.com/findstr/silly/tree/063cd2ce">063cd2ce</a>
+footer: Copyright © 2015-present 重归混沌 | Based on <a href="https://github.com/findstr/silly/tree/48f09ae9b">48f09ae9b</a>
 ---

@@ -8,7 +8,7 @@ bgImageStyle:
   background-attachment: fixed
 heroText: Silly
 tagline: |
-  一个轻量级、极简的高性能Lua服务器框架。
+  一个轻量级、极简的高性能Lua网络框架。
 actions:
   - text: 快速开始
     icon: rocket
@@ -113,5 +113,5 @@ highlights:
         link: https://github.com/starwing/lua-protobuf
 
 copyright: false
-footer: 版权所有 © 2015-至今 重归混沌 | 基于 <a href="https://github.com/findstr/silly/tree/063cd2ce">063cd2ce</a>
+footer: 版权所有 © 2015-至今 重归混沌 | 基于 <a href="https://github.com/findstr/silly/tree/48f09ae9b">48f09ae9b</a>
 ---

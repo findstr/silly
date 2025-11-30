@@ -17,6 +17,7 @@ tag:
 
 ```lua validate
 local task = require "silly.task"
+local trace = require "silly.trace"
 ```
 
 ## 协程管理
@@ -103,12 +104,12 @@ end)
 
 ## 任务统计
 
-### task.taskstat()
+### task.readycount()
 获取当前就绪队列中等待执行的任务数量。
 
 - **返回值**: `integer` - 任务数量
 
-### task.tasks()
+### task.inspect()
 获取所有协程的状态信息（用于调试）。
 
 - **返回值**: `table` - 协程状态表，格式：
@@ -123,53 +124,33 @@ end)
 
 ## 分布式追踪
 
-### task.tracenode(nodeid)
-设置当前节点的节点ID（用于trace ID生成）。
+task 模块支持为每个协程关联分布式追踪 ID，用于实现跨服务的请求链路追踪。
 
-- **参数**:
-  - `nodeid`: `integer` - 节点ID（16位，0-65535）
-- **示例**:
+> 📖 **完整文档**: 详细的分布式追踪 API 和使用指南请参见 **[silly.trace](./trace.md)** 模块文档。
+
+**快速示例**：
+
 ```lua validate
-local task = require "silly.task"
+local trace = require "silly.trace"
 
--- 在服务启动时设置节点ID
-task.tracenode(1)  -- 设置为节点1
+-- 设置节点 ID（服务启动时）
+trace.setnode(1)
+
+-- 创建新的 trace（处理新请求时）
+trace.spawn()
+
+-- 传播 trace 到下游（调用其他服务时）
+local traceid = trace.propagate()
+
+-- 附加上游的 trace（接收请求时）
+trace.attach(upstream_traceid)
 ```
 
-### task.tracespawn()
-创建新的根追踪ID并设置为当前协程的追踪ID。
-
-- **返回值**: `integer` - 之前的追踪ID（可用于后续恢复）
-- **示例**:
-```lua validate
-local task = require "silly.task"
-
--- 处理新的HTTP请求时创建新的trace ID
-local old_trace = task.tracespawn()
--- ... 处理请求 ...
--- 如需恢复旧的trace context
-task.traceset(old_trace)
-```
-
-### task.traceset(id)
-设置当前协程的追踪ID。
-
-- **参数**:
-  - `id`: `integer` - 追踪ID
-- **返回值**: `integer` - 之前的追踪ID
-
-### task.tracepropagate()
-获取用于跨服务传播的追踪ID（保留root trace，替换node ID为当前节点）。
-
-- **返回值**: `integer` - 传播用的追踪ID
-- **示例**:
-```lua validate
-local task = require "silly.task"
-
--- 在 RPC 调用时传播 trace ID
-local trace_id = task.tracepropagate()
--- 将 trace_id 发送到远程服务
-```
+**相关 API**:
+- [trace.setnode()](./trace.md#tracesetnodenodeid) - 设置节点 ID
+- [trace.spawn()](./trace.md#tracespawn) - 创建新 trace
+- [trace.attach()](./trace.md#traceattachid) - 附加 trace
+- [trace.propagate()](./trace.md#tracepropagate) - 传播 trace
 
 ## 高级API
 
@@ -177,13 +158,13 @@ local trace_id = task.tracepropagate()
 以下函数以 `_` 开头，属于内部实现细节，**不应在业务代码中使用**。
 :::
 
-### task._task_create(f)
+### task._create(f)
 创建协程（内部API）。
 
-### task._task_resume(t, ...)
+### task._resume(t, ...)
 恢复协程执行（内部API）。
 
-### task._task_yield(...)
+### task._yield(...)
 挂起当前协程（内部API）。
 
 ### task._dispatch_wakeup()
@@ -195,7 +176,7 @@ local trace_id = task.tracepropagate()
 ### task._exit(status)
 退出进程（内部API，请使用 `silly.exit`）。
 
-### task.task_hook(create, term)
+### task.hook(create, term)
 设置协程创建和终止的钩子函数（高级用法）。
 
 - **参数**:

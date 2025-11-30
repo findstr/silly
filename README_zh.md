@@ -49,19 +49,23 @@ make OPENSSL=ON
 ```lua
 local tcp = require "silly.net.tcp"
 
-tcp.listen("127.0.0.1:8888", function(fd, addr)
-    print("新连接来自", addr)
+local server = tcp.listen {
+    addr = "127.0.0.1:8888",
+    accept = function(conn)
+        print("新连接来自", conn:remoteaddr())
 
-    while true do
-        local data = tcp.readline(fd, "\n")
-        if not data then
-            print("客户端断开连接")
-            break
+        while true do
+            local data = conn:read("\n")
+            if not data then
+                print("客户端断开连接")
+                break
+            end
+
+            conn:write("回显: " .. data)
         end
-
-        tcp.write(fd, "回显: " .. data)
+        conn:close()
     end
-end)
+}
 
 print("服务器监听在 127.0.0.1:8888")
 ```
@@ -103,7 +107,7 @@ echo "你好 Silly!" | nc localhost 8888
 local silly = require "silly"
 local http = require "silly.net.http"
 
-http.listen {
+local server = http.listen {
     addr = "0.0.0.0:8080",
     handler = function(stream)
         local response_body = "你好，来自 Silly！"
@@ -111,7 +115,7 @@ http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 
@@ -123,7 +127,7 @@ print("HTTP 服务器监听在 http://0.0.0.0:8080")
 ```lua
 local websocket = require "silly.net.websocket"
 
-websocket.listen {
+local server = websocket.listen {
     addr = "0.0.0.0:8080",
     handler = function(sock)
         print("客户端已连接:", sock.fd)

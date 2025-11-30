@@ -87,6 +87,7 @@ Connect to TCP server.
 - `addr` (string): Server address
 - `event` (table): Event handler table (same as `tcplisten`, but no `accept` needed)
 - `bind` (string, optional): Local bind address
+- `timeout` (integer, optional): Connection timeout (milliseconds)
 
 **Returns**:
 - `fd` (integer): Connected file descriptor

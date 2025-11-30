@@ -49,20 +49,23 @@ Create a file `hello.lua`:
 ```lua
 local tcp = require "silly.net.tcp"
 
-tcp.listen("127.0.0.1:8888", function(conn)
-    print("New connection from", conn:remoteaddr())
+local server = tcp.listen {
+    addr = "127.0.0.1:8888",
+    accept = function(conn)
+        print("New connection from", conn:remoteaddr())
 
-    while true do
-        local data = conn:read("\n")
-        if not data then
-            print("Client disconnected")
-            break
+        while true do
+            local data = conn:read("\n")
+            if not data then
+                print("Client disconnected")
+                break
+            end
+
+            conn:write("Echo: " .. data)
         end
-
-        conn:write("Echo: " .. data)
+        conn:close()
     end
-    conn:close()
-end)
+}
 
 print("Server listening on 127.0.0.1:8888")
 ```
@@ -98,7 +101,7 @@ Benchmarked on Intel Core i7-10700 @ 2.90GHz using redis-benchmark:
 local silly = require "silly"
 local http = require "silly.net.http"
 
-http.listen {
+local server = http.listen {
     addr = "0.0.0.0:8080",
     handler = function(stream)
         local response_body = "Hello from Silly!"
@@ -106,7 +109,7 @@ http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = #response_body,
         })
-        stream:close(response_body)
+        stream:closewrite(response_body)
     end
 }
 
@@ -118,7 +121,7 @@ print("HTTP server listening on http://0.0.0.0:8080")
 ```lua
 local websocket = require "silly.net.websocket"
 
-websocket.listen {
+local server = websocket.listen {
     addr = "0.0.0.0:8080",
     handler = function(sock)
         print("Client connected:", sock.fd)
