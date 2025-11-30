@@ -134,8 +134,8 @@ SILLY_API void silly_sockstat(silly_socket_id_t sid,
 
 SILLY_API uint64_t silly_now();
 SILLY_API uint64_t silly_monotonic();
-SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud);
-SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud);
+SILLY_API uint64_t silly_timer_after(uint32_t expire);
+SILLY_API int silly_timer_cancel(uint64_t session);
 SILLY_API void silly_timerstat(struct silly_timerstat *stat);
 
 SILLY_API void silly_trace_set_node(silly_tracenode_t id);

@@ -137,13 +137,13 @@ SILLY_API void silly_timerstat(struct silly_timerstat *stat)
 {
 	timer_stat(stat);
 }
-SILLY_API uint64_t silly_timer_after(uint32_t expire, uint32_t ud)
+SILLY_API uint64_t silly_timer_after(uint32_t expire)
 {
-	return timer_after(expire, ud);
+	return timer_after(expire);
 }
-SILLY_API int silly_timer_cancel(uint64_t session, uint32_t *ud)
+SILLY_API int silly_timer_cancel(uint64_t session)
 {
-	return timer_cancel(session, ud);
+	return timer_cancel(session);
 }
 SILLY_API uint64_t silly_now()
 {

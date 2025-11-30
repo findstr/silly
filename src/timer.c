@@ -56,7 +56,6 @@ struct node {
 	atomic_uint_least32_t version;
 	atomic_uint_least8_t state;
 	uint32_t cookie;
-	uint32_t userdata;
 	uint32_t expire;
 	struct node *next;
 	struct node **prev;
@@ -110,7 +109,6 @@ struct timer {
 struct message_expire { //timer expire
 	struct silly_message hdr;
 	uint64_t session;
-	uint64_t userdata;
 };
 
 static struct timer *T;
@@ -283,7 +281,7 @@ static inline uint32_t cookie_of(uint64_t session)
 	return (uint32_t)session;
 }
 
-uint64_t timer_after(uint32_t expire, uint32_t userdata)
+uint64_t timer_after(uint32_t expire)
 {
 	struct node *n;
 	uint64_t session;
@@ -293,7 +291,6 @@ uint64_t timer_after(uint32_t expire, uint32_t userdata)
 	n = pool_newnode(&T->pool);
 	assert(atomic_load_relax(n->state) == NODE_FREED);
 	atomic_store_relax(n->state, NODE_ADDING);
-	n->userdata = userdata;
 	n->expire = expire / TIMER_RESOLUTION +
 		    atomic_load_explicit(&T->ticktime, memory_order_relaxed);
 	session = session_of(n);
@@ -302,7 +299,7 @@ uint64_t timer_after(uint32_t expire, uint32_t userdata)
 	return session;
 }
 
-int timer_cancel(uint64_t session, uint32_t *ud)
+int timer_cancel(uint64_t session)
 {
 	struct node *n;
 	uint32_t nver;
@@ -312,15 +309,9 @@ int timer_cancel(uint64_t session, uint32_t *ud)
 	n = pool_locate(&T->pool, cookie);
 	// first load version
 	nver = atomic_load_explicit(&n->version, memory_order_acquire);
-	if (nver == version) {
-		*ud = n->userdata;
-		// double load version
-		nver = atomic_load_explicit(&n->version, memory_order_acquire);
-	}
 	if (nver != version) {
-		*ud = 0;
-		log_warn("[timer] cancel session invalid:%d %d", version,
-			 cookie);
+		log_warn("[timer] cancel session invalid:%d %d\n",
+			version, cookie);
 		return 0;
 	}
 	cmd.n = n;
@@ -334,8 +325,7 @@ static int expire_unpack(lua_State *L, struct silly_message *msg)
 	struct message_expire *ms =
 		container_of(msg, struct message_expire, hdr);
 	lua_pushinteger(L, ms->session);
-	lua_pushinteger(L, ms->userdata);
-	return 2;
+	return 1;
 }
 
 static void timeout(struct timer *t, struct node *n)
@@ -350,7 +340,6 @@ static void timeout(struct timer *t, struct node *n)
 	te->hdr.unpack = expire_unpack;
 	te->hdr.free = mem_free;
 	te->session = session;
-	te->userdata = n->userdata;
 	worker_push(&te->hdr);
 	return;
 }

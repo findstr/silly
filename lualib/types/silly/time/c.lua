@@ -8,14 +8,13 @@ M.EXPIRE = 0
 
 ---Set a timeout timer
 ---@param expire integer milliseconds
----@param userdata integer? user data to associate with timer
 ---@return integer session timer session ID
-function M.timeout(expire, userdata) end
+function M.after(expire) end
 
 ---Cancel a timer
 ---@param session integer timer session ID
----@return integer? userdata returns userdata if cancelled successfully, nil if timer not found
-function M.timercancel(session) end
+---@return boolean ok return userdata if cancelled successfully
+function M.cancel(session) end
 
 ---Get current wall clock time in milliseconds
 ---@return integer
