@@ -1,7 +1,16 @@
 ---@meta silly.net.c
 
 ---@class silly.net.c
+---@field ACCEPT integer
+---@field CLOSE integer
+---@field LISTEN integer
+---@field CONNECT integer
+---@field TCPDATA integer
+---@field UDPDATA integer
 local M = {}
+
+---@param ptr lightuserdata
+function M.free(ptr) end
 
 ---@param ip string
 ---@param port string

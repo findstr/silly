@@ -178,6 +178,7 @@ end
 
 ---@class silly.net.tcp.connect.opts
 ---@field bind string?
+---@field timeout integer? --milliseconds
 
 ---@param addr string
 ---@param opts silly.net.tcp.connect.opts?
@@ -186,7 +187,12 @@ function M.connect(addr, opts)
 	if not addr then
 		error("tcp.connect missing addr", 2)
 	end
-	local fd, err = net.tcpconnect(addr, EVENT, opts and opts.bind)
+	local bind, timeout
+	if opts then
+		bind = opts.bind
+		timeout = opts.timeout
+	end
+	local fd, err = net.tcpconnect(addr, EVENT, bind, timeout)
 	if not fd then
 		return nil, err
 	end

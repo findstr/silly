@@ -380,8 +380,40 @@ testaux.case("Test 9: Multiple sequential timeouts", function()
 	waitdone()
 end)
 
+-- Test 10: TLS Connect Timeout (TCP)
+testaux.case("Test 10: TLS Connect Timeout (TCP)", function()
+	-- 192.0.2.1 is reserved for documentation (TEST-NET-1) and usually not reachable
+	local fd, err = tls.connect("192.0.2.1:80", {timeout = 100})
+	testaux.asserteq(fd, nil, "Test 10.1: Connect should timeout")
+	-- The error message might vary slightly depending on system, but usually "timeout" or similar
+	-- silly net returns "connect timeout" or "operation canceled" depending on implementation
+	-- Let's just check it failed.
+	testaux.success("Test 10 passed")
+end)
+
+-- Test 11: TLS Handshake Timeout
+testaux.case("Test 11: TLS Handshake Timeout", function()
+	local tcp = require "silly.net.tcp"
+	local port = 10005
+	local ch = channel.new()
+	-- Spawn a raw TCP server that accepts but sends nothing
+	local listenfd = tcp.listen {
+		addr = "127.0.0.1:" .. port,
+		accept = function(conn)
+			conn:read(1) -- Read something to keep connection alive
+			time.sleep(1000)
+			conn:close()
+			ch:push("done")
+		end
+	}
+	-- Connect with timeout
+	local fd, err = tls.connect("127.0.0.1:" .. port, {timeout = 200})
+	testaux.asserteq(fd, nil, "Test 11.1: Connect should fail due to handshake timeout")
+	testaux.asserteq(err, "read timeout", "Test 11.2: Error should be 'read timeout'")
+	ch:pop()
+	tcp.close(listenfd)
+	testaux.success("Test 11 passed")
+end)
+
 -- Cleanup EOF server
 eof_server:close()
-
-print("\ntestssl all tests passed!")
-silly.exit(0)

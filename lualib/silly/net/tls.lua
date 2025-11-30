@@ -6,11 +6,13 @@ local tls = require "silly.tls.tls"
 local ctx = require "silly.tls.ctx"
 local logger = require "silly.logger"
 
+local error = error
 local type = type
 local pairs = pairs
 local assert = assert
 local concat = table.concat
 local setmetatable = setmetatable
+local monotonic = time.monotonic
 
 local wait = task.wait
 local running = task.running
@@ -184,8 +186,9 @@ local function block_read(s, delim, timeout)
 end
 
 ---@param s silly.net.tls.conn
+---@param timeout integer? --milliseconds
 ---@return string?, string? error
-local function handshake(s)
+local function handshake(s, timeout)
 	local ret, alpnproto = tls.handshake(s.ssl)
 	if ret == HANDSHAKE_OK then
 		s.alpn = alpnproto
@@ -194,7 +197,7 @@ local function handshake(s)
 		s.err = alpnproto
 		return nil, alpnproto
 	end
-	return block_read(s, HANDSHAKE)
+	return block_read(s, HANDSHAKE, timeout)
 end
 
 local EVENT = {
@@ -272,27 +275,36 @@ end
 ---@class silly.net.tls.connect.opts
 ---@field bind string?
 ---@field hostname string?
+---@field timeout integer? --milliseconds
 ---@field alpnprotos silly.net.tls.alpn_proto[]?
 
 ---@param addr string
 ---@param opts silly.net.tls.connect.opts?
 ---@return silly.net.tls.conn?, string? error
 function M.connect(addr, opts)
-	local bind, hostname, alpnprotos
+	local bind, hostname, alpnprotos, timeout
 	if not addr then
 		error("tls.connect missing addr", 2)
 	end
+	local deadline
 	if opts then
 		bind = opts.bind
 		hostname = opts.hostname
 		alpnprotos = opts.alpnprotos
+		timeout = opts.timeout
+		if timeout then
+			deadline = monotonic() + timeout
+		end
 	end
-	local fd, err = net.tcpconnect(addr, EVENT, bind)
+	local fd, err = net.tcpconnect(addr, EVENT, bind, timeout)
 	if not fd then
 		return nil, err
 	end
 	local s = new_socket(fd, addr, client_ctx, hostname, alpnprotos)
-	local ok, err = handshake(s)
+	if deadline then
+		timeout = deadline - monotonic()
+	end
+	local ok, err = handshake(s, timeout)
 	if not ok then
 		s:close()
 		return nil, err

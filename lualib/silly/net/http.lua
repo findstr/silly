@@ -59,5 +59,9 @@ function M.post(url, header, body)
 	return httpc:post(url, header, body)
 end
 
+function M.request(method, url, header)
+	return httpc:request(method, url, header)
+end
+
 return M
 

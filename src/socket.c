@@ -1345,7 +1345,6 @@ static void op_tcp_connect(struct socket_manager *ss, struct op_connect *op,
 		if (!wlist_empty(s))
 			write_enable(ss, s, 1);
 	} else { //block
-		set_connecting(s);
 		write_enable(ss, s, 1);
 	}
 }
@@ -1452,11 +1451,11 @@ static int op_close(struct socket_manager *ss, struct op_close *op,
 	(void)op;
 	type = s->type;
 	if (unlikely(type == SOCKET_PIPE_CTRL || type == SOCKET_RESERVE)) {
-		log_error("[socket] op_tcp_close unsupport type %d\n", type);
+		log_error("[socket] op_close unsupport type %d\n", type);
 		return -1;
 	}
 	if (wlist_empty(s)) { //already send all the data, directly close it
-		if (s->type == SOCKET_TCP_CONNECTION) {
+		if (s->type == SOCKET_TCP_CONNECTION && unlikely(!is_connecting(s))) {
 			atomic_sub(&SM->netstat.tcp_connections, 1);
 		}
 		free_socket(ss, s);

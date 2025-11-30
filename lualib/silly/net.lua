@@ -1,4 +1,5 @@
 local silly = require "silly"
+local time = require "silly.time"
 local task = require "silly.task"
 local logger = require "silly.logger.c"
 local c = require "silly.net.c"
@@ -6,11 +7,17 @@ local c = require "silly.net.c"
 local assert = assert
 local smatch = string.match
 
+local task_wait = task.wait
 local task_running = task.running
 local task_create = task._create
 local task_resume = task._resume
+
 local log_info = assert(logger.info)
 local log_error = assert(logger.error)
+
+local TIMEOUT<const> = {}
+local time_after = time.after
+local time_cancel = time.cancel
 
 local M = {}
 
@@ -57,7 +64,7 @@ local function listen_wrap(listen)
 		if fd  then
 			assert(socket_pending[fd] == nil)
 			socket_pending[fd] = task_running()
-			err = task.wait()
+			err = task_wait()
 			socket_pending[fd] = nil
 			if err then
 				return nil, err
@@ -72,12 +79,21 @@ local function listen_wrap(listen)
 	end
 end
 
+local function connect_timer(fd)
+	local t = socket_pending[fd]
+	if t then
+		socket_close(fd)
+		task_resume(t, TIMEOUT)
+	end
+end
+
 local function connect_wrap(connect)
 	---@param addr string
 	---@param event silly.net.event
-	---@param bind string|nil
-	---@return integer|nil, string|nil
-	return function(addr, event, bind)
+	---@param bind string?
+	---@param timeout integer?
+	---@return integer? fd, string? error
+	return function(addr, event, bind, timeout)
 		local ip, port = smatch(addr, ip_pattern)
 		if not ip or not port then
 			return nil, "invalid address:" .. addr
@@ -95,7 +111,17 @@ local function connect_wrap(connect)
 		if fd then
 			assert(socket_pending[fd] == nil)
 			socket_pending[fd] = task_running()
-			err = task.wait()
+			if timeout then
+				local timer = time_after(timeout, connect_timer, fd)
+				err = task_wait()
+				if err == TIMEOUT then
+					err = "connect timeout"
+				else
+					time_cancel(timer)
+				end
+			else
+				err = task_wait()
+			end
 			socket_pending[fd] = nil
 			if err then
 				return nil, err
