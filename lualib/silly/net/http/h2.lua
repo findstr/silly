@@ -70,6 +70,8 @@ local max_header_wire_size<const> = 65535
 local default_header_table_size<const> = 4096
 local default_frame_size<const> = 16384
 local default_window_size<const> = 65535
+local stream_init_window_size <const> = default_window_size
+local channel_init_window_size<const> = 4*1024*1024 - default_window_size
 local max_stream_per_channel<const> = 100
 local client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 local client_preface_size = #client_preface
@@ -231,10 +233,10 @@ local function newchannel(scheme, conn)
 		streams = {},
 		streammax = max_stream_per_channel,
 		--- send control
-		initialwindowsize = default_window_size,  -- Stream initial window size (from SETTINGS)
+		initialwindowsize = default_window_size,      -- Stream initial window size (from SETTINGS)
 		sendframemaxsize = default_frame_size,
 		sendbuf = {},
-		sendwindow = default_window_size,         -- Connection-level send window
+		sendwindow = default_window_size,             -- Connection-level send window
 		writewaitq = queue.new(),
 		--- recv control
 		recvframemaxsize = default_frame_size,
@@ -1494,7 +1496,7 @@ local function handshake_as_client(ch)
 		return false, "expect settings"
 	end
 	frame_settings(ch, id, f, dat)
-	local ok, err = conn:write(build_setting(0x01))
+	local ok, err = conn:write(build_setting(ACK))
 	if not ok then
 		return false, err
 	end
@@ -1511,6 +1513,8 @@ local function handshake_as_client(ch)
 			break
 		end
 	end
+	channel_write(ch, build_setting(0, SETTINGS_INITIAL_WINDOW_SIZE, stream_init_window_size))
+	channel_write(ch, build_winupdate(0, 0, channel_init_window_size))
 	ch.dispatchco = task.fork(common_dispatch, {ch = ch, frame_process = frame_client})
 	return true, nil
 end
@@ -1674,6 +1678,8 @@ local function handshake_as_server(ch)
 			break
 		end
 	end
+	channel_write(ch, build_setting(0, SETTINGS_INITIAL_WINDOW_SIZE, stream_init_window_size))
+	channel_write(ch, build_winupdate(0, 0, channel_init_window_size))
 	return true, nil
 end
 

@@ -455,9 +455,9 @@ testaux.case("Test 16: Flow control - Stream window 63KB single stream", functio
 	testaux.assertneq(stream, nil, "Test 16.1: stream should not be nil")
 	-- Write 63KB - this should consume most of stream window (65535 initial)
 	stream:write(data)
-	time.sleep(200)
+	time.sleep(1000)
 	testaux.asserteq(stream.sendwindow, 1023, "Test 16.2: sendwindow should be 1023")
-	testaux.asserteq(stream.channel.sendwindow, 65535, "Test 16.3: channel sendwindow should be 65535")
+	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 16.3: channel sendwindow should be 65535")
 	ch:push("")
 	stream:closewrite()
 	stream:waitresponse()
@@ -465,18 +465,18 @@ testaux.case("Test 16: Flow control - Stream window 63KB single stream", functio
 	local body, err = stream:readall()
 	testaux.asserteq(body, "OK", "Test 16.5: Response should be OK")
 
-	testaux.asserteq(stream.sendwindow, 65535, "Test 16.6: sendwindow should be 0")
-	testaux.asserteq(stream.channel.sendwindow, 65535, "Test 16.7: channel sendwindow should be 0")
+	testaux.asserteq(stream.sendwindow, 65535, "Test 16.6: sendwindow should be full")
+	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 16.7: channel sendwindow should be full")
 
 	wait_done()
 end)
 
 testaux.case("Test 17: Flow control - Connection window with concurrent streams", function()
 	-- Test that connection window is shared between streams
-	-- Stream 1 sends 63KB, then Stream 2 sends 63KB
+	-- Stream 1 sends 1M-1KB, then Stream 2 sends 1M-1KB
 	-- This should exhaust connection window and require flow control
 
-	local data = crypto.randomkey(63 * 1024)
+	local data = crypto.randomkey(4 * 1024 * 1024 - 1024)
 	local stream1_arrived = false
 	local stream2_arrived = false
 	local responses = {}
@@ -492,14 +492,14 @@ testaux.case("Test 17: Flow control - Connection window with concurrent streams"
 			stream1_arrived = true
 			-- Wait for stream2 to arrive
 			while not stream2_arrived do
-				time.sleep(10)
+				time.sleep(100)
 			end
 		else
 			stream2_arrived = true
 		end
 
 		local body, err = stream:readall()
-		testaux.asserteq(#body, 63 * 1024, "Test 17." .. current_call .. ": Should receive 63KB")
+		testaux.asserteq(#body, #data, "Test 17." .. current_call .. ": Should receive " .. tostring(#data) .. "KB")
 
 		stream:respond(200, {})
 		stream:closewrite("OK" .. current_call)
@@ -557,14 +557,14 @@ end)
 
 testaux.case("Test 18: Flow control - Window recovery after read", function()
 	-- Test that reading data sends WINDOW_UPDATE and recovers window
-	local data = crypto.randomkey(60 * 1024)
+	local data = crypto.randomkey(66 * 1024)
 
 	server_handler = function(stream)
 		-- Don't read immediately, let client send data
 		time.sleep(100)
 
 		local body, err = stream:readall()
-		testaux.asserteq(#body, 60 * 1024, "Test 18.1: Should receive 60KB")
+		testaux.asserteq(#body, #data, "Test 18.1: Should receive " .. tostring(#data) .. " KB")
 
 		stream:respond(200, {})
 		stream:closewrite("OK")
@@ -577,7 +577,8 @@ testaux.case("Test 18: Flow control - Window recovery after read", function()
 
 	stream:closewrite(data)
 	stream:waitresponse()
-
+	testaux.asserteq(stream.sendwindow, 65535, "Test 18.2: sendwindow should be full")
+	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 18.2: channel sendwindow should be full")
 	local body, err = stream:readall()
 	testaux.asserteq(body, "OK", "Test 18.3: Response should be OK")
 
