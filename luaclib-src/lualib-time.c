@@ -13,16 +13,16 @@
 
 static int lafter(lua_State *L)
 {
-	lua_Integer expire;
+	lua_Integer timeout;
 	uint64_t session;
-	expire = luaL_checkinteger(L, 1);
-	if (unlikely(expire > UINT32_MAX)) {
+	timeout = luaL_checkinteger(L, 1);
+	if (unlikely(timeout > UINT32_MAX)) {
 		return luaL_argerror(L, 1, "expire too large");
 	}
-	if (unlikely(expire < 0)) {
-		expire = 0;
+	if (unlikely(timeout < 0)) {
+		timeout = 0;
 	}
-	session = silly_timer_after(expire);
+	session = silly_timer_after(timeout);
 	lua_pushinteger(L, (lua_Integer)session);
 	return 1;
 }

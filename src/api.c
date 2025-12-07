@@ -133,13 +133,14 @@ SILLY_API void silly_sockstat(silly_socket_id_t sid,
 {
 	socket_stat(sid, info);
 }
+
 SILLY_API void silly_timerstat(struct silly_timerstat *stat)
 {
 	timer_stat(stat);
 }
-SILLY_API uint64_t silly_timer_after(uint32_t expire)
+SILLY_API uint64_t silly_timer_after(uint32_t timeout)
 {
-	return timer_after(expire);
+	return timer_after(timeout);
 }
 SILLY_API int silly_timer_cancel(uint64_t session)
 {

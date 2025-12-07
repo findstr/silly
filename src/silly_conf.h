@@ -56,12 +56,8 @@
 #define TIMER_RESOLUTION (10) //ms
 #endif
 
-#ifndef TIMER_ACCURACY
-#define TIMER_ACCURACY (50) //ms
-#endif
-
-#ifndef TIMER_DELAY_WARNING
-#define TIMER_DELAY_WARNING (10 * TIMER_ACCURACY) //ms
+#ifndef TIME_DELAY_WARNING
+#define TIME_DELAY_WARNING (1000) //ms
 #endif
 
 #ifndef MONITOR_MSG_SLOW_TIME

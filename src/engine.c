@@ -31,14 +31,14 @@ struct {
 static void *thread_timer(void *arg)
 {
 	(void)arg;
-	struct timespec req;
-	req.tv_sec = TIMER_ACCURACY / 1000;
-	req.tv_nsec = (TIMER_ACCURACY % 1000) * 1000000;
 	log_info("[timer] start\n");
 	for (;;) {
-		timer_update();
+		struct timespec req;
+		int sleep = timer_update();
 		if (R.workerstatus == -1)
 			break;
+		req.tv_sec = sleep / 1000;
+		req.tv_nsec = (sleep % 1000) * 1000000;
 		nanosleep(&req, NULL);
 		if (R.workerstatus == 0)
 			pthread_cond_signal(&R.cond);

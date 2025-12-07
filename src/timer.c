@@ -95,9 +95,9 @@ struct slot_level {
 
 struct timer {
 	struct pool pool;
-	uint32_t expire;
+	uint64_t startwall;
+	uint32_t jiffies;
 	atomic_uint_least64_t ticktime;
-	atomic_uint_least64_t clocktime;
 	atomic_uint_least64_t monotonic;
 	struct slot_root root;
 	struct slot_level level[4];
@@ -203,12 +203,14 @@ static inline void pool_freelist(struct pool *pool, struct node *head,
 
 uint64_t timer_now()
 {
-	return atomic_load_relax(T->clocktime) * TIMER_RESOLUTION;
+	uint64_t start = T->startwall;
+	uint64_t mono = atomic_load_relax(T->monotonic);
+	return start + mono;
 }
 
 uint64_t timer_monotonic()
 {
-	return atomic_load_relax(T->monotonic) * TIMER_RESOLUTION;
+	return atomic_load_relax(T->monotonic);
 }
 
 void timer_stat(struct silly_timerstat *stat)
@@ -241,9 +243,9 @@ static inline void unlinklist(struct node *n)
 static void add_node(struct timer *timer, struct node *n)
 {
 	int i;
-	int32_t idx = n->expire - timer->expire;
+	int32_t idx = n->expire - timer->jiffies;
 	if (idx < 0) { //timeout
-		i = timer->expire & SR_MASK;
+		i = timer->jiffies & SR_MASK;
 		linklist(&timer->root.slot[i], n);
 	} else if (idx < SR_SIZE) {
 		i = n->expire & SR_MASK;
@@ -281,18 +283,19 @@ static inline uint32_t cookie_of(uint64_t session)
 	return (uint32_t)session;
 }
 
-uint64_t timer_after(uint32_t expire)
+uint64_t timer_after(uint32_t timeout)
 {
 	struct node *n;
 	uint64_t session;
+	uint64_t deadline;
 	struct cmdafter cmd;
 	atomic_add_relax(T->stat.scheduled, 1);
 	atomic_add_relax(T->stat.pending, 1);
 	n = pool_newnode(&T->pool);
 	assert(atomic_load_relax(n->state) == NODE_FREED);
 	atomic_store_relax(n->state, NODE_ADDING);
-	n->expire = expire / TIMER_RESOLUTION +
-		    atomic_load_explicit(&T->ticktime, memory_order_relaxed);
+	deadline = atomic_load_relax(T->ticktime) + timeout + TIMER_RESOLUTION - 1;
+	n->expire = deadline / TIMER_RESOLUTION;
 	session = session_of(n);
 	cmd.n = n;
 	flipbuf_write(&T->cmdafter, (const uint8_t *)&cmd, sizeof(cmd));
@@ -346,32 +349,29 @@ static void timeout(struct timer *t, struct node *n)
 
 static uint64_t ticktime()
 {
-	uint64_t ms;
+	uint64_t total_ms;
 #ifdef __MACH__
 	clock_serv_t cclock;
 	mach_timespec_t mts;
 	host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &cclock);
 	clock_get_time(cclock, &mts);
 	mach_port_deallocate(mach_task_self(), cclock);
-	ms = (uint64_t)mts.tv_sec * 1000 / TIMER_RESOLUTION;
-	ms += mts.tv_nsec / 1000000 / TIMER_RESOLUTION;
+	total_ms = (uint64_t)mts.tv_sec * 1000 + mts.tv_nsec / 1000000;
 #else
 	struct timespec tp;
 	clock_gettime(CLOCK_MONOTONIC, &tp);
-	ms = (uint64_t)tp.tv_sec * 1000 / TIMER_RESOLUTION;
-	ms += tp.tv_nsec / 1000000 / TIMER_RESOLUTION;
+	total_ms = (uint64_t)tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
 #endif
-	return ms;
+	return total_ms;
 }
 
-static uint64_t clocktime()
+static uint64_t walltime()
 {
-	uint64_t ms;
 	struct timeval t;
+	uint64_t total_ms;
 	gettimeofday(&t, NULL);
-	ms = (uint64_t)t.tv_sec * 1000 / TIMER_RESOLUTION;
-	ms += (uint64_t)t.tv_usec / 1000 / TIMER_RESOLUTION;
-	return ms;
+	total_ms = (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_usec / 1000;
+	return total_ms;
 }
 
 static inline void node_free(struct node ***tail, struct node *n)
@@ -384,14 +384,14 @@ static inline void node_free(struct node ***tail, struct node *n)
 
 static inline void expire_timer(struct timer *timer, struct node ***tail)
 {
-	int idx = timer->expire & SR_MASK;
+	int idx = timer->jiffies & SR_MASK;
 	while (timer->root.slot[idx]) {
 		struct node *n = timer->root.slot[idx];
 		timer->root.slot[idx] = NULL;
 		while (n) {
 			struct node *tmp = n;
 			n = n->next;
-			assert((int32_t)(tmp->expire - timer->expire) <= 0);
+			assert((int32_t)(tmp->expire - timer->jiffies) <= 0);
 			timeout(timer, tmp);
 			node_free(tail, tmp);
 		}
@@ -401,7 +401,7 @@ static inline void expire_timer(struct timer *timer, struct node ***tail)
 static int cascade_timer(struct timer *timer, int level)
 {
 	struct node *n;
-	int idx = timer->expire >> (level * SL_BITS + SR_BITS);
+	int idx = timer->jiffies >> (level * SL_BITS + SR_BITS);
 	idx &= SL_MASK;
 	assert(level < 4);
 	n = timer->level[level].slot[idx];
@@ -410,7 +410,7 @@ static int cascade_timer(struct timer *timer, int level)
 		struct node *tmp = n;
 		n = n->next;
 		assert(tmp->expire >> (level * SL_BITS + SR_BITS) ==
-		       timer->expire >> (level * SL_BITS + SR_BITS));
+		       timer->jiffies >> (level * SL_BITS + SR_BITS));
 		add_node(timer, tmp);
 	}
 	return idx;
@@ -420,7 +420,7 @@ static void update_timer(struct timer *timer, struct node ***tail)
 {
 	uint32_t idx;
 	expire_timer(timer, tail);
-	idx = ++timer->expire;
+	idx = ++timer->jiffies;
 	idx &= SR_MASK;
 	if (idx == 0) {
 		int i;
@@ -480,58 +480,55 @@ static inline void process_after(struct node ***tail)
 	}
 }
 
-void timer_update()
+int timer_update()
 {
-	int i;
-	int delta;
 	struct node *head;
 	struct node **tail;
+	int i, delta, ticks, tickstep;
 	uint64_t time = ticktime();
-	uint64_t cur_ticktime =
-		atomic_load_explicit(&T->ticktime, memory_order_relaxed);
-	if (cur_ticktime == time)
-		return;
-	if (unlikely(cur_ticktime > time)) {
+	uint64_t lasttick = atomic_load_relax(T->ticktime);
+	if (time < lasttick + TIMER_RESOLUTION) {
+		return (int)(lasttick + TIMER_RESOLUTION - time);
+	}
+	if (unlikely(lasttick > time)) {
 		log_error("[timer] time rewind change "
 			  "from %lld to %lld\n",
-			  cur_ticktime, time);
+			  lasttick, time);
 	}
-	delta = time - cur_ticktime;
+	delta = time - lasttick;
 	assert(delta > 0);
-	if (unlikely(delta > TIMER_DELAY_WARNING / TIMER_RESOLUTION)) {
+	if (unlikely(delta > TIME_DELAY_WARNING)) {
 		log_warn("[timer] update delta is too big, "
 			 "from:%lld ms to %lld ms\n",
-			 cur_ticktime * TIMER_RESOLUTION,
-			 time * TIMER_RESOLUTION);
+			 lasttick, time);
 	}
-	//uint64_t on x86 platform, can't assign as a atomic
-	atomic_exchange_explicit(&T->ticktime, time, memory_order_relaxed);
-	atomic_fetch_add_explicit(&T->clocktime, delta, memory_order_relaxed);
-	atomic_fetch_add_explicit(&T->monotonic, delta, memory_order_relaxed);
+	ticks = delta / TIMER_RESOLUTION;
+	tickstep = ticks * TIMER_RESOLUTION;
+	atomic_add_relax(T->ticktime, tickstep);
+	atomic_add_relax(T->monotonic, tickstep);
 	head = NULL;
 	tail = &head;
 	process_cancel(&tail);
 	process_after(&tail);
-	for (i = 0; i < delta; i++)
+	for (i = 0; i < ticks; i++)
 		update_timer(T, &tail);
 	*tail = NULL;
 	if (head != NULL) {
 		pool_freelist(&T->pool, head, tail);
 	}
-	assert((uint32_t)atomic_load_explicit(
-		       &T->ticktime, memory_order_relaxed) == T->expire);
-	return;
+	assert((uint32_t)atomic_load_relax(T->ticktime) == T->jiffies * TIMER_RESOLUTION);
+	return TIMER_RESOLUTION - (delta % TIMER_RESOLUTION);
 }
 
 void timer_init()
 {
+	uint64_t tt;
 	T = mem_alloc(sizeof(*T));
 	memset(T, 0, sizeof(*T));
-	uint64_t cur_ticktime;
-	atomic_init(&T->clocktime, clocktime());
-	cur_ticktime = ticktime();
-	atomic_init(&T->ticktime, cur_ticktime);
-	T->expire = cur_ticktime;
+	tt = ticktime();
+	T->startwall = walltime();
+	T->jiffies = tt / TIMER_RESOLUTION;
+	atomic_init(&T->ticktime, tt / TIMER_RESOLUTION * TIMER_RESOLUTION);
 	atomic_init(&T->monotonic, 0);
 	atomic_init(&T->stat.pending, 0);
 	atomic_init(&T->stat.scheduled, 0);
