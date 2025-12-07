@@ -516,7 +516,7 @@ end)
 
 -- Test 17: Listen Failure FD Leak
 testaux.case("Test 17: Listen Failure FD Leak", function()
-	if metrics.pollapi() == "iocp" then
+	if silly.multiplexer == "iocp" then
 		-- Skip this test on Windows/iocp as binding to used port may not fail immediately
 		testaux.success("Test 17 skipped on iocp")
 		return

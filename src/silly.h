@@ -62,7 +62,7 @@ struct silly_netstat {
 	atomic_uint_least64_t operate_processed;
 };
 
-struct silly_sockstat {
+struct silly_socketstat {
 	silly_socket_id_t sid;
 	int fd;
 	const char *type;
@@ -127,10 +127,10 @@ SILLY_API int silly_udp_send(silly_socket_id_t sid, uint8_t *buff, size_t sz,
 SILLY_API void silly_socket_readenable(silly_socket_id_t sid, int enable);
 SILLY_API int silly_socket_sendsize(silly_socket_id_t sid);
 SILLY_API int silly_socket_close(silly_socket_id_t sid);
-SILLY_API const char *silly_socket_pollapi();
+SILLY_API const char *silly_socket_multiplexer();
 SILLY_API void silly_netstat(struct silly_netstat *stat);
-SILLY_API void silly_sockstat(silly_socket_id_t sid,
-			      struct silly_sockstat *info);
+SILLY_API void silly_socketstat(silly_socket_id_t sid,
+			      struct silly_socketstat *info);
 
 SILLY_API uint64_t silly_now();
 SILLY_API uint64_t silly_monotonic();

@@ -2,7 +2,6 @@ local c = require "silly.metrics.c"
 local gauge = require "silly.metrics.gauge"
 
 local M = {}
-M.__index = M
 
 ---@return silly.metrics.collector
 function M.new()

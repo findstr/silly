@@ -120,16 +120,16 @@ SILLY_API int silly_socket_close(silly_socket_id_t sid)
 {
 	return socket_close(sid);
 }
-SILLY_API const char *silly_socket_pollapi()
+SILLY_API const char *silly_socket_multiplexer()
 {
-	return socket_pollapi();
+	return socket_multiplexer();
 }
 SILLY_API void silly_netstat(struct silly_netstat *stat)
 {
 	socket_netstat(stat);
 }
-SILLY_API void silly_sockstat(silly_socket_id_t sid,
-			      struct silly_sockstat *info)
+SILLY_API void silly_socketstat(silly_socket_id_t sid,
+			      struct silly_socketstat *info)
 {
 	socket_stat(sid, info);
 }

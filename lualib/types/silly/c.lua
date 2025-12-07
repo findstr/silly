@@ -1,15 +1,13 @@
 --- @meta silly.c
 
 ---@class silly.c
+---@field public gitsha1 string Get git SHA1 of the build
+---@field public version string Get silly version
+---@field public pid integer Get process ID
+---@field public multiplexer string Get socket multiplexer name
+---@field public allocator string Get memory allocator name
+---@field public timerresolution integer Get timer resolution in milliseconds
 local M = {}
-
----Get git SHA1 of the build
----@return string
-function M.gitsha1() end
-
----Get silly version
----@return string
-function M.version() end
 
 ---Register a callback in the callback table
 ---@param key any
@@ -34,15 +32,6 @@ function M.genid() end
 ---@param size integer
 ---@return string
 function M.tostring(ptr, size) end
-
----Get process ID
----@return integer
-function M.getpid() end
-
----Get error string from error code
----@param errno integer
----@return string
-function M.strerror(errno) end
 
 ---Exit the program
 ---@param status integer?

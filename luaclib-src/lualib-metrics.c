@@ -18,14 +18,6 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-static int lmemallocator(lua_State *L)
-{
-	const char *ver;
-	ver = silly_allocator();
-	lua_pushstring(L, ver);
-	return 1;
-}
-
 static int lcpustat(lua_State *L)
 {
 	float stime, utime;
@@ -83,13 +75,6 @@ static int lworkerstat(lua_State *L)
 	return 1;
 }
 
-static int lpollapi(lua_State *L)
-{
-	const char *api = silly_socket_pollapi();
-	lua_pushstring(L, api);
-	return 1;
-}
-
 static inline void table_set_int(lua_State *L, int table, const char *k,
 				 lua_Integer v)
 {
@@ -130,9 +115,9 @@ static int ltimerstat(lua_State *L)
 static int lsocketstat(lua_State *L)
 {
 	silly_socket_id_t sid;
-	struct silly_sockstat info;
+	struct silly_socketstat info;
 	sid = luaL_checkinteger(L, 1);
-	silly_sockstat(sid, &info);
+	silly_socketstat(sid, &info);
 	lua_newtable(L);
 	table_set_int(L, -1, "fd", info.sid);
 	table_set_int(L, -1, "os_fd", info.fd);
@@ -144,19 +129,9 @@ static int lsocketstat(lua_State *L)
 	return 1;
 }
 
-static int ltimerresolution(lua_State *L)
-{
-	lua_pushinteger(L, TIMER_RESOLUTION);
-	return 1;
-}
-
 SILLY_MOD_API int luaopen_silly_metrics_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		//build
-		{ "pollapi",         lpollapi         },
-		{ "memallocator",    lmemallocator    },
-		{ "timerresolution", ltimerresolution },
 		//process
 		{ "cpustat",         lcpustat         },
 		{ "maxfds",          lmaxfds          },
@@ -168,7 +143,7 @@ SILLY_MOD_API int luaopen_silly_metrics_c(lua_State *L)
 		{ "workerstat",      lworkerstat      },
 		{ "timerstat",       ltimerstat       },
 		{ "netstat",         lnetstat         },
-		{ "socketstat",      lsocketstat      },
+		{ "socketstat",        lsocketstat      },
 		//end
 		{ NULL,              NULL             },
 	};

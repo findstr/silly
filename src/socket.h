@@ -31,9 +31,9 @@ int socket_close(silly_socket_id_t sid);
 
 int socket_poll();
 
-const char *socket_pollapi();
+const char *socket_multiplexer();
 
 void socket_netstat(struct silly_netstat *stat);
-void socket_stat(silly_socket_id_t sid, struct silly_sockstat *info);
+void socket_stat(silly_socket_id_t sid, struct silly_socketstat *info);
 
 #endif

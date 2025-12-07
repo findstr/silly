@@ -46,7 +46,6 @@ function M.new()
 		buf[len + 2] = cpu_seconds_sys
 		buf[len + 3] = resident_memory_bytes
 		buf[len + 4] = heap_bytes
-		return len + 4
 	end
 	local c = {
 		name = "Process",

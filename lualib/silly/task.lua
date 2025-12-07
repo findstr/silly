@@ -30,12 +30,6 @@ local trace_attach = assert(trace.attach)
 local trace_setnode = assert(trace.setnode)
 local trace_resume = assert(trace.resume)
 
-task.pid = c.getpid()
-task.genid = c.genid
-task.gitsha1 = c.gitsha1()
-task.version = c.version()
-task.tostring = c.tostring
-task.register = c.register
 --coroutine
 --state migrate(RUN (WAIT->READY)/SLEEP RUN)
 local task_status = {}

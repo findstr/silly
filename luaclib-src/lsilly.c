@@ -13,13 +13,6 @@
 
 #include "silly.h"
 
-#define UPVAL_ERROR_TABLE (1)
-
-static inline void push_error(lua_State *L, int code)
-{
-	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
-}
-
 static int lexit(lua_State *L)
 {
 	int status;
@@ -42,33 +35,6 @@ static int ltostring(lua_State *L)
 	buff = lua_touserdata(L, 1);
 	size = luaL_checkinteger(L, 2);
 	lua_pushlstring(L, buff, size);
-	return 1;
-}
-
-static int lgetpid(lua_State *L)
-{
-	int pid = getpid();
-	lua_pushinteger(L, pid);
-	return 1;
-}
-
-static int lstrerror(lua_State *L)
-{
-	lua_Integer err = luaL_checkinteger(L, 1);
-	lua_pushstring(L, strerror((int)err));
-	return 1;
-}
-
-static int lgitsha1(lua_State *L)
-{
-	lua_pushstring(L, STR(SILLY_GIT_SHA1));
-	return 1;
-}
-
-static int lversion(lua_State *L)
-{
-	const char *ver = SILLY_VERSION;
-	lua_pushstring(L, ver);
 	return 1;
 }
 
@@ -130,24 +96,33 @@ static int lsignal(lua_State *L)
 SILLY_MOD_API int luaopen_silly_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		//core
-		{ "gitsha1",    lgitsha1   },
-		{ "version",    lversion   },
 		{ "register",   lregister  },
 		{ "signalmap",  lsignalmap },
 		{ "signal",     lsignal    },
 		{ "genid",      lgenid     },
 		{ "tostring",   ltostring  },
-		{ "getpid",     lgetpid    },
-		{ "strerror",   lstrerror  },
 		{ "exit",       lexit      },
-		//end
 		{ NULL,         NULL       },
 	};
 
-	luaL_checkversion(L);
-	luaL_newlibtable(L, tbl);
-	silly_error_table(L);
-	luaL_setfuncs(L, tbl, 1);
+	luaL_newlib(L, tbl);
+	// c.version
+	lua_pushstring(L, SILLY_VERSION);
+	lua_setfield(L, -2, "version");
+	// c.gitsha1
+	lua_pushstring(L, STR(SILLY_GIT_SHA1));
+	lua_setfield(L, -2, "gitsha1");
+	// c.timerresolution
+	lua_pushinteger(L, TIMER_RESOLUTION);
+	lua_setfield(L, -2, "timerresolution");
+	// c.muxplexer
+	lua_pushstring(L, silly_socket_multiplexer());
+	lua_setfield(L, -2, "multiplexer");
+	// c.memallocator
+	lua_pushstring(L, silly_allocator());
+	lua_setfield(L, -2, "allocator");
+	// c.pid
+	lua_pushinteger(L, getpid());
+	lua_setfield(L, -2, "pid");
 	return 1;
 }

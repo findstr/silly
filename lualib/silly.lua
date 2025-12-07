@@ -28,10 +28,14 @@ function silly.error(errmsg)
 	log_error(traceback())
 end
 
-silly.pid = c.getpid()
+silly.pid = c.pid
+silly.gitsha1 = c.gitsha1
+silly.version = c.version
+silly.allocator = c.allocator
+silly.multiplexer = c.multiplexer
+silly.timerresolution = c.timerresolution
+
 silly.genid = c.genid
-silly.gitsha1 = c.gitsha1()
-silly.version = c.version()
 silly.tostring = c.tostring
 silly.register = c.register
 silly.pcall = silly_pcall

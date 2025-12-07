@@ -72,7 +72,7 @@ function console.socket(_, fd)
 	if not fd then
 		return "lost fd argument"
 	end
-	local info = metrics.socketinfo(fd)
+	local info = metrics.socketstat(fd)
 	local a, b = format("#Socket\r\nfd: %s\r\nos_fd: %s\r\ntype: %s\r\n\z
 		protocol: %s\r\nsendsize: %s\r\n", info.fd, info.os_fd,
 		info.type, info.protocol, info.sendsize), ""
@@ -83,39 +83,35 @@ function console.socket(_, fd)
 end
 
 function console.info()
-	local buf = {}
-	buf[#buf + 1] = ""
-	buf[#buf + 1] = "#Build"
-	buf[#buf + 1] = format("version:%s", silly.version)
-	buf[#buf + 1] = format("git_sha1:%s", silly.gitsha1)
-	buf[#buf + 1] = format("multiplexing_api:%s", metrics.pollapi())
-	buf[#buf + 1] = format("memory_allocator:%s", metrics.memallocator())
-	buf[#buf + 1] = format("timer_resolution:%s ms", metrics.timerresolution())
-	buf[#buf + 1] = ""
-	local list = {}
-	local collectors = prometheus.registry()
-	for i = 1, #collectors do
-		local collector = collectors[i]
-		local n = collector:collect(list)
-		local name = collector.name
-		buf[#buf + 1] = "#" .. name
-		if name == "Process" then
-			buf[#buf + 1] = format("process_id:%s", silly.pid)
-		end
-		for j = 1, n do
-			local m = list[j]
-			local name = m.name
-			if m.labelnames then
-				for j = 1, #m do
-					local v = m[j]
-					buf[#buf + 1] = format('%s%s:%s',
-						name, v[2], v[1])
-				end
-			else
-				buf[#buf + 1] = format('%s:%s', name, m[1])
-			end
-		end
-		buf[#buf + 1] = ""
+	local buf, n = {}, 0
+	buf[n + 1] = ""
+	buf[n + 2] = "#Build"
+	buf[n + 3] = format("version:%s", silly.version)
+	buf[n + 4] = format("git_sha1:%s", silly.gitsha1)
+	buf[n + 5] = format("multiplexing_api:%s", silly.multiplexer)
+	buf[n + 6] = format("memory_allocator:%s", silly.allocator)
+	buf[n + 7] = format("timer_resolution:%sms", silly.timerresolution)
+	n = #buf
+	local sys, usr = metrics.cpustat()
+	local vmrss, heap = metrics.memstat()
+	buf[n + 1] = ""
+	buf[n + 2] = "#Process"
+	buf[n + 3] = format("process_id:%s", silly.pid)
+	buf[n + 4] = format("used_cpu_sys:%s", sys)
+	buf[n + 5] = format("used_cpu_user:%s", usr)
+	buf[n + 6] = format("used_memory_rss:%s", vmrss)
+	buf[n + 7] = format("used_memory_rss_human:%sM", format("%.2f", vmrss / 1024 / 1024))
+	buf[n + 8] = format("used_memory_heap:%s", heap)
+	buf[n + 9] = format("used_memory_heap_human:%sM", format("%.2f", heap / 1024 / 1024))
+	n = #buf
+	if metrics.jestat then
+		local resident, active, allocated, retained = metrics.jestat()
+		buf[n + 1] = ""
+		buf[n + 2] = "#Jemalloc"
+		buf[n + 3] = format("jemalloc_resident:%s", resident)
+		buf[n + 4] = format("jemalloc_active:%s", active)
+		buf[n + 5] = format("jemalloc_allocated:%s", allocated)
+		buf[n + 6] = format("jemalloc_retained:%s", retained)
 	end
 	return concat(buf, "\r\n")
 end

@@ -3,18 +3,6 @@
 ---@class silly.metrics.c
 local M = {}
 
----Get socket polling API name (epoll/kqueue/iocp)
----@return string
-function M.pollapi() end
-
----Get memory allocator name
----@return string
-function M.memallocator() end
-
----Get timer resolution in milliseconds
----@return integer
-function M.timerresolution() end
-
 ---Get CPU statistics
 ---@return number system_time
 ---@return number user_time

@@ -1868,7 +1868,7 @@ void socket_exit()
 	return;
 }
 
-const char *socket_pollapi()
+const char *socket_multiplexer()
 {
 	return SOCKET_POLL_API;
 }
@@ -1888,7 +1888,7 @@ void socket_netstat(struct silly_netstat *stat)
 	return;
 }
 
-void socket_stat(silly_socket_id_t sid, struct silly_sockstat *info)
+void socket_stat(silly_socket_id_t sid, struct silly_socketstat *info)
 {
 	struct socket *s;
 	memset(info, 0, sizeof(*info));
