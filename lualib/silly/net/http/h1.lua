@@ -16,6 +16,7 @@ local M = {}
 --- @class silly.net.http.h1.stream
 --- connection
 --- @field conn silly.net.tcp.conn|silly.net.tls.conn
+--- @field remoteaddr string
 --- protocol
 --- @field version string
 --- @field method string
@@ -457,6 +458,7 @@ local function newstream(scheme, conn, ver, method, path, header, readexpect)
 	local stream = {
 		--- connection
 		conn = conn,
+		remoteaddr = conn.remoteaddr,
 		--- protocol
 		scheme = scheme,
 		version = ver,
@@ -527,15 +529,6 @@ local function waitresponse(s, timeout)
 		s.eof = true
 	end
 	return true, nil
-end
-
----@param s silly.net.http.h1.stream.client|silly.net.http.h1.stream.server
-local function remoteaddr(s)
-	local conn = s.conn
-	if not conn then
-		return nil
-	end
-	return conn:remoteaddr()
 end
 
 ---@param s silly.net.http.h1.stream.client

@@ -124,7 +124,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
         },
         accept = function(conn)
             wg:fork(function()
-                print("客户端已连接:", conn:remoteaddr())
+                print("客户端已连接:", conn.remoteaddr)
 
                 -- 读取 HTTP 请求
                 local request, err = conn:read("\n")
@@ -514,11 +514,23 @@ end)
 
 - **返回值**: `integer` - 字节数
 
-### conn:remoteaddr()
+### conn.remoteaddr
 
-获取远程地址。
+获取远程地址（只读属性）。
 
-- **返回值**: `string` - 远程地址 (IP:Port)
+> **注意**: `remoteaddr` 是连接对象的属性，直接访问即可，不需要加括号调用。
+
+- **类型**: `string` - 远程地址（格式：`IP:Port`）
+- **示例**:
+
+```lua validate
+local tls = require "silly.net.tls"
+
+local conn = tls.connect("example.com:443")
+if not conn then return end
+
+print("Remote address:", conn.remoteaddr)
+```
 
 ---
 

@@ -144,7 +144,7 @@ end)
 testaux.case("Test 6: Test connection broken", function()
 	-- test server connection broken
 	server_handler = function(stream)
-		testaux.assertneq(stream:remoteaddr(), nil, "Test 6.2: Server stream contains remoteaddr")
+		testaux.assertneq(stream.remoteaddr, nil, "Test 6.2: Server stream contains remoteaddr")
 		local data, err = stream:readall()
 		testaux.asserteq(data, nil, "Test 6.2: Server should not receive data")
 		testaux.assertneq(err, nil, "Test 6.2: Server should not receive data")

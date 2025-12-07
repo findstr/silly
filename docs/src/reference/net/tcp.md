@@ -52,7 +52,7 @@ local tcp = require "silly.net.tcp"
 local listener, err = tcp.listen {
     addr = "127.0.0.1:8080",
     accept = function(conn)
-        print("New connection from:", conn:remoteaddr())
+        print("New connection from:", conn.remoteaddr)
         -- 处理连接...
         conn:close()
     end
@@ -90,7 +90,7 @@ task.fork(function()
         print("Connect failed:", err)
         return
     end
-    print("Connected! Remote addr:", conn:remoteaddr())
+    print("Connected! Remote addr:", conn.remoteaddr)
     conn:close()
 
     -- 带超时的连接（1秒超时）
@@ -325,11 +325,13 @@ if conn:isalive() then
 end
 ```
 
-### conn:remoteaddr()
+### conn.remoteaddr
 
-获取连接的远程地址。
+获取连接的远程地址（只读属性）。
 
-- **返回值**: `string` - 远程地址字符串
+> **注意**: `remoteaddr` 是连接对象的属性，直接访问即可，不需要加括号调用。
+
+- **类型**: `string` - 远程地址字符串（格式：`IP:Port`）
 - **示例**:
 
 ```lua validate
@@ -338,7 +340,7 @@ local tcp = require "silly.net.tcp"
 local conn = tcp.connect("127.0.0.1:8080")
 if not conn then return end
 
-print("Remote address:", conn:remoteaddr())
+print("Remote address:", conn.remoteaddr)
 ```
 
 ### conn:isalive()

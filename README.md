@@ -52,7 +52,7 @@ local tcp = require "silly.net.tcp"
 local server = tcp.listen {
     addr = "127.0.0.1:8888",
     accept = function(conn)
-        print("New connection from", conn:remoteaddr())
+        print("New connection from", conn.remoteaddr)
 
         while true do
             local data = conn:read("\n")

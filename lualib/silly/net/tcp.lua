@@ -23,7 +23,7 @@ local M = {}
 
 ---@class silly.net.tcp.conn
 ---@field fd integer?
----@field raddr string
+---@field remoteaddr string
 ---@field co thread?
 ---@field err string?
 ---@field buf silly.adt.buffer
@@ -61,7 +61,7 @@ local function new_socket(fd, addr)
 	---@type silly.net.tcp.conn
 	local s = setmetatable({
 		fd = fd,
-		raddr = addr,
+		remoteaddr = addr,
 		co = nil,
 		err = nil,
 		delim = nil,
@@ -326,12 +326,6 @@ function conn.unsentbytes(s)
 		return 0
 	end
 	return net.sendsize(fd)
-end
-
----@param s silly.net.tcp.conn
----@return string
-function conn.remoteaddr(s)
-	return s.raddr
 end
 
 -- for compatibility

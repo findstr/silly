@@ -124,7 +124,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
         },
         accept = function(conn)
             wg:fork(function()
-                print("Client connected:", conn:remoteaddr())
+                print("Client connected:", conn.remoteaddr)
 
                 -- Read HTTP request
                 local request, err = conn:read("\n")
@@ -514,11 +514,23 @@ Get the number of unsent bytes in the current send buffer.
 
 - **Return value**: `integer` - Number of bytes
 
-### conn:remoteaddr()
+### conn.remoteaddr
 
-Get the remote address.
+Get the remote address (read-only property).
 
-- **Return value**: `string` - Remote address (IP:Port)
+> **Note**: `remoteaddr` is a property of the connection object. Access it directly without parentheses.
+
+- **Type**: `string` - Remote address (format: `IP:Port`)
+- **Example**:
+
+```lua validate
+local tls = require "silly.net.tls"
+
+local conn = tls.connect("example.com:443")
+if not conn then return end
+
+print("Remote address:", conn.remoteaddr)
+```
 
 ---
 

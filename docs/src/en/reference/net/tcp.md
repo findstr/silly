@@ -52,7 +52,7 @@ local tcp = require "silly.net.tcp"
 local listener, err = tcp.listen {
     addr = "127.0.0.1:8080",
     accept = function(conn)
-        print("New connection from:", conn:remoteaddr())
+        print("New connection from:", conn.remoteaddr)
         -- Handle connection...
         conn:close()
     end
@@ -89,7 +89,7 @@ task.fork(function()
         print("Connect failed:", err)
         return
     end
-    print("Connected! Remote addr:", conn:remoteaddr())
+    print("Connected! Remote addr:", conn.remoteaddr)
     conn:close()
 end)
 ```
@@ -316,11 +316,13 @@ if conn:isalive() then
 end
 ```
 
-### conn:remoteaddr()
+### conn.remoteaddr
 
-Gets the remote address of the connection.
+Gets the remote address of the connection (read-only property).
 
-- **Returns**: `string` - Remote address string
+> **Note**: `remoteaddr` is a property of the connection object. Access it directly without parentheses.
+
+- **Type**: `string` - Remote address string (format: `IP:Port`)
 - **Example**:
 
 ```lua validate
@@ -329,7 +331,7 @@ local tcp = require "silly.net.tcp"
 local conn = tcp.connect("127.0.0.1:8080")
 if not conn then return end
 
-print("Remote address:", conn:remoteaddr())
+print("Remote address:", conn.remoteaddr)
 ```
 
 ## Usage Examples
@@ -353,7 +355,7 @@ task.fork(function()
         addr = "127.0.0.1:9988",
         accept = function(conn)
             wg:fork(function()
-                print("Client connected:", conn:remoteaddr())
+                print("Client connected:", conn.remoteaddr)
 
                 -- Echo data continuously until connection closes
                 while true do

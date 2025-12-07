@@ -55,7 +55,7 @@ local socket = require "silly.net.tcp"
 
 socket.listen("127.0.0.1:9999", function(conn)
     -- conn: client connection object
-    print("New client connection:", conn:remoteaddr())
+    print("New client connection:", conn.remoteaddr)
 end)
 ```
 
@@ -70,7 +70,7 @@ In the callback function, we need to loop and read client data and echo it back:
 
 ```lua
 socket.listen("127.0.0.1:9999", function(conn)
-    print("New client connection:", conn:remoteaddr())
+    print("New client connection:", conn.remoteaddr)
 
     while true do
         -- Read one line
@@ -127,20 +127,20 @@ When a connection error occurs or the client closes the connection, we need to c
 while true do
     local data, err = conn:read("\n")
     if err then
-        print("Connection closed:", conn:remoteaddr(), err)
+        print("Connection closed:", conn.remoteaddr, err)
         break
     end
 
     local ok, werr = conn:write(data)
     if not ok then
-        print("Write failed:", conn:remoteaddr(), werr)
+        print("Write failed:", conn.remoteaddr, werr)
         break
     end
 end
 
 -- Close connection
 conn:close()
-print("Connection closed:", conn:remoteaddr())
+print("Connection closed:", conn.remoteaddr)
 ```
 
 ## Complete Code
@@ -156,26 +156,26 @@ local socket = require "silly.net.tcp"
 
 -- Start Echo server
 socket.listen("127.0.0.1:9999", function(conn)
-    print("Accept connection", conn:remoteaddr())
+    print("Accept connection", conn.remoteaddr)
 
     while true do
         -- Read one line
         local line, err = conn:read("\n")
         if err then
-            print("Read error [", conn:remoteaddr(), "] ->", err)
+            print("Read error [", conn.remoteaddr, "] ->", err)
             break
         end
 
         -- Echo data
         local ok, werr = conn:write(line)
         if not ok then
-            print("Write error [", conn:remoteaddr(), "] ->", werr)
+            print("Write error [", conn.remoteaddr, "] ->", werr)
             break
         end
     end
 
     -- Close connection
-    print("Close connection", conn:remoteaddr())
+    print("Close connection", conn.remoteaddr)
     conn:close()
 end)
 
@@ -190,29 +190,29 @@ for i = 1, 3 do
             return
         end
 
-        print("Client", i, "connected:", conn:remoteaddr())
+        print("Client", i, "connected:", conn.remoteaddr)
 
         -- Send 5 test messages
         for j = 1, 5 do
             -- Generate random data
             local msg = crypto.randomkey(5) .. "\n"
-            print("Send [", conn:remoteaddr(), "] ->", msg)
+            print("Send [", conn.remoteaddr, "] ->", msg)
 
             -- Send data
             local ok, werr = conn:write(msg)
             if not ok then
-                print("Send failed [", conn:remoteaddr(), "] ->", werr)
+                print("Send failed [", conn.remoteaddr, "] ->", werr)
                 break
             end
 
             -- Receive echo data
             local recv, rerr = conn:read("\n")
             if not recv then
-                print("Receive failed [", conn:remoteaddr(), "] ->", rerr)
+                print("Receive failed [", conn.remoteaddr, "] ->", rerr)
                 break
             end
 
-            print("Receive [", conn:remoteaddr(), "] ->", recv)
+            print("Receive [", conn.remoteaddr, "] ->", recv)
 
             -- Verify echo data correctness
             assert(recv == msg, "Echo data mismatch!")
@@ -222,7 +222,7 @@ for i = 1, 3 do
         end
 
         -- Close connection
-        print("Client close connection", conn:remoteaddr())
+        print("Client close connection", conn.remoteaddr)
         conn:close()
     end)
 end
@@ -292,7 +292,7 @@ task.fork(function()
         return
     end
 
-    print("Connected to server:", conn:remoteaddr())
+    print("Connected to server:", conn.remoteaddr)
 
     -- Send message
     conn:write("Hello from client\n")
@@ -433,7 +433,7 @@ local connections = 0
 socket.listen("127.0.0.1:9999", function(conn)
     connections = connections + 1
     print(string.format("New connection from %s, current connections: %d",
-        conn:remoteaddr(), connections))
+        conn.remoteaddr, connections))
 
     while true do
         local line, err = conn:read("\n")
@@ -444,7 +444,7 @@ socket.listen("127.0.0.1:9999", function(conn)
     connections = connections - 1
     conn:close()
     print(string.format("Connection closed %s, remaining connections: %d",
-        conn:remoteaddr(), connections))
+        conn.remoteaddr, connections))
 end)
 ```
 
@@ -456,11 +456,11 @@ Use `time.after()` to add timeout mechanism:
 local time = require "silly.time"
 
 socket.listen("127.0.0.1:9999", function(conn)
-    print("New connection:", conn:remoteaddr())
+    print("New connection:", conn.remoteaddr)
 
     -- Set 30-second timeout
     local timeout_timer = time.after(30000, function()
-        print("Connection timeout:", conn:remoteaddr())
+        print("Connection timeout:", conn.remoteaddr)
         conn:close()
     end)
 
@@ -471,7 +471,7 @@ socket.listen("127.0.0.1:9999", function(conn)
         -- Data activity, reset timeout
         time.cancel(timeout_timer)
         timeout_timer = time.after(30000, function()
-            print("Connection timeout:", conn:remoteaddr())
+            print("Connection timeout:", conn.remoteaddr)
             conn:close()
         end)
 
@@ -493,7 +493,7 @@ socket.listen("127.0.0.1:9999", function(conn)
     local bytes_sent = 0
     local msg_count = 0
 
-    print("New connection:", conn:remoteaddr())
+    print("New connection:", conn.remoteaddr)
 
     while true do
         local line, err = conn:read("\n")
@@ -512,7 +512,7 @@ socket.listen("127.0.0.1:9999", function(conn)
 
     conn:close()
     print(string.format("Connection %s statistics: received %d bytes, sent %d bytes, messages %d",
-        conn:remoteaddr(), bytes_recv, bytes_sent, msg_count))
+        conn.remoteaddr, bytes_recv, bytes_sent, msg_count))
 end)
 ```
 

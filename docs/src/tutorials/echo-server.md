@@ -55,7 +55,7 @@ local socket = require "silly.net.tcp"
 
 socket.listen("127.0.0.1:9999", function(conn)
     -- conn: 客户端连接对象
-    print("新客户端连接:", conn:remoteaddr())
+    print("新客户端连接:", conn.remoteaddr)
 end)
 ```
 
@@ -70,7 +70,7 @@ end)
 
 ```lua
 socket.listen("127.0.0.1:9999", function(conn)
-    print("新客户端连接:", conn:remoteaddr())
+    print("新客户端连接:", conn.remoteaddr)
 
     while true do
         -- 读取一行数据
@@ -127,20 +127,20 @@ end
 while true do
     local data, err = conn:read("\n")
     if err then
-        print("连接关闭:", conn:remoteaddr(), err)
+        print("连接关闭:", conn.remoteaddr, err)
         break
     end
 
     local ok, werr = conn:write(data)
     if not ok then
-        print("写入失败:", conn:remoteaddr(), werr)
+        print("写入失败:", conn.remoteaddr, werr)
         break
     end
 end
 
 -- 关闭连接
 conn:close()
-print("已关闭连接:", conn:remoteaddr())
+print("已关闭连接:", conn.remoteaddr)
 ```
 
 ## 完整代码
@@ -156,26 +156,26 @@ local socket = require "silly.net.tcp"
 
 -- 启动 Echo 服务器
 socket.listen("127.0.0.1:9999", function(conn)
-    print("接受连接", conn:remoteaddr())
+    print("接受连接", conn.remoteaddr)
 
     while true do
         -- 读取一行数据
         local line, err = conn:read("\n")
         if err then
-            print("读取错误 [", conn:remoteaddr(), "] ->", err)
+            print("读取错误 [", conn.remoteaddr, "] ->", err)
             break
         end
 
         -- 回显数据
         local ok, werr = conn:write(line)
         if not ok then
-            print("写入错误 [", conn:remoteaddr(), "] ->", werr)
+            print("写入错误 [", conn.remoteaddr, "] ->", werr)
             break
         end
     end
 
     -- 关闭连接
-    print("关闭连接", conn:remoteaddr())
+    print("关闭连接", conn.remoteaddr)
     conn:close()
 end)
 
@@ -190,29 +190,29 @@ for i = 1, 3 do
             return
         end
 
-        print("客户端", i, "已连接:", conn:remoteaddr())
+        print("客户端", i, "已连接:", conn.remoteaddr)
 
         -- 发送 5 条测试消息
         for j = 1, 5 do
             -- 生成随机数据
             local msg = crypto.randomkey(5) .. "\n"
-            print("发送 [", conn:remoteaddr(), "] ->", msg)
+            print("发送 [", conn.remoteaddr, "] ->", msg)
 
             -- 发送数据
             local ok, werr = conn:write(msg)
             if not ok then
-                print("发送失败 [", conn:remoteaddr(), "] ->", werr)
+                print("发送失败 [", conn.remoteaddr, "] ->", werr)
                 break
             end
 
             -- 接收回显数据
             local recv, rerr = conn:read("\n")
             if not recv then
-                print("接收失败 [", conn:remoteaddr(), "] ->", rerr)
+                print("接收失败 [", conn.remoteaddr, "] ->", rerr)
                 break
             end
 
-            print("接收 [", conn:remoteaddr(), "] ->", recv)
+            print("接收 [", conn.remoteaddr, "] ->", recv)
 
             -- 验证回显数据正确性
             assert(recv == msg, "回显数据不匹配!")
@@ -222,7 +222,7 @@ for i = 1, 3 do
         end
 
         -- 关闭连接
-        print("客户端关闭连接", conn:remoteaddr())
+        print("客户端关闭连接", conn.remoteaddr)
         conn:close()
     end)
 end
@@ -292,7 +292,7 @@ task.fork(function()
         return
     end
 
-    print("已连接到服务器:", conn:remoteaddr())
+    print("已连接到服务器:", conn.remoteaddr)
 
     -- 发送消息
     conn:write("Hello from client\n")
@@ -433,7 +433,7 @@ local connections = 0
 socket.listen("127.0.0.1:9999", function(conn)
     connections = connections + 1
     print(string.format("新连接来自 %s, 当前连接数: %d",
-        conn:remoteaddr(), connections))
+        conn.remoteaddr, connections))
 
     while true do
         local line, err = conn:read("\n")
@@ -444,7 +444,7 @@ socket.listen("127.0.0.1:9999", function(conn)
     connections = connections - 1
     conn:close()
     print(string.format("连接关闭 %s, 剩余连接数: %d",
-        conn:remoteaddr(), connections))
+        conn.remoteaddr, connections))
 end)
 ```
 
@@ -456,11 +456,11 @@ end)
 local time = require "silly.time"
 
 socket.listen("127.0.0.1:9999", function(conn)
-    print("新连接:", conn:remoteaddr())
+    print("新连接:", conn.remoteaddr)
 
     -- 设置 30 秒超时
     local timeout_timer = time.after(30000, function()
-        print("连接超时:", conn:remoteaddr())
+        print("连接超时:", conn.remoteaddr)
         conn:close()
     end)
 
@@ -471,7 +471,7 @@ socket.listen("127.0.0.1:9999", function(conn)
         -- 有数据活动,重置超时
         time.cancel(timeout_timer)
         timeout_timer = time.after(30000, function()
-            print("连接超时:", conn:remoteaddr())
+            print("连接超时:", conn.remoteaddr)
             conn:close()
         end)
 
@@ -493,7 +493,7 @@ socket.listen("127.0.0.1:9999", function(conn)
     local bytes_sent = 0
     local msg_count = 0
 
-    print("新连接:", conn:remoteaddr())
+    print("新连接:", conn.remoteaddr)
 
     while true do
         local line, err = conn:read("\n")
@@ -512,7 +512,7 @@ socket.listen("127.0.0.1:9999", function(conn)
 
     conn:close()
     print(string.format("连接 %s 统计: 接收 %d 字节, 发送 %d 字节, 消息数 %d",
-        conn:remoteaddr(), bytes_recv, bytes_sent, msg_count))
+        conn.remoteaddr, bytes_recv, bytes_sent, msg_count))
 end)
 ```
 

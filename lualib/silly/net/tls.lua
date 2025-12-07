@@ -36,7 +36,7 @@ local M = {}
 
 ---@class silly.net.tls.conn
 ---@field fd integer?
----@field raddr string
+---@field remoteaddr string
 ---@field co thread?
 ---@field err string?
 ---@field alpn string?
@@ -86,11 +86,11 @@ local listener_mt = {
 }
 
 ---@param fd integer
----@param raddr string
+---@param remoteaddr string
 ---@param hostname string?
 ---@param alpnprotos silly.net.tls.alpn_proto[]?
 ---@return silly.net.tls.conn
-local function new_socket(fd, raddr, ctx, hostname, alpnprotos)
+local function new_socket(fd, remoteaddr, ctx, hostname, alpnprotos)
 	local alpnstr
 	if alpnprotos then
 		alpnstr = wire_alpn_protos(alpnprotos)
@@ -98,7 +98,7 @@ local function new_socket(fd, raddr, ctx, hostname, alpnprotos)
 	---@type silly.net.tls.conn
 	local s = setmetatable({
 		fd = fd,
-		raddr = raddr,
+		remoteaddr = remoteaddr,
 		co = nil,
 		err = nil,
 		ssl = tls.open(ctx, fd, hostname, alpnstr),
@@ -474,12 +474,6 @@ function conn.unsentbytes(s)
 		return 0
 	end
 	return net.sendsize(fd)
-end
-
----@param s silly.net.tls.conn
----@return string
-function conn.remoteaddr(s)
-	return s.raddr
 end
 
 -- for compatibility

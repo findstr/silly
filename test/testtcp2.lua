@@ -43,7 +43,7 @@ testaux.case("Test 1: Accept a connection", function()
 	local localfd
 	local remoteaddr = ""
 	listen_cb = function(fd)
-		local addr = fd:remoteaddr()
+		local addr = fd.remoteaddr
 		remoteaddr = addr
 		local localaddr = testaux.getsockname(localfd)
 		testaux.asserteq(localaddr, remoteaddr, "Test 1.1: Local endpoint matches accept address")
@@ -101,7 +101,7 @@ end)
 -- Test 4: Half-close scenario
 testaux.case("Test 4: Half-close scenario", function()
 	listen_cb = function(sfd)
-		local addr = sfd:remoteaddr()
+		local addr = sfd.remoteaddr
 		-- 1. Read the initial data
 		local dat, err = tcp.read(sfd, 5)
 		testaux.asserteq(dat, "hello", "Test 4.1: Server read initial data")
@@ -135,7 +135,7 @@ end)
 -- Test 5: Readline interrupted by close
 testaux.case("Test 5: Readline interrupted by close", function()
 	listen_cb = function(sfd)
-		local addr = sfd:remoteaddr()
+		local addr = sfd.remoteaddr
 		local data, err = tcp.readline(sfd, "\n")
 		testaux.asserteq(data, "", "Test 5.1: Readline returns empty string on interrupted read")
 		testaux.asserteq(err, "end of file", "Test 5.2: Readline returns 'end of file' error")
@@ -153,7 +153,7 @@ end)
 -- Test 6: Double close
 testaux.case("Test 6: Double close", function()
 	listen_cb = function(sfd)
-		local addr = sfd:remoteaddr()
+		local addr = sfd.remoteaddr
 		local ok1, err1 = tcp.close(sfd)
 		testaux.asserteq(ok1, true, "Test 6.1: First close succeeds")
 

@@ -170,6 +170,7 @@ local channel_mt = {
 
 --- @class silly.net.http.h2.stream
 --- @field channel silly.net.http.h2.channel
+--- @field remoteaddr string
 --- protocol
 --- @field scheme string
 --- @field version string
@@ -448,6 +449,7 @@ local function channel_newstream(ch, id, active, method, path, header)
 	---@type silly.net.http.h2.stream
 	local stream = {
 		channel = ch,
+		remoteaddr = ch.conn.remoteaddr,
 		-- protocol
 		scheme = ch.scheme,
 		version = "HTTP/2",
@@ -1253,7 +1255,7 @@ local function frame_settings(ch, stream_id, flag, dat)
 		elseif id == SETTINGS_MAX_HEADER_LIST_SIZE then
 			-- SETTINGS_MAX_HEADER_LIST_SIZE is advisory only, no error checking needed
 		else
-			logger.warn("[h2stream] unknown settings id:", id)
+			logger.warn("[h2] unknown settings id:", id)
 		end
 	end
 	-- RFC 7540 Section 6.5.3: Must immediately emit a SETTINGS frame with ACK flag
@@ -1649,6 +1651,7 @@ local function handshake_as_server(ch)
 	end
 	if dat ~= client_preface then
 		-- Send GOAWAY with PROTOCOL_ERROR before closing
+		logger.error("[h2] accept %s handshake fail", conn.remoteaddr)
 		channel_goaway(ch, PROTOCOL_ERROR)
 		return false
 	end
