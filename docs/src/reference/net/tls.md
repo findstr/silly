@@ -299,7 +299,7 @@ task.fork(function()
     end)
 
     print("发送 SIGUSR1 信号以触发证书重载")
-    print("运行: kill -USR1", silly.getpid())
+    print("运行: kill -USR1", silly.pid)
 
     wg:wait()
 end)

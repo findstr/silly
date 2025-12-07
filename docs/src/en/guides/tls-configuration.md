@@ -1204,7 +1204,7 @@ signal.register("SIGUSR1", function()
     end
 end)
 
-logger.info("Send 'kill -USR1 " .. silly.getpid() .. "' to reload certificates")
+logger.info("Send 'kill -USR1 " .. silly.pid .. "' to reload certificates")
 ```
 
 Running the server:

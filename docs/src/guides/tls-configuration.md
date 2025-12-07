@@ -1204,7 +1204,7 @@ signal.register("SIGUSR1", function()
     end
 end)
 
-logger.info("发送 'kill -USR1 " .. silly.getpid() .. "' 来重载证书")
+logger.info("发送 'kill -USR1 " .. silly.pid .. "' 来重载证书")
 ```
 
 运行服务器：

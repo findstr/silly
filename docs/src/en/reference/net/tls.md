@@ -299,7 +299,7 @@ task.fork(function()
     end)
 
     print("Send SIGUSR1 signal to trigger certificate reload")
-    print("Run: kill -USR1", silly.getpid())
+    print("Run: kill -USR1", silly.pid)
 
     wg:wait()
 end)

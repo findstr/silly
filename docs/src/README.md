@@ -113,5 +113,5 @@ highlights:
         link: https://github.com/starwing/lua-protobuf
 
 copyright: false
-footer: 版权所有 © 2015-至今 重归混沌 | 基于 <a href="https://github.com/findstr/silly/tree/48f09ae9b">48f09ae9b</a>
+footer: 版权所有 © 2015-至今 重归混沌 | 基于 <a href="https://github.com/findstr/silly/tree/d4dbd865">d4dbd865</a>
 ---
