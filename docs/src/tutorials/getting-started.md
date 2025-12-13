@@ -117,8 +117,8 @@ make
 ::: details 高级编译选项
 
 ```bash
-# 启用 OpenSSL 支持
-make OPENSSL=ON
+# 禁用 OpenSSL 支持（默认启用）
+make OPENSSL=off
 
 # 使用 glibc 内存分配器（调试用）
 make MALLOC=glibc
@@ -139,12 +139,10 @@ make clean
 ./silly --version
 ```
 
-你应该看到类似输出：
+你应该看到版本号输出：
 
 ```
-Silly version: 1.0.x
-Git SHA1: xxxxxxx
-Lua version: 5.4.x
+0.6
 ```
 
 恭喜！Silly 已经成功安装。
@@ -182,11 +180,11 @@ silly.exit(0)
 ```
 Hello, Silly!
 当前进程 ID: 12345
-框架版本: 1.0.x
+框架版本: 0.6
 ```
 
 ::: tip 发生了什么？
-1. `require "silly"` 加载核心模块并自动启动事件循环
+1. `require "silly"` 获取 silly 框架接口
 2. `print()` 输出信息到控制台
 3. `silly.exit(0)` 优雅退出进程
 :::
@@ -256,7 +254,7 @@ Silly 使用单线程事件循环处理所有业务逻辑：
 ```
 
 ::: info 为什么是单线程？
-单线程模型避免了锁、竞态条件等多线程复杂问题，同时通过异步 I/O 和协程实现高并发。这是 Node.js、Redis 等高性能系统采用的成熟模式。
+单线程模型避免了锁、竞态条件等多线程复杂问题，同时通过异步 I/O 和协程实现高并发。这是 Node.js、Nginx 等高性能系统采用的成熟模式。
 :::
 
 ### 3. task.fork() - 创建并发任务
@@ -450,12 +448,19 @@ sudo ./silly your_script.lua
 
 输出包含所有可用选项：
 ```
+Usage: silly main.lua [options]
 Options:
-  -h, --help                Display this help message
-  -v, --version             Show version information
-  -d, --daemon              Run as a daemon process
-  -l, --loglevel LEVEL      Set logging level (debug/info/warn/error)
-  ...
+  -h, --help                help
+  -v, --version             version
+  -d, --daemon              run as a daemon
+  -p, --logpath PATH        path for the log file
+  -l, --loglevel LEVEL      logging level (e.g. debug, info, warn, error)
+  -f, --pidfile FILE        path for the PID file
+  -L, --lualib_path PATH    path for Lua libraries
+  -C, --lualib_cpath PATH   path for C Lua libraries
+  -S, --socket_cpu_affinity affinity for socket thread
+  -W, --worker_cpu_affinity affinity for worker threads
+  -T, --timer_cpu_affinity  affinity for timer thread
 ```
 
 ## 总结

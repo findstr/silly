@@ -36,10 +36,11 @@ git clone https://github.com/findstr/silly.git
 cd silly
 
 # Build (supports Linux, macOS, Windows)
+# OpenSSL support is enabled by default for TLS
 make
 
-# With OpenSSL support for TLS
-make OPENSSL=ON
+# Disable OpenSSL if not needed
+make OPENSSL=off
 ```
 
 ### Hello World
@@ -53,10 +54,9 @@ local server = tcp.listen {
     addr = "127.0.0.1:8888",
     accept = function(conn)
         print("New connection from", conn.remoteaddr)
-
         while true do
-            local data = conn:read("\n")
-            if not data then
+            local data, err = conn:read("\n")
+            if err then
                 print("Client disconnected")
                 break
             end
@@ -79,7 +79,7 @@ Run the server:
 Test with telnet or netcat:
 
 ```bash
-echo "Hello Silly!" | nc localhost 8888
+echo "Hello Silly\!" | nc localhost 8888
 ```
 
 ## 📊 Performance
@@ -119,13 +119,24 @@ print("HTTP server listening on http://0.0.0.0:8080")
 ### WebSocket Chat
 
 ```lua
+local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 
-local server = websocket.listen {
-    addr = "0.0.0.0:8080",
-    handler = function(sock)
-        print("Client connected:", sock.fd)
-
+http.listen {
+    addr = "127.0.0.1:8080",
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            print("Upgrade failed:", err)
+            return
+        end
+        print("New client connected")
         while true do
             local data, typ = sock:read()
             if not data or typ == "close" then
@@ -136,7 +147,6 @@ local server = websocket.listen {
                 sock:write("Echo: " .. data, "text")
             end
         end
-
         sock:close()
     end
 }
@@ -147,7 +157,6 @@ print("WebSocket server listening on ws://0.0.0.0:8080")
 ### MySQL Query
 
 ```lua
-local silly = require "silly"
 local mysql = require "silly.store.mysql"
 
 local db = mysql.open {
@@ -160,18 +169,16 @@ local db = mysql.open {
     max_idle_conns = 5,
 }
 
-silly.fork(function()
-    local users, err = db:query("SELECT * FROM users WHERE age > ?", 18)
-    if users then
-        for _, user in ipairs(users) do
-            print(user.name, user.email)
-        end
-    else
-        print("Query failed:", err.message)
+local users, err = db:query("SELECT * FROM users WHERE age > ?", 18)
+if users then
+    for _, user in ipairs(users) do
+        print(user.name, user.email)
     end
+else
+    print("Query failed:", err.message)
+end
 
-    db:close()
-end)
+db:close()
 ```
 
 For more examples, check out the [tutorials](https://findstr.github.io/silly/tutorials/) in the documentation.

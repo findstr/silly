@@ -51,17 +51,20 @@ Client                     Server
 First, we need to create a TCP listening server on a specified address and port:
 
 ```lua
-local socket = require "silly.net.tcp"
+local tcp = require "silly.net.tcp"
 
-socket.listen("127.0.0.1:9999", function(conn)
-    -- conn: client connection object
-    print("New client connection:", conn.remoteaddr)
-end)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        -- conn: client connection object
+        print("New client connection:", conn.remoteaddr)
+    end
+}
 ```
 
 **Key Points**:
-- `socket.listen()` creates a listening socket at the specified address
-- The callback function is called whenever a new client connects
+- `tcp.listen()` accepts a table parameter with `addr` and `accept` fields
+- The `accept` callback function is called whenever a new client connects
 - The callback function executes in an independent coroutine and does not block the main thread
 
 ### Step 2: Handle Client Connections
@@ -69,28 +72,31 @@ end)
 In the callback function, we need to loop and read client data and echo it back:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(conn)
-    print("New client connection:", conn.remoteaddr)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        print("New client connection:", conn.remoteaddr)
 
-    while true do
-        -- Read one line
-        local data, err = conn:read("\n")
-        if err then
-            print("Read error:", err)
-            break
+        while true do
+            -- Read one line
+            local data, err = conn:read("\n")
+            if err then
+                print("Read error:", err)
+                break
+            end
+
+            -- Echo data
+            local ok, werr = conn:write(data)
+            if not ok then
+                print("Write error:", werr)
+                break
+            end
         end
 
-        -- Echo data
-        local ok, werr = conn:write(data)
-        if not ok then
-            print("Write error:", werr)
-            break
-        end
+        -- Close connection
+        conn:close()
     end
-
-    -- Close connection
-    conn:close()
-end)
+}
 ```
 
 ### Step 3: Read and Echo Data
@@ -152,39 +158,42 @@ local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
 local crypto = require "silly.crypto.utils"
-local socket = require "silly.net.tcp"
+local tcp = require "silly.net.tcp"
 
 -- Start Echo server
-socket.listen("127.0.0.1:9999", function(conn)
-    print("Accept connection", conn.remoteaddr)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        print("Accept connection", conn.remoteaddr)
 
-    while true do
-        -- Read one line
-        local line, err = conn:read("\n")
-        if err then
-            print("Read error [", conn.remoteaddr, "] ->", err)
-            break
+        while true do
+            -- Read one line
+            local line, err = conn:read("\n")
+            if err then
+                print("Read error [", conn.remoteaddr, "] ->", err)
+                break
+            end
+
+            -- Echo data
+            local ok, werr = conn:write(line)
+            if not ok then
+                print("Write error [", conn.remoteaddr, "] ->", werr)
+                break
+            end
         end
 
-        -- Echo data
-        local ok, werr = conn:write(line)
-        if not ok then
-            print("Write error [", conn.remoteaddr, "] ->", werr)
-            break
-        end
+        -- Close connection
+        print("Close connection", conn.remoteaddr)
+        conn:close()
     end
-
-    -- Close connection
-    print("Close connection", conn.remoteaddr)
-    conn:close()
-end)
+}
 
 -- Start test clients
 -- Create 3 clients for testing
 for i = 1, 3 do
     task.fork(function()
         -- Connect to server
-        local conn, err = socket.connect("127.0.0.1:9999")
+        local conn, err = tcp.connect("127.0.0.1:9999")
         if not conn then
             print("Connect failed:", err)
             return
@@ -282,11 +291,11 @@ If you want to write a separate client:
 ```lua
 local silly = require "silly"
 local task = require "silly.task"
-local socket = require "silly.net.tcp"
+local tcp = require "silly.net.tcp"
 
 task.fork(function()
     -- Connect to server
-    local conn, err = socket.connect("127.0.0.1:9999")
+    local conn, err = tcp.connect("127.0.0.1:9999")
     if not conn then
         print("Connect failed:", err)
         return
@@ -315,18 +324,23 @@ end)
 ### Listen Function
 
 ```lua
-socket.listen(addr, callback, backlog)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        -- Handle client connection
+    end
+}
 ```
 
 **Parameters**:
-- `addr`: Listen address in format `"IP:port"`, e.g., `"127.0.0.1:9999"` or `"0.0.0.0:8080"`
-- `callback`: Client connection callback function with signature `function(conn)`
-  - `conn`: Client connection object
-- `backlog`: (optional) Listen queue length, default is 128
+- Accepts a table parameter with the following fields:
+  - `addr`: Listen address in format `"IP:port"`, e.g., `"127.0.0.1:9999"` or `"0.0.0.0:8080"`
+  - `accept`: Client connection callback function with signature `function(conn)`
+    - `conn`: Client connection object
 
 **Return Value**:
 - Success: Returns listener object
-- Failure: Returns `nil` and error message
+- Failure: Throws error
 
 **Important Features**:
 - Each client connection is handled in an **independent coroutine**
@@ -339,15 +353,18 @@ Silly uses Lua coroutines to implement asynchronous I/O:
 
 ```lua
 -- Each client connection runs in an independent coroutine
-socket.listen("127.0.0.1:9999", function(conn)
-    -- Code here runs in an independent coroutine
-    while true do
-        local data = conn:read("\n")  -- Async read, doesn't block other connections
-        if err then break end
-        conn:write(data)              -- Async write
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        -- Code here runs in an independent coroutine
+        while true do
+            local data, err = conn:read("\n")  -- Async read, doesn't block other connections
+            if err then break end
+            conn:write(data)              -- Async write
+        end
+        conn:close()
     end
-    conn:close()
-end)
+}
 ```
 
 **Advantages of Coroutines**:
@@ -430,22 +447,25 @@ The current code already supports multiple clients, but you can try:
 -- Add connection counter
 local connections = 0
 
-socket.listen("127.0.0.1:9999", function(conn)
-    connections = connections + 1
-    print(string.format("New connection from %s, current connections: %d",
-        conn.remoteaddr, connections))
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        connections = connections + 1
+        print(string.format("New connection from %s, current connections: %d",
+            conn.remoteaddr, connections))
 
-    while true do
-        local line, err = conn:read("\n")
-        if err then break end
-        conn:write(line)
+        while true do
+            local line, err = conn:read("\n")
+            if err then break end
+            conn:write(line)
+        end
+
+        connections = connections - 1
+        conn:close()
+        print(string.format("Connection closed %s, remaining connections: %d",
+            conn.remoteaddr, connections))
     end
-
-    connections = connections - 1
-    conn:close()
-    print(string.format("Connection closed %s, remaining connections: %d",
-        conn.remoteaddr, connections))
-end)
+}
 ```
 
 ### 2. Add Timeout Handling
@@ -455,32 +475,35 @@ Use `time.after()` to add timeout mechanism:
 ```lua
 local time = require "silly.time"
 
-socket.listen("127.0.0.1:9999", function(conn)
-    print("New connection:", conn.remoteaddr)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        print("New connection:", conn.remoteaddr)
 
-    -- Set 30-second timeout
-    local timeout_timer = time.after(30000, function()
-        print("Connection timeout:", conn.remoteaddr)
-        conn:close()
-    end)
-
-    while true do
-        local line, err = conn:read("\n")
-        if err then break end
-
-        -- Data activity, reset timeout
-        time.cancel(timeout_timer)
-        timeout_timer = time.after(30000, function()
+        -- Set 30-second timeout
+        local timeout_timer = time.after(30000, function()
             print("Connection timeout:", conn.remoteaddr)
             conn:close()
         end)
 
-        conn:write(line)
-    end
+        while true do
+            local line, err = conn:read("\n")
+            if err then break end
 
-    time.cancel(timeout_timer)
-    conn:close()
-end)
+            -- Data activity, reset timeout
+            time.cancel(timeout_timer)
+            timeout_timer = time.after(30000, function()
+                print("Connection timeout:", conn.remoteaddr)
+                conn:close()
+            end)
+
+            conn:write(line)
+        end
+
+        time.cancel(timeout_timer)
+        conn:close()
+    end
+}
 ```
 
 ### 3. Add Data Statistics
@@ -488,32 +511,35 @@ end)
 Record data transfer volume for each connection:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(conn)
-    local bytes_recv = 0
-    local bytes_sent = 0
-    local msg_count = 0
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        local bytes_recv = 0
+        local bytes_sent = 0
+        local msg_count = 0
 
-    print("New connection:", conn.remoteaddr)
+        print("New connection:", conn.remoteaddr)
 
-    while true do
-        local line, err = conn:read("\n")
-        if err then break end
+        while true do
+            local line, err = conn:read("\n")
+            if err then break end
 
-        bytes_recv = bytes_recv + #line
-        msg_count = msg_count + 1
+            bytes_recv = bytes_recv + #line
+            msg_count = msg_count + 1
 
-        local ok = conn:write(line)
-        if ok then
-            bytes_sent = bytes_sent + #line
-        else
-            break
+            local ok = conn:write(line)
+            if ok then
+                bytes_sent = bytes_sent + #line
+            else
+                break
+            end
         end
-    end
 
-    conn:close()
-    print(string.format("Connection %s statistics: received %d bytes, sent %d bytes, messages %d",
-        conn.remoteaddr, bytes_recv, bytes_sent, msg_count))
-end)
+        conn:close()
+        print(string.format("Connection %s statistics: received %d bytes, sent %d bytes, messages %d",
+            conn.remoteaddr, bytes_recv, bytes_sent, msg_count))
+    end
+}
 ```
 
 ### 4. Implement Simple Protocol
@@ -521,34 +547,37 @@ end)
 Make the Echo server support simple commands:
 
 ```lua
-socket.listen("127.0.0.1:9999", function(conn)
-    conn:write("Welcome to Silly Echo Server!\n")
-    conn:write("Type 'help' for commands\n")
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        conn:write("Welcome to Silly Echo Server!\n")
+        conn:write("Type 'help' for commands\n")
 
-    while true do
-        conn:write("> ")
-        local line, err = conn:read("\n")
-        if err then break end
+        while true do
+            conn:write("> ")
+            local line, err = conn:read("\n")
+            if err then break end
 
-        local cmd = line:match("^%s*(.-)%s*$")  -- Trim whitespace
+            local cmd = line:match("^%s*(.-)%s*$")  -- Trim whitespace
 
-        if cmd == "help" then
-            conn:write("Command list:\n")
-            conn:write("  help  - Show this help\n")
-            conn:write("  time  - Show server time\n")
-            conn:write("  quit  - Disconnect\n")
-        elseif cmd == "time" then
-            conn:write(os.date() .. "\n")
-        elseif cmd == "quit" then
-            conn:write("Goodbye!\n")
-            break
-        else
-            conn:write("Echo: " .. line)
+            if cmd == "help" then
+                conn:write("Command list:\n")
+                conn:write("  help  - Show this help\n")
+                conn:write("  time  - Show server time\n")
+                conn:write("  quit  - Disconnect\n")
+            elseif cmd == "time" then
+                conn:write(os.date() .. "\n")
+            elseif cmd == "quit" then
+                conn:write("Goodbye!\n")
+                break
+            else
+                conn:write("Echo: " .. line)
+            end
         end
-    end
 
-    conn:close()
-end)
+        conn:close()
+    end
+}
 ```
 
 ### 5. Performance Testing
@@ -558,7 +587,7 @@ Write a stress test client:
 ```lua
 local silly = require "silly"
 local task = require "silly.task"
-local socket = require "silly.net.tcp"
+local tcp = require "silly.net.tcp"
 
 local client_count = 100  -- 100 concurrent clients
 local msg_per_client = 100  -- 100 messages per client
@@ -568,7 +597,7 @@ local total_messages = 0
 
 for i = 1, client_count do
     task.fork(function()
-        local conn = socket.connect("127.0.0.1:9999")
+        local conn = tcp.connect("127.0.0.1:9999")
         if not conn then return end
 
         for j = 1, msg_per_client do

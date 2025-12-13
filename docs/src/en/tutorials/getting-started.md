@@ -117,8 +117,8 @@ make
 ::: details Advanced Compilation Options
 
 ```bash
-# Enable OpenSSL support
-make OPENSSL=ON
+# Disable OpenSSL support (enabled by default)
+make OPENSSL=off
 
 # Use glibc memory allocator (for debugging)
 make MALLOC=glibc
@@ -139,12 +139,10 @@ make clean
 ./silly --version
 ```
 
-You should see output similar to:
+You should see the version number:
 
 ```
-Silly version: 1.0.x
-Git SHA1: xxxxxxx
-Lua version: 5.4.x
+0.6
 ```
 
 Congratulations! Silly has been successfully installed.
@@ -182,11 +180,11 @@ You will see:
 ```
 Hello, Silly!
 Current process ID: 12345
-Framework version: 1.0.x
+Framework version: 0.6
 ```
 
 ::: tip What Happened?
-1. `require "silly"` loads the core module and automatically starts the event loop
+1. `require "silly"` gets the silly framework interface
 2. `print()` outputs information to the console
 3. `silly.exit(0)` gracefully exits the process
 :::
@@ -259,7 +257,7 @@ Silly uses a single-threaded event loop to handle all business logic:
 ```
 
 ::: info Why Single-Threaded?
-The single-threaded model avoids complex multi-threading issues like locks and race conditions, while achieving high concurrency through asynchronous I/O and coroutines. This is the proven pattern used by high-performance systems like Node.js and Redis.
+The single-threaded model avoids complex multi-threading issues like locks and race conditions, while achieving high concurrency through asynchronous I/O and coroutines. This is the proven pattern used by high-performance systems like Node.js and Nginx.
 :::
 
 ### 3. task.fork() - Creating Concurrent Tasks
@@ -453,12 +451,19 @@ If you encounter other problems:
 
 Output includes all available options:
 ```
+Usage: silly main.lua [options]
 Options:
-  -h, --help                Display this help message
-  -v, --version             Show version information
-  -d, --daemon              Run as a daemon process
-  -l, --loglevel LEVEL      Set logging level (debug/info/warn/error)
-  ...
+  -h, --help                help
+  -v, --version             version
+  -d, --daemon              run as a daemon
+  -p, --logpath PATH        path for the log file
+  -l, --loglevel LEVEL      logging level (e.g. debug, info, warn, error)
+  -f, --pidfile FILE        path for the PID file
+  -L, --lualib_path PATH    path for Lua libraries
+  -C, --lualib_cpath PATH   path for C Lua libraries
+  -S, --socket_cpu_affinity affinity for socket thread
+  -W, --worker_cpu_affinity affinity for worker threads
+  -T, --timer_cpu_affinity  affinity for timer thread
 ```
 
 ## Summary

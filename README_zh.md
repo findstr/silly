@@ -36,10 +36,11 @@ git clone https://github.com/findstr/silly.git
 cd silly
 
 # 编译（支持 Linux、macOS、Windows）
+# OpenSSL 支持默认启用（用于 TLS）
 make
 
-# 启用 OpenSSL 支持编译（用于 TLS）
-make OPENSSL=ON
+# 如不需要可禁用 OpenSSL
+make OPENSSL=off
 ```
 
 ### Hello World
@@ -53,10 +54,9 @@ local server = tcp.listen {
     addr = "127.0.0.1:8888",
     accept = function(conn)
         print("新连接来自", conn.remoteaddr)
-
         while true do
-            local data = conn:read("\n")
-            if not data then
+            local data, err = conn:read("\n")
+            if err then
                 print("客户端断开连接")
                 break
             end
@@ -79,7 +79,7 @@ print("服务器监听在 127.0.0.1:8888")
 使用 telnet 或 netcat 测试：
 
 ```bash
-echo "你好 Silly!" | nc localhost 8888
+echo "你好 Silly\!" | nc localhost 8888
 ```
 
 ## 📊 性能
@@ -125,13 +125,24 @@ print("HTTP 服务器监听在 http://0.0.0.0:8080")
 ### WebSocket 聊天
 
 ```lua
+local silly = require "silly"
+local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 
-local server = websocket.listen {
-    addr = "0.0.0.0:8080",
-    handler = function(sock)
-        print("客户端已连接:", sock.fd)
-
+http.listen {
+    addr = "127.0.0.1:8080",
+    handler = function(stream)
+        if stream.header["upgrade"] ~= "websocket" then
+            stream:respond(404, {})
+            stream:close("Not Found")
+            return
+        end
+        local sock, err = websocket.upgrade(stream)
+        if not sock then
+            print("升级失败:", err)
+            return
+        end
+        print("新客户端已连接")
         while true do
             local data, typ = sock:read()
             if not data or typ == "close" then
@@ -142,7 +153,6 @@ local server = websocket.listen {
                 sock:write("回显: " .. data, "text")
             end
         end
-
         sock:close()
     end
 }
@@ -153,7 +163,6 @@ print("WebSocket 服务器监听在 ws://0.0.0.0:8080")
 ### MySQL 查询
 
 ```lua
-local silly = require "silly"
 local mysql = require "silly.store.mysql"
 
 local db = mysql.open {
@@ -166,18 +175,16 @@ local db = mysql.open {
     max_idle_conns = 5,
 }
 
-silly.fork(function()
-    local users, err = db:query("SELECT * FROM users WHERE age > ?", 18)
-    if users then
-        for _, user in ipairs(users) do
-            print(user.name, user.email)
-        end
-    else
-        print("查询失败:", err.message)
+local users, err = db:query("SELECT * FROM users WHERE age > ?", 18)
+if users then
+    for _, user in ipairs(users) do
+        print(user.name, user.email)
     end
+else
+    print("查询失败:", err.message)
+end
 
-    db:close()
-end)
+db:close()
 ```
 
 更多示例请查看文档中的[教程部分](https://findstr.github.io/silly/tutorials/)。
