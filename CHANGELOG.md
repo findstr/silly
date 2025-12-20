@@ -1,7 +1,48 @@
 ## Unreleased
 
 ### Added
-- Add `mingw` support
+- New peer-based cluster implementation (`cluster.lua`) as an alternative to legacy cluster APIs.
+- Interactive Lua REPL when running without a script or from stdin.
+- MySQL `caching_sha2_password` authentication support and connection pooling.
+- Etcd v3 client (kv, lease, watch).
+- Unified timeout support for `tcp.connect`, `tls.connect`, and `net.connect`.
+- Public C API layer (`api.c`) for embedding and integration.
+- `silly.hive` thread pool for offloading blocking operations.
+- Zlib compression support.
+- Dockerfile for containerized builds and deployment.
+
+### Changed
+
+#### Breaking changes
+- Modules reorganized into namespaces (`silly.net`, `silly.store`, `silly.security`, `silly.internal`).
+- TCP, UDP, and TLS networking APIs refactored to object-oriented, coroutine-friendly interfaces.
+  - UDP receive model changed from callbacks to pull-based APIs (e.g. `udp:recvfrom()`).
+- HTTP/1.x and HTTP/2 APIs redesigned for protocol correctness.
+  - `tcp.read` / `tls.read` now return `nil, err` on error and `"" , err` on EOF.
+- Legacy `cluster.rpc` and `cluster.msg` APIs removed.
+- Internal entry point `silly.start()` made private as `silly._start`.
+
+#### Improvements
+- HTTP/2 implementation reworked with proper flow control and stream lifecycle handling.
+- gRPC behavior improved for large requests via correct HTTP/2 frame fragmentation handling.
+- Socket subsystem refactored with new pooling, ID handling, and error semantics.
+- Socket read path redesigned to use a bounded temporary buffer instead of prediction-based growth.
+- UDP implementation rewritten to align with coroutine-based networking model.
+- WebSocket implementation refined for RFC 6455 compliance.
+- TLS enhanced to support loading certificates from PEM content and dynamic reload.
+- Redis client API updated (`redis.new` replacing `redis:connect`, `redis.call` added).
+- Internal error handling standardized to use string-based error descriptions instead of numeric errno.
+- Tracing improved with more robust trace ID generation.
+- Logging improved (format specifiers fixed, better consistency).
+- Atomic operations migrated from GCC built-ins to C11 atomics.
+- Platform-specific code isolated into `unix/` and `win/` directories.
+- Internal source layout and naming normalized (drop `silly_` prefix, rename `silly-src` → `src`, `lualib-src` → `luaclib-src`).
+
+### Fixed
+- HTTP/2 trailer headers arriving before response body.
+- Race conditions in `sync.channel`.
+- Timer session race conditions.
+- Socket-related race conditions and stability issues.
 
 ---
 
