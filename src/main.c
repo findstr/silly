@@ -21,23 +21,47 @@
 static void print_help(const char *selfname)
 {
 	const char *help[] = {
-		"-h, --help                help",
-		"-v, --version             version",
-		"-d, --daemon              run as a daemon",
-		"-p, --logpath PATH        path for the log file",
-		"-l, --loglevel LEVEL      logging level (e.g. debug, info, warn, error)",
-		"-f, --pidfile FILE        path for the PID file",
-		"-L, --lualib_path PATH    path for Lua libraries",
-		"-C, --lualib_cpath PATH   path for C Lua libraries",
-		"-S, --socket_cpu_affinity affinity for socket thread",
-		"-W, --worker_cpu_affinity affinity for worker threads",
-		"-T, --timer_cpu_affinity  affinity for timer thread",
+		"-h, --help                Show this help message",
+		"-v, --version             Show version",
+		"-d, --daemon              Run as a daemon",
+		"-l, --log-level LEVEL     Set logging level (debug, info, warn, error)",
+		"    --log-path PATH       Path for the log file (effective with --daemon)",
+		"    --pid-file FILE       Path for the PID file (effective with --daemon)",
+		"-L, --lualib-path PATH    Path for Lua libraries (package.path)",
+		"-C, --lualib-cpath PATH   Path for C Lua libraries (package.cpath)",
+		"-S, --socket-affinity CPU Bind socket thread to specific CPU core",
+		"-W, --worker-affinity CPU Bind worker thread to specific CPU core",
+		"-T, --timer-affinity CPU  Bind timer thread to specific CPU core",
 	};
-	printf("Usage: %s main.lua [options]\n", selfname);
-	printf("Options:\n");
+	printf("Usage: %s [script] [options] [--key=value ...]\n", selfname);
+	printf("\nModes:\n");
+	printf("  %s                 Start in REPL mode\n", selfname);
+	printf("  %s script.lua      Run a Lua script\n", selfname);
+	printf("\nOptions:\n");
 	for (size_t i = 0; i < ARRAY_SIZE(help); i++) {
 		printf(" %s\n", help[i]);
 	}
+	printf("\nScript arguments:\n");
+	printf("  --key=value pairs passed after the script\n");
+	printf("  are exposed to Lua via env.get(\"key\").\n");
+}
+
+static void opt_path(char *buff, size_t size, const char *arg, const char *name)
+{
+	if (strlen(arg) >= size) {
+		log_error("[option] %s is too long\n", name);
+	}
+	strncpy(buff, arg, size - 1);
+}
+
+static int opt_int(const char *arg, const char *name)
+{
+	char *end;
+	long n = strtol(arg, &end, 10);
+	if (*end != '\0') {
+		log_error("[option] %s is invalid:%s\n", name, arg);
+	}
+	return (int)n;
 }
 
 static void parse_args(struct boot_args *args, int argc, char *argv[])
@@ -47,18 +71,18 @@ static void parse_args(struct boot_args *args, int argc, char *argv[])
 	optind = 2;
 	opterr = 0;
 	struct option long_options[] = {
-		{ "help",                no_argument,       0, 'h' },
-		{ "version",             no_argument,       0, 'v' },
-		{ "daemon",              no_argument,       0, 'd' },
-		{ "logpath",             required_argument, 0, 'p' },
-		{ "loglevel",            required_argument, 0, 'l' },
-		{ "pidfile",             required_argument, 0, 'f' },
-		{ "lualib_path",         required_argument, 0, 'L' },
-		{ "lualib_cpath",        required_argument, 0, 'C' },
-		{ "socket_cpu_affinity", required_argument, 0, 'S' },
-		{ "worker_cpu_affinity", required_argument, 0, 'W' },
-		{ "timer_cpu_affinity",  required_argument, 0, 'T' },
-		{ NULL,                  0,                 0, 0   }
+		{ "help",            no_argument,       0, 'h' },
+		{ "version",         no_argument,       0, 'v' },
+		{ "daemon",          no_argument,       0, 'd' },
+		{ "log-level",       required_argument, 0, 'l' },
+		{ "log-path",        required_argument, 0, 0   },
+		{ "pid-file",        required_argument, 0, 1   },
+		{ "lualib-path",     required_argument, 0, 'L' },
+		{ "lualib-cpath",    required_argument, 0, 'C' },
+		{ "socket-affinity", required_argument, 0, 'S' },
+		{ "worker-affinity", required_argument, 0, 'W' },
+		{ "timer-affinity",  required_argument, 0, 'T' },
+		{ NULL,              0,                 0, 0   }
 	};
 	struct {
 		const char *name;
@@ -73,7 +97,7 @@ static void parse_args(struct boot_args *args, int argc, char *argv[])
 		optind = 1;
 	}
 	for (;;) {
-		c = getopt_long(argc, argv, "hvdp:l:f:L:C:S:W:T:", long_options,
+		c = getopt_long(argc, argv, "hvdl:L:C:S:W:T:", long_options,
 				NULL);
 		if (c == -1)
 			break;
@@ -83,18 +107,19 @@ static void parse_args(struct boot_args *args, int argc, char *argv[])
 			exit(0);
 			break;
 		case 'v':
-			printf("%s\n", SILLY_VERSION);
+			printf("v%s\n", SILLY_RELEASE);
 			exit(0);
 			break;
 		case 'd':
 			args->daemon = 1;
 			break;
-		case 'p':
-			if (strlen(optarg) >= ARRAY_SIZE(args->logpath)) {
-				log_error("[option] logpath is too long\n");
-			}
-			strncpy(args->logpath, optarg,
-				ARRAY_SIZE(args->logpath) - 1);
+		case 0:
+			opt_path(args->logpath, ARRAY_SIZE(args->logpath), optarg,
+				 "log-path");
+			break;
+		case 1:
+			opt_path(args->pidfile, ARRAY_SIZE(args->pidfile), optarg,
+				 "pid-file");
 			break;
 		case 'l':
 			for (i = 0; i < ARRAY_SIZE(loglevels); i++) {
@@ -108,36 +133,25 @@ static void parse_args(struct boot_args *args, int argc, char *argv[])
 					  optarg);
 			}
 			break;
-		case 'f':
-			if (strlen(optarg) >= ARRAY_SIZE(args->pidfile)) {
-				log_error("[option] pidfile is too long\n");
-			}
-			strncpy(args->pidfile, optarg,
-				ARRAY_SIZE(args->pidfile) - 1);
-			break;
 		case 'L':
-			if (strlen(optarg) >= ARRAY_SIZE(args->lualib_path)) {
-				log_error("[option] lualib_path is too long\n");
-			}
-			strncpy(args->lualib_path, optarg,
-				ARRAY_SIZE(args->lualib_path) - 1);
+			opt_path(args->lualib_path, ARRAY_SIZE(args->lualib_path),
+				 optarg, "lualib-path");
 			break;
 		case 'C':
-			if (strlen(optarg) >= ARRAY_SIZE(args->lualib_cpath)) {
-				log_error(
-					"[option] lualib_cpath is too long\n");
-			}
-			strncpy(args->lualib_cpath, optarg,
-				ARRAY_SIZE(args->lualib_cpath) - 1);
+			opt_path(args->lualib_cpath, ARRAY_SIZE(args->lualib_cpath),
+				 optarg, "lualib-cpath");
 			break;
 		case 'S':
-			args->socketaffinity = atoi(optarg);
+			args->socketaffinity =
+				opt_int(optarg, "socket-affinity");
 			break;
 		case 'W':
-			args->workeraffinity = atoi(optarg);
+			args->workeraffinity =
+				opt_int(optarg, "worker-affinity");
 			break;
 		case 'T':
-			args->timeraffinity = atoi(optarg);
+			args->timeraffinity =
+				opt_int(optarg, "timer-affinity");
 			break;
 		case '?':
 			break;
@@ -167,8 +181,8 @@ int main(int argc, char *argv[])
 	args.selfname = selfname(argv[0]);
 	args.bootstrap[0] = '\0';
 	if (argc > 1) {
-		strncpy(args.bootstrap, argv[1],
-			ARRAY_SIZE(args.bootstrap) - 1);
+		opt_path(args.bootstrap, ARRAY_SIZE(args.bootstrap), argv[1],
+			 "script");
 		parse_args(&args, argc, argv);
 	}
 	trace_init();
