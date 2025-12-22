@@ -238,7 +238,7 @@ do --parse hosts
 			end
 
 			for name in names:gmatch("%S+") do
-				name = name:lower()
+				local name = name:lower()
 				local rr = answers[name][typename]
 				rr[#rr + 1] = ip
 			end

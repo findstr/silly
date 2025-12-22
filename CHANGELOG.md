@@ -14,11 +14,12 @@
 ### Changed
 
 #### Breaking changes
+- **Lua runtime upgraded to 5.5.0**.
 - Modules reorganized into namespaces (`silly.net`, `silly.store`, `silly.security`, `silly.internal`).
 - TCP, UDP, and TLS networking APIs refactored to object-oriented, coroutine-friendly interfaces.
-  - UDP receive model changed from callbacks to pull-based APIs (e.g. `udp:recvfrom()`).
+- UDP receive model changed from callbacks to pull-based APIs (e.g. `udp:recvfrom()`).
 - HTTP/1.x and HTTP/2 APIs redesigned for protocol correctness.
-  - `tcp.read` / `tls.read` now return `nil, err` on error and `"" , err` on EOF.
+- `tcp.read` / `tls.read` now return `nil, err` on error and `"" , err` on EOF.
 - Legacy `cluster.rpc` and `cluster.msg` APIs removed.
 - Internal entry point `silly.start()` made private as `silly._start`.
 

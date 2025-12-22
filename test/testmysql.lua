@@ -415,7 +415,7 @@ do
 		0x05,0x68,0x65,0x6C,0x6C,0x6F,          -- "hello"
 		0x01                                    -- 1
 	)
-	local stmt = mysqlc.compose_stmt_execute(1, #params, 0, table.unpack(params))
+	local stmt = mysqlc.compose_stmt_execute(1, 5, 0, table.unpack(params, 1, 5))
 	testaux.asserteq(stmt, expected, "Test 7: compose_stmt_execute")
 end
 

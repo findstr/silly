@@ -16,6 +16,7 @@ static const char *load_config = "\
 	local config = {}\
 	local function eval(parent, tbl)\
 		for k, v in pairs(tbl) do\
+			local k = k \
 			if #parent > 0 then\
 				k = parent .. '.' .. tostring(k)\
 			end\

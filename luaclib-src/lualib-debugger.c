@@ -28,7 +28,7 @@ static void hookf(lua_State *L, lua_Debug *ar)
 				L, ar->currentline); /* push current line */
 		else
 			lua_pushnil(L);
-		lua_assert(lua_getinfo(L, "lS", ar));
+		lua_getinfo(L, "lS", ar);
 		lua_call(L, 2, 1);
 		if (!lua_isnil(L, -1)) {
 			lua_pop(L, 1);

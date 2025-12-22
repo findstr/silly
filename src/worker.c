@@ -89,9 +89,6 @@ void worker_dispatch()
 	msg = queue_pop(W->queue);
 	atomic_fetch_add_explicit(&W->process_id, 1, memory_order_relaxed);
 	if (msg == NULL) {
-#ifdef LUA_GC_STEP
-		lua_gc(W->L, LUA_GCSTEP, LUA_GC_STEP);
-#endif
 		return;
 	}
 	do {
@@ -250,20 +247,15 @@ void worker_start(const struct boot_args *config)
 	int err;
 	int dir_len;
 	int lib_len;
-	lua_State *L = lua_newstate(lua_alloc, NULL);
+	lua_State *L = lua_newstate(lua_alloc, NULL, luaL_makeseed(NULL));
 	luaL_openlibs(L);
 	W->argc = config->argc;
 	W->argv = config->argv;
 	W->L = L;
 	W->running = L;
-#if LUA_GC_MODE == LUA_GC_INC
-	lua_gc(L, LUA_GCINC, 0, 0, 0);
-#else
-	lua_gc(L, LUA_GCGEN, 0, 0);
-#endif
+	lua_gc(L, LUA_GCGEN);
 	//set load path
-	lib_len =
-		max(sizeof("lualib/?.lua"), sizeof("luaclib/?" LUA_LIB_SUFFIX));
+	lib_len = max(sizeof("lualib/?.lua"), sizeof("luaclib/?" LUA_LIB_SUFFIX));
 	dir_len = config->selfname - config->selfpath;
 	char buf[dir_len + lib_len];
 	setlibpath(L, "path", config->lualib_path);

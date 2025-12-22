@@ -35,14 +35,6 @@
 
 #endif
 
-#define LUA_GC_INC 0
-#define LUA_GC_GEN 1
-#define LUA_GC_MODE LUA_GC_GEN
-
-#if LUA_GC_MODE == LUA_GC_INC
-#define LUA_GC_STEP (100) //KiB
-#endif
-
 //(1 << 16) = 65536
 #ifndef SOCKET_POOL_EXP
 #define SOCKET_POOL_EXP (16)
