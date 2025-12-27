@@ -95,13 +95,13 @@ SRC = $(COMMON_SRC) $(PLAT_SRC)
 OBJS = $(patsubst %.c,%.o,$(SRC))
 
 LIB_SRC = lsilly.c \
-	lualib-env.c \
-	lualib-time.c \
-	lualib-metrics.c \
-	lualib-logger.c \
-	lualib-profiler.c \
-	lualib-tls.c \
-	lualib-debugger.c \
+	lenv.c \
+	ltime.c \
+	lmetrics.c \
+	llogger.c \
+	lprofiler.c \
+	ltls.c \
+	ldebugger.c \
 	ltrace.c\
 	lcluster.c \
 	lencoding.c \
@@ -138,7 +138,7 @@ $(LUACLIB_PATH)/zproto.$(SO): $(LUACLIB_SRC_PATH)/zproto/lzproto.c $(LUACLIB_SRC
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/pb.$(SO): $(LUACLIB_SRC_PATH)/pb.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -DPB_IMPLEMENTATION -o $@ $^ $(SHARED)
-$(LUACLIB_PATH)/test.$(SO): $(LUACLIB_SRC_PATH)/lualib-test.c | $(LUACLIB_PATH)
+$(LUACLIB_PATH)/test.$(SO): $(LUACLIB_SRC_PATH)/ltest.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 
 .depend:
