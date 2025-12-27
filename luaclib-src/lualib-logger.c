@@ -81,10 +81,12 @@ static void log_buffer_addvalue(struct log_buffer *b, lua_State *L, int arg)
 {
 	size_t len;
 	int top = lua_gettop(L);
-	const char *s = lua_tolstring(L, arg, &len);
+	const char *s = luaL_tolstring(L, arg, &len);
+	log_buffer_addchar(b, '"');
 	char *ptr = log_buffer_prepbuffsize(b, len);
 	memcpy(ptr, s, len);
 	log_buffer_addsize(b, len);
+	log_buffer_addchar(b, '"');
 	if (top != lua_gettop(L)) {
 		lua_settop(L, top);
 	}
@@ -125,6 +127,7 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 			     int type, int deep)
 {
 	size_t sz;
+	int first;
 	const char *str;
 	if (unlikely(deep > LOG_TABLE_DEEP)) {
 		return;
@@ -157,9 +160,20 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 		log_buffer_addbool(b, L, stk);
 		break;
 	case LUA_TTABLE:
+		first = 1;
 		log_buffer_addchar(b, '{');
+		if (deep == LOG_TABLE_DEEP) {
+			log_buffer_append(b, "...", 3);
+			log_buffer_addchar(b, '}');
+			break;
+		}
 		lua_pushnil(L);
 		while (lua_next(L, stk) != 0) {
+			if (first) {
+				first = 0;
+			} else {
+				log_buffer_addchar(b, ',');
+			}
 			int key_stk = lua_absindex(L, -2);
 			int key_type = lua_type(L, key_stk);
 			int val_stk = lua_absindex(L, -1);
@@ -179,7 +193,6 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 			} else {
 				log_field(L, b, val_stk, val_type, deep + 1);
 			}
-			log_buffer_addchar(b, ',');
 			lua_pop(L, 1);
 		}
 		log_buffer_addchar(b, '}');
