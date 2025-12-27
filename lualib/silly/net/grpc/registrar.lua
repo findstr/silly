@@ -43,8 +43,8 @@ local function stream_close(s)
 end
 
 ---@class silly.net.grpc.server.cstream
----@field h2stream silly.net.http.h2.stream
----@field input_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package input_type string
 ---@field status integer?
 ---@field message string?
 local cs = {
@@ -54,8 +54,8 @@ local cs = {
 local cs_mt= { __index = cs }
 
 ---@class silly.net.grpc.server.sstream
----@field h2stream silly.net.http.h2.stream
----@field output_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package output_type string
 ---@field status integer?
 ---@field message string?
 local ss = {
@@ -65,9 +65,9 @@ local ss = {
 local ss_mt= { __index = ss }
 
 ---@class silly.net.grpc.server.bstream
----@field h2stream silly.net.http.h2.stream
----@field input_type string
----@field output_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package input_type string
+---@field package output_type string
 ---@field status integer?
 ---@field message string?
 local bs = {
@@ -246,7 +246,7 @@ local function wrap(fullname, method, fn)
 end
 
 ---@class silly.net.grpc.registrar
----@field handlers table<string, function>
+---@field package handlers table<string, function>
 local M = {}
 
 

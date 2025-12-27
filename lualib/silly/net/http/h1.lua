@@ -15,8 +15,8 @@ local M = {}
 
 --- @class silly.net.http.h1.stream
 --- connection
---- @field conn silly.net.tcp.conn|silly.net.tls.conn
 --- @field remoteaddr string
+--- @field conn silly.net.tcp.conn|silly.net.tls.conn
 --- protocol
 --- @field version string
 --- @field method string
@@ -25,26 +25,26 @@ local M = {}
 --- read fields
 --- @field header table<string, string>
 --- @field trailer table<string, string>
---- @field readexpect integer|string
---- @field recvbuf silly.adt.buffer
---- @field recvbytes integer
+--- @field package readexpect integer|string
+--- @field package recvbuf silly.adt.buffer
+--- @field package recvbytes integer
 --- write fields
---- @field sendbuf string[]
---- @field sendsize integer
---- @field writeheader table<string, string>?
---- @field writeexpect integer|string
---- @field writebytes integer
---- @field writeclosed boolean
+--- @field package sendbuf string[]
+--- @field package sendsize integer
+--- @field package writeheader table<string, string>?
+--- @field package writeexpect integer|string
+--- @field package writebytes integer
+--- @field package writeclosed boolean
 --- private fields
---- @field allowbody boolean
---- @field eof boolean
---- @field err string?
+--- @field package allowbody boolean
+--- @field package eof boolean
+--- @field package err string?
 
 --- @class silly.net.http.h1.stream.client : silly.net.http.h1.stream
 --- @field scheme string
 --- @field status integer?
---- @field hasresponse boolean
---- @field release fun(conn: silly.net.tcp.conn|silly.net.tls.conn, broken: boolean)?
+--- @field package hasresponse boolean
+--- @field package release fun(conn: silly.net.tcp.conn|silly.net.tls.conn, broken: boolean)?
 local h1c = {}
 
 --- @class silly.net.http.h1.stream.server : silly.net.http.h1.stream
@@ -637,8 +637,6 @@ function h1c.flush(s)
 	flushwrite(s)
 end
 
-h1c.remoteaddr = remoteaddr
-
 ---@param s silly.net.http.h1.stream.client
 function h1c.close(s)
 	local conn = s.conn
@@ -705,7 +703,6 @@ end
 
 h1s.read = read
 h1s.readall = readall
-h1s.remoteaddr = remoteaddr
 
 ---@param s silly.net.http.h1.stream.server
 function h1s.write(s, data)

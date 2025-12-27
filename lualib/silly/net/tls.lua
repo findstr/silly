@@ -37,20 +37,20 @@ local M = {}
 ---@class silly.net.tls.conn
 ---@field fd integer?
 ---@field remoteaddr string
----@field co thread?
----@field err string?
----@field alpn string?
----@field ssl any
----@field buflimit integer?
----@field delim string|integer|table|nil
----@field readpause boolean
+---@field package co thread?
+---@field package err string?
+---@field package alpn string?
+---@field package ssl any
+---@field package buflimit integer?
+---@field package delim string|integer|table|nil
+---@field package readpause boolean
 local conn = {}
 
 ---@class silly.net.tls.listener
 ---@field fd integer
----@field accept async fun(s:silly.net.tls.conn)
----@field ctx any
----@field conf silly.net.tls.conf
+---@field package accept async fun(s:silly.net.tls.conn)
+---@field package ctx any
+---@field package conf silly.net.tls.conf
 local listener = {}
 
 ---@type table<integer, silly.net.tls.conn>

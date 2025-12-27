@@ -126,12 +126,12 @@ local function write_frame(conn, fin, op, mask, dat)
 end
 
 ---@class silly.net.websocket.socket
----@field conn silly.net.tcp.conn|silly.net.tls.conn
----@field stream silly.net.http.h1.stream.client|silly.net.http.h1.stream.client
----@field rmask integer
----@field wmask integer
----@field stashtype string|nil
----@field stashbuf string[]|nil
+---@field package conn silly.net.tcp.conn|silly.net.tls.conn
+---@field package stream silly.net.http.h1.stream.client|silly.net.http.h1.stream.client
+---@field package rmask integer
+---@field package wmask integer
+---@field package stashtype string|nil
+---@field package stashbuf string[]|nil
 local s = {}
 
 ---@param sock silly.net.websocket.socket

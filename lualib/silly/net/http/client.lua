@@ -28,11 +28,11 @@ local lower = string.lower
 ---@field client silly.net.http.client
 
 ---@class silly.net.http.client
----@field max_idle_per_host integer
----@field idle_timeout integer
----@field alpnprotos silly.net.tls.alpn_proto[]
----@field h1pool table<string, silly.net.http.client.pool.h1[]>
----@field h2pool table<string, silly.net.http.client.pool.h2[]>
+---@field package max_idle_per_host integer
+---@field package idle_timeout integer
+---@field package alpnprotos silly.net.tls.alpn_proto[]
+---@field package h1pool table<string, silly.net.http.client.pool.h1[]>
+---@field package h2pool table<string, silly.net.http.client.pool.h2[]>
 local M = {}
 local mt = {__index = M}
 

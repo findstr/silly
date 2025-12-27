@@ -24,17 +24,17 @@ local M = {}
 ---@class silly.net.tcp.conn
 ---@field fd integer?
 ---@field remoteaddr string
----@field co thread?
----@field err string?
----@field buf silly.adt.buffer
----@field buflimit integer?
----@field delim string|integer|nil
----@field readpause boolean
+---@field package co thread?
+---@field package err string?
+---@field package buf silly.adt.buffer
+---@field package buflimit integer?
+---@field package delim string|integer|nil
+---@field package readpause boolean
 local conn = {}
 
 ---@class silly.net.tcp.listener
 ---@field fd integer
----@field accept async fun(s:silly.net.tcp.conn)
+---@field package accept async fun(s:silly.net.tcp.conn)
 local listener = {}
 
 --when luaVM destroyed, all process will be exit

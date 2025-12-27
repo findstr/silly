@@ -140,36 +140,36 @@ local forbidden_headers = {
 --- connection
 --- @field scheme string
 --- @field conn silly.net.tcp.conn|silly.net.tls.conn
---- @field writeco thread?
+--- @field package writeco thread?
 --- streams
---- @field streamidx integer
---- @field laststreamid integer
---- @field streamcount integer
---- @field streams table<integer, silly.net.http.h2.stream>
---- @field streammax integer
+--- @field package streamidx integer
+--- @field package laststreamid integer
+--- @field package streamcount integer
+--- @field package streams table<integer, silly.net.http.h2.stream>
+--- @field package streammax integer
 --- send control
---- @field sendframemaxsize integer
---- @field sendbuf string[]
---- @field sendwindow integer
---- @field writewaitq silly.adt.queue
---- @field initialwindowsize integer
+--- @field package sendframemaxsize integer
+--- @field package sendbuf string[]
+--- @field package sendwindow integer
+--- @field package writewaitq silly.adt.queue
+--- @field package initialwindowsize integer
 --- recv control
---- @field recvframemaxsize integer
---- @field recvwindebt integer
+--- @field package recvframemaxsize integer
+--- @field package recvwindebt integer
 --- hpack
---- @field sendhpack silly.http2.hpack
---- @field recvhpack silly.http2.hpack
+--- @field package sendhpack silly.http2.hpack
+--- @field package recvhpack silly.http2.hpack
 --- misc
---- @field closingq silly.adt.queue
---- @field enablepush boolean
---- @field goaway boolean
+--- @field package closingq silly.adt.queue
+--- @field package enablepush boolean
+--- @field package goaway boolean
 local C = {}
 local channel_mt = {
 	__index = C,
 }
 
 --- @class silly.net.http.h2.stream
---- @field channel silly.net.http.h2.channel
+--- @field package channel silly.net.http.h2.channel
 --- @field remoteaddr string
 --- protocol
 --- @field scheme string
@@ -181,29 +181,29 @@ local channel_mt = {
 --- @field status integer?
 --- @field query table<string, string>?
 --- stream
---- @field id integer
---- @field active boolean
---- @field closed boolean
---- @field errstr string?
---- @field localstate silly.net.http.h2.state
---- @field remotestate silly.net.http.h2.state
+--- @field package id integer
+--- @field package active boolean
+--- @field package closed boolean
+--- @field package errstr string?
+--- @field package localstate silly.net.http.h2.state
+--- @field package remotestate silly.net.http.h2.state
 --- read
---- @field readco thread?
---- @field readtype silly.net.http.h2.state?
---- @field readneed integer
+--- @field package readco thread?
+--- @field package readtype silly.net.http.h2.state?
+--- @field package readneed integer
 --- recv(passive read)
---- @field recvbuf silly.adt.buffer
---- @field recvwindebt integer
---- @field recvbytes integer
---- @field recvexpect integer?
+--- @field package recvbuf silly.adt.buffer
+--- @field package recvwindebt integer
+--- @field package recvbytes integer
+--- @field package recvexpect integer?
 --- write
---- @field writeco thread?
---- @field writedat string?
---- @field writeoffset integer
---- @field writelength integer
---- @field writeeoffset boolean
---- @field writeheader table?
---- @field sendwindow integer
+--- @field package writeco thread?
+--- @field package writedat string?
+--- @field package writeoffset integer
+--- @field package writelength integer
+--- @field package writeeoffset boolean
+--- @field package writeheader table?
+--- @field package sendwindow integer
 local S = {}
 local stream_mt = {
 	__index = S,
@@ -211,12 +211,11 @@ local stream_mt = {
 }
 
 --- @class silly.net.http.h2.channel.client: silly.net.http.h2.channel
---- @field dispatchco thread?
---- @field scheme string
---- @field openwaitq silly.adt.queue
+--- @field package dispatchco thread?
+--- @field package openwaitq silly.adt.queue
 
 --- @class silly.net.http.h2.channel.server: silly.net.http.h2.channel
---- @field handler fun(s:silly.net.http.h2.stream): any
+--- @field package handler fun(s:silly.net.http.h2.stream): any
 
 ---@param scheme string
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn

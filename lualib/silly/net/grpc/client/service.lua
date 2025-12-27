@@ -24,9 +24,9 @@ local function timer_stream(session)
 end
 
 ---@class silly.net.grpc.client.service.meta
----@field _package string
----@field _name string
----@field _methods table<string, pb.method>
+---@field package _package string
+---@field package _name string
+---@field package _methods table<string, pb.method>
 ---@field [string] fun(self:silly.net.grpc.client.service, req:table, timeout:integer?):table?, string? error
 ---@field [string] fun(self:silly.net.grpc.client.service, req:table, timeout:integer?):silly.net.grpc.client.sstream?, string? error
 ---@field [string] fun(self:silly.net.grpc.client.service):silly.net.grpc.client.cstream?, string? error
@@ -94,9 +94,9 @@ local function stream_close(s)
 end
 
 ---@class silly.net.grpc.client.cstream
----@field h2stream silly.net.http.h2.stream
----@field input_type string
----@field output_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package input_type string
+---@field package output_type string
 ---@field status integer?
 ---@field message string?
 local cs = {
@@ -108,8 +108,8 @@ local cs = {
 local cs_mt= { __index = cs, __close = stream_close }
 
 ---@class silly.net.grpc.client.sstream
----@field h2stream silly.net.http.h2.stream
----@field output_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package output_type string
 ---@field status integer?
 ---@field message string?
 local ss = {
@@ -119,9 +119,9 @@ local ss = {
 local ss_mt= { __index = ss, __close = stream_close }
 
 ---@class silly.net.grpc.client.bstream
----@field h2stream silly.net.http.h2.stream
----@field input_type string
----@field output_type string
+---@field package h2stream silly.net.http.h2.stream
+---@field package input_type string
+---@field package output_type string
 ---@field status integer?
 ---@field message string?
 local bs = {

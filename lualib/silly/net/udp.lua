@@ -21,10 +21,10 @@ local udp = {}
 
 ---@class silly.net.udp.conn
 ---@field fd integer?
----@field co thread?
----@field err string?
----@field stash_bytes integer
----@field stash_packets silly.adt.queue<silly.net.udp.packet>
+---@field package co thread?
+---@field package err string?
+---@field package stash_bytes integer
+---@field package stash_packets silly.adt.queue<silly.net.udp.packet>
 local conn = {}
 local conn_mt = {
 	__index = conn,
