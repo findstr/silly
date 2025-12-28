@@ -1,5 +1,7 @@
 ## Unreleased
 
+## v0.7.0 (Dec 28, 2025)
+
 ### Added
 - New peer-based cluster implementation (`cluster.lua`) as an alternative to legacy cluster APIs.
 - Interactive Lua REPL when running without a script or from stdin.
@@ -34,10 +36,11 @@
 - Redis client API updated (`redis.new` replacing `redis:connect`, `redis.call` added).
 - Internal error handling standardized to use string-based error descriptions instead of numeric errno.
 - Tracing improved with more robust trace ID generation.
-- Logging improved (format specifiers fixed, better consistency).
+- Logging improved (fixed format specifiers, better consistency, deterministic table truncation using `{...}`, and fallback of unsupported value types to string).
 - Atomic operations migrated from GCC built-ins to C11 atomics.
 - Platform-specific code isolated into `unix/` and `win/` directories.
 - Internal source layout and naming normalized (drop `silly_` prefix, rename `silly-src` → `src`, `lualib-src` → `luaclib-src`).
+- Crypto reimplemented on top of OpenSSL.
 
 ### Fixed
 - HTTP/2 trailer headers arriving before response body.
