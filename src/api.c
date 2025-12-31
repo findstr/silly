@@ -220,8 +220,8 @@ SILLY_API int silly_cpu_count(void)
 }
 SILLY_API void silly_exit(int status)
 {
+	engine_shutdown(status);
 	worker_reset();
-	return engine_shutdown(status);
 }
 SILLY_API const struct silly_message_id *silly_messages()
 {

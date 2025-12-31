@@ -7,7 +7,7 @@
 
 int socket_init();
 void socket_exit();
-void socket_terminate();
+void socket_stop();
 
 silly_socket_id_t socket_tcp_listen(const char *ip, const char *port,
 				    int backlog);

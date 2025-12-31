@@ -170,6 +170,7 @@ void worker_callback_table(lua_State *L)
 
 void worker_reset()
 {
+	queue_clear(W->queue);
 	lua_newtable(W->L);
 	lua_pushvalue(W->L, -1);
 	lua_replace(W->L, STK_CALLBACK_TABLE);

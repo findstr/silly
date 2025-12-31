@@ -6,6 +6,7 @@
 
 void timer_init();
 void timer_exit();
+void timer_stop();
 int timer_update();
 uint64_t timer_now();
 uint64_t timer_monotonic();

@@ -6,6 +6,7 @@ struct queue;
 
 struct queue *queue_create();
 void queue_free(struct queue *q);
+void queue_clear(struct queue *q);
 
 //when return from silly_push, should not be free the msg
 int queue_push(struct queue *q, struct silly_message *msg);

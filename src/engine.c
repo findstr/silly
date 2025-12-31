@@ -22,10 +22,12 @@
 struct {
 	volatile int running;
 	int exitstatus;
-	int workerstatus; /* 0:sleep 1:running -1:dead */
+	int workerstatus; /* 0:sleep 1:running */
 	const struct boot_args *conf;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
+	pthread_t sockettid;
+	pthread_t timertid;
 } R;
 
 static void *thread_timer(void *arg)
@@ -35,7 +37,7 @@ static void *thread_timer(void *arg)
 	for (;;) {
 		struct timespec req;
 		int sleep = timer_update();
-		if (R.workerstatus == -1)
+		if (sleep < 0)
 			break;
 		req.tv_sec = sleep / 1000;
 		req.tv_nsec = (sleep % 1000) * 1000000;
@@ -44,7 +46,6 @@ static void *thread_timer(void *arg)
 			pthread_cond_signal(&R.cond);
 	}
 	log_info("[timer] stop\n");
-	socket_terminate();
 	return NULL;
 }
 
@@ -71,17 +72,16 @@ static void *thread_worker(void *arg)
 	worker_start(c);
 	pthread_mutex_lock(&R.mutex);
 	while (R.running) {
-		worker_dispatch();
 		//allow spurious wakeup, it's harmless
 		R.workerstatus = 0;
 		if (worker_backlog() == 0) //double check
 			pthread_cond_wait(&R.cond, &R.mutex);
 		R.workerstatus = 1;
+		worker_dispatch();
 		log_flush();
 	}
 	log_info("[worker] stop\n");
 	pthread_mutex_unlock(&R.mutex);
-	R.workerstatus = -1;
 	return NULL;
 }
 
@@ -92,7 +92,7 @@ static void thread_monitor()
 	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
 	log_info("[monitor] start\n");
 	for (;;) {
-		if (R.workerstatus == -1)
+		if (R.running == 0)
 			break;
 		nanosleep(&req, NULL);
 		monitor_check();
@@ -125,12 +125,11 @@ static void thread_create(pthread_t *tid, void *(*start)(void *), void *arg,
 
 int engine_run(const struct boot_args *config)
 {
-	int i;
 	int err;
-	pthread_t pid[3];
 	R.running = 1;
 	R.conf = config;
 	R.exitstatus = 0;
+	pthread_t workertid;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
 	sig_init();
@@ -146,13 +145,12 @@ int engine_run(const struct boot_args *config)
 	log_info("cpu affinity setting, timer:%d, socket:%d, worker:%d\n",
 		 config->timeraffinity, config->socketaffinity,
 		 config->workeraffinity);
-	thread_create(&pid[0], thread_socket, NULL, config->socketaffinity);
-	thread_create(&pid[1], thread_timer, NULL, config->timeraffinity);
-	thread_create(&pid[2], thread_worker, (void *)config,
+	thread_create(&R.sockettid, thread_socket, NULL, config->socketaffinity);
+	thread_create(&R.timertid, thread_timer, NULL, config->timeraffinity);
+	thread_create(&workertid, thread_worker, (void *)config,
 		      config->workeraffinity);
 	thread_monitor();
-	for (i = 0; i < 3; i++)
-		pthread_join(pid[i], NULL);
+	pthread_join(workertid, NULL);
 	log_flush();
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
@@ -166,4 +164,8 @@ void engine_shutdown(int status)
 {
 	R.running = 0;
 	R.exitstatus = status;
+	timer_stop();
+	socket_stop();
+	pthread_join(R.timertid, NULL);
+	pthread_join(R.sockettid, NULL);
 }

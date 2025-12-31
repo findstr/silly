@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Changed
+- Refactor timer to use unified command buffer instead of separate after/cancel buffers.
+- Refactor shutdown sequence with explicit thread termination via OP_EXIT commands.
+
 ## v0.7.0 (Dec 28, 2025)
 
 ### Added

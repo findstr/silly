@@ -1601,7 +1601,7 @@ static int op_udp_send(struct socket_manager *ss, struct op_udpsend *op,
 	return 0;
 }
 
-void socket_terminate()
+void socket_stop()
 {
 	struct op_exit op = { 0 };
 	op.hdr.op = OP_EXIT;

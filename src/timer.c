@@ -21,6 +21,12 @@
 #include "mem.h"
 #include "log.h"
 
+enum OP {
+	OP_AFTER = 0,
+	OP_CANCEL = 1,
+	OP_EXIT = 2,
+};
+
 enum NODE_STATE {
 	NODE_ADDING = 0,
 	NODE_TICKING = 1,
@@ -70,6 +76,14 @@ struct cmdcancel {
 	uint32_t version;
 };
 
+struct cmdpkt {
+	enum OP op;
+	union {
+		struct cmdafter after;
+		struct cmdcancel cancel;
+	};
+};
+
 #define PAGE_SIZE (4096 / sizeof(struct node))
 
 struct page {
@@ -102,8 +116,7 @@ struct timer {
 	struct slot_root root;
 	struct slot_level level[4];
 	struct silly_timerstat stat;
-	struct flipbuf cmdafter;
-	struct flipbuf cmdcancel;
+	struct flipbuf cmdbuf;
 };
 
 struct message_expire { //timer expire
@@ -288,7 +301,7 @@ uint64_t timer_after(uint32_t timeout)
 	struct node *n;
 	uint64_t session;
 	uint64_t deadline;
-	struct cmdafter cmd;
+	struct cmdpkt cmd;
 	atomic_add_relax(T->stat.scheduled, 1);
 	atomic_add_relax(T->stat.pending, 1);
 	n = pool_newnode(&T->pool);
@@ -297,8 +310,9 @@ uint64_t timer_after(uint32_t timeout)
 	deadline = atomic_load_relax(T->ticktime) + timeout + TIMER_RESOLUTION - 1;
 	n->expire = deadline / TIMER_RESOLUTION;
 	session = session_of(n);
-	cmd.n = n;
-	flipbuf_write(&T->cmdafter, (const uint8_t *)&cmd, sizeof(cmd));
+	cmd.op = OP_AFTER;
+	cmd.after.n = n;
+	flipbuf_write(&T->cmdbuf, (const uint8_t *)&cmd, sizeof(cmd));
 	return session;
 }
 
@@ -306,7 +320,7 @@ int timer_cancel(uint64_t session)
 {
 	struct node *n;
 	uint32_t nver;
-	struct cmdcancel cmd;
+	struct cmdpkt cmd;
 	uint32_t version = version_of(session);
 	uint32_t cookie = cookie_of(session);
 	n = pool_locate(&T->pool, cookie);
@@ -317,9 +331,10 @@ int timer_cancel(uint64_t session)
 			version, cookie);
 		return 0;
 	}
-	cmd.n = n;
-	cmd.version = version;
-	flipbuf_write(&T->cmdcancel, (const uint8_t *)&cmd, sizeof(cmd));
+	cmd.op = OP_CANCEL;
+	cmd.cancel.n = n;
+	cmd.cancel.version = version;
+	flipbuf_write(&T->cmdbuf, (const uint8_t *)&cmd, sizeof(cmd));
 	return 1;
 }
 
@@ -434,50 +449,52 @@ static void update_timer(struct timer *timer, struct node ***tail)
 	return;
 }
 
-static inline void process_cancel(struct node ***tail)
+static inline int process_cancel(struct cmdcancel *cmd, struct node ***tail)
 {
-	int count = 0;
-	struct cmdcancel *ptr, *end;
-	struct array *arr = flipbuf_flip(&T->cmdcancel);
-	assert(arr->size % sizeof(struct cmdcancel) == 0);
-	ptr = (struct cmdcancel *)arr->buf;
-	end = (struct cmdcancel *)(arr->buf + arr->size);
-	for (; ptr < end; ptr++) {
-		struct node *n = ptr->n;
-		if (atomic_load_relax(n->version) != ptr->version)
-			continue;
-		int state = atomic_load_relax(n->state);
-		if (state == NODE_ADDING) {
-			atomic_store_relax(n->state, NODE_CANCLED);
-		} else {
-			assert(state == NODE_TICKING);
-			unlinklist(n);
-			node_free(tail, n);
-		}
-		count++;
-	}
-	atomic_sub_relax(T->stat.pending, count);
-	atomic_add_relax(T->stat.canceled, count);
+	int state;
+	struct node *n = cmd->n;
+	if (atomic_load_relax(n->version) != cmd->version)
+		return 0;
+	state = atomic_load_relax(n->state);
+	assert(state == NODE_TICKING);
+	unlinklist(n);
+	node_free(tail, n);
+	return 1;
 }
 
-static inline void process_after(struct node ***tail)
+static inline void process_after(struct cmdafter *cmd)
 {
-	struct cmdafter *ptr, *end;
-	struct array *arr = flipbuf_flip(&T->cmdafter);
-	assert(arr->size % sizeof(struct cmdafter) == 0);
-	ptr = (struct cmdafter *)arr->buf;
-	end = (struct cmdafter *)(arr->buf + arr->size);
+	struct node *n = cmd->n;
+	int state = atomic_load_relax(n->state);
+	assert(state == NODE_ADDING);
+	atomic_store_relax(n->state, NODE_TICKING);
+	add_node(T, n);
+}
+
+static inline int process_cmd(struct node ***tail)
+{
+	int cancel_count = 0;
+	struct cmdpkt *ptr, *end;
+	struct array *arr = flipbuf_flip(&T->cmdbuf);
+	assert(arr->size % sizeof(struct cmdpkt) == 0);
+	ptr = (struct cmdpkt *)arr->buf;
+	end = (struct cmdpkt *)(arr->buf + arr->size);
 	for (; ptr < end; ptr++) {
-		struct node *n = ptr->n;
-		int state = atomic_load_relax(n->state);
-		if (state == NODE_ADDING) {
-			atomic_store_relax(n->state, NODE_TICKING);
-			add_node(T, ptr->n);
-		} else {
-			assert(state == NODE_CANCLED);
-			node_free(tail, n);
+		switch (ptr->op) {
+		case OP_AFTER:
+			process_after(&ptr->after);
+			break;
+		case OP_CANCEL:
+			cancel_count += process_cancel(&ptr->cancel, tail);
+			break;
+		case OP_EXIT:
+			return -1;
+			break;
 		}
 	}
+	atomic_sub_relax(T->stat.pending, cancel_count);
+	atomic_add_relax(T->stat.canceled, cancel_count);
+	return 0;
 }
 
 int timer_update()
@@ -508,8 +525,9 @@ int timer_update()
 	atomic_add_relax(T->monotonic, tickstep);
 	head = NULL;
 	tail = &head;
-	process_cancel(&tail);
-	process_after(&tail);
+	if (process_cmd(&tail) < 0) {
+		return -1;
+	}
 	for (i = 0; i < ticks; i++)
 		update_timer(T, &tail);
 	*tail = NULL;
@@ -518,6 +536,14 @@ int timer_update()
 	}
 	assert((uint32_t)atomic_load_relax(T->ticktime) == T->jiffies * TIMER_RESOLUTION);
 	return TIMER_RESOLUTION - (delta % TIMER_RESOLUTION);
+}
+
+void timer_stop()
+{
+	struct cmdpkt cmd;
+	cmd.op = OP_EXIT;
+	flipbuf_write(&T->cmdbuf, (const uint8_t *)&cmd, sizeof(cmd));
+	return;
 }
 
 void timer_init()
@@ -535,16 +561,14 @@ void timer_init()
 	atomic_init(&T->stat.fired, 0);
 	atomic_init(&T->stat.canceled, 0);
 	pool_init(&T->pool);
-	flipbuf_init(&T->cmdafter);
-	flipbuf_init(&T->cmdcancel);
+	flipbuf_init(&T->cmdbuf);
 	return;
 }
 
 void timer_exit()
 {
 	pool_free(&T->pool);
-	flipbuf_destroy(&T->cmdafter);
-	flipbuf_destroy(&T->cmdcancel);
+	flipbuf_destroy(&T->cmdbuf);
 	mem_free(T);
 	return;
 }

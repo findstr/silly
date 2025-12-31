@@ -23,27 +23,35 @@ static inline void unlock(struct queue *q)
 	return;
 }
 
-struct queue *queue_create()
+static inline void queue_init(struct queue *q)
 {
-	struct queue *q = (struct queue *)mem_alloc(sizeof(*q));
 	q->size = 0;
 	q->head = NULL;
 	q->tail = &q->head;
+}
+
+struct queue *queue_create()
+{
+	struct queue *q = (struct queue *)mem_alloc(sizeof(*q));
 	spinlock_init(&q->lock);
+	queue_init(q);
 	return q;
 }
 
-void queue_free(struct queue *q)
+void queue_clear(struct queue *q)
 {
 	struct silly_message *next, *tmp;
-	lock(q);
-	next = q->head;
+	next = queue_pop(q);
 	while (next) {
 		tmp = next;
 		next = next->next;
 		tmp->free(tmp);
 	}
-	unlock(q);
+}
+
+void queue_free(struct queue *q)
+{
+	queue_clear(q);
 	spinlock_destroy(&q->lock);
 	mem_free(q);
 	return;
@@ -73,9 +81,7 @@ struct silly_message *queue_pop(struct queue *q)
 		return NULL;
 	}
 	msg = q->head;
-	q->head = NULL;
-	q->tail = &q->head;
-	q->size = 0;
+	queue_init(q);
 	unlock(q);
 	return msg;
 }
