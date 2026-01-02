@@ -132,7 +132,6 @@ static struct page *pool_newpage(struct pool *pool)
 	struct page *p;
 	struct node *n;
 	uint32_t page_id = pool->count++;
-	assert(pool->free == NULL);
 	if (pool->count >= pool->cap) {
 		size_t newsz;
 		pool->cap = 2 * pool->count;
@@ -179,29 +178,7 @@ static inline struct node *pool_locate(struct pool *pool, uint32_t cookie)
 	uint32_t page_id = cookie / PAGE_SIZE;
 	uint32_t page_offset = cookie % PAGE_SIZE;
 	assert(page_id < pool->count);
-	spinlock_lock(&pool->lock);
 	n = &pool->buf[page_id]->buf[page_offset];
-	spinlock_unlock(&pool->lock);
-	return n;
-}
-
-static inline struct node *pool_newnode(struct pool *pool)
-{
-	struct node *n;
-	spinlock_lock(&pool->lock);
-	if (pool->free == NULL) {
-		struct page *p;
-		p = pool_newpage(pool);
-		p->buf[PAGE_SIZE - 1].next = pool->free;
-		pool->free = &p->buf[0];
-		pool->tail = &p->buf[PAGE_SIZE - 1].next;
-	}
-	n = pool->free;
-	pool->free = n->next;
-	if (pool->free == NULL) {
-		pool->tail = &pool->free;
-	}
-	spinlock_unlock(&pool->lock);
 	return n;
 }
 
@@ -212,6 +189,30 @@ static inline void pool_freelist(struct pool *pool, struct node *head,
 	*pool->tail = head;
 	pool->tail = tail;
 	spinlock_unlock(&pool->lock);
+}
+
+static inline struct node *pool_newnode(struct pool *pool)
+{
+	struct node *n;
+	spinlock_lock(&pool->lock);
+	if (pool->free == NULL) {
+		struct page *p;
+		struct node *head, **tail;
+		spinlock_unlock(&pool->lock);
+		p = pool_newpage(pool);
+		head = &p->buf[0];
+		tail = &p->buf[PAGE_SIZE - 1].next;
+		spinlock_lock(&pool->lock);
+		*pool->tail = head;
+		pool->tail = tail;
+	}
+	n = pool->free;
+	pool->free = n->next;
+	if (pool->free == NULL) {
+		pool->tail = &pool->free;
+	}
+	spinlock_unlock(&pool->lock);
+	return n;
 }
 
 uint64_t timer_now()
