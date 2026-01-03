@@ -296,6 +296,79 @@ testaux.assertneq(fd, nil, "Test 1.1: Connect to server")
 testaux.assertgt(count, 0, "Test 7.2: Should have buffered data")
 ```
 
+### Test Synchronization Patterns
+
+**NEVER use `time.sleep()` for synchronization in tests** - it's unreliable and slows down test execution. Always use `silly.sync.channel` for deterministic synchronization:
+
+#### Pattern 1: Wait for async operation to complete
+```lua
+local channel = require "silly.sync.channel"
+local sync_ch = channel.new()
+
+-- In async handler
+server_handler = function(stream)
+    sync_ch:push("done")  -- Signal completion
+    -- ... handle request
+end
+
+-- In test code
+client:send(data)
+local result = sync_ch:pop()  -- Blocking wait until handler runs
+testaux.asserteq(result, "done", "Test 1.1: Handler should complete")
+```
+
+#### Pattern 2: Verify something should NOT happen
+```lua
+local sync_ch = channel.new()
+local call_count = 0
+
+server_handler = function(stream)
+    call_count = call_count + 1
+    sync_ch:push(call_count)
+end
+
+-- Operation that should NOT trigger handler
+client:close_without_data()
+
+-- Later, trigger handler for real
+client2:send(data)
+local count = sync_ch:pop()  -- Wait for the real call
+
+-- Verify handler was only called once (not for the first operation)
+testaux.asserteq(count, 1, "Test 2.1: Handler called exactly once")
+```
+
+#### Pattern 3: Multiple operations with ordering
+```lua
+local sync_ch = channel.new()
+local results = {}
+
+task.fork(function()
+    -- Operation 1
+    results[1] = do_something()
+    sync_ch:push(1)
+end)
+
+task.fork(function()
+    -- Operation 2 (waits for operation 1)
+    sync_ch:pop()
+    results[2] = do_something_else()
+    sync_ch:push(2)
+end)
+
+-- Wait for both to complete
+sync_ch:pop()
+testaux.asserteq(results[1], expected1, "Test 3.1: Operation 1 result")
+testaux.asserteq(results[2], expected2, "Test 3.2: Operation 2 result")
+```
+
+#### Key principles
+- **Use channel.pop() for blocking waits** - if it hangs, the test timeout will catch the bug
+- **Use counters to verify events didn't happen** - check counts before and after
+- **Never guess timing** - let channel synchronization handle it
+- **If test hangs, it's a real bug** - better than flaky passes with sleep()
+
+
 ## Running Examples
 
 ```bash

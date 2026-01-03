@@ -4,6 +4,9 @@
 #include <zlib.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#ifdef USE_SNAPPY
+#include <snappy-c.h>
+#endif
 
 #include "silly.h"
 
@@ -115,3 +118,63 @@ SILLY_MOD_API int luaopen_silly_compress_gzip(lua_State *L)
 	luaL_newlib(L, tbl);
 	return 1;
 }
+
+#ifdef USE_SNAPPY
+// snappy_compress(data)
+static int lsnappy_compress(lua_State *L)
+{
+	luaL_Buffer buf;
+	size_t isize, osize;
+	snappy_status status;
+	const char *input;
+	char *output;
+	input = luaL_checklstring(L, 1, &isize);
+	osize = snappy_max_compressed_length(isize);
+	output = luaL_buffinitsize(L, &buf, osize);
+	status = snappy_compress(input, isize, output, &osize);
+	if (status != SNAPPY_OK) {
+		lua_pushnil(L);
+		lua_pushfstring(L, "snappy_compress failed: %d", status);
+		return 2;
+	}
+	luaL_pushresultsize(&buf, osize);
+	return 1;
+}
+
+// snappy_decompress(data)
+static int lsnappy_decompress(lua_State *L)
+{
+	luaL_Buffer buf;
+	size_t isize, osize;
+	snappy_status status;
+	const char *input;
+	char *output;
+	input = luaL_checklstring(L, 1, &isize);
+	status = snappy_uncompressed_length(input, isize, &osize);
+	if (status != SNAPPY_OK) {
+		lua_pushnil(L);
+		lua_pushfstring(L, "snappy_uncompressed_length failed: %d", status);
+		return 2;
+	}
+	output = luaL_buffinitsize(L, &buf, osize);
+	status = snappy_uncompress(input, isize, output, &osize);
+	if (status != SNAPPY_OK) {
+		lua_pushnil(L);
+		lua_pushfstring(L, "snappy_uncompress failed: %d", status);
+		return 2;
+	}
+	luaL_pushresultsize(&buf, osize);
+	return 1;
+}
+
+SILLY_MOD_API int luaopen_silly_compress_snappy(lua_State *L)
+{
+	luaL_Reg tbl[] = {
+		{ "compress",   lsnappy_compress   },
+		{ "decompress", lsnappy_decompress },
+		{ NULL,         NULL               },
+	};
+	luaL_newlib(L, tbl);
+	return 1;
+}
+#endif

@@ -2,3 +2,6 @@
 	path = deps/jemalloc
 	url = https://github.com/jemalloc/jemalloc
 	branch = master
+[submodule "deps/snappy"]
+	path = deps/snappy
+	url = https://github.com/google/snappy.git

@@ -8,6 +8,7 @@ SHARED :=
 A := a
 SO := so
 LUA_PLAT :=
+CMAKE_GENERATOR :=
 
 ifeq ($(uname_S),Linux)
 	LDFLAGS += -ldl -lrt -rdynamic
@@ -45,6 +46,7 @@ ifeq ($(findstring _NT, $(uname_S)),_NT)
 	A = lib
 	LIBPREFIX =
 	LUA_PLAT = mingw
+	CMAKE_GENERATOR = -G "MSYS Makefiles"
 ifeq ($(TEST),ON)
 	CFLAGS += -DSILLY_TEST
 endif

@@ -5,6 +5,7 @@ INCLUDE :=
 
 TARGET = silly
 OPENSSL ?= ON
+SNAPPY ?= OFF
 TEST ?= OFF
 MALLOC ?= jemalloc
 SRC_PATH = src
@@ -47,9 +48,10 @@ CFLAGS += -DDISABLE_JEMALLOC
 MALLOC_LIB :=
 endif
 
-#tls disable
+#####openssl
 ifeq ($(OPENSSL), ON)
-OPENSSLFLAG := -DUSE_OPENSSL -lssl -lcrypto
+CFLAGS += -DUSE_OPENSSL
+SHARED += -lssl -lcrypto
 endif
 
 #####zlib
@@ -61,6 +63,30 @@ $(ZLIB_LIB): $(ZLIB_DIR)/Makefile
 
 $(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
 	cd $(ZLIB_DIR) && ./configure
+
+#####snappy
+SNAPPY_DIR=deps/snappy
+ifeq ($(SNAPPY), ON)
+CFLAGS += -DUSE_SNAPPY
+INCLUDE += -I $(SNAPPY_DIR)
+LDFLAGS += -lstdc++
+SNAPPY_BUILD_DIR=$(SNAPPY_DIR)/build
+SNAPPY_LIB=$(SNAPPY_BUILD_DIR)/libsnappy.a
+
+$(SNAPPY_LIB): $(SNAPPY_BUILD_DIR)/Makefile
+	make -C $(SNAPPY_BUILD_DIR)
+
+$(SNAPPY_BUILD_DIR)/Makefile: $(SNAPPY_DIR)/CMakeLists.txt
+	mkdir -p $(SNAPPY_BUILD_DIR) && \
+		cd $(SNAPPY_BUILD_DIR) && \
+		cmake .. $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release \
+			-DSNAPPY_BUILD_TESTS=OFF \
+			-DSNAPPY_BUILD_BENCHMARKS=OFF \
+			-DBUILD_SHARED_LIBS=OFF
+
+$(SNAPPY_DIR)/CMakeLists.txt:
+	git submodule update --init
+endif
 
 #-----------project
 # Platform directory mapping
@@ -126,14 +152,14 @@ all: \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
 
-$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB) $(SNAPPY_LIB)
 	$(LD) -o $@ $^ $(LDFLAGS)
 
 $(LUACLIB_PATH):
 	mkdir $(LUACLIB_PATH)
 
 $(LUACLIB_PATH)/silly.$(SO): $(addprefix $(LUACLIB_SRC_PATH)/, $(LIB_SRC)) | $(LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) $(OPENSSLFLAG) -fvisibility=hidden
+	$(CC) $(CFLAGS) $(INCLUDE) -I$(LUACLIB_SRC_PATH) -o $@ $^ $(SHARED) -fvisibility=hidden
 $(LUACLIB_PATH)/zproto.$(SO): $(LUACLIB_SRC_PATH)/zproto/lzproto.c $(LUACLIB_SRC_PATH)/zproto/zproto.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $^ $(SHARED)
 $(LUACLIB_PATH)/pb.$(SO): $(LUACLIB_SRC_PATH)/pb.c | $(LUACLIB_PATH)
@@ -151,7 +177,7 @@ $(LUACLIB_PATH)/test.$(SO): $(LUACLIB_SRC_PATH)/ltest.c | $(LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(INCLUDE) -fvisibility=hidden -c -o $@ $<
 
 test:
-	make TEST=ON MALLOC=glibc all
+	make TEST=ON MALLOC=glibc SNAPPY=ON all
 
 testall: test
 	sh ./test/test.sh
@@ -174,6 +200,7 @@ endif
 	-rm $(ZLIB_DIR)/example64
 	-rm $(ZLIB_DIR)/minigzip
 	-rm $(ZLIB_DIR)/minigzip64
+	-rm -rf $(SNAPPY_DIR)/build
 
 fmt:
 	-clang-format -style=file -i $(SRC_PATH)/*.h
