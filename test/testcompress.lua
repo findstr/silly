@@ -1,4 +1,5 @@
 local gzip = require "silly.compress.gzip"
+local lz4 = require "silly.compress.lz4"
 local testaux = require "test.testaux"
 
 local ok, snappy = pcall(require, "silly.compress.snappy")
@@ -74,4 +75,37 @@ if snappy then
 	local snappy_data = string.char(0x05, 0x10, 0x68, 0x65, 0x6c, 0x6c, 0x6f)
 	local output = snappy.decompress(snappy_data)
 	testaux.asserteq(output, "hello", "Case 5: Snappy external compatibility")
+end
+
+-- Test 6: LZ4 compress and decompress (requires original_size)
+do
+	local test_strings = {
+		"hello world",
+		"",
+		"a",
+		string.rep("a", 1000),
+		"你好世界",
+		string.char(0, 1, 2, 3, 255),
+	}
+
+	for i, str in ipairs(test_strings) do
+		local compressed = lz4.compress(str)
+		local decompressed = lz4.decompress(compressed, #str)
+		testaux.asserteq(decompressed, str, string.format("Case 6.%d: LZ4 basic", i))
+	end
+end
+
+-- Test 7: LZ4 large data compression
+do
+	local data = string.rep("X", 1024 * 1024)
+	local compressed = lz4.compress(data)
+	local decompressed = lz4.decompress(compressed, #data)
+	testaux.asserteq(decompressed, data, "Case 7.1: LZ4 large data")
+	testaux.assertlt(#compressed, #data, "Case 7.2: LZ4 compression ratio")
+end
+
+-- Test 8: LZ4 invalid input
+do
+	local dat, err = lz4.decompress("not valid", 100)
+	testaux.asserteq(dat, nil, "Case 8: LZ4 invalid input")
 end

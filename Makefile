@@ -64,6 +64,14 @@ $(ZLIB_LIB): $(ZLIB_DIR)/Makefile
 $(ZLIB_DIR)/Makefile: $(ZLIB_DIR)/configure
 	cd $(ZLIB_DIR) && ./configure
 
+#####lz4
+LZ4_DIR=deps/lz4
+LZ4_OBJ=$(LZ4_DIR)/lz4.o
+INCLUDE += -I $(LZ4_DIR)
+
+$(LZ4_OBJ): $(LZ4_DIR)/lz4.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 #####snappy
 SNAPPY_DIR=deps/snappy
 ifeq ($(SNAPPY), ON)
@@ -152,7 +160,7 @@ all: \
 	$(LUACLIB_PATH)/pb.$(SO) \
 	$(LUACLIB_PATH)/test.$(SO) \
 
-$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB) $(SNAPPY_LIB)
+$(TARGET):$(OBJS) $(LUA_STATICLIB) $(MALLOC_LIB) $(ZLIB_LIB) $(LZ4_OBJ) $(SNAPPY_LIB)
 	$(LD) -o $@ $^ $(LDFLAGS)
 
 $(LUACLIB_PATH):
@@ -200,6 +208,7 @@ endif
 	-rm $(ZLIB_DIR)/example64
 	-rm $(ZLIB_DIR)/minigzip
 	-rm $(ZLIB_DIR)/minigzip64
+	-git -C $(ZLIB_DIR) checkout zconf.h
 	-rm -rf $(SNAPPY_DIR)/build
 
 fmt:

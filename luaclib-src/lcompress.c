@@ -4,6 +4,7 @@
 #include <zlib.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#include <lz4.h>
 #ifdef USE_SNAPPY
 #include <snappy-c.h>
 #endif
@@ -114,6 +115,68 @@ SILLY_MOD_API int luaopen_silly_compress_gzip(lua_State *L)
 		{ "compress",   lgzip_compress   },
 		{ "decompress", lgzip_decompress },
 		{ NULL,         NULL             },
+	};
+	luaL_newlib(L, tbl);
+	return 1;
+}
+
+// lz4_compress(data)
+static int llz4_compress(lua_State *L)
+{
+	luaL_Buffer buf;
+	size_t isize;
+	int osize, ret;
+	const char *input;
+	char *output;
+	input = luaL_checklstring(L, 1, &isize);
+	osize = LZ4_compressBound(isize);
+	output = luaL_buffinitsize(L, &buf, osize);
+	ret = LZ4_compress_default(input, output, isize, osize);
+	if (ret <= 0) {
+		lua_pushnil(L);
+		lua_pushfstring(L, "lz4_compress failed: %d", ret);
+		return 2;
+	}
+	luaL_pushresultsize(&buf, ret);
+	return 1;
+}
+
+// lz4_decompress(data, original_size)
+static int llz4_decompress(lua_State *L)
+{
+	luaL_Buffer buf;
+	size_t isize;
+	int osize, ret;
+	const char *input;
+	char *output;
+	input = luaL_checklstring(L, 1, &isize);
+	osize = luaL_checkinteger(L, 2);
+	if (osize < 0) {
+		lua_pushnil(L);
+		lua_pushliteral(L, "invalid original_size");
+		return 2;
+	}
+	if (osize == 0) {
+		lua_pushliteral(L, "");
+		return 1;
+	}
+	output = luaL_buffinitsize(L, &buf, osize);
+	ret = LZ4_decompress_safe(input, output, isize, osize);
+	if (ret < 0) {
+		lua_pushnil(L);
+		lua_pushfstring(L, "lz4_decompress failed: %d", ret);
+		return 2;
+	}
+	luaL_pushresultsize(&buf, ret);
+	return 1;
+}
+
+SILLY_MOD_API int luaopen_silly_compress_lz4(lua_State *L)
+{
+	luaL_Reg tbl[] = {
+		{ "compress",   llz4_compress   },
+		{ "decompress", llz4_decompress },
+		{ NULL,         NULL            },
 	};
 	luaL_newlib(L, tbl);
 	return 1;
