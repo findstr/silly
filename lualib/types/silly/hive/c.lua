@@ -1,5 +1,7 @@
 --- @meta silly.hive.c
 
+---@class silly.hive.worker
+
 ---@class silly.hive.c
 local M = {}
 
@@ -16,13 +18,14 @@ function M.prune() end
 ---Spawn a new thread
 ---@param func function
 ---@param ... any
----@return integer thread_id
+---@return silly.hive.worker
 function M.spawn(func, ...) end
 
 ---Push task to thread
----@param thread_id integer
+---@param worker silly.hive.worker
 ---@param data any
-function M.push(thread_id, data) end
+---@return integer task_id
+function M.push(worker, data) end
 
 ---Get active threads count
 ---@return integer

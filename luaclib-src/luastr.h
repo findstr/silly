@@ -24,4 +24,11 @@ static inline void luastr_opt(lua_State *L, int idx, struct luastr *s)
 	s->len = (int)len;
 }
 
+static inline void luastr_get(lua_State *L, int idx, struct luastr *s)
+{
+	size_t len;
+	s->str = (const uint8_t *)lua_tolstring(L, idx, &len);
+	s->len = (int)len;
+}
+
 #endif

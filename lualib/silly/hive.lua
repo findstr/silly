@@ -23,8 +23,6 @@ prune_timer = function()
 end
 prune_timer()
 
----@class silly.hive.worker
-
 ---@type fun(min:integer, max:integer)
 M.limit = c.limit
 ---@type fun():integer

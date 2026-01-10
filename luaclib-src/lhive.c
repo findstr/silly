@@ -12,6 +12,7 @@
 #include <lualib.h>
 
 #include "silly.h"
+#include "luastr.h"
 
 #define MT_HIVE "silly.hive"
 #define MT_WORKER "silly.hive.worker"
@@ -143,6 +144,78 @@ static inline void copy_values(lua_State *L_from, lua_State *L_to, int stk,
 static inline void copy_value(lua_State *from, lua_State *to, int index)
 {
 	copy_value_r(from, to, index, 0);
+}
+
+static void inherit_package_path(lua_State *from, lua_State *to)
+{
+	struct luastr path, cpath;
+
+	lua_getglobal(from, "package");
+	lua_getfield(from, -1, "path");
+	lua_getfield(from, -2, "cpath");
+	luastr_get(from, -2, &path);
+	luastr_get(from, -1, &cpath);
+
+	lua_getglobal(to, "package");
+	lua_pushlstring(to, (const char *)path.str, path.len);
+	lua_setfield(to, -2, "path");
+	lua_pushlstring(to, (const char *)cpath.str, cpath.len);
+	lua_setfield(to, -2, "cpath");
+	lua_pop(to, 1);
+
+	lua_pop(from, 3);
+}
+
+static const char *whitelist_prefix[] = {
+	"adt",
+	"compress",
+	"crypto",
+	"encoding",
+	"security",
+	"perf",
+	NULL
+};
+
+static int in_whitelist(const char *name)
+{
+	for (int i = 0; whitelist_prefix[i]; i++) {
+		const char *prefix = whitelist_prefix[i];
+		size_t len = strlen(prefix);
+		if (strncmp(name, prefix, len) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static inline int is_module_allowed(const struct luastr *name)
+{
+	int prefix_len = sizeof("silly") - 1;
+	if (strncmp((const char *)name->str, "silly", prefix_len) != 0)
+		return 1;
+	if (name->len < prefix_len || name->str[prefix_len] != '.')
+		return 0;
+	return in_whitelist((const char *)&name->str[prefix_len + 1]);
+}
+
+static int safe_require(lua_State *L)
+{
+	struct luastr name;
+	luastr_get(L, 1, &name);
+	if (!is_module_allowed(&name)) {
+		return luaL_error(L,
+			"module '%s' cannot be used in hive worker", name.str);
+	}
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_pushvalue(L, 1);
+	lua_call(L, 1, LUA_MULTRET);
+	return lua_gettop(L) - 1;
+}
+
+static void install_safe_require(lua_State *L)
+{
+	lua_getglobal(L, "require");
+	lua_pushcclosure(L, safe_require, 1);
+	lua_setglobal(L, "require");
 }
 
 static int msg_unpack(lua_State *L, struct silly_message *m)
@@ -436,6 +509,8 @@ static int lspawn(lua_State *L)
 	lua_setmetatable(L, -2);
 	w->L = luaL_newstate();
 	luaL_openlibs(w->L);
+	inherit_package_path(L, w->L);
+	install_safe_require(w->L);
 
 	if (luaL_loadstring(w->L, code) != LUA_OK) {
 		copy_value(w->L, L, -1);
