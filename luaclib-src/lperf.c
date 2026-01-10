@@ -18,13 +18,12 @@
 #define UV_G 2
 #define UV_TIME 3
 #define UV_CALL 4
-#define UV_START 5
-#define UV_COSTAMP 6
-#define UV_COTIME 7
+#define UV_COSTAMP 5
+#define UV_COTIME 6
 
-static uint64_t timestamp()
+static uint64_t hrtime(void)
 {
-	uint64_t ms;
+	uint64_t ns;
 #ifdef __macosx__
 	struct task_thread_times_info info;
 	mach_msg_type_number_t count = TASK_THREAD_TIMES_INFO_COUNT;
@@ -32,17 +31,17 @@ static uint64_t timestamp()
 				     (task_info_t)&info, &count);
 	if (kr != KERN_SUCCESS)
 		return 0;
-	ms = info.user_time.seconds * 1000 * 1000;
-	ms += info.user_time.microseconds;
-	ms += info.system_time.seconds * 1000 * 1000;
-	ms += info.system_time.microseconds;
+	ns = info.user_time.seconds * 1000000000ULL;
+	ns += info.user_time.microseconds * 1000ULL;
+	ns += info.system_time.seconds * 1000000000ULL;
+	ns += info.system_time.microseconds * 1000ULL;
 #else
 	struct timespec tp;
 	clock_gettime(CLOCK_MONOTONIC, &tp);
-	ms = tp.tv_sec * 1000 * 1000;
-	ms += tp.tv_nsec / 1000;
+	ns = tp.tv_sec * 1000000000ULL;
+	ns += tp.tv_nsec;
 #endif
-	return ms;
+	return ns;
 }
 
 static inline lua_Integer diff(lua_Integer last, lua_Integer now)
@@ -148,7 +147,7 @@ static inline lua_Integer fetchsetkt(lua_State *L, lua_Integer v)
 
 static int lstart(lua_State *L)
 {
-	lua_Integer stamp = timestamp();
+	lua_Integer stamp = hrtime();
 	stamp = coinit(L, stamp);
 	lua_pushvalue(L, 1);
 	lua_rawget(L, lua_upvalueindex(UV_G));
@@ -186,7 +185,7 @@ static int lstop(lua_State *L)
 	lua_Integer now;
 	lua_Integer time;
 	lua_Integer stamp;
-	now = timestamp();
+	now = hrtime();
 	now = coupdate(L, now);
 	lua_pushvalue(L, -1); //name
 	lua_rawget(L, lua_upvalueindex(UV_G));
@@ -212,7 +211,7 @@ static int lstop(lua_State *L)
 static int lyield(lua_State *L)
 {
 	lua_Integer stamp;
-	stamp = timestamp();
+	stamp = hrtime();
 	lua_pushthread(L);
 	lua_rawget(L, lua_upvalueindex(UV_COTIME));
 	if (!lua_isnil(L, -1))
@@ -224,7 +223,7 @@ static int lyield(lua_State *L)
 static int lresume(lua_State *L)
 {
 	lua_Integer stamp;
-	stamp = timestamp();
+	stamp = hrtime();
 
 	lua_pushvalue(L, 1);
 	lua_rawget(L, lua_upvalueindex(UV_COSTAMP));
@@ -250,6 +249,12 @@ static int ldump(lua_State *L)
 	return 1;
 }
 
+static int lhrtime(lua_State *L)
+{
+	lua_pushinteger(L, hrtime());
+	return 1;
+}
+
 static inline void newmetatable(lua_State *L)
 {
 	lua_newtable(L);
@@ -258,16 +263,17 @@ static inline void newmetatable(lua_State *L)
 	return;
 }
 
-SILLY_MOD_API int luaopen_silly_profiler(lua_State *L)
+SILLY_MOD_API int luaopen_silly_perf(lua_State *L)
 {
 	int mi;
 	luaL_Reg tbl[] = {
 		{ "start",  lstart  },
-                { "stop",   lstop   },
-                { "yield",  lyield  },
+		{ "stop",   lstop   },
+		{ "yield",  lyield  },
 		{ "resume", lresume },
-                { "dump",   ldump   },
-                { NULL,     NULL    },
+		{ "dump",   ldump   },
+		{ "hrtime", lhrtime },
+		{ NULL,     NULL    },
 	};
 
 	luaL_checkversion(L);
@@ -284,8 +290,6 @@ SILLY_MOD_API int luaopen_silly_profiler(lua_State *L)
 	lua_pushliteral(L, "time");
 	//UV_CALL
 	lua_pushliteral(L, "call");
-	//UV_START
-	lua_pushliteral(L, "start");
 	//UV_COSTAMP
 	lua_newtable(L);
 	lua_pushvalue(L, mi);
@@ -295,7 +299,7 @@ SILLY_MOD_API int luaopen_silly_profiler(lua_State *L)
 	lua_pushvalue(L, mi);
 	lua_setmetatable(L, -2);
 
-	luaL_setfuncs(L, tbl, 7);
+	luaL_setfuncs(L, tbl, 6);
 
 	return 1;
 }

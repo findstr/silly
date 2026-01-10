@@ -28,6 +28,9 @@ category:
 - [silly.console](./console.md) - 交互式控制台
 - [silly.debugger](./debugger.md) - 交互式调试器
 - [silly.patch](./patch.md) - 模块热更新
+- [silly.perf](./perf.md) - 性能分析
+- [silly.trace](./trace.md) - 分布式追踪
+- [silly.env](./env.md) - 环境变量
 
 ## 数据结构模块
 

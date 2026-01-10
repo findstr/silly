@@ -133,7 +133,7 @@ LIB_SRC = lsilly.c \
 	ltime.c \
 	lmetrics.c \
 	llogger.c \
-	lprofiler.c \
+	lperf.c \
 	ltls.c \
 	ldebugger.c \
 	ltrace.c\

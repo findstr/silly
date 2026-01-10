@@ -28,6 +28,9 @@ Development and operations tools, including console, debugger, hot reload, etc.
 - [silly.console](./console.md) - Interactive console
 - [silly.debugger](./debugger.md) - Interactive debugger
 - [silly.patch](./patch.md) - Module hot reload
+- [silly.perf](./perf.md) - Performance profiling
+- [silly.trace](./trace.md) - Distributed tracing
+- [silly.env](./env.md) - Environment variables
 
 ## Data Structure Modules
 
