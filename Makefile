@@ -195,6 +195,7 @@ clean:
 	-rm $(SRC:.c=.o) *.so $(TARGET)
 	-rm -rf $(LUACLIB_PATH)
 	-rm $(SRC_PATH)/*.lib
+	-rm $(LZ4_DIR)/lz4.o
 
 cleanall: clean
 	make -C $(LUA_DIR) clean

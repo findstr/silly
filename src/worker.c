@@ -354,7 +354,7 @@ void worker_warn_endless()
 
 void worker_exit()
 {
+	lua_close(W->L); // lua close may call worker_push during gc
 	queue_free(W->queue);
-	lua_close(W->L);
 	mem_free(W);
 }
