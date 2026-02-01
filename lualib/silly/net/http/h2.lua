@@ -1,4 +1,5 @@
 local task = require "silly.task"
+local base64 = require "silly.encoding.base64"
 local time = require "silly.time"
 local buffer = require "silly.adt.buffer"
 local queue = require "silly.adt.queue"
@@ -1497,10 +1498,6 @@ local function handshake_as_client(ch)
 		return false, "expect settings"
 	end
 	frame_settings(ch, id, f, dat)
-	local ok, err = conn:write(build_setting(ACK))
-	if not ok then
-		return false, err
-	end
 	while true do
 		local t,f,dat,id = read_frame(conn, ch)
 		if not t then
@@ -1650,7 +1647,8 @@ local function handshake_as_server(ch)
 	end
 	if dat ~= client_preface then
 		-- Send GOAWAY with PROTOCOL_ERROR before closing
-		logger.error("[h2] accept %s handshake fail", conn.remoteaddr)
+		logger.errorf("[h2] accept %s handshake fail:%s",
+			conn.remoteaddr, base64.encode(dat))
 		channel_goaway(ch, PROTOCOL_ERROR)
 		return false
 	end
@@ -1666,7 +1664,6 @@ local function handshake_as_server(ch)
 		return false
 	end
 	frame_settings(ch, id, f, dat)
-	conn:write(build_setting(0x01))
 	while true do
 		local t,f,dat,id = read_frame(conn, ch)
 		if not t then
