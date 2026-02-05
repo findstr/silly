@@ -1355,6 +1355,8 @@ local function frame_winupdate(ch, id, flag, dat)
 		return
 	end
 	local increment = unpack(">I4", dat)
+	-- RFC 7540 Section 6.9: Ignore reserved bit, use 31-bit window size increment
+	increment = increment & 0x7FFFFFFF
 	-- RFC 7540 Section 6.9.1: Flow control window increment of 0 MUST be treated as error
 	if id == 0 then
 		if increment == 0 then
