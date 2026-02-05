@@ -1445,19 +1445,26 @@ local function frame_header_client(ch, streamid, flag, dat)
 		channel_goaway(ch, err)
 		return
 	end
-	local ok, clen = check_content_length(hlist)
-	if not ok then
-		channel_goaway(ch, clen)
-		return
-	end
 	if remotestate == STATE_NONE then
 		local header = s.header
-		s.remotestate = STATE_HEADER
 		map_header(hlist, header)
+		local ok, clen = check_content_length(header)
+		if not ok then
+			channel_goaway(ch, clen)
+			return
+		end
+		s.remotestate = STATE_HEADER
 		local status = header[":status"]
 		header[":status"] = nil
-		s.recvexpect = clen
-		s.status = tonumber(status)
+		local nstatus = tonumber(status)
+		s.status = nstatus
+		-- RFC 9110 Section 6.4.1: Responses to HEAD, 204, 304, 1xx, and successful CONNECT
+		-- must not have a body, skip content-length validation
+		local method = s.method
+		if method ~= "HEAD" and nstatus ~= 204 and nstatus ~= 304 and nstatus // 100 ~= 1
+			and not (method == "CONNECT" and nstatus >= 200 and nstatus < 300) then
+			s.recvexpect = clen
+		end
 		if s.readtype == STATE_HEADER then
 			stream_readwakeup(s, "")
 		end
