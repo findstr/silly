@@ -1355,6 +1355,8 @@ local function frame_winupdate(ch, id, flag, dat)
 		return
 	end
 	local increment = unpack(">I4", dat)
+	-- RFC 7540 Section 6.9: Ignore reserved bit, use 31-bit window size increment
+	increment = increment & 0x7FFFFFFF
 	-- RFC 7540 Section 6.9.1: Flow control window increment of 0 MUST be treated as error
 	if id == 0 then
 		if increment == 0 then
@@ -1443,15 +1445,15 @@ local function frame_header_client(ch, streamid, flag, dat)
 		channel_goaway(ch, err)
 		return
 	end
-	local ok, clen = check_content_length(hlist)
-	if not ok then
-		channel_goaway(ch, clen)
-		return
-	end
 	if remotestate == STATE_NONE then
 		local header = s.header
-		s.remotestate = STATE_HEADER
 		map_header(hlist, header)
+		local ok, clen = check_content_length(header)
+		if not ok then
+			channel_goaway(ch, clen)
+			return
+		end
+		s.remotestate = STATE_HEADER
 		local status = header[":status"]
 		header[":status"] = nil
 		s.recvexpect = clen
