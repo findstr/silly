@@ -32,6 +32,10 @@ local function create_client()
 	return c
 end
 
+local function wait_watch_created(n)
+	server:wait_watch_created(n)
+end
+
 -- Test 1: Basic CRUD operations with edge cases
 testaux.case("Test 1: Basic CRUD edge cases", function()
 	print("-----Test 1: Basic CRUD edge cases-----")
@@ -242,6 +246,7 @@ testaux.case("Test 5: Watch edge cases", function()
 	-- Test 5.1: Watch non-existent key
 	local watcher, err = c:watch { key = "/nonexistent" }
 	testaux.assertneq(watcher, nil, "Test 5.1: Watch non-existent key")
+	wait_watch_created(1)
 
 	-- Test 5.2: Create key after watch started
 	task.fork(function()
@@ -257,6 +262,7 @@ testaux.case("Test 5: Watch edge cases", function()
 
 	-- Test 5.5: Watch with prefix, multiple events
 	local watcher2 = c:watch { key = "/watch/", prefix = true }
+	wait_watch_created(1)
 	task.fork(function()
 		time.sleep(100)
 		c:put { key = "/watch/a", value = "1" }
@@ -278,6 +284,7 @@ testaux.case("Test 5: Watch edge cases", function()
 
 	-- Test 5.6: Cancel watch immediately
 	local watcher3 = c:watch { key = "/test/cancel" }
+	wait_watch_created(1)
 	watcher3:cancel()
 	-- Should be able to cancel without error
 	testaux.success("Test 5.6: Immediate cancel works")
@@ -285,6 +292,7 @@ testaux.case("Test 5: Watch edge cases", function()
 	-- Test 5.7: Multiple watchers on same key
 	local w1 = c:watch { key = "/multi" }
 	local w2 = c:watch { key = "/multi" }
+	wait_watch_created(2)
 	local wg = waitgroup.new()
 	wg:fork(function()
 		local r1 = w1:read()
@@ -301,6 +309,7 @@ testaux.case("Test 5: Watch edge cases", function()
 	-- Test 5.9: Watch overlapping prefixes
 	local w_a = c:watch { key = "/overlap/a/", prefix = true }
 	local w_all = c:watch { key = "/overlap/", prefix = true }
+	wait_watch_created(2)
 
 	c:put { key = "/overlap/a/1", value = "v1" }
 	local ra = w_a:read()
@@ -325,6 +334,7 @@ testaux.case("Test 6: Watch cancel edge cases", function()
 
 	-- Test 6.1: Cancel watcher, then verify read fails
 	local w = c:watch { key = "/cancel/test" }
+	wait_watch_created(1)
 	w:cancel()
 
 	-- After cancel, read should eventually return error
@@ -342,12 +352,14 @@ testaux.case("Test 6: Watch cancel edge cases", function()
 
 	-- Test 6.3: Double cancel (idempotent)
 	local w2 = c:watch { key = "/cancel/test2" }
+	wait_watch_created(1)
 	w2:cancel()
 	w2:cancel()  -- Should not error
 	testaux.success("Test 6.3: Double cancel is safe")
 
 	-- Test 6.4: Cancel during active watch
 	local w3 = c:watch { key = "/cancel/test3" }
+	wait_watch_created(1)
 	task.fork(function()
 		time.sleep(100)
 		w3:cancel()
@@ -374,6 +386,7 @@ testaux.case("Test 7: Client close edge cases", function()
 	c:keepalive(lease.ID)
 	local w1 = c:watch { key = "/close/test1" }
 	local w2 = c:watch { key = "/close/test2" }
+	wait_watch_created(2)
 
 	-- Test 7.2: Close client
 	c:close()
@@ -475,6 +488,7 @@ testaux.case("Test 9: Concurrent watchers", function()
 		local w = c:watch { key = "/multi/watch" }
 		watchers[i] = w
 	end
+	wait_watch_created(10)
 
 	-- Test 9.2: Trigger event, all watchers should receive it
 	task.fork(function()
@@ -656,6 +670,7 @@ testaux.case("Test 13: Watch with filters", function()
 		key = "/filter/test",
 		NOPUT = true,  -- Filter out PUT events
 	}
+	wait_watch_created(1)
 
 	-- Even though filter may not be implemented, watch should be created
 	testaux.assertneq(w, nil, "Test 13.1: Watch with NOPUT filter created")
@@ -663,15 +678,14 @@ testaux.case("Test 13: Watch with filters", function()
 	-- Test 13.2: Watch with prev_kv option
 
 	local wg = waitgroup.new()
+	local w2 = c:watch {
+		key = "/prevkv/test",
+		-- prev_kv = true,  -- Request previous value in events
+	}
+	wait_watch_created(1)
 	wg:fork(function()
-		local w2 = c:watch {
-			key = "/prevkv/test",
-			-- prev_kv = true,  -- Request previous value in events
-		}
-
 		local res = w2:read()
 		testaux.assertneq(res, nil, "Test 13.2: Watch with prev_kv receives event")
-
 		w:cancel()
 		w2:cancel()
 	end)
@@ -751,7 +765,7 @@ testaux.case("Test 16: Watch stream reconnection", function()
 	-- Test 16.1: Create watcher and check initial start_revision
 	server:clear_watch_requests()
 	local watcher = c:watch { key = "/reconnect/test" }
-	time.sleep(100)  -- Give time for watch to be created
+	wait_watch_created(1)
 
 	local watch_reqs = server:get_watch_requests()
 	testaux.asserteq(#watch_reqs, 1, "Test 16.1: One watch request sent")

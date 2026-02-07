@@ -3,6 +3,7 @@ local time = require "silly.time"
 local grpc = require "silly.net.grpc"
 local registrar = require "silly.net.grpc.registrar"
 local v3proto = require "silly.store.etcd.v3.proto"
+local channel = require "silly.sync.channel"
 
 local pairs = pairs
 local ipairs = ipairs
@@ -20,6 +21,7 @@ local setmetatable = setmetatable
 ---@field watch_requests table -- Hook to capture watch create requests
 ---@field keepalive_requests table -- Hook to capture lease keepalive requests
 ---@field active_streams table -- Track all active streams for forced close
+---@field watch_created_ch silly.sync.channel -- Signal watch creation for tests
 local Storage = {}
 
 function Storage:new()
@@ -33,6 +35,7 @@ function Storage:new()
 		watch_requests = {},  -- Array to store watch create requests for testing
 		keepalive_requests = {},  -- Array to store keepalive requests for testing
 		active_streams = {},  -- Array to track active streams
+		watch_created_ch = channel.new(),
 	}
 	return setmetatable(s, {__index = Storage})
 end
@@ -437,6 +440,7 @@ function WatchHandlers.Watch(self, stream)
 				start_revision = create.start_revision,
 				watch_id = id,
 			}
+			storage.watch_created_ch:push(id)
 
 			local watcher = {
 				id = id,
@@ -637,6 +641,14 @@ function M:clear_watch_requests()
 	self.storage.watch_requests = {}
 end
 
+---Wait for N watch create requests to be received
+---@param n integer
+function M:wait_watch_created(n)
+	for _ = 1, n do
+		self.storage.watch_created_ch:pop()
+	end
+end
+
 ---Get keepalive requests history (for testing)
 function M:get_keepalive_requests()
 	return self.storage.keepalive_requests
@@ -674,6 +686,7 @@ function M:reset()
 	self.storage.watch_requests = {}
 	self.storage.keepalive_requests = {}
 	self.storage.active_streams = {}
+	self.storage.watch_created_ch = channel.new()
 end
 
 return M
