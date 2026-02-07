@@ -1457,6 +1457,11 @@ local function frame_header_client(ch, streamid, flag, dat)
 		local status = header[":status"]
 		header[":status"] = nil
 		local nstatus = tonumber(status)
+		-- RFC 7540 Section 8.1.2.4: Response pseudo-header :status is mandatory
+		if not nstatus then
+			channel_goaway(ch, PROTOCOL_ERROR)
+			return
+		end
 		s.status = nstatus
 		-- RFC 9110 Section 6.4.1: Responses to HEAD, 204, 304, 1xx, and successful CONNECT
 		-- must not have a body, skip content-length validation
