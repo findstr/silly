@@ -46,7 +46,7 @@ local signal = require "silly.signal"
 | SIGINT | 中断信号 (Ctrl+C) | 用户终止程序 |
 | SIGTERM | 终止信号 | 优雅关闭 |
 | SIGUSR1 | 用户自定义信号1 | 重新加载配置 |
-| SIGUSR2 | 用户自定义信号2 | 自定义操作 |
+| SIGUSR2 | 用户自定义信号2 | 可能与内部监控冲突，繁忙时可能丢失 |
 | SIGHUP | 挂起信号 | 重新加载配置 |
 
 ## 使用示例
@@ -107,7 +107,8 @@ signal("SIGTERM", graceful_shutdown)
 local signal = require "silly.signal"
 local logger = require "silly.logger"
 
-signal("SIGUSR2", function(sig)
+-- 注意：SIGUSR2 在程序繁忙时可能被合并或丢失，请避免用于关键操作
+signal("SIGUSR1", function(sig)
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         print("Debug logging disabled")
@@ -147,8 +148,16 @@ end)
 信号处理函数在独立协程中执行，不会阻塞主事件循环。处理函数内可以使用所有异步API（如 `time.sleep`、网络调用等）。
 :::
 
+::: warning 信号编号限制
+当前仅支持编号 `0-31` 的信号，超过范围的信号无法注册。
+:::
+
 ::: warning 线程安全
 信号处理是通过Silly的消息系统实现的，确保了线程安全。实际的信号捕获发生在C层，然后通过消息队列传递到Lua层处理。
+:::
+
+::: warning SIGUSR2 可能丢失
+`SIGUSR2` 与内部监控信号共用，繁忙时可能被合并或丢失。避免用于关键控制信号。
 :::
 
 ::: danger 不要长时间阻塞

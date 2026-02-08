@@ -15,6 +15,7 @@
 #include "log.h"
 #include "timer.h"
 #include "engine.h"
+#include "platform.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
@@ -185,6 +186,7 @@ int main(int argc, char *argv[])
 			 "script");
 		parse_args(&args, argc, argv);
 	}
+	signal_ignore_pipe();
 	trace_init();
 	daemon_start(&args);
 	log_init(&args);

@@ -15,7 +15,7 @@
 #include "socket.h"
 #include "worker.h"
 #include "monitor.h"
-#include "sig.h"
+#include "platform.h"
 
 #include "engine.h"
 
@@ -132,7 +132,9 @@ int engine_run(const struct boot_args *config)
 	pthread_t workertid;
 	pthread_mutex_init(&R.mutex, NULL);
 	pthread_cond_init(&R.cond, NULL);
-	sig_init();
+	/* Block SIGUSR2 before creating threads, so all threads inherit
+	 * the blocked signal mask. Only worker thread will unblock it. */
+	signal_block_usr2();
 	err = socket_init();
 	if (unlikely(err < 0)) {
 		log_error("%s socket init fail:%d\n", config->selfname, err);

@@ -16,7 +16,8 @@ size_t worker_backlog();
 
 uint32_t worker_process_id();
 void worker_resume(lua_State *L);
-void worker_warn_endless();
+void worker_mark_endless();
+int worker_signal_watch(int signum);
 
 char **worker_args(int *argc);
 

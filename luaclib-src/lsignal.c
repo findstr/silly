@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 #include <sys/time.h>

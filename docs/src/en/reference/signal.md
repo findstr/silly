@@ -46,7 +46,7 @@ Common Unix signals (specific support depends on operating system):
 | SIGINT | Interrupt signal (Ctrl+C) | User terminates program |
 | SIGTERM | Termination signal | Graceful shutdown |
 | SIGUSR1 | User-defined signal 1 | Reload configuration |
-| SIGUSR2 | User-defined signal 2 | Custom operations |
+| SIGUSR2 | User-defined signal 2 | May conflict with internal watchdog; can be dropped under load |
 | SIGHUP | Hangup signal | Reload configuration |
 
 ## Usage Examples
@@ -107,7 +107,8 @@ signal("SIGTERM", graceful_shutdown)
 local signal = require "silly.signal"
 local logger = require "silly.logger"
 
-signal("SIGUSR2", function(sig)
+-- Note: SIGUSR2 may be coalesced or dropped when the process is busy.
+signal("SIGUSR1", function(sig)
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         print("Debug logging disabled")
@@ -147,8 +148,16 @@ end)
 Signal handlers execute in separate coroutines and do not block the main event loop. Handlers can use all async APIs (such as `time.sleep`, network calls, etc.).
 :::
 
+::: warning Signal number limit
+Only signals numbered `0-31` are supported. Signals outside this range cannot be registered.
+:::
+
 ::: warning Thread Safety
 Signal handling is implemented through Silly's message system, ensuring thread safety. Actual signal capture happens at the C layer, then passed to the Lua layer through message queue for handling.
+:::
+
+::: warning SIGUSR2 may be dropped
+`SIGUSR2` shares the internal watchdog channel and may be coalesced or dropped under load. Avoid using it for critical controls.
 :::
 
 ::: danger Do Not Block for Long Time

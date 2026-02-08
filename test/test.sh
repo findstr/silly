@@ -71,6 +71,27 @@ if [ ! -x "$SILLY" ]; then
     exit 1
 fi
 
+# ---- Test endless loop detection ----
+# This test verifies that the monitor thread correctly detects endless loops
+# and sends SIGUSR2 to trigger the warning. Only run on Unix platforms.
+run_endless_test() {
+    if [ "$PLATFORM" = "mingw" ]; then
+        echo "⏭️  Skipping endless loop test (not supported on Windows)"
+        return 0
+    fi
+    echo "🔹 Running special test: testendless (endless loop detection)"
+    output=$($SILLY test/testendless.lua 2>&1)
+    if echo "$output" | grep -q "endless loop"; then
+        echo "✅ Passed: testendless (endless loop warning detected)"
+        return 0
+    else
+        echo "❌ Failed: testendless (endless loop warning NOT detected)"
+        echo "Output was:"
+        echo "$output"
+        return 1
+    fi
+}
+
 # ---- Detect parallelism ----
 JOBS=1
 if [ "$PARALLEL_MODE" -eq 1 ] && [ "$PLATFORM" = "linux" ]; then
@@ -86,7 +107,8 @@ echo "📂 Scanning test directory: $TEST_DIR"
 
 # POSIX-compatible sorting (works on macOS / Linux)
 # Search in test/ and test/adt/ directories for files starting with "test"
-TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' 2>/dev/null | sort)
+# Exclude test.lua, testprometheus.lua (requires prometheus), testendless.lua (special handling)
+TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' ! -name 'testendless.lua' 2>/dev/null | sort)
 if [ -z "$TEST_FILES" ]; then
     echo "⚠️  No test files (*.lua) found"
     exit 1
@@ -149,6 +171,12 @@ if [ $JOBS -eq 1 ]; then
             exit $rc
         fi
     done
+    # Run endless loop detection test
+    if ! run_endless_test; then
+        exit 1
+    fi
+    TOTAL=$((TOTAL + 1))
+    PASSED=$((PASSED + 1))
     echo "🎉 All tests passed: $PASSED/$TOTAL (skipped: $SKIPPED)"
     exit 0
 else
@@ -339,6 +367,16 @@ else
             printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         fi
     done
+
+    # Run endless loop detection test
+    if run_endless_test; then
+        TOTAL=$((TOTAL + 1))
+        PASSED=$((PASSED + 1))
+    else
+        TOTAL=$((TOTAL + 1))
+        FAILED=$((FAILED + 1))
+        FAILED_TESTS="$FAILED_TESTS testendless"
+    fi
 
     echo ""
     if [ $FAILED -gt 0 ]; then

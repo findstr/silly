@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
+#include <signal.h>
+#include <pthread.h>
 
 #if defined(__linux__)
 #include <sys/epoll.h>
@@ -30,6 +32,13 @@ void nonblock(fd_t fd);
 int open_fd_count(void);
 void fd_open_limit(int *soft, int *hard);
 void cpu_usage(float *stime, float *utime);
+
+/* Signal handling */
+void signal_ignore_pipe(void);
+void signal_block_usr2(void);
+void signal_register_usr2(void (*handler)(int));
+void signal_kill_usr2(pthread_t tid);
+
 static inline int cpu_count(void)
 {
 #if defined(__MACH__)

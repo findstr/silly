@@ -36,4 +36,10 @@ static inline int cpu_count(void)
 	return sysinfo.dwNumberOfProcessors;
 }
 
+/* Signal handling stubs (not supported on Windows) */
+static inline void signal_ignore_pipe(void) {}
+static inline void signal_block_usr2(void) {}
+static inline void signal_register_usr2(void (*handler)(int)) { (void)handler; }
+static inline void signal_kill_usr2(void *tid) { (void)tid; }
+
 #endif

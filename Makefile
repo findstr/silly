@@ -112,7 +112,6 @@ SRC_FILE = \
       queue.c \
       worker.c \
       timer.c \
-      sig.c \
       engine.c \
       daemon.c \
       mem.c \

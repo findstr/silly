@@ -199,8 +199,9 @@ local signal = require "silly.signal"
 -- 初始化为 INFO 级别
 logger.setlevel(logger.INFO)
 
--- 通过 SIGUSR2 信号切换 DEBUG 模式
-signal("SIGUSR2", function()
+-- 通过信号切换 DEBUG 模式
+-- 注意：SIGUSR2 在程序繁忙时可能被合并或丢失，请避免用于关键操作。
+signal("SIGUSR1", function()
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         logger.info("日志级别切换为 INFO")
@@ -215,10 +216,10 @@ end)
 
 ```bash
 # 切换到 DEBUG 模式
-kill -USR2 <pid>
+kill -USR1 <pid>
 
 # 再次执行切换回 INFO 模式
-kill -USR2 <pid>
+kill -USR1 <pid>
 ```
 
 ## 性能监控
@@ -861,7 +862,8 @@ local json = require "silly.encoding.json"
 logger.setlevel(logger.INFO)
 
 -- 动态调整日志级别
-signal("SIGUSR2", function()
+-- 注意：SIGUSR2 在程序繁忙时可能被合并或丢失，请避免用于关键操作。
+signal("SIGUSR1", function()
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         logger.info("日志级别切换为 INFO")
@@ -1061,7 +1063,7 @@ logger.infof("监控指标: http://localhost:8080/metrics")
 logger.info("========================================")
 logger.info("信号控制:")
 logger.info("  kill -USR1 <pid>  # 重新打开日志文件")
-logger.info("  kill -USR2 <pid>  # 切换日志级别 (INFO <-> DEBUG)")
+logger.info("  kill -USR1 <pid>  # 切换日志级别 (INFO <-> DEBUG)")
 logger.info("========================================")
 ```
 

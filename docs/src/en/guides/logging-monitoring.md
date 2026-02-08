@@ -199,8 +199,9 @@ local signal = require "silly.signal"
 -- Initialize to INFO level
 logger.setlevel(logger.INFO)
 
--- Toggle DEBUG mode via SIGUSR2 signal
-signal("SIGUSR2", function()
+-- Toggle DEBUG mode via signal
+-- Note: SIGUSR2 may be coalesced or dropped when the process is busy.
+signal("SIGUSR1", function()
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         logger.info("Log level switched to INFO")
@@ -215,10 +216,10 @@ Switch log level:
 
 ```bash
 # Switch to DEBUG mode
-kill -USR2 <pid>
+kill -USR1 <pid>
 
 # Execute again to switch back to INFO mode
-kill -USR2 <pid>
+kill -USR1 <pid>
 ```
 
 ## Performance Monitoring
@@ -863,7 +864,8 @@ local json = require "silly.encoding.json"
 logger.setlevel(logger.INFO)
 
 -- Dynamically adjust log level
-signal("SIGUSR2", function()
+-- Note: SIGUSR2 may be coalesced or dropped when the process is busy.
+signal("SIGUSR1", function()
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         logger.info("Log level switched to INFO")
@@ -1063,7 +1065,7 @@ logger.infof("Monitoring Metrics: http://localhost:8080/metrics")
 logger.info("========================================")
 logger.info("Signal Controls:")
 logger.info("  kill -USR1 <pid>  # Reopen log file")
-logger.info("  kill -USR2 <pid>  # Toggle log level (INFO <-> DEBUG)")
+logger.info("  kill -USR1 <pid>  # Toggle log level (INFO <-> DEBUG)")
 logger.info("========================================")
 ```
 

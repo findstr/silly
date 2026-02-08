@@ -5,7 +5,6 @@
 #include "mem.h"
 #include "socket.h"
 #include "log.h"
-#include "sig.h"
 #include "worker.h"
 #include "timer.h"
 #include "trace.h"
@@ -70,7 +69,7 @@ SILLY_API void silly_log_append(const char *str, size_t sz)
 }
 SILLY_API int silly_signal_watch(int signum)
 {
-	return sig_watch(signum);
+	return worker_signal_watch(signum);
 }
 SILLY_API silly_socket_id_t silly_tcp_listen(const char *ip, const char *port,
 					     int backlog)
