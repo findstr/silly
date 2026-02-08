@@ -153,7 +153,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
         end
     }
 
-    if not listenfd then
+    if not listener then
         print("Failed to start server")
         return
     end
@@ -162,7 +162,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
 
     -- Wait for some time to process requests
     wg:wait()
-    tls.close(listenfd)
+    listener:close()
 end)
 ```
 
@@ -189,8 +189,8 @@ task.fork(function()
         ip .. ":443",       -- Server address
         {
             bind = nil,         -- No local address binding
-            server = "www.example.com", -- SNI hostname
-            alpn = {"http/1.1"} -- ALPN protocol
+            hostname = "www.example.com", -- SNI hostname
+            alpnprotos = {"http/1.1"} -- ALPN protocol
         }
     )
 
@@ -320,11 +320,11 @@ Start a TLS server listening on the given address.
       - `cert`: `string` - Certificate content in PEM format
       - `key`: `string` - Private key content in PEM format
     - `backlog`: `integer|nil` (optional) - Maximum length of the pending connection queue
-    - `accept`: `fun(fd: integer, addr: string)` (required) - Connection handler, called for each new connection
+    - `accept`: `fun(conn: silly.net.tls.conn)` (required) - Connection handler, called for each new connection
     - `ciphers`: `string|nil` (optional) - Allowed cipher suites in OpenSSL format
     - `alpnprotos`: `string[]|nil` (optional) - List of supported ALPN protocols, e.g. `{"http/1.1", "h2"}`
 - **Return value**:
-  - Success: `integer` - Listener file descriptor
+  - Success: `silly.net.tls.listener` - Listener object
   - Failure: `nil, string` - nil and error message
 - **Example**:
 
@@ -380,6 +380,14 @@ if not conn then
     return
 end
 ```
+
+### listener:close()
+
+Close the TLS listener.
+
+- **Return value**:
+  - Success: `true`
+  - Failure: `false, string` - false and error message
 
 ### listener:reload([conf])
 
@@ -554,7 +562,7 @@ print("Remote address:", conn.remoteaddr)
 
 1. **Key Protection**: Private key files should have strict access permissions (e.g. `chmod 600`)
 2. **Cipher Suites**: In production environments, it's recommended to configure the `ciphers` parameter to disable insecure encryption algorithms
-3. **Certificate Updates**: Use `tls.reload()` to regularly update certificates to avoid certificate expiration
+3. **Certificate Updates**: Use `listener:reload()` to regularly update certificates to avoid certificate expiration
 4. **ALPN Negotiation**: Use `alpnprotos` to explicitly specify supported protocols, avoiding protocol downgrade attacks
 
 ### Common Errors

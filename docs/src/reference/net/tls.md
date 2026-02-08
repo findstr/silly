@@ -153,7 +153,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
         end
     }
 
-    if not listenfd then
+    if not listener then
         print("启动服务器失败")
         return
     end
@@ -162,7 +162,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
 
     -- 等待一段时间以处理请求
     wg:wait()
-    tls.close(listenfd)
+    listener:close()
 end)
 ```
 
@@ -189,8 +189,8 @@ task.fork(function()
         ip .. ":443",       -- 服务器地址
         {
             bind = nil,         -- 不绑定本地地址
-            server = "www.example.com", -- SNI hostname
-            alpn = {"http/1.1"} -- ALPN 协议
+            hostname = "www.example.com", -- SNI hostname
+            alpnprotos = {"http/1.1"} -- ALPN 协议
         }
     )
 
@@ -320,11 +320,11 @@ end)
       - `cert`: `string` - PEM 格式的证书内容
       - `key`: `string` - PEM 格式的私钥内容
     - `backlog`: `integer|nil` (可选) - 等待连接队列的最大长度
-    - `accept`: `fun(fd: integer, addr: string)` (必需) - 连接处理器，为每个新连接调用
+    - `accept`: `fun(conn: silly.net.tls.conn)` (必需) - 连接处理器，为每个新连接调用
     - `ciphers`: `string|nil` (可选) - 允许的加密套件，使用 OpenSSL 格式
     - `alpnprotos`: `string[]|nil` (可选) - 支持的 ALPN 协议列表，例如 `{"http/1.1", "h2"}`
 - **返回值**:
-  - 成功: `integer` - 监听器文件描述符
+  - 成功: `silly.net.tls.listener` - 监听器对象
   - 失败: `nil, string` - nil 和错误信息
 - **示例**:
 
@@ -380,6 +380,14 @@ if not conn then
     return
 end
 ```
+
+### listener:close()
+
+关闭 TLS 监听器。
+
+- **返回值**:
+  - 成功: `true`
+  - 失败: `false, string` - false 和错误信息
 
 ### listener:reload([conf])
 
@@ -554,7 +562,7 @@ print("Remote address:", conn.remoteaddr)
 
 1. **密钥保护**: 私钥文件应设置严格的访问权限（如 `chmod 600`）
 2. **加密套件**: 生产环境建议配置 `ciphers` 参数，禁用不安全的加密算法
-3. **证书更新**: 使用 `tls.reload()` 定期更新证书，避免证书过期
+3. **证书更新**: 使用 `listener:reload()` 定期更新证书，避免证书过期
 4. **ALPN 协商**: 使用 `alpnprotos` 明确支持的协议，避免协议降级攻击
 
 ### 常见错误

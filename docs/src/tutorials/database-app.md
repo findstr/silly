@@ -584,14 +584,14 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #body,
             })
-            stream:close(body)
+            stream:closewrite(body)
         else
             local body = json.encode({success = false, error = err})
             stream:respond(500, {
                 ["content-type"] = "application/json",
                 ["content-length"] = #body,
             })
-            stream:close(body)
+            stream:closewrite(body)
         end
         return
     end
@@ -606,14 +606,14 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #body,
             })
-            stream:close(body)
+            stream:closewrite(body)
         else
             local body = json.encode({success = false, error = err})
             stream:respond(404, {
                 ["content-type"] = "application/json",
                 ["content-length"] = #body,
             })
-            stream:close(body)
+            stream:closewrite(body)
         end
         return
     end
@@ -627,7 +627,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
             return
         end
 
@@ -641,7 +641,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
             return
         end
 
@@ -655,14 +655,14 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         else
             local resp = json.encode({success = false, error = err})
             stream:respond(500, {
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         end
         return
     end
@@ -677,7 +677,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
             return
         end
 
@@ -691,7 +691,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
             return
         end
 
@@ -702,7 +702,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         else
             local resp = json.encode({success = false, error = err})
             local status = err == "用户不存在" and 404 or 500
@@ -710,7 +710,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         end
         return
     end
@@ -725,7 +725,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         else
             local resp = json.encode({success = false, error = err})
             local status = err == "用户不存在" and 404 or 500
@@ -733,7 +733,7 @@ local function handle_request(stream)
                 ["content-type"] = "application/json",
                 ["content-length"] = #resp,
             })
-            stream:close(resp)
+            stream:closewrite(resp)
         end
         return
     end
@@ -744,7 +744,7 @@ local function handle_request(stream)
         ["content-type"] = "application/json",
         ["content-length"] = #resp,
     })
-    stream:close(resp)
+    stream:closewrite(resp)
 end
 
 -- 启动 HTTP 服务器

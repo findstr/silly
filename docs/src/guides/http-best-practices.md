@@ -724,6 +724,7 @@ http.listen {
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- 全局错误处理器
@@ -1033,6 +1034,7 @@ http.listen {
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- 中间件链
 local function chain(middlewares, final_handler)
@@ -1142,6 +1144,7 @@ http.listen {
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 local function access_log(stream, status, duration, response_size)
@@ -1294,6 +1297,7 @@ scrape_configs:
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 http.listen {
     addr = ":8080",
@@ -1301,10 +1305,10 @@ http.listen {
         -- 从请求头获取或生成 Trace ID
         local trace_id = tonumber(stream.header["x-trace-id"])
         if trace_id then
-            silly.traceset(trace_id)
+            trace.attach(trace_id)
         else
-            silly.tracespawn()
-            trace_id = silly.tracepropagate()  -- 用于返回给客户端
+            trace.spawn()
+            trace_id = trace.propagate()  -- 用于返回给客户端
         end
 
         logger.info("Request started:", stream.method, stream.path)
@@ -1340,7 +1344,7 @@ http.listen {
 
 -- 调用外部服务时自动传递当前 Trace ID
 function call_external_service()
-    local trace_id = silly.tracepropagate()
+    local trace_id = trace.propagate()
     local response = http.get("http://other-service/api", {
         ["x-trace-id"] = tostring(trace_id),
     })
@@ -1654,6 +1658,7 @@ local silly = require "silly"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- 配置
@@ -1723,9 +1728,9 @@ local function logging_middleware(stream, next)
     -- 设置或创建 trace ID
     local trace_id = tonumber(stream.header["x-trace-id"])
     if trace_id then
-        silly.traceset(trace_id)
+        trace.attach(trace_id)
     else
-        silly.tracespawn()
+        trace.spawn()
     end
 
     logger.info("Request:", stream.method, stream.path, "from", stream.remoteaddr)

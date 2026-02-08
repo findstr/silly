@@ -671,7 +671,7 @@ task.fork(function()
                 ["content-type"] = "application/json",
                 ["content-length"] = #response_body
             })
-            stream:close(response_body)
+            stream:closewrite(response_body)
 
             -- Record metrics
             local duration = (silly.time.now() - start_time) / 1000
@@ -690,10 +690,10 @@ task.fork(function()
                     ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
                     ["content-length"] = #metrics
                 })
-                stream:close(metrics)
+                stream:closewrite(metrics)
             else
                 stream:respond(404, {["content-type"] = "text/plain"})
-                stream:close("Not Found")
+                stream:closewrite("Not Found")
             end
         end
     }

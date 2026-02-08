@@ -359,11 +359,11 @@ local server = http.listen {
         ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
         ["content-length"] = #metrics,
       })
-      stream:close(metrics)
+      stream:closewrite(metrics)
     else
       -- 业务逻辑
       stream:respond(200, {["content-type"] = "text/plain"})
-      stream:close("Hello World")
+      stream:closewrite("Hello World")
 
       -- 记录指标
       local duration = os.clock() - start
@@ -428,19 +428,19 @@ local server = http.listen {
       stream:respond(200, {
         ["content-type"] = "text/plain; version=0.0.4; charset=utf-8",
       })
-      stream:close(metrics)
+      stream:closewrite(metrics)
       requests_in_flight:dec()
       return
     end
 
     -- 记录请求大小
-    local req_size = stream.headers["content-length"] or 0
+    local req_size = stream.header["content-length"] or 0
     request_size:observe(tonumber(req_size))
 
     -- 业务逻辑
     local response_data = "Response data"
     stream:respond(200, {["content-type"] = "text/plain"})
-    stream:close(response_data)
+    stream:closewrite(response_data)
 
     -- 记录响应指标
     local duration = os.clock() - start
@@ -993,10 +993,10 @@ local metrics_server = http.listen {
       stream:respond(200, {
         ["content-type"] = "text/plain; version=0.0.4",
       })
-      stream:close(metrics)
+      stream:closewrite(metrics)
     else
       stream:respond(404)
-      stream:close("Not Found")
+      stream:closewrite("Not Found")
     end
   end
 }

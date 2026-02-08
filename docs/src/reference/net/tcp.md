@@ -245,7 +245,7 @@ end)
 ### conn:unreadbytes()
 
 ::: warning 名称变更
-此方法替代了旧的 `tcp.recvsize(fd)`。获取当前接收缓冲区中未读取的数据量。
+此方法替代了旧的 `tcp.recvsize(conn)`。获取当前接收缓冲区中未读取的数据量。
 :::
 
 获取接收缓冲区中当前可用但尚未读取的数据量。
@@ -288,7 +288,7 @@ conn:limit(nil)
 ### conn:unsentbytes()
 
 ::: warning 名称变更
-此方法替代了旧的 `tcp.sendsize(fd)`。获取发送缓冲区中等待发送的数据量。
+此方法替代了旧的 `tcp.sendsize(conn)`。获取发送缓冲区中等待发送的数据量。
 :::
 
 获取当前发送缓冲区（已排队但尚未传输）中保存的数据量。
@@ -381,9 +381,9 @@ task.fork(function()
     -- 启动服务器
     local listenfd = tcp.listen {
         addr = "127.0.0.1:9988",
-        accept = function(fd, addr)
+        accept = function(conn)
         wg:fork(function()
-            print("Client connected:", addr)
+            print("Client connected:", conn.remoteaddr)
 
             -- 持续回显数据，直到连接关闭
             while true do
@@ -407,8 +407,8 @@ task.fork(function()
     wg:fork(function()
         time.sleep(100)  -- 等待服务器启动
 
-        local fd, err = tcp.connect("127.0.0.1:9988")
-        if not fd then
+        local conn, err = tcp.connect("127.0.0.1:9988")
+        if not conn then
             print("Connect failed:", err)
             return
         end
@@ -422,7 +422,7 @@ task.fork(function()
     end)
 
     wg:wait()
-    tcp.close(listenfd)
+    listenfd:close()
 end)
 ```
 
@@ -436,8 +436,8 @@ local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
 task.fork(function()
-    local fd, err = tcp.connect("example.com:80")
-    if not fd then
+    local conn, err = tcp.connect("example.com:80")
+    if not conn then
         print("Connect failed:", err)
         return
     end
@@ -505,7 +505,9 @@ task.fork(function()
     local wg = waitgroup.new()
 
     -- 服务器：接收二进制消息
-    local listenfd = tcp.listen("127.0.0.1:9989", function(fd, addr)
+    local listenfd = tcp.listen {
+        addr = "127.0.0.1:9989",
+        accept = function(conn)
         wg:fork(function()
             while true do
                 -- 读取4字节长度头
@@ -532,14 +534,15 @@ task.fork(function()
 
             conn:close()
         end)
-    end)
+    end
+    }
 
     -- 客户端：发送二进制消息
     wg:fork(function()
         time.sleep(100)
 
-        local fd = tcp.connect("127.0.0.1:9989")
-        if not fd then
+        local conn = tcp.connect("127.0.0.1:9989")
+        if not conn then
             return
         end
 
@@ -561,7 +564,7 @@ task.fork(function()
     end)
 
     wg:wait()
-    tcp.close(listenfd)
+    listenfd:close()
 end)
 ```
 
@@ -580,7 +583,9 @@ task.fork(function()
     local wg = waitgroup.new()
 
     -- 服务器：快速发送大量数据
-    local listenfd = tcp.listen("127.0.0.1:9990", function(fd, addr)
+    local listenfd = tcp.listen {
+        addr = "127.0.0.1:9990",
+        accept = function(conn)
         wg:fork(function()
             -- 发送10MB数据
             local chunk = string.rep("A", 1024 * 1024)
@@ -590,14 +595,15 @@ task.fork(function()
             end
             conn:close()
         end)
-    end)
+    end
+    }
 
     -- 客户端：限制接收缓冲区，慢速消费
     wg:fork(function()
         time.sleep(100)
 
-        local fd = tcp.connect("127.0.0.1:9990")
-        if not fd then
+        local conn = tcp.connect("127.0.0.1:9990")
+        if not conn then
             return
         end
 
@@ -613,7 +619,7 @@ task.fork(function()
             end
 
             total = total + #data
-            print("Received:", total, "bytes, buffered:", tcp.recvsize(fd))
+            print("Received:", total, "bytes, buffered:", tcp.recvsize(conn))
 
             -- 模拟慢速处理
             time.sleep(100)
@@ -624,7 +630,7 @@ task.fork(function()
     end)
 
     wg:wait()
-    tcp.close(listenfd)
+    listenfd:close()
 end)
 ```
 
@@ -648,24 +654,24 @@ local pool = {
 function pool:acquire()
     -- 优先使用空闲连接
     if #self.idle > 0 then
-        local fd = table.remove(self.idle)
+        local conn = table.remove(self.idle)
         if conn:isalive() then
-            return fd
+            return conn
         end
         conn:close()
     end
 
     -- 创建新连接
-    local fd, err = tcp.connect(self.host)
-    if not fd then
+    local conn, err = tcp.connect(self.host)
+    if not conn then
         return nil, err
     end
 
-    return fd
+    return conn
 end
 
 -- 归还连接
-function pool:release(fd)
+function pool:release(conn)
     if not conn:isalive() then
         conn:close()
         return
@@ -673,7 +679,7 @@ function pool:release(fd)
 
     -- 如果池未满，放回池中
     if #self.idle < self.max_size then
-        table.insert(self.idle, fd)
+        table.insert(self.idle, conn)
     else
         conn:close()
     end
@@ -684,20 +690,20 @@ local task = require "silly.task"
 task.fork(function()
     -- 发起多个请求，复用连接
     for i = 1, 5 do
-        local fd, err = pool:acquire()
-        if not fd then
+        local conn, err = pool:acquire()
+        if not conn then
             print("Failed to acquire connection:", err)
             return
         end
 
-        print("Request", i, "using fd:", fd)
+        print("Request", i, "using conn:", conn)
         conn:write( "GET / HTTP/1.1\r\n\r\n")
 
         -- 读取响应（简化）
         time.sleep(100)
 
         -- 归还连接
-        pool:release(fd)
+        pool:release(conn)
     end
 end)
 ```
@@ -715,12 +721,12 @@ local tcp = require "silly.net.tcp"
 
 -- 正确：在协程中调用
 task.fork(function()
-    local fd = tcp.connect("127.0.0.1:8080")
+    local conn = tcp.connect("127.0.0.1:8080")
     -- ...
 end)
 
 -- 错误：不能在主线程中直接调用
--- local fd = tcp.connect("127.0.0.1:8080")  -- 这会失败！
+-- local conn = tcp.connect("127.0.0.1:8080")  -- 这会失败！
 ```
 
 ### 2. 及时关闭连接
@@ -733,8 +739,8 @@ local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
 task.fork(function()
-    local fd = tcp.connect("127.0.0.1:8080")
-    if not fd then
+    local conn = tcp.connect("127.0.0.1:8080")
+    if not conn then
         return
     end
 
@@ -761,8 +767,8 @@ local task = require "silly.task"
 local tcp = require "silly.net.tcp"
 
 task.fork(function()
-    local fd, err = tcp.connect("127.0.0.1:8080")
-    if not fd then
+    local conn, err = tcp.connect("127.0.0.1:8080")
+    if not conn then
         print("Connect failed:", err)
         return
     end
@@ -798,7 +804,7 @@ local tcp = require "silly.net.tcp"
 local time = require "silly.time"
 
 -- 如果发送缓冲区过大，等待一段时间
-if tcp.sendsize(fd) > 10 * 1024 * 1024 then
+if tcp.sendsize(conn) > 10 * 1024 * 1024 then
     time.sleep(100)
 end
 ```
@@ -820,18 +826,21 @@ local waitgroup = require "silly.sync.waitgroup"
 task.fork(function()
     local wg = waitgroup.new()
 
-    local listenfd = tcp.listen("127.0.0.1:8080", function(fd, addr)
+    local listenfd = tcp.listen {
+        addr = "127.0.0.1:8080",
+        accept = function(conn)
         wg:fork(function()
             -- 处理连接
             conn:close()
         end)
-    end)
+    end
+    }
 
     -- 等待所有连接处理完成
     wg:wait()
 
     -- 现在可以安全关闭监听器
-    tcp.close(listenfd)
+    listenfd:close()
 end)
 ```
 
@@ -878,8 +887,8 @@ local tcp = require "silly.net.tcp"
 local task = require "silly.task"
 
 task.fork(function()
-    local fd = tcp.connect("127.0.0.1:8080")
-    if not fd then return end
+    local conn = tcp.connect("127.0.0.1:8080")
+    if not conn then return end
 
     -- 推荐：按行读取
     local line = conn:read("\n")

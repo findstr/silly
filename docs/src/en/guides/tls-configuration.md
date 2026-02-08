@@ -573,7 +573,7 @@ signal.register("SIGUSR1", function()
     end
 
     -- Hot reload certificates
-    local success, reload_err = tls.reload(listenfd, {
+    local success, reload_err = listenfd:reload({
         certs = {{cert = cert_pem, key = key_pem}}
     })
 
@@ -779,7 +779,7 @@ local function get_connection(host, port)
 
     -- Create new connection
     local ip = dns.lookup(host, dns.A)
-    conn = tls.connect(ip .. ":" .. port, nil, host, {"http/1.1"})
+    conn = tls.connect(ip .. ":" .. port, {hostname = host, alpnprotos = {"http/1.1"}})
 
     if conn then
         connection_pool[key] = conn

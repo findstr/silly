@@ -265,20 +265,16 @@ end)
 
 ### grpc.newclient(conf)
 
-创建 gRPC 客户端。
+创建 gRPC 连接池。
 
 - **参数**:
   - `conf`: `table` - 客户端配置表
-    - `service`: `string` (必需) - 服务名称（对应 proto 中的 service 名）
-    - `endpoints`: `string[]` (必需) - gRPC 服务器地址列表，格式 `"host:port"`
-    - `proto`: `table` (必需) - protoc 加载的 proto 定义
+    - `targets`: `string[]` (必需) - gRPC 目标地址列表，格式 `"host:port"`（或 `dns://host:port`）
     - `tls`: `boolean|nil` (可选) - 是否使用 TLS，默认 false
-    - `timeout`: `number|nil` (可选) - 请求超时时间（毫秒）
 - **返回值**:
-  - 成功: `client` - 客户端对象
+  - 成功: `conn` - gRPC 连接对象
   - 失败: `nil, string` - nil 和错误信息
-- **注意**: 客户端对象会动态生成方法，方法名对应 proto 中定义的 RPC 方法
-- **负载均衡**: 多个 endpoint 时使用轮询策略
+- **负载均衡**: 多个 target 时使用轮询策略
 - **示例**:
 
 ```lua validate
@@ -306,19 +302,23 @@ task.fork(function()
     }
     ]], "hello.proto")
 
-    local client, err = grpc.newclient {
-        service = "Greeter",
-        endpoints = {"127.0.0.1:50051", "127.0.0.1:50052"},
-        proto = p.loaded["hello.proto"],
-        timeout = 5000,
+    local client_conn, err = grpc.newclient {
+        targets = {"127.0.0.1:50051", "127.0.0.1:50052"},
     }
-
-    if not client then
-        print("Failed to create client:", err)
+    if not client_conn then
+        print("Failed to create client connection:", err)
         return
     end
 
-    -- 客户端对象会自动生成 SayHello 方法
+    local client
+    client, err = grpc.newservice(client_conn, p.loaded["hello.proto"], "Greeter")
+
+    if not client then
+        print("Failed to create service client:", err)
+        return
+    end
+
+    -- service 对象会按 proto 动态提供方法
     local response, err = client.SayHello({name = "World"})
     if response then
         print("Response:", response.message)
@@ -328,7 +328,19 @@ task.fork(function()
 end)
 ```
 
-### client.MethodName(request)
+### grpc.newservice(conn, proto, service_name)
+
+基于 gRPC 连接创建类型化的 service 客户端。
+
+- **参数**:
+  - `conn`: `silly.net.grpc.client.conn` - `grpc.newclient` 返回的连接对象
+  - `proto`: `table` - protoc 加载的 proto 定义
+  - `service_name`: `string` - proto 中定义的服务名
+- **返回值**:
+  - 成功: `service` - service 客户端对象
+  - 失败: `nil, string` - nil 和错误信息
+
+### service.MethodName(request)
 
 调用 RPC 方法（Unary RPC）。
 
@@ -367,11 +379,10 @@ task.fork(function()
     }
     ]], "math.proto")
 
-    local client = grpc.newclient {
-        service = "MathService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["math.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["math.proto"], "MathService"))
 
     -- 调用 Multiply 方法
     local result, err = client.Multiply({x = 6, y = 7})
@@ -383,7 +394,7 @@ task.fork(function()
 end)
 ```
 
-### client.StreamMethod()
+### service.StreamMethod()
 
 创建流式 RPC 连接（Streaming RPC）。
 
@@ -416,11 +427,10 @@ task.fork(function()
     }
     ]], "stream.proto")
 
-    local client = grpc.newclient {
-        service = "StreamService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["stream.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["stream.proto"], "StreamService"))
 
     -- 创建双向流
     local stream, err = client.BiStream()
@@ -486,11 +496,10 @@ task.fork(function()
     }
     ]], "file.proto")
 
-    local client = grpc.newclient {
-        service = "FileService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["file.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["file.proto"], "FileService"))
 
     local stream = client.Upload()
 
@@ -548,11 +557,10 @@ task.fork(function()
     }
     ]], "log.proto")
 
-    local client = grpc.newclient {
-        service = "LogService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["log.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["log.proto"], "LogService"))
 
     local stream = client.StreamLogs()
 
@@ -603,11 +611,10 @@ task.fork(function()
     }
     ]], "chat.proto")
 
-    local client = grpc.newclient {
-        service = "ChatService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["chat.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["chat.proto"], "ChatService"))
 
     local stream = client.Chat()
 
@@ -680,12 +687,10 @@ task.fork(function()
     print("Greeter server started on 127.0.0.1:50051")
 
     -- 创建客户端
-    local client = grpc.newclient {
-        service = "Greeter",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["greeter.proto"],
-        timeout = 5000,
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["greeter.proto"], "Greeter"))
 
     -- 调用 RPC
     local resp1 = client.SayHello({name = "Alice"})
@@ -747,12 +752,10 @@ task.fork(function()
     }
 
     -- 客户端
-    local client = grpc.newclient {
-        service = "Calculator",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["calculator.proto"],
-        timeout = 5000,
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["calculator.proto"], "Calculator"))
 
     -- 正常调用
     local result, err = client.Divide({
@@ -844,14 +847,13 @@ task.fork(function()
     print("Started two servers on ports 50051 and 50052")
 
     -- 客户端连接多个端点
-    local client = grpc.newclient {
-        service = "Counter",
-        endpoints = {
+    local client_conn = grpc.newclient {
+        targets = {
             "127.0.0.1:50051",
             "127.0.0.1:50052"
         },
-        proto = p.loaded["counter.proto"],
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["counter.proto"], "Counter"))
 
     -- 请求会轮询到两个服务器
     for i = 1, 4 do
@@ -910,15 +912,13 @@ task.fork(function()
     }
 
     -- 客户端：设置短超时
-    local client = grpc.newclient {
-        service = "SlowService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["slow.proto"],
-        timeout = 1000,  -- 1秒超时
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["slow.proto"], "SlowService"))
 
     -- 快速请求（应该成功）
-    local result1, err1 = client.SlowMethod({delay_ms = 100})
+    local result1, err1 = client.SlowMethod({delay_ms = 100}, 1000)
     if result1 then
         print("Fast request:", result1.result)
     else
@@ -926,7 +926,7 @@ task.fork(function()
     end
 
     -- 慢速请求（应该超时）
-    local result2, err2 = client.SlowMethod({delay_ms = 2000})
+    local result2, err2 = client.SlowMethod({delay_ms = 2000}, 1000)
     if result2 then
         print("Slow request:", result2.result)
     else
@@ -1043,12 +1043,11 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
     print("Secure gRPC server started")
 
     -- TLS 客户端
-    local client = grpc.newclient {
-        service = "SecureService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["secure.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
         tls = true,
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["secure.proto"], "SecureService"))
 
     local result = client.ProcessSecret({
         secret = "my-sensitive-data"
@@ -1111,11 +1110,10 @@ task.fork(function()
     }
 
     -- 客户端
-    local client = grpc.newclient {
-        service = "DataService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["api.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["api.proto"], "DataService"))
 
     -- 并发请求多个资源
     local wg = waitgroup.new()
@@ -1189,11 +1187,10 @@ task.fork(function()
         registrar = reg,
     }
 
-    local client = grpc.newclient {
-        service = "EventService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["events.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["events.proto"], "EventService"))
 
     -- 对于流式方法，调用返回流对象
     local stream, err = client.Subscribe()
@@ -1286,11 +1283,10 @@ task.fork(function()
     }
 
     -- 客户端
-    local client = grpc.newclient {
-        service = "UserService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["user.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["user.proto"], "UserService"))
 
     local response = client.CreateUser({
         user = {
@@ -1337,7 +1333,7 @@ local task = require "silly.task"
 
 -- 正确：在协程中调用
 task.fork(function()
-    local client = grpc.newclient({
+    local client_conn = grpc.newclient({
         -- ...
     })
     -- 正常使用
@@ -1390,11 +1386,16 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client, err = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn, err = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    if not client_conn then
+        print("Failed to create client connection:", err)
+        return
+    end
+
+    local client
+    client, err = grpc.newservice(client_conn, p.loaded["test.proto"], "Test")
 
     if not client then
         print("Failed to create client:", err)
@@ -1443,15 +1444,13 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
-        timeout = 5000,  -- 5秒超时（推荐设置）
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- 超时后返回 nil 和错误信息
-    local result, err = client.Ping({})
+    local result, err = client.Ping({}, 5000)  -- 5秒超时
     if not result then
         print("Request timeout or failed:", err)
     end
@@ -1519,16 +1518,15 @@ task.fork(function()
     ]], "test.proto")
 
     -- 请求会按顺序分发到三个端点
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {
+    local client_conn = grpc.newclient {
+        targets = {
             "server1.example.com:50051",  -- 第1个请求
             "server2.example.com:50051",  -- 第2个请求
             "server3.example.com:50051",  -- 第3个请求
             -- 第4个请求回到 server1...
         },
-        proto = p.loaded["test.proto"],
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- 10 个请求会均匀分布到 3 个服务器
     for i = 1, 10 do
@@ -1567,11 +1565,10 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- HTTP/2 连接会被自动复用
     for i = 1, 100 do
@@ -1608,11 +1605,10 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     local wg = waitgroup.new()
 
