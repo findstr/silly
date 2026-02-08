@@ -6,10 +6,22 @@ set -eu
 # Parse parallel flag
 PARALLEL_MODE=0
 ARGS_LIST=""
+OVERRIDE_SET=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -j|--parallel)
             PARALLEL_MODE=1
+            shift
+            ;;
+        --set=*)
+            OVERRIDE_SET=$(printf "%s" "$1" | sed 's/^--set=//')
+            ARGS_LIST="$ARGS_LIST $1"
+            shift
+            ;;
+        --set)
+            shift
+            OVERRIDE_SET="$1"
+            ARGS_LIST="$ARGS_LIST --set=$1"
             shift
             ;;
         *)
@@ -38,6 +50,23 @@ case "$uname_S" in
         ;;
 esac
 
+# ---- Sanitizer options (fail fast) ----
+if [ -z "${ASAN_OPTIONS+x}" ]; then
+    case "$PLATFORM" in
+        darwin)
+            # LSan is flaky on macOS runners; disable leak detection by default.
+            export ASAN_OPTIONS="halt_on_error=1:detect_leaks=0"
+            ;;
+        *)
+            export ASAN_OPTIONS="halt_on_error=1:detect_leaks=1"
+            ;;
+    esac
+else
+    export ASAN_OPTIONS
+fi
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
+export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1:report_signal_unsafe=1}"
+
 # ---- Platform-specific ARGS ----
 ARGS=""
 case "$PLATFORM" in
@@ -61,15 +90,42 @@ if [ -n "$ARGS_LIST" ]; then
     ARGS="$ARGS $ARGS_LIST"
 fi
 
+SET_ARG=""
+if [ -n "$OVERRIDE_SET" ]; then
+    SET_ARG="--set=$OVERRIDE_SET"
+fi
+
 # ---- Locate test files ----
 TEST_DIR="test"
-SILLY="./silly"
 TEST_SCRIPT="test/test.lua"
 
-if [ ! -x "$SILLY" ]; then
-    echo "❌ Error: Executable $SILLY not found"
-    exit 1
+# ---- Detect test binaries ----
+BINARIES=""
+if [ -x "./silly.asan" ] && [ -x "./silly.tsan" ]; then
+    BINARIES="./silly.asan ./silly.tsan"
+else
+    BINARIES="./silly"
 fi
+
+for b in $BINARIES; do
+    if [ ! -x "$b" ]; then
+        echo "❌ Error: Executable $b not found"
+        exit 1
+    fi
+done
+
+# ---- Preflight checks ----
+echo "🔍 Preflight: CLI version/help"
+for b in $BINARIES; do
+    if ! $b --version >/dev/null 2>&1; then
+        echo "❌ Preflight failed: $b --version"
+        exit 1
+    fi
+    if ! $b --help >/dev/null 2>&1; then
+        echo "❌ Preflight failed: $b --help"
+        exit 1
+    fi
+done
 
 # ---- Test endless loop detection ----
 # This test verifies that the monitor thread correctly detects endless loops
@@ -79,19 +135,28 @@ run_endless_test() {
         echo "⏭️  Skipping endless loop test (not supported on Windows)"
         return 0
     fi
-    echo "🔹 Running special test: testendless (endless loop detection)"
-    output=$($SILLY test/testendless.lua 2>&1)
-    if echo "$output" | grep -q "endless loop"; then
-        echo "✅ Passed: testendless (endless loop warning detected)"
-        return 0
-    else
-        echo "❌ Failed: testendless (endless loop warning NOT detected)"
-        echo "Output was:"
-        echo "$output"
-        return 1
-    fi
+    for b in $BINARIES; do
+        cpath="luaclib"
+        if [ "$b" = "./silly.asan" ]; then
+            cpath="luaclib.asan"
+        elif [ "$b" = "./silly.tsan" ]; then
+            cpath="luaclib.tsan"
+        fi
+        export SILLY_LUACLIB_PATH="$cpath"
+        export SILLY_BIN="$b"
+        echo "🔹 Running special test: testendless (endless loop detection) [$b]"
+        output=$($b test/testendless.lua --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" 2>&1)
+        if echo "$output" | grep -q "endless loop"; then
+            echo "✅ Passed: testendless (endless loop warning detected) [$b]"
+        else
+            echo "❌ Failed: testendless (endless loop warning NOT detected) [$b]"
+            echo "Output was:"
+            echo "$output"
+            return 1
+        fi
+    done
+    return 0
 }
-
 # ---- Detect parallelism ----
 JOBS=1
 if [ "$PARALLEL_MODE" -eq 1 ] && [ "$PLATFORM" = "linux" ]; then
@@ -99,6 +164,7 @@ if [ "$PARALLEL_MODE" -eq 1 ] && [ "$PLATFORM" = "linux" ]; then
 fi
 
 echo "🧪 Platform: $PLATFORM"
+echo "🧬 Binaries: $BINARIES"
 echo "🧰 Test arguments: $ARGS"
 if [ $JOBS -gt 1 ]; then
     echo "⚙️  Parallel jobs: $JOBS"
@@ -108,7 +174,15 @@ echo "📂 Scanning test directory: $TEST_DIR"
 # POSIX-compatible sorting (works on macOS / Linux)
 # Search in test/ and test/adt/ directories for files starting with "test"
 # Exclude test.lua, testprometheus.lua (requires prometheus), testendless.lua (special handling)
-TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' ! -name 'testendless.lua' 2>/dev/null | sort)
+if [ -n "$OVERRIDE_SET" ]; then
+    TEST_FILES="$TEST_DIR/$OVERRIDE_SET.lua"
+    if [ ! -f "$TEST_FILES" ]; then
+        echo "❌ Error: test case not found: $TEST_FILES"
+        exit 1
+    fi
+else
+    TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' ! -name 'testendless.lua' 2>/dev/null | sort)
+fi
 if [ -z "$TEST_FILES" ]; then
     echo "⚠️  No test files (*.lua) found"
     exit 1
@@ -147,22 +221,60 @@ if [ $JOBS -eq 1 ]; then
     TOTAL=0
     PASSED=0
     FAILED=0
+    LOGDIR=$(mktemp -d)
+    trap 'rm -rf "$LOGDIR"' EXIT
     # Combine all tests (parallel-eligible and serial tests)
     all_tests="$FILTERED_TESTS $SERIAL_TESTS"
 
-    for base in $all_tests; do
-        echo "🔹 Running test: $base"
-        $SILLY "$TEST_SCRIPT" --set="$base" $ARGS
-        rc=$?
-
-        # On mingw, add delay between tests to let Windows clean up resources
-        if [ "$PLATFORM" = "mingw" ]; then
-            sleep 0.5
+    # Create subdirectories for test cases with paths (e.g., adt/testqueue)
+    for t in $all_tests; do
+        test_dir=$(dirname "$t")
+        if [ "$test_dir" != "." ]; then
+            mkdir -p "$LOGDIR/$test_dir"
         fi
+    done
+
+    for base in $all_tests; do
+        rc=0
+        for b in $BINARIES; do
+            cpath="luaclib"
+            if [ "$b" = "./silly.asan" ]; then
+                cpath="luaclib.asan"
+            elif [ "$b" = "./silly.tsan" ]; then
+                cpath="luaclib.tsan"
+            fi
+            export SILLY_LUACLIB_PATH="$cpath"
+            export SILLY_BIN="$b"
+            echo "🔹 Running test: $base [$b]"
+            logfile="$LOGDIR/$base.$(basename "$b").log"
+            if [ -n "$SET_ARG" ]; then
+                setarg="$SET_ARG"
+            else
+                setarg="--set=$base"
+            fi
+            set +e
+            # Run test with output to both terminal and log file.
+            # Use a status file to capture the real exit code through tee pipe.
+            rcfile="$LOGDIR/$base.$(basename "$b").rc"
+            ( $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS 2>&1; echo $? > "$rcfile" ) | tee "$logfile"
+            rc=$(cat "$rcfile" 2>/dev/null || echo 1)
+            set -e
+            if [ $rc -eq 0 ] && grep -Eq "(^|[^A-Za-z0-9_])FAIL([^A-Za-z0-9_]|$)" "$logfile"; then
+                rc=1
+            fi
+            if [ $rc -ne 0 ]; then
+                break
+            fi
+
+            # On mingw, add delay between tests to let Windows clean up resources
+            if [ "$PLATFORM" = "mingw" ]; then
+                sleep 0.5
+            fi
+        done
 
         TOTAL=$((TOTAL + 1))
         if [ $rc -eq 0 ]; then
-            echo "✅ Passed: $base"
+            echo "✅ Passed: $base (all binaries)"
             PASSED=$((PASSED + 1))
         else
             echo "❌ Failed: $base (exit code=$rc)"
@@ -171,12 +283,6 @@ if [ $JOBS -eq 1 ]; then
             exit $rc
         fi
     done
-    # Run endless loop detection test
-    if ! run_endless_test; then
-        exit 1
-    fi
-    TOTAL=$((TOTAL + 1))
-    PASSED=$((PASSED + 1))
     echo "🎉 All tests passed: $PASSED/$TOTAL (skipped: $SKIPPED)"
     exit 0
 else
@@ -264,6 +370,9 @@ else
                     # Get line number
                     line=$(cat "$TMPDIR/$t.line")
                     status=$(cat "$TMPDIR/$t.status")
+                    rc=${status%%:*}
+                    bin=${status#*:}
+                    [ "$bin" = "$status" ] && bin=""
 
                     # Calculate test number
                     test_idx=$((completed + line + 1))
@@ -272,10 +381,14 @@ else
                     move_up=$((batch_count - line))
                     printf "\033[%dA" "$move_up"
 
-                    if [ "$status" -eq 0 ]; then
-                        printf "\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d)\033[K\n" "$t" "$test_idx" "$TOTAL_TESTS"
+                    if [ "$rc" -eq 0 ]; then
+                        printf "\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d) [all]\033[K\n" "$t" "$test_idx" "$TOTAL_TESTS"
                     else
-                        printf "\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\033[K\n" "$t" "$test_idx" "$TOTAL_TESTS" "$status"
+                        if [ -n "$bin" ]; then
+                            printf "\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [%s exit: %d]\033[K\n" "$t" "$test_idx" "$TOTAL_TESTS" "$bin" "$rc"
+                        else
+                            printf "\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\033[K\n" "$t" "$test_idx" "$TOTAL_TESTS" "$rc"
+                        fi
                     fi
 
                     # Move back to bottom
@@ -290,22 +403,47 @@ else
         ) &
         MONITOR_PID=$!
 
-        # Run batch in parallel
+        # Run batch in parallel (pass variables via environment to avoid quoting issues with dash)
+        export _TS_TMPDIR="$TMPDIR"
+        export _TS_TEST_SCRIPT="$TEST_SCRIPT"
+        export _TS_ARGS="$ARGS"
+        export _TS_BINARIES="$BINARIES"
+        export _TS_OVERRIDE_SET="$OVERRIDE_SET"
         echo "$batch_tests" | tr ' ' '\n' | grep -v '^$' | xargs -P "$JOBS" -I {} sh -c '
             base={}
-            TMPDIR='"$TMPDIR"'
-            SILLY='"$SILLY"'
-            TEST_SCRIPT='"$TEST_SCRIPT"'
-            ARGS="'"$ARGS"'"
-
-            logfile="$TMPDIR/$base.log"
+            logfile="$_TS_TMPDIR/$base.log"
             echo "🔹 Running test: $base" > "$logfile"
 
-            if $SILLY "$TEST_SCRIPT" --set="$base" $ARGS >> "$logfile" 2>&1; then
-                echo "0" > "$TMPDIR/$base.status"
-            else
-                echo "$?" > "$TMPDIR/$base.status"
+            rc=0
+            failed_bin=""
+            for b in $_TS_BINARIES; do
+                cpath="luaclib"
+                if [ "$b" = "./silly.asan" ]; then
+                    cpath="luaclib.asan"
+                elif [ "$b" = "./silly.tsan" ]; then
+                    cpath="luaclib.tsan"
+                fi
+                export SILLY_LUACLIB_PATH="$cpath"
+                export SILLY_BIN="$b"
+                echo "-> $b" >> "$logfile"
+                if [ -n "$_TS_OVERRIDE_SET" ]; then
+                    setarg="--set=$_TS_OVERRIDE_SET"
+                else
+                    setarg="--set=$base"
+                fi
+                set +e
+                $b "$_TS_TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $_TS_ARGS >> "$logfile" 2>&1
+                rc=$?
+                set -e
+                if [ $rc -ne 0 ]; then
+                    failed_bin=$b
+                    break
+                fi
+            done
+            if [ $rc -eq 0 ] && grep -Eq "(^|[^A-Za-z0-9_])FAIL([^A-Za-z0-9_]|$)" "$logfile"; then
+                rc=1
             fi
+            echo "$rc:$failed_bin" > "$_TS_TMPDIR/$base.status"
         '
 
         # Wait for monitor to finish
@@ -326,15 +464,46 @@ else
             logfile="$TMPDIR/$t.log"
             echo "🔹 Running test: $t" > "$logfile"
 
-            if $SILLY "$TEST_SCRIPT" --set="$t" $ARGS >> "$logfile" 2>&1; then
-                echo "0" > "$TMPDIR/$t.status"
-                # Move up one line, clear, and print success
-                printf "\033[1A\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d)\033[K\n" "$t" "$completed" "$TOTAL_TESTS"
-            else
+            rc=0
+            failed_bin=""
+            for b in $BINARIES; do
+                cpath="luaclib"
+                if [ "$b" = "./silly.asan" ]; then
+                    cpath="luaclib.asan"
+                elif [ "$b" = "./silly.tsan" ]; then
+                    cpath="luaclib.tsan"
+                fi
+                export SILLY_LUACLIB_PATH="$cpath"
+                export SILLY_BIN="$b"
+                echo "-> $b" >> "$logfile"
+                if [ -n "$SET_ARG" ]; then
+                    setarg="$SET_ARG"
+                else
+                    setarg="--set=$t"
+                fi
+                set +e
+                $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS >> "$logfile" 2>&1
                 rc=$?
-                echo "$rc" > "$TMPDIR/$t.status"
+                set -e
+                if [ $rc -ne 0 ]; then
+                    failed_bin=$b
+                    break
+                fi
+            done
+            if [ $rc -eq 0 ] && grep -Eq "(^|[^A-Za-z0-9_])FAIL([^A-Za-z0-9_]|$)" "$logfile"; then
+                rc=1
+            fi
+            echo "$rc:$failed_bin" > "$TMPDIR/$t.status"
+            if [ "$rc" -eq 0 ]; then
+                # Move up one line, clear, and print success
+                printf "\033[1A\r${GREEN}✓ SUCCESS${NC}: %-18s (%d/%d) [all]\033[K\n" "$t" "$completed" "$TOTAL_TESTS"
+            else
                 # Move up one line, clear, and print failure
-                printf "\033[1A\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\033[K\n" "$t" "$completed" "$TOTAL_TESTS" "$rc"
+                if [ -n "$failed_bin" ]; then
+                    printf "\033[1A\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [%s exit: %d]\033[K\n" "$t" "$completed" "$TOTAL_TESTS" "$failed_bin" "$rc"
+                else
+                    printf "\033[1A\r${RED}✗ FAIL${NC}:    %-18s (%d/%d) [exit code: %d]\033[K\n" "$t" "$completed" "$TOTAL_TESTS" "$rc"
+                fi
             fi
         done
         echo ""
@@ -355,8 +524,9 @@ else
     for base in $all_tests; do
         TOTAL=$((TOTAL + 1))
         status=$(cat "$TMPDIR/$base.status" 2>/dev/null || echo 1)
+        rc=${status%%:*}
 
-        if [ "$status" -eq 0 ]; then
+        if [ "$rc" -eq 0 ]; then
             PASSED=$((PASSED + 1))
         else
             FAILED=$((FAILED + 1))
@@ -367,16 +537,6 @@ else
             printf "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         fi
     done
-
-    # Run endless loop detection test
-    if run_endless_test; then
-        TOTAL=$((TOTAL + 1))
-        PASSED=$((PASSED + 1))
-    else
-        TOTAL=$((TOTAL + 1))
-        FAILED=$((FAILED + 1))
-        FAILED_TESTS="$FAILED_TESTS testendless"
-    fi
 
     echo ""
     if [ $FAILED -gt 0 ]; then

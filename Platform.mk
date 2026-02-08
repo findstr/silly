@@ -16,26 +16,26 @@ ifeq ($(uname_S),Linux)
 	SO = so
 	A = a
 	LIBPREFIX = lib
-ifeq ($(TEST),ON)
-	CFLAGS += -fsanitize=address -fno-omit-frame-pointer -DSILLY_TEST
-	LDFLAGS += -fsanitize=address -fno-omit-frame-pointer
-endif
 endif
 
 ifeq ($(uname_S),Darwin)
-ifeq ($(OPENSSL),ON)
-	CFLAGS += $(shell pkg-config --cflags openssl)
-	LDFLAGS += $(shell pkg-config --libs openssl)
-	SHARED += $(shell pkg-config --libs openssl)
-endif
 	LDFLAGS += -ldl -Wl,-no_compact_unwind,-export_dynamic
 	SHARED += -dynamiclib -fPIC -Wl,-undefined,dynamic_lookup
 	SO = so
 	A = a
 	LIBPREFIX = lib
-ifeq ($(TEST),ON)
-	CFLAGS += -fsanitize=address -fno-omit-frame-pointer -DSILLY_TEST
-	LDFLAGS += -fsanitize=address -fno-omit-frame-pointer
+endif
+
+# ---- OpenSSL (platform-specific) ----
+ifeq ($(OPENSSL),ON)
+	CFLAGS += -DUSE_OPENSSL
+ifneq (,$(shell command -v pkg-config 2>/dev/null))
+	CFLAGS += $(shell pkg-config --cflags openssl)
+	LDFLAGS += $(shell pkg-config --libs openssl)
+	SHARED += $(shell pkg-config --libs openssl)
+else
+	LDFLAGS += -lssl -lcrypto
+	SHARED += -lssl -lcrypto
 endif
 endif
 
@@ -47,11 +47,15 @@ ifeq ($(findstring _NT, $(uname_S)),_NT)
 	LIBPREFIX =
 	LUA_PLAT = mingw
 	CMAKE_GENERATOR = -G "MSYS Makefiles"
+endif
+
+# ---- Test (sanitizers) ----
 ifeq ($(TEST),ON)
 	CFLAGS += -DSILLY_TEST
+ifneq ($(findstring _NT, $(uname_S)),_NT)
+	CFLAGS += -fsanitize=address -fno-omit-frame-pointer
+	LDFLAGS += -fsanitize=address -fno-omit-frame-pointer
 endif
 endif
 
 GITSHA1=$(shell git log -1 --pretty=format:"%h")
-
-
