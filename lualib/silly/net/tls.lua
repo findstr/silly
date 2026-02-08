@@ -179,7 +179,7 @@ local function block_read(s, delim, timeout)
 		end
 		err = s.err
 	end
-	if #err == 0 then
+	if err == "end of file" or #err == 0 then
 		return "", "end of file"
 	end
 	return nil, err
