@@ -6,6 +6,10 @@ on:
   release:
     types: [ published ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,7 +23,7 @@ jobs:
         variant: [alpine, slim]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -70,6 +74,8 @@ jobs:
           tags:   ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
   clean:
+    needs: build
+    if: github.ref == 'refs/heads/master' || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: ghcr.io cleanup action
