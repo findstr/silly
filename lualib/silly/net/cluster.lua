@@ -49,8 +49,9 @@ local expire
 local wait_pool = {}
 local fd_to_peer = {}
 local addr_to_peer = {}
-local ctx = c.create()
 local connect_lock = lock.new()
+---@type silly.net.cluster.context
+local ctx
 
 ---@class silly.net.cluster
 local M = {}
@@ -63,8 +64,9 @@ local function process()
 	task.fork(process)
 	while true do
 		if cmd then	--rpc request
-			local body, err = unmarshal("request", cmd, buf)
-			if not body then
+			local req, resp, err
+			req, err = unmarshal("request", cmd, buf)
+			if not req then
 				logger.error("[cluster] decode fail",
 					session, cmd, err)
 				break
@@ -74,7 +76,7 @@ local function process()
 				logger.error("[cluster] peer not found", fd)
 				break
 			end
-			local ok, res = pcall(call, peer, cmd, body)
+			local ok, res = pcall(call, peer, cmd, req)
 			if not ok then
 				logger.error("[cluster] call error", res)
 				break
@@ -83,7 +85,12 @@ local function process()
 			if not id then
 				break
 			end
-			tcp_send(fd, c.response(session, res_data))
+			resp, err = c.response(ctx, session, res_data)
+			if not resp then
+				logger.error("[cluster] response cmd:", cmd, "error:", err)
+				break
+			end
+			tcp_send(fd, resp)
 		else	-- rpc response
 			local co = wait_pool[session]
 			wait_pool[session] = nil
@@ -99,6 +106,25 @@ local function process()
 	trace_attach(otrace)
 end
 
+local function close_fd(fd, errno)
+	c.clear(ctx, fd)
+	tcp_close(fd)
+	local peer = fd_to_peer[fd]
+	if peer then
+		fd_to_peer[fd] = nil
+		peer.fd = nil
+		if close then
+			local ok, err = pcall(close, peer, errno)
+			if not ok then
+				logger.error("[cluster] close callback fd:", fd,
+					"errno:", errno, "error:", err)
+			end
+		end
+	else
+		logger.error("[cluster] close fd:", fd, "not found")
+	end
+end
+
 ---@type silly.net.event
 local EVENT = {
 accept = function(fd, addr)
@@ -110,37 +136,23 @@ accept = function(fd, addr)
 	if accept then
 		local ok, err = pcall(accept, peer, addr)
 		if not ok then
-			logger.error("[cluster] accept:", addr, "fd:", fd, "error", err)
+			logger.error("[cluster] accept addr:", addr, "fd:", fd, "error:", err)
 			tcp_close(fd)
 			fd_to_peer[fd] = nil
-			addr_to_peer[addr] = nil
 		end
 	end
 end,
 close = function(fd, errno)
 	logger.info("[cluster] close", fd, errno)
-	c.clear(ctx, fd)
-	tcp_close(fd)
-	local peer = fd_to_peer[fd]
-	if peer then
-		fd_to_peer[fd] = nil
-		peer.fd = nil
-		local addr = peer.addr
-		if addr then
-			addr_to_peer[addr] = nil
-		end
-		if close then
-			local ok, err = pcall(close, peer, errno)
-			if not ok then
-				logger.error("[cluster] close:", fd, "addr:", addr, "error", err)
-			end
-		end
-	else
-		logger.error("[cluster] close", fd, "not found")
-	end
+	close_fd(fd, errno)
 end,
 data = function(fd, ptr, size)
-	c.push(ctx, fd, ptr, size)
+	local ok, err = c.push(ctx, fd, ptr, size)
+	if not ok then
+		logger.error("[cluster] push fd:", fd, "error:", err)
+		close_fd(fd, err)
+		return
+	end
 	process()
 end
 }
@@ -192,7 +204,7 @@ function M.close(peer)
 	if addr then
 		addr_to_peer[addr] = nil
 	end
-	logger.info("[cluster] close", addr, "fd:", fd)
+	logger.info("[cluster] close addr", addr, "fd:", fd)
 end
 
 
@@ -259,7 +271,10 @@ local function callx(is_send)
 			return nil, dat
 		end
 		local traceid = trace_propagate()
-		local session, body = c.request(cmdn, traceid, dat)
+		local session, body = c.request(ctx, cmdn, traceid, dat)
+		if not session then
+			return nil, body
+		end
 		local ok, err = tcp_send(fd, body)
 		if not ok then
 			return nil, err
@@ -276,6 +291,8 @@ M.send = callx(true)
 
 ---@param conf {
 ---	timeout: integer, -- default 5000 ms
+---	hardlimit: integer?, -- max body size before error (default 128MB)
+---	softlimit: integer?, -- max body size before warning (default 65535)
 ---	marshal: silly.net.cluster.marshal,
 ---	unmarshal: silly.net.cluster.unmarshal,
 ---	call: silly.net.cluster.call,
@@ -289,6 +306,7 @@ function M.serve(conf)
 	call = assert(conf.call)
 	accept = conf.accept
 	close = conf.close
+	ctx = c.create(conf.hardlimit, conf.softlimit)
 end
 
 return M
