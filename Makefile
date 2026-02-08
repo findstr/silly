@@ -48,12 +48,6 @@ CFLAGS += -DDISABLE_JEMALLOC
 MALLOC_LIB :=
 endif
 
-#####openssl
-ifeq ($(OPENSSL), ON)
-CFLAGS += -DUSE_OPENSSL
-SHARED += -lssl -lcrypto
-endif
-
 #####zlib
 ZLIB_DIR=deps/zlib
 ZLIB_LIB=$(ZLIB_DIR)/libz.a
@@ -216,4 +210,3 @@ fmt:
 	-clang-format -style=file -i $(SRC_PATH)/*.c
 	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/l*.c
 	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/crypto/l*.c
-

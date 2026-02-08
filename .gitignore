@@ -42,6 +42,8 @@ luac
 *.x86_64
 *.hex
 /silly
+/silly.asan
+/silly.tsan
 # Debug files
 *.dSYM/
 
