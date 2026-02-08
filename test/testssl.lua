@@ -415,5 +415,63 @@ testaux.case("Test 11: TLS Handshake Timeout", function()
 	testaux.success("Test 11 passed")
 end)
 
+-- Test 12: ALPN GC stability
+testaux.case("Test 12: ALPN GC stability", function()
+	local port = 10006
+	local alpn_list = {"h2", "http/1.1"}
+	local listener = tls.listen {
+		addr = "127.0.0.1:" .. port,
+		certs = {
+			{
+				cert = testaux.CERT_A,
+				key = testaux.KEY_A,
+			},
+		},
+		alpnprotos = alpn_list,
+		accept = function(conn)
+			local ap = conn:alpnproto()
+			testaux.asserteq(ap, "h2", "Test 12.2: Server ALPN should be h2")
+			conn:close()
+		end
+	}
+
+	-- Force GC and memory churn to stress ALPN userdata lifetime
+	for i = 1, 64 do
+		local t = {}
+		for j = 1, 64 do
+			t[j] = string.rep("x", 1024)
+		end
+	end
+	collectgarbage("collect")
+	collectgarbage("collect")
+
+	local conn, err = tls.connect("127.0.0.1:" .. port, {alpnprotos = alpn_list})
+	testaux.assertneq(conn, nil, "Test 12.1: Client connected for ALPN test")
+	local apc = conn:alpnproto()
+	testaux.asserteq(apc, "h2", "Test 12.3: Client ALPN should be h2")
+	conn:close()
+	listener:close()
+	testaux.success("Test 12 passed")
+end)
+
+-- Test 13: TLS handshake error on plaintext server
+testaux.case("Test 13: TLS handshake error", function()
+	local tcp = require "silly.net.tcp"
+	local port = 10007
+	local listener = tcp.listen {
+		addr = "127.0.0.1:" .. port,
+		accept = function(conn)
+			conn:write("HTTP/1.1 200 OK\r\n\r\n")
+			conn:close()
+		end
+	}
+	local c, err = tls.connect("127.0.0.1:" .. port, {timeout = 500})
+	testaux.asserteq(c, nil, "Test 13.1: TLS connect should fail")
+	testaux.assertneq(err, nil, "Test 13.2: TLS connect should return error")
+	testaux.assertneq(err, "read timeout", "Test 13.3: handshake error should not be read timeout")
+	listener:close()
+	testaux.success("Test 13 passed")
+end)
+
 -- Cleanup EOF server
 eof_server:close()

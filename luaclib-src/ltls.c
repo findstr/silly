@@ -377,6 +377,10 @@ static int lctx_server(lua_State *L)
 	ctx = new_ctx(L, 'S', ncert, alpn_protos != NULL ? 1 : 0);
 	ctx->alpn_protos = alpn_protos;
 	ctx->alpn_size = alpn_size;
+	if (alpn_protos != NULL) {
+		lua_pushvalue(L, 3);
+		lua_setiuservalue(L, -2, 1);
+	}
 	for (i = 0; i < ctx->entry_count; i++) {
 		int absidx;
 		struct ctx_entry *entry;
