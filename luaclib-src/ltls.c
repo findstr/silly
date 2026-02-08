@@ -11,6 +11,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+#include <errno.h>
 
 #define UPVAL_ERROR_TABLE (1)
 #define META_CTX	"silly.tls.ctx"
@@ -59,6 +60,33 @@ struct tls {
 static inline void push_error(lua_State *L, int code)
 {
 	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
+}
+
+static void push_ssl_error(lua_State *L, int err)
+{
+	if (err == SSL_ERROR_SSL) {
+		unsigned long e = ERR_get_error();
+		if (e != 0) {
+			char buf[256];
+			ERR_error_string_n(e, buf, sizeof(buf));
+			lua_pushstring(L, buf);
+			return;
+		}
+	}
+	switch (err) {
+	case SSL_ERROR_ZERO_RETURN:
+		lua_pushliteral(L, "end of file");
+		break;
+	case SSL_ERROR_SYSCALL:
+		if (errno != 0)
+			lua_pushstring(L, strerror(errno));
+		else
+			lua_pushliteral(L, "ssl syscall error");
+		break;
+	default:
+		lua_pushliteral(L, "ssl error");
+		break;
+	}
 }
 
 static inline void buf_init(struct buf *buf)
@@ -525,58 +553,79 @@ static int flushwrite(struct tls *tls)
 
 static int ltls_write(lua_State *L)
 {
-	int ret;
+	int ret = 0;
 	size_t sz;
 	struct tls *tls;
 	const char *str;
+	int sslerr = 0;
 	tls = check_tls(L, 1);
+	ERR_clear_error();
 	switch (lua_type(L, 2)) {
 	case LUA_TSTRING: {
 		str = luaL_checklstring(L, 2, &sz);
-		SSL_write(tls->ssl, str, sz);
+		ret = SSL_write(tls->ssl, str, sz);
 		break;
 	}
 	case LUA_TTABLE: {
 		size_t i, n;
 		n = luaL_len(L, 2);
+		luaL_argcheck(L, n > 0, 2, "table must not be empty");
 		for (i = 1; i <= n; i++) {
 			lua_geti(L, 2, i);
 			str = luaL_checklstring(L, -1, &sz);
-			SSL_write(tls->ssl, str, sz);
+			ret = SSL_write(tls->ssl, str, sz);
 			lua_pop(L, 1);
+			if (ret <= 0)
+				break;
 		}
 		break;
 	}
 	default:
 		return luaL_error(L, "invalid data type");
 	}
+	if (ret <= 0) {
+		sslerr = SSL_get_error(tls->ssl, ret);
+		lua_pushboolean(L, 0);
+		push_ssl_error(L, sslerr);
+		return 2;
+	}
 	ret = flushwrite(tls);
 	lua_pushboolean(L, ret >= 0);
-	if (ret < 0) {
+	if (ret < 0)
 		push_error(L, -ret);
-	} else {
+	else
 		lua_pushnil(L);
-	}
 	return 2;
 }
 
 static int ltls_handshake(lua_State *L)
 {
 	int ret;
+	int sslerr;
 	struct tls *tls;
 	tls = check_tls(L, 1);
+	ERR_clear_error();
 	ret = SSL_do_handshake(tls->ssl);
 	// 1:success 0:error <0:continue
-	lua_pushinteger(L, ret);
-	if (ret == 1) {// success
+	if (ret == 1) { // success
 		unsigned int len;
 		const unsigned char *data;
+		lua_pushinteger(L, 1);
 		SSL_get0_alpn_selected(tls->ssl, &data, &len);
 		lua_pushlstring(L, (const char *)data, len);
-	} else if (ret <= 0) {
-		lua_pushnil(L);
+	} else {
+		sslerr = SSL_get_error(tls->ssl, ret);
+		if (sslerr == SSL_ERROR_WANT_READ ||
+		    sslerr == SSL_ERROR_WANT_WRITE) {
+			lua_pushinteger(L, -1);
+			lua_pushnil(L);
+		} else {
+			lua_pushinteger(L, 0);
+			push_ssl_error(L, sslerr);
+		}
 	}
-	if (flushwrite(tls) < 0) {
+	ret = flushwrite(tls);
+	if (ret < 0) {
 		lua_pop(L, 2);
 		lua_pushinteger(L, 0);
 		push_error(L, -ret);

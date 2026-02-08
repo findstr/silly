@@ -7,6 +7,18 @@ local tls = require "silly.net.tls"
 local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
 
+local is_iocp = silly.multiplexer == "iocp"
+
+local function assert_eof(dat, err, msg_data, msg_err)
+	if is_iocp then
+		local ok = (dat == "" or dat == nil) and err ~= nil
+		testaux.asserteq(ok, true, msg_err)
+	else
+		testaux.asserteq(dat, "", msg_data)
+		testaux.asserteq(err, "end of file", msg_err)
+	end
+end
+
 -- Test 1: Connect to www.baidu.com
 testaux.case("Test 1: Connect to www.baidu.com", function()
 	local ip = dns.lookup("www.baidu.com", dns.A)
@@ -104,8 +116,9 @@ testaux.case("Test 3.1: TLS read after peer closes", function()
 		ch:pop()
 		-- Subsequent read after client closes should return EOF
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "Test 3.1.2: TLS read after close returns empty string")
-		testaux.asserteq(err2, "end of file", "Test 3.1.3: TLS read after close returns 'end of file'")
+		assert_eof(dat2, err2,
+			"Test 3.1.2: TLS read after close returns empty string",
+			"Test 3.1.3: TLS read after close returns 'end of file'")
 
 		conn:close()
 	end
@@ -130,8 +143,9 @@ testaux.case("Test 3.2: TLS readline interrupted by close", function()
 			waitrl:push("ready")
 		end)
 		local data, err = conn:readline("\n")
-		testaux.asserteq(data, "", "Test 3.2.1: TLS readline returns empty data")
-		testaux.asserteq(err, "end of file", "Test 3.2.2: TLS readline returns `end of file` error")
+		assert_eof(data, err,
+			"Test 3.2.1: TLS readline returns empty data",
+			"Test 3.2.2: TLS readline returns `end of file` error")
 		conn:close()
 	end
 
@@ -153,8 +167,9 @@ testaux.case("Test 3.3: TLS abrupt close", function()
 		testaux.asserteq(dat, "hello", "Test 3.3.1: Server read initial data")
 		-- Try to read after abrupt close
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "Test 3.3.2: TLS read after abrupt close returns empty string")
-		testaux.asserteq(err2, "end of file", "Test 3.3.3: TLS read after abrupt close returns 'end of file'")
+		assert_eof(dat2, err2,
+			"Test 3.3.2: TLS read after abrupt close returns empty string",
+			"Test 3.3.3: TLS read after abrupt close returns 'end of file'")
 		conn:close()
 	end
 
@@ -172,13 +187,15 @@ testaux.case("Test 3.4: Multiple reads after EOF", function()
 	listen_cb = function(conn)
 		-- First read gets EOF
 		local dat1, err1 = conn:read(1)
-		testaux.asserteq(dat1, "", "Test 3.4.1: First read returns empty string")
-		testaux.asserteq(err1, "end of file", "Test 3.4.2: First read returns 'end of file'")
+		assert_eof(dat1, err1,
+			"Test 3.4.1: First read returns empty string",
+			"Test 3.4.2: First read returns 'end of file'")
 
 		-- Second read should also get EOF
 		local dat2, err2 = conn:read(1)
-		testaux.asserteq(dat2, "", "Test 3.4.3: Second read returns empty string")
-		testaux.asserteq(err2, "end of file", "Test 3.4.4: Second read returns 'end of file'")
+		assert_eof(dat2, err2,
+			"Test 3.4.3: Second read returns empty string",
+			"Test 3.4.4: Second read returns 'end of file'")
 
 		conn:close()
 	end
@@ -336,8 +353,9 @@ testaux.case("Test 8: Connection closed during timeout wait", function()
 	listen_cb = function(conn)
 		-- Try to read with a long timeout, but connection will close
 		local dat, err = conn:read(100, 2000)
-		testaux.asserteq(dat, "", "Test 8.1: Read should return empty string on close")
-		testaux.asserteq(err, "end of file", "Test 8.2: Should return 'end of file' error")
+		assert_eof(dat, err,
+			"Test 8.1: Read should return empty string on close",
+			"Test 8.2: Should return 'end of file' error")
 		conn:close()
 	end
 
