@@ -285,7 +285,8 @@ local signal = require "silly.signal"
 env.load("config.lua")
 
 -- Toggle debug mode dynamically via signal
-signal("SIGUSR2", function()
+-- Note: SIGUSR2 may be coalesced or dropped when the process is busy.
+signal("SIGUSR1", function()
     local debug = env.get("debug")
     env.set("debug", not debug)
     print("Debug mode toggled:", env.get("debug"))

@@ -68,6 +68,33 @@ void cpu_usage(float *stime, float *utime)
 	*utime += (float)ru.ru_utime.tv_usec / 1000000;
 }
 
+void signal_ignore_pipe(void)
+{
+	signal(SIGPIPE, SIG_IGN);
+}
+
+void signal_block_usr2(void)
+{
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, SIGUSR2);
+	pthread_sigmask(SIG_BLOCK, &set, NULL);
+}
+
+void signal_register_usr2(void (*handler)(int))
+{
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, SIGUSR2);
+	pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+	signal(SIGUSR2, handler);
+}
+
+void signal_kill_usr2(pthread_t tid)
+{
+	pthread_kill(tid, SIGUSR2);
+}
+
 size_t memory_rss_(void)
 {
 	size_t rss;

@@ -17,7 +17,7 @@ void monitor_check()
 {
 	uint32_t check_id = worker_process_id();
 	if (unlikely(M.check_id == check_id)) {
-		worker_warn_endless();
+		worker_mark_endless();
 	}
 	M.check_id = check_id;
 }

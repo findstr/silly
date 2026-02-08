@@ -285,7 +285,8 @@ local signal = require "silly.signal"
 env.load("config.lua")
 
 -- 通过信号动态切换调试模式
-signal("SIGUSR2", function()
+-- 注意：SIGUSR2 在程序繁忙时可能被合并或丢失，请避免用于关键操作。
+signal("SIGUSR1", function()
     local debug = env.get("debug")
     env.set("debug", not debug)
     print("Debug mode toggled:", env.get("debug"))

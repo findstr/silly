@@ -184,7 +184,8 @@ local signal = require "silly.signal"
 logger.setlevel(logger.INFO)
 
 -- 通过信号切换到DEBUG模式
-signal("SIGUSR2", function()
+-- 注意：SIGUSR2 在程序繁忙时可能被合并或丢失，请避免用于关键操作。
+signal("SIGUSR1", function()
     if logger.getlevel() == logger.DEBUG then
         logger.setlevel(logger.INFO)
         logger.info("Switched to INFO level")
