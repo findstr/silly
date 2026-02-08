@@ -1,6 +1,11 @@
 name: CI
 
 on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -15,7 +20,7 @@ jobs:
           mingw-w64-x86_64-cmake
           mingw-w64-x86_64-openssl
           mingw-w64-x86_64-gcc
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
     - shell: msys2 {0}
@@ -29,10 +34,9 @@ jobs:
       run: |
         brew update
         brew install openssl autoconf
-        brew link openssl --force
         pkg-config --cflags openssl
         pkg-config --libs openssl
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
     - name: make
@@ -59,7 +63,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libssl-dev autoconf
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
     - name: make
@@ -100,7 +104,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libssl-dev autoconf
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
     - name: DB-focused tests
