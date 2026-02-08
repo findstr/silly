@@ -265,20 +265,16 @@ end)
 
 ### grpc.newclient(conf)
 
-Create a gRPC client.
+Create a gRPC connection pool.
 
 - **Parameters**:
   - `conf`: `table` - Client configuration table
-    - `service`: `string` (required) - Service name (corresponds to service name in proto)
-    - `endpoints`: `string[]` (required) - List of gRPC server addresses, format `"host:port"`
-    - `proto`: `table` (required) - Proto definition loaded by protoc
+    - `targets`: `string[]` (required) - List of gRPC targets, format `"host:port"` (or `dns://host:port`)
     - `tls`: `boolean|nil` (optional) - Whether to use TLS, default false
-    - `timeout`: `number|nil` (optional) - Request timeout (milliseconds)
 - **Returns**:
-  - Success: `client` - Client object
+  - Success: `conn` - gRPC connection object
   - Failure: `nil, string` - nil and error message
-- **Note**: Client object dynamically generates methods with names corresponding to RPC methods defined in proto
-- **Load Balancing**: Uses round-robin strategy with multiple endpoints
+- **Load Balancing**: Uses round-robin strategy with multiple targets
 - **Example**:
 
 ```lua validate
@@ -306,19 +302,23 @@ task.fork(function()
     }
     ]], "hello.proto")
 
-    local client, err = grpc.newclient {
-        service = "Greeter",
-        endpoints = {"127.0.0.1:50051", "127.0.0.1:50052"},
-        proto = p.loaded["hello.proto"],
-        timeout = 5000,
+    local client_conn, err = grpc.newclient {
+        targets = {"127.0.0.1:50051", "127.0.0.1:50052"},
     }
-
-    if not client then
-        print("Failed to create client:", err)
+    if not client_conn then
+        print("Failed to create client connection:", err)
         return
     end
 
-    -- Client object automatically generates SayHello method
+    local client
+    client, err = grpc.newservice(client_conn, p.loaded["hello.proto"], "Greeter")
+
+    if not client then
+        print("Failed to create service client:", err)
+        return
+    end
+
+    -- Service object dynamically provides methods from proto
     local response, err = client.SayHello({name = "World"})
     if response then
         print("Response:", response.message)
@@ -328,7 +328,19 @@ task.fork(function()
 end)
 ```
 
-### client.MethodName(request)
+### grpc.newservice(conn, proto, service_name)
+
+Create a typed service client from a gRPC connection.
+
+- **Parameters**:
+  - `conn`: `silly.net.grpc.client.conn` - Connection returned by `grpc.newclient`
+  - `proto`: `table` - Proto definition loaded by protoc
+  - `service_name`: `string` - Service name defined in proto
+- **Returns**:
+  - Success: `service` - Service client object
+  - Failure: `nil, string` - nil and error message
+
+### service.MethodName(request)
 
 Call an RPC method (Unary RPC).
 
@@ -367,11 +379,10 @@ task.fork(function()
     }
     ]], "math.proto")
 
-    local client = grpc.newclient {
-        service = "MathService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["math.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["math.proto"], "MathService"))
 
     -- Call Multiply method
     local result, err = client.Multiply({x = 6, y = 7})
@@ -383,7 +394,7 @@ task.fork(function()
 end)
 ```
 
-### client.StreamMethod()
+### service.StreamMethod()
 
 Create a streaming RPC connection (Streaming RPC).
 
@@ -416,11 +427,10 @@ task.fork(function()
     }
     ]], "stream.proto")
 
-    local client = grpc.newclient {
-        service = "StreamService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["stream.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["stream.proto"], "StreamService"))
 
     -- Create bidirectional stream
     local stream, err = client.BiStream()
@@ -486,11 +496,10 @@ task.fork(function()
     }
     ]], "file.proto")
 
-    local client = grpc.newclient {
-        service = "FileService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["file.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["file.proto"], "FileService"))
 
     local stream = client.Upload()
 
@@ -548,11 +557,10 @@ task.fork(function()
     }
     ]], "log.proto")
 
-    local client = grpc.newclient {
-        service = "LogService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["log.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["log.proto"], "LogService"))
 
     local stream = client.StreamLogs()
 
@@ -603,11 +611,10 @@ task.fork(function()
     }
     ]], "chat.proto")
 
-    local client = grpc.newclient {
-        service = "ChatService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["chat.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["chat.proto"], "ChatService"))
 
     local stream = client.Chat()
 
@@ -680,12 +687,10 @@ task.fork(function()
     print("Greeter server started on 127.0.0.1:50051")
 
     -- Create client
-    local client = grpc.newclient {
-        service = "Greeter",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["greeter.proto"],
-        timeout = 5000,
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["greeter.proto"], "Greeter"))
 
     -- Call RPC
     local resp1 = client.SayHello({name = "Alice"})
@@ -747,12 +752,10 @@ task.fork(function()
     }
 
     -- Client side
-    local client = grpc.newclient {
-        service = "Calculator",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["calculator.proto"],
-        timeout = 5000,
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["calculator.proto"], "Calculator"))
 
     -- Normal call
     local result, err = client.Divide({
@@ -844,14 +847,13 @@ task.fork(function()
     print("Started two servers on ports 50051 and 50052")
 
     -- Client connects to multiple endpoints
-    local client = grpc.newclient {
-        service = "Counter",
-        endpoints = {
+    local client_conn = grpc.newclient {
+        targets = {
             "127.0.0.1:50051",
             "127.0.0.1:50052"
         },
-        proto = p.loaded["counter.proto"],
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["counter.proto"], "Counter"))
 
     -- Requests will be distributed to both servers
     for i = 1, 4 do
@@ -910,15 +912,13 @@ task.fork(function()
     }
 
     -- Client: set short timeout
-    local client = grpc.newclient {
-        service = "SlowService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["slow.proto"],
-        timeout = 1000,  -- 1 second timeout
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["slow.proto"], "SlowService"))
 
     -- Fast request (should succeed)
-    local result1, err1 = client.SlowMethod({delay_ms = 100})
+    local result1, err1 = client.SlowMethod({delay_ms = 100}, 1000)
     if result1 then
         print("Fast request:", result1.result)
     else
@@ -926,7 +926,7 @@ task.fork(function()
     end
 
     -- Slow request (should timeout)
-    local result2, err2 = client.SlowMethod({delay_ms = 2000})
+    local result2, err2 = client.SlowMethod({delay_ms = 2000}, 1000)
     if result2 then
         print("Slow request:", result2.result)
     else
@@ -1043,12 +1043,11 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
     print("Secure gRPC server started")
 
     -- TLS client
-    local client = grpc.newclient {
-        service = "SecureService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["secure.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
         tls = true,
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["secure.proto"], "SecureService"))
 
     local result = client.ProcessSecret({
         secret = "my-sensitive-data"
@@ -1111,11 +1110,10 @@ task.fork(function()
     }
 
     -- Client
-    local client = grpc.newclient {
-        service = "DataService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["api.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["api.proto"], "DataService"))
 
     -- Concurrent requests for multiple resources
     local wg = waitgroup.new()
@@ -1189,11 +1187,10 @@ task.fork(function()
         registrar = reg,
     }
 
-    local client = grpc.newclient {
-        service = "EventService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["events.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["events.proto"], "EventService"))
 
     -- For streaming methods, call returns stream object
     local stream, err = client.Subscribe()
@@ -1286,11 +1283,10 @@ task.fork(function()
     }
 
     -- Client
-    local client = grpc.newclient {
-        service = "UserService",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["user.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["user.proto"], "UserService"))
 
     local response = client.CreateUser({
         user = {
@@ -1337,7 +1333,7 @@ local task = require "silly.task"
 
 -- Correct: call in coroutine
 task.fork(function()
-    local client = grpc.newclient({
+    local client_conn = grpc.newclient({
         -- ...
     })
     -- normal usage
@@ -1390,11 +1386,16 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client, err = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn, err = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    if not client_conn then
+        print("Failed to create client connection:", err)
+        return
+    end
+
+    local client
+    client, err = grpc.newservice(client_conn, p.loaded["test.proto"], "Test")
 
     if not client then
         print("Failed to create client:", err)
@@ -1443,15 +1444,13 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
-        timeout = 5000,  -- 5 second timeout (recommended)
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- Returns nil and error message on timeout
-    local result, err = client.Ping({})
+    local result, err = client.Ping({}, 5000)  -- 5 second timeout
     if not result then
         print("Request timeout or failed:", err)
     end
@@ -1519,16 +1518,15 @@ task.fork(function()
     ]], "test.proto")
 
     -- Requests are distributed to three endpoints in order
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {
+    local client_conn = grpc.newclient {
+        targets = {
             "server1.example.com:50051",  -- 1st request
             "server2.example.com:50051",  -- 2nd request
             "server3.example.com:50051",  -- 3rd request
             -- 4th request goes back to server1...
         },
-        proto = p.loaded["test.proto"],
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- 10 requests will be evenly distributed across 3 servers
     for i = 1, 10 do
@@ -1567,11 +1565,10 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- HTTP/2 connection is automatically reused
     for i = 1, 100 do
@@ -1608,11 +1605,10 @@ task.fork(function()
     }
     ]], "test.proto")
 
-    local client = grpc.newclient {
-        service = "Test",
-        endpoints = {"127.0.0.1:50051"},
-        proto = p.loaded["test.proto"],
+    local client_conn = grpc.newclient {
+        targets = {"127.0.0.1:50051"},
     }
+    local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     local wg = waitgroup.new()
 

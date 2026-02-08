@@ -27,7 +27,7 @@ The Silly framework provides built-in support for all three aspects:
 
 - `silly.logger`: Hierarchical logging system with log rotation support
 - `silly.metrics.prometheus`: Prometheus metrics collection and export
-- `silly.tracespawn/traceset`: Distributed trace ID generation and propagation
+- `trace.spawn/trace.attach`: Distributed trace ID generation and propagation
 
 ## Logging System
 
@@ -37,6 +37,7 @@ The Silly framework provides built-in support for all three aspects:
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- Set log level (only output INFO and above)
 logger.setlevel(logger.INFO)
@@ -89,6 +90,7 @@ Choose appropriate log levels based on different scenarios:
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- Production environment: use INFO level
 logger.setlevel(logger.INFO)
@@ -110,6 +112,7 @@ Use formatted log functions (`*f` series) to improve log readability:
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- Use string.format style
 logger.infof("User [%s] completed %d operations in %d seconds",
@@ -129,6 +132,7 @@ For easier log analysis, use structured log format:
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- Define log helper function
@@ -194,6 +198,7 @@ In production environments, dynamically adjust log levels via signals to avoid s
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local signal = require "silly.signal"
 
 -- Initialize to INFO level
@@ -367,6 +372,7 @@ An HTTP service example with complete monitoring:
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- Define metrics
@@ -500,6 +506,7 @@ Silly provides a distributed trace ID system where each coroutine has an indepen
 local silly = require "silly"
 local task = require "silly.task"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 task.fork(function()
     -- Create new trace ID (if current coroutine doesn't have one)
@@ -518,6 +525,7 @@ In microservice architecture, trace IDs need to be propagated to downstream serv
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local httpc = http.newclient()
 -- Service A: Initiate HTTP request
 local function call_service_b()
@@ -525,17 +533,22 @@ local function call_service_b()
     local trace_id = trace.propagate()
     logger.info("Calling service B")
 
-    -- Pass trace ID via HTTP Header
-    local response = httpc:request {
-        method = "POST",
-        url = "http://service-b:8080/api/process",
-        headers = {
+    -- Pass trace ID via HTTP header
+    local stream, err = httpc:request(
+        "POST",
+        "http://service-b:8080/api/process",
+        {
             ["X-Trace-Id"] = tostring(trace_id),
-        },
-        body = '{"data": "value"}',
-    }
+            ["content-type"] = "application/json",
+        }
+    )
+    if not stream then
+        return nil, err
+    end
 
-    return response
+    stream:closewrite('{"data": "value"}')
+    local body, status = stream:readall()
+    return {status = status, body = body}
 end
 
 -- Service B: Receive request and use incoming trace ID
@@ -543,7 +556,7 @@ local server = http.listen {
     addr = "0.0.0.0:8080",
     handler = function(stream)
         -- Extract and set trace ID
-        local trace_id = tonumber(stream.headers["x-trace-id"])
+        local trace_id = tonumber(stream.header["x-trace-id"])
         if trace_id then
             trace.attach(trace_id)
         else
@@ -564,6 +577,7 @@ When making RPC calls using `silly.net.cluster`, trace IDs are automatically pro
 ```lua
 local cluster = require "silly.net.cluster"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- Create cluster service
 cluster.serve {
@@ -593,6 +607,7 @@ Integrate trace ID into logs to achieve complete request tracking:
 ```lua
 local silly = require "silly"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- Structured log helper function
@@ -758,6 +773,7 @@ You can also implement simple alert logic within the application:
 local silly = require "silly"
 local time = require "silly.time"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- Define alert thresholds
@@ -854,6 +870,7 @@ A production-grade HTTP service example with complete logging, monitoring, and t
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local signal = require "silly.signal"
 local time = require "silly.time"
 local prometheus = require "silly.metrics.prometheus"
@@ -971,16 +988,16 @@ local function handle_request(stream)
     http_requests_in_flight:inc()
 
     -- Get or create trace ID
-    local trace_id = tonumber(stream.headers["x-trace-id"])
+    local trace_id = tonumber(stream.header["x-trace-id"])
     if trace_id then
-        silly.traceset(trace_id)
+        trace.attach(trace_id)
     else
-        silly.tracespawn()
-        trace_id = silly.tracepropagate()  -- Get current trace ID for response header
+        trace.spawn()
+        trace_id = trace.propagate()  -- Get current trace ID for response header
     end
 
     -- Record request size
-    local req_size = tonumber(stream.headers["content-length"]) or 0
+    local req_size = tonumber(stream.header["content-length"]) or 0
     http_request_size:observe(req_size)
 
     -- Route handling
@@ -1044,7 +1061,7 @@ local server = http.listen {
     handler = function(stream)
         local ok, err = silly.pcall(handle_request, stream)
         if not ok then
-            silly.tracespawn()  -- Create new trace ID
+            trace.spawn()  -- Create new trace ID
             logger.error("Request handling failed:", err)
 
             stream:respond(500, {["content-type"] = "application/json"})

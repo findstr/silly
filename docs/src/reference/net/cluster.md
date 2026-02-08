@@ -1077,7 +1077,7 @@ end)
 cluster 自动传播 trace ID：
 
 ```lua
--- 客户端发起请求时，自动使用 silly.tracepropagate() 携带当前 trace ID
+-- 客户端发起请求时，自动使用 trace.propagate() 携带当前 trace ID
 local resp = cluster.call(peer, "ping", data)
 
 -- 服务器端处理时，trace ID 已由 cluster 自动设置

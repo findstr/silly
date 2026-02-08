@@ -27,7 +27,7 @@ Silly 框架为这三个方面提供了内置支持：
 
 - `silly.logger`：分级日志系统，支持日志轮转
 - `silly.metrics.prometheus`：Prometheus 指标收集和导出
-- `silly.tracespawn/traceset`：分布式追踪 ID 生成和传播
+- `trace.spawn/trace.attach`：分布式追踪 ID 生成和传播
 
 ## 日志系统
 
@@ -37,6 +37,7 @@ Silly 框架为这三个方面提供了内置支持：
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- 设置日志级别（只输出 INFO 及以上级别）
 logger.setlevel(logger.INFO)
@@ -89,6 +90,7 @@ logger.info("Processing request")
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- 生产环境：使用 INFO 级别
 logger.setlevel(logger.INFO)
@@ -110,6 +112,7 @@ end
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- 使用 string.format 格式
 logger.infof("用户 [%s] 在 %d 秒内完成了 %d 次操作",
@@ -129,6 +132,7 @@ logger.debugf("%.2f%% 的请求在 %dms 内完成",
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- 定义日志辅助函数
@@ -194,6 +198,7 @@ find /var/log -name "myapp.log.*" -mtime +7 -delete
 
 ```lua
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local signal = require "silly.signal"
 
 -- 初始化为 INFO 级别
@@ -367,6 +372,7 @@ response_size:labels("GET"):observe(1234)
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- 定义指标
@@ -500,6 +506,7 @@ Silly 提供了分布式追踪 ID 系统，每个协程都有独立的 trace ID�
 local silly = require "silly"
 local task = require "silly.task"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 task.fork(function()
     -- 创建新的 trace ID（如果当前协程没有）
@@ -518,6 +525,7 @@ end)
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 -- 服务 A：发起 HTTP 请求
 local function call_service_b()
     -- 生成传播用的 trace ID
@@ -525,16 +533,22 @@ local function call_service_b()
     logger.info("调用服务 B")
 
     -- 通过 HTTP Header 传递 trace ID
-    local response = http.request {
-        method = "POST",
-        url = "http://service-b:8080/api/process",
-        headers = {
+    local httpc = http.newclient()
+    local stream, err = httpc:request(
+        "POST",
+        "http://service-b:8080/api/process",
+        {
             ["X-Trace-Id"] = tostring(trace_id),
-        },
-        body = '{"data": "value"}',
-    }
+            ["content-type"] = "application/json",
+        }
+    )
+    if not stream then
+        return nil, err
+    end
 
-    return response
+    stream:closewrite('{"data": "value"}')
+    local body, status = stream:readall()
+    return {status = status, body = body}
 end
 
 -- 服务 B：接收请求并使用传入的 trace ID
@@ -542,7 +556,7 @@ local server = http.listen {
     addr = "0.0.0.0:8080",
     handler = function(stream)
         -- 提取并设置 trace ID
-        local trace_id = tonumber(stream.headers["x-trace-id"])
+        local trace_id = tonumber(stream.header["x-trace-id"])
         if trace_id then
             trace.attach(trace_id)
         else
@@ -563,6 +577,7 @@ local server = http.listen {
 ```lua
 local cluster = require "silly.net.cluster"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- 创建 cluster 服务
 cluster.serve {
@@ -592,6 +607,7 @@ local result = cluster.call(peer, "get_user", {user_id = 123})
 ```lua
 local silly = require "silly"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- 结构化日志辅助函数
@@ -757,6 +773,7 @@ receivers:
 local silly = require "silly"
 local time = require "silly.time"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- 定义告警阈值
@@ -852,6 +869,7 @@ end)
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local signal = require "silly.signal"
 local time = require "silly.time"
 local prometheus = require "silly.metrics.prometheus"
@@ -969,16 +987,16 @@ local function handle_request(stream)
     http_requests_in_flight:inc()
 
     -- 获取或创建 trace ID
-    local trace_id = tonumber(stream.headers["x-trace-id"])
+    local trace_id = tonumber(stream.header["x-trace-id"])
     if trace_id then
-        silly.traceset(trace_id)
+        trace.attach(trace_id)
     else
-        silly.tracespawn()
-        trace_id = silly.tracepropagate()  -- 获取当前 trace ID 用于响应头
+        trace.spawn()
+        trace_id = trace.propagate()  -- 获取当前 trace ID 用于响应头
     end
 
     -- 记录请求大小
-    local req_size = tonumber(stream.headers["content-length"]) or 0
+    local req_size = tonumber(stream.header["content-length"]) or 0
     http_request_size:observe(req_size)
 
     -- 路由处理
@@ -1042,7 +1060,7 @@ local server = http.listen {
     handler = function(stream)
         local ok, err = silly.pcall(handle_request, stream)
         if not ok then
-            silly.tracespawn()  -- 创建新的 trace ID
+            trace.spawn()  -- 创建新的 trace ID
             logger.error("请求处理失败:", err)
 
             stream:respond(500, {["content-type"] = "application/json"})

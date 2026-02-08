@@ -724,6 +724,7 @@ Use `pcall` to catch exceptions, avoiding service crashes from individual reques
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 -- Global error handler
@@ -1033,6 +1034,7 @@ Implement a middleware system for cross-cutting concerns (logging, authenticatio
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 -- Middleware chain
 local function chain(middlewares, final_handler)
@@ -1142,6 +1144,7 @@ Record detailed information for each request for audit and troubleshooting.
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local json = require "silly.encoding.json"
 
 local function access_log(stream, status, duration, response_size)
@@ -1294,6 +1297,7 @@ Use Trace ID to track request flow through the system.
 local silly = require "silly"
 local http = require "silly.net.http"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 
 http.listen {
     addr = ":8080",
@@ -1301,10 +1305,10 @@ http.listen {
         -- Get or generate Trace ID from request header
         local trace_id = tonumber(stream.header["x-trace-id"])
         if trace_id then
-            silly.traceset(trace_id)
+            trace.attach(trace_id)
         else
-            silly.tracespawn()
-            trace_id = silly.tracepropagate()  -- For returning to client
+            trace.spawn()
+            trace_id = trace.propagate()  -- For returning to client
         end
 
         logger.info("Request started:", stream.method, stream.path)
@@ -1340,7 +1344,7 @@ http.listen {
 
 -- Automatically pass current Trace ID when calling external services
 function call_external_service()
-    local trace_id = silly.tracepropagate()
+    local trace_id = trace.propagate()
     local response = http.get("http://other-service/api", {
         ["x-trace-id"] = tostring(trace_id),
     })
@@ -1654,6 +1658,7 @@ local silly = require "silly"
 local http = require "silly.net.http"
 local json = require "silly.encoding.json"
 local logger = require "silly.logger"
+local trace = require "silly.trace"
 local prometheus = require "silly.metrics.prometheus"
 
 -- Configuration
@@ -1723,9 +1728,9 @@ local function logging_middleware(stream, next)
     -- Set or create trace ID
     local trace_id = tonumber(stream.header["x-trace-id"])
     if trace_id then
-        silly.traceset(trace_id)
+        trace.attach(trace_id)
     else
-        silly.tracespawn()
+        trace.spawn()
     end
 
     logger.info("Request:", stream.method, stream.path, "from", stream.remoteaddr)

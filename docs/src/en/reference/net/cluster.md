@@ -1077,7 +1077,7 @@ end)
 Cluster automatically propagates trace IDs:
 
 ```lua
--- Client initiates request, automatically carries current trace ID using silly.tracepropagate()
+-- Client initiates request, automatically carries current trace ID using trace.propagate()
 local resp = cluster.call(peer, "ping", data)
 
 -- Server processes, trace ID is automatically set by cluster

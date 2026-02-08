@@ -95,7 +95,7 @@ task.fork(function()
             else
                 -- 处理普通 HTTP 请求
                 stream:respond(200, {["content-type"] = "text/plain"})
-                stream:close("Not a WebSocket request")
+                stream:closewrite("Not a WebSocket request")
             end
         end
     }
@@ -286,7 +286,7 @@ task.fork(function()
                 end
             else
                 stream:respond(404, {})
-                stream:close()
+                stream:closewrite()
             end
         end
     }

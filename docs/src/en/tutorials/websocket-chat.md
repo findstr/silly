@@ -78,7 +78,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
 
@@ -156,7 +156,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
 
@@ -248,7 +248,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
 
@@ -377,7 +377,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
 
@@ -715,7 +715,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
 
