@@ -1,16 +1,19 @@
+local addr = require "silly.net.addr"
+
+local pairs = pairs
+local tonumber = tonumber
+local type = type
 local format = string.format
 local gsub = string.gsub
 local find = string.find
 local sub = string.sub
 local match = string.match
 local gmatch = string.gmatch
-local insert = table.insert
+local byte = string.byte
 local concat = table.concat
 local utf8char = utf8.char
 local strchar = string.char
-local pairs = pairs
-local tonumber = tonumber
-local type = type
+local parse_addr = addr.parse
 
 local helper = {}
 
@@ -32,7 +35,7 @@ end
 
 local function encode(val)
 	return gsub(val, "([^0-9a-zA-Z$_%.!*(),-])", function(n)
-		return format("%%%02X", n:byte(1))
+		return format("%%%02X", byte(n, 1))
 	end)
 end
 
@@ -40,8 +43,7 @@ function helper.urlencode(val)
 	if type(val) == "table" then
 		local buf = {}
 		for k, v in pairs(val) do
-			v = encode(v)
-			buf[#buf+1] = format("%s=%s", k, v)
+			buf[#buf+1] = format("%s=%s", encode(k), encode(v))
 		end
 		return concat(buf, "&")
 	else
@@ -49,23 +51,13 @@ function helper.urlencode(val)
 	end
 end
 
-function helper.urldecode(url)
-	url = gsub(url, "%%([0-9A-Fa-F][0-9A-Fa-F])", function (s)
-		return strchar(tonumber(s, 16))
+local function urldecode(s)
+	return gsub(s, "%%([0-9a-fA-F][0-9a-fA-F])", function (h)
+		return strchar(tonumber(h, 16))
 	end)
-	return url
 end
 
-function helper.setcookie(header, cookie)
-	local c = header['Set-Cookie']
-	if c then
-		insert(cookie, c)
-	end
-end
-
-function helper.getcookie(cookie)
-	return "Cookie:" .. concat(cookie, ";")
-end
+helper.urldecode = urldecode
 
 local default_port = {
 	["https"] = "443",
@@ -77,14 +69,21 @@ local default_port = {
 
 function helper.parseurl(url)
 	local default = false
-	local scheme, host, port, path= match(url, "^([^:]+)://([^:/]+):?(%d*)(.*)")
-	if path == "" then
-		path = "/"
+	local scheme, hostport, path = match(url, "^([^:]+)://([^/?]*)(.*)")
+	if not scheme then
+		return nil, "invalid url"
 	end
-	if port == "" then
+	if path == "" or byte(path, 1) == 63 then -- '?'
+		path = "/" .. path
+	end
+	local host, port = parse_addr(hostport)
+	if not host then
+		return nil, "invalid url"
+	end
+	if not port then
 		port = default_port[scheme]
 		if not port then
-			assert(false, "unsupport parse url scheme:" .. scheme)
+			return nil, "unsupported scheme"
 		end
 		default = true
 	end
@@ -102,12 +101,10 @@ function helper.parsetarget(target)
 	local querystring = sub(target, start + 1)
 	if querystring ~= "" then
 		for k, v in gmatch(querystring, "([^=&]+)=([^&]+)") do
-			query[k] = v
+			query[urldecode(k)] = urldecode(v)
 		end
 	end
-
 	return path, query
 end
 
 return helper
-

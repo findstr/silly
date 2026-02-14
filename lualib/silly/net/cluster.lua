@@ -5,6 +5,7 @@ local lock = require "silly.sync.mutex"
 local time = require "silly.time"
 local net = require "silly.net"
 local dns = require "silly.net.dns"
+local addr = require "silly.net.addr"
 local logger = require "silly.logger"
 local c = require "silly.net.cluster.c"
 
@@ -14,6 +15,9 @@ local tcp_connect = net.tcpconnect
 local tcp_send = net.tcpsend
 local tcp_close = net.close
 local tcp_listen = net.tcplisten
+local parse_addr = addr.parse
+local join_addr = addr.join
+local is_host = addr.ishost
 local pcall = silly.pcall
 local after = time.after
 local cancel = time.cancel
@@ -159,13 +163,16 @@ end
 
 local function connect(addr)
 	local l<close> = connect_lock:lock(addr)
-	local name, port = addr:match("([^:]+):(%d+)")
-	if dns.isname(name) then
+	local name, port = parse_addr(addr)
+	if not name or not port then
+		return nil, "invalid address:" .. addr
+	end
+	if is_host(name) then
 		local ip = dns.lookup(name, dns.A)
 		if not ip then
 			return nil, format("dns lookup:%s fail", name)
 		end
-		addr = ip .. ":" .. port
+		addr = join_addr(ip, port)
 	end
 	local fd, errstr = tcp_connect(addr, EVENT)
 	logger.info("[cluster] connect", addr, "fd:", fd, "err:", errstr)

@@ -3,10 +3,13 @@ local tcp = require "silly.net.tcp"
 local tls = require "silly.net.tls"
 local dns = require "silly.net.dns"
 local h2 = require "silly.net.http.h2"
+local addr = require "silly.net.addr"
 
 local ipairs = ipairs
 local setmetatable = setmetatable
 local format = string.format
+local parse_addr = addr.parse
+local join_addr = addr.join
 
 local ALPN_PROTOS<const> = {"h2"}
 
@@ -17,7 +20,7 @@ local function parse_target(target)
 		rest = target
 	end
 	if scheme == "dns" or scheme == "passthrough" then
-		local host, port = rest:match("([^:]+):(%d+)")
+		local host, port = parse_addr(rest)
 		if not host or not port then
 			return nil, "invalid target: " .. target
 		end
@@ -143,7 +146,7 @@ function conn.new(opts)
 			return nil, "dns lookup failed"
 		end
 		c[i] = {
-			addr = format("%s:%s", ip, port),
+			addr = join_addr(ip, port),
 			hostname = host,
 			channel = nil,
 		}
@@ -153,4 +156,3 @@ function conn.new(opts)
 end
 
 return conn
-

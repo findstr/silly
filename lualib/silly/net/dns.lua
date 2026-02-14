@@ -3,6 +3,7 @@ local time = require "silly.time"
 local env = require "silly.env"
 local logger = require "silly.logger"
 local udp = require "silly.net.udp"
+local addr = require "silly.net.addr"
 local assert = assert
 local pairs = pairs
 local sub = string.sub
@@ -14,6 +15,9 @@ local gmatch = string.gmatch
 local setmetatable = setmetatable
 local timenow = time.monotonic
 local maxinteger = math.maxinteger
+local isv6 = addr.isv6
+local ishost = addr.ishost
+local join_addr = addr.join
 
 local session = 0
 local dns_server
@@ -31,13 +35,13 @@ local RR_AAAA<const> = 28
 local RR_SRV<const> = 33
 
 local function guesstype(str)
-	if str:match("^[%d%.]+$") then
-		return RR_A
+	if ishost(str) then
+		return RR_CNAME
 	end
-	if str:find(":") then
+	if isv6(str) then
 		return RR_AAAA
 	end
-	return RR_CNAME
+	return RR_A
 end
 
 --[[
@@ -233,7 +237,7 @@ do --parse hosts
 			end
 
 			local typename = guesstype(ip)
-			if typename == "NAME" then
+			if typename == RR_CNAME then
 				goto continue
 			end
 
@@ -271,10 +275,7 @@ local function find_dns_server()
 	for l in f:lines() do
 		dns_server = l:match("^%s*nameserver%s+([^%s]+)")
 		if dns_server then
-			if dns_server:find(':') then
-				dns_server = '[' .. dns_server .. ']'
-			end
-			dns_server = format("%s:53", dns_server)
+			dns_server = join_addr(dns_server, "53")
 			break
 		end
 	end
@@ -415,7 +416,7 @@ local dns = {
 ---@param timeout integer|nil
 ---@return string|nil
 function dns.lookup(name, qtype, timeout)
-	if guesstype(name) ~= RR_CNAME then
+	if not ishost(name) then
 		return name
 	end
 	local rr = resolve(name, qtype, timeout, 1)
@@ -431,7 +432,7 @@ end
 ---@param timeout integer|nil
 ---@return table
 function dns.resolve(name, qtype, timeout)
-	if guesstype(name) ~= RR_CNAME then
+	if not ishost(name) then
 		return {name}
 	end
 	return resolve(name, qtype, timeout, 1)
@@ -442,10 +443,6 @@ function dns.server(ip)
 	dns_server = ip
 end
 
----@param name string
----@return boolean
-function dns.isname(name)
-	return guesstype(name) == RR_CNAME
-end
+dns.isname = ishost
 
 return dns

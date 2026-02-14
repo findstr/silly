@@ -6,7 +6,9 @@ local h1 = require "silly.net.http.h1"
 local h2 = require "silly.net.http.h2"
 local helper = require "silly.net.http.helper"
 local gzip = require "silly.compress.gzip"
+local addr = require "silly.net.addr"
 local parseurl = helper.parseurl
+local join_addr = addr.join
 
 local assert = assert
 local pairs = pairs
@@ -192,7 +194,7 @@ local function connect(client, scheme, host, port)
 		return nil, "dns lookup failed"
 	end
 	assert(ip, host)
-	local addr = format("%s:%s", ip, port)
+	local addr = join_addr(ip, port)
 	local conn, err
 	if scheme == "https" then
 		conn, err = tls.connect(addr, {
@@ -238,6 +240,9 @@ end
 ---@return silly.net.http.h2.stream|silly.net.http.h1.stream.client|nil, string?
 function M.request(client, method, url, header)
 	local scheme, host, port, path = parseurl(url)
+	if not scheme then
+		return nil, host
+	end
 	local stream, err = connect(client, scheme, host, port)
 	if not stream then
 		return nil, err

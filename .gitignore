@@ -2,6 +2,7 @@
 *.o
 *.d
 .depend
+.clangd
 tags
 server
 .vscode/
@@ -13,10 +14,14 @@ server
 /deps/zlib/minigzip
 /deps/zlib/minigzip64
 /deps/zlib/Makefile
+/.cache
+/.claude
+/build
 luac
 *.ko
 *.obj
 *.elf
+*.patch
 
 # Precompiled Headers
 *.gch

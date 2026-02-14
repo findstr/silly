@@ -23,3 +23,6 @@ icon: network-wired
 ### 网络服务
 - [dns](dns.md) - DNS 域名解析
 - [cluster](cluster.md) - 集群节点通信
+
+### 工具
+- [addr](addr.md) - 地址解析与拼接工具

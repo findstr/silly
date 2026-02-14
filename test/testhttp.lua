@@ -1079,6 +1079,351 @@ testaux.case("Test 37: GET with Accept-Encoding header check", function()
 	wait_done()
 end)
 
+testaux.case("Test 38: Query parameters with percent-encoding", function()
+	server_handler = function(stream)
+		local query = stream.query
+		testaux.asserteq(query["name"], "你好", "Test 38.1: Percent-encoded value should be decoded")
+		testaux.asserteq(query["key with space"], "val&ue", "Test 38.2: Percent-encoded key and value should be decoded")
+		stream:respond(200, {
+			["content-type"] = "text/plain",
+			["content-length"] = 2,
+		})
+		stream:write("OK")
+	end
+
+	local response = httpc:get("http://127.0.0.1:8080?name=%E4%BD%A0%E5%A5%BD&key%20with%20space=val%26ue")
+	testaux.assertneq(response, nil, "Test 38.3: GET with encoded query should succeed")
+	assert(response)
+	testaux.asserteq(response.body, "OK", "Test 38.4: Response body should be OK")
+	wait_done()
+end)
+
+testaux.case("Test 39: Invalid URL error handling", function()
+	local response, err = httpc:get("not-a-url")
+	testaux.asserteq(response, nil, "Test 39.1: Invalid URL should return nil")
+	testaux.assertneq(err, nil, "Test 39.2: Invalid URL should return error")
+
+	response, err = httpc:get("ftp://example.com/file")
+	testaux.asserteq(response, nil, "Test 39.3: Unsupported scheme should return nil")
+	testaux.assertneq(err, nil, "Test 39.4: Unsupported scheme should return error")
+end)
+
+local helper = require "silly.net.http.helper"
+
+testaux.case("Test 40: urlencode encodes both keys and values", function()
+	local result = helper.urlencode({["a b"] = "c&d"})
+	testaux.assertneq(result, nil, "Test 40.1: urlencode should return result")
+	-- In Lua string literals, % has no special meaning, so "a%20b" is literal a%20b
+	local found_key = result:find("a%20b", 1, true)
+	testaux.assertneq(found_key, nil, "Test 40.2: Key should be percent-encoded")
+	local found_val = result:find("c%26d", 1, true)
+	testaux.assertneq(found_val, nil, "Test 40.3: Value should be percent-encoded")
+end)
+
+testaux.case("Test 41: parseurl comprehensive", function()
+	-- Normal HTTP URL with path
+	local scheme, host, port, path, default = helper.parseurl("http://example.com/path")
+	testaux.asserteq(scheme, "http", "Test 41.1: scheme")
+	testaux.asserteq(host, "example.com", "Test 41.2: host")
+	testaux.asserteq(port, "80", "Test 41.3: default port 80")
+	testaux.asserteq(path, "/path", "Test 41.4: path")
+	testaux.asserteq(default, true, "Test 41.5: default flag true")
+
+	-- URL with explicit port
+	scheme, host, port, path, default = helper.parseurl("http://example.com:8080/api/v1")
+	testaux.asserteq(host, "example.com", "Test 41.6: host with port")
+	testaux.asserteq(port, "8080", "Test 41.7: explicit port")
+	testaux.asserteq(path, "/api/v1", "Test 41.8: multi-segment path")
+	testaux.asserteq(default, false, "Test 41.9: default flag false")
+
+	-- HTTPS URL without path (empty path becomes "/")
+	scheme, host, port, path = helper.parseurl("https://secure.example.com")
+	testaux.asserteq(scheme, "https", "Test 41.10: https scheme")
+	testaux.asserteq(port, "443", "Test 41.11: default https port")
+	testaux.asserteq(path, "/", "Test 41.12: empty path becomes /")
+
+	-- URL with query only (no path before ?)
+	scheme, host, port, path = helper.parseurl("http://example.com?key=value")
+	testaux.asserteq(host, "example.com", "Test 41.13: host before query")
+	testaux.asserteq(path, "/?key=value", "Test 41.14: query-only path gets / prefix")
+
+	-- WSS URL
+	scheme, host, port, path = helper.parseurl("wss://ws.example.com/ws")
+	testaux.asserteq(scheme, "wss", "Test 41.15: wss scheme")
+	testaux.asserteq(port, "443", "Test 41.16: wss default port 443")
+	testaux.asserteq(path, "/ws", "Test 41.17: wss path")
+
+	-- WS URL
+	scheme, host, port, path = helper.parseurl("ws://ws.example.com/chat")
+	testaux.asserteq(scheme, "ws", "Test 41.18: ws scheme")
+	testaux.asserteq(port, "80", "Test 41.19: ws default port 80")
+
+	-- IPv6 URL with port
+	scheme, host, port, path = helper.parseurl("http://[::1]:8080/path")
+	testaux.asserteq(host, "::1", "Test 41.20: IPv6 host brackets stripped")
+	testaux.asserteq(port, "8080", "Test 41.21: IPv6 explicit port")
+	testaux.asserteq(path, "/path", "Test 41.22: IPv6 path")
+
+	-- IPv6 URL without port
+	scheme, host, port, path = helper.parseurl("http://[::1]/path")
+	testaux.asserteq(host, "::1", "Test 41.23: IPv6 host without port")
+	testaux.asserteq(port, "80", "Test 41.24: IPv6 default port")
+
+	-- IPv6 URL with query (no path)
+	scheme, host, port, path = helper.parseurl("http://[::1]:9090?q=1")
+	testaux.asserteq(host, "::1", "Test 41.25: IPv6 host before query")
+	testaux.asserteq(port, "9090", "Test 41.26: IPv6 port before query")
+	testaux.asserteq(path, "/?q=1", "Test 41.27: IPv6 query-only gets / prefix")
+
+	-- Invalid URL - no scheme
+	local r, err = helper.parseurl("example.com/path")
+	testaux.asserteq(r, nil, "Test 41.28: no scheme returns nil")
+	testaux.assertneq(err, nil, "Test 41.29: no scheme returns error")
+
+	-- Invalid URL - just a string
+	r, err = helper.parseurl("not-a-url")
+	testaux.asserteq(r, nil, "Test 41.30: plain string returns nil")
+
+	-- Unsupported scheme
+	r, err = helper.parseurl("ftp://example.com/file")
+	testaux.asserteq(r, nil, "Test 41.31: unsupported scheme returns nil")
+	testaux.assertneq(err, nil, "Test 41.32: unsupported scheme returns error")
+
+	-- URL with path, query and fragment
+	scheme, host, port, path = helper.parseurl("http://example.com/path?a=1&b=2#frag")
+	testaux.asserteq(path, "/path?a=1&b=2#frag", "Test 41.33: path includes query and fragment")
+
+	-- URL with port and query
+	scheme, host, port, path = helper.parseurl("http://example.com:3000/api?token=abc")
+	testaux.asserteq(host, "example.com", "Test 41.34: host with port and query")
+	testaux.asserteq(port, "3000", "Test 41.35: port with query")
+	testaux.asserteq(path, "/api?token=abc", "Test 41.36: path with query")
+
+	-- HTTPS with explicit 443 (not default since explicitly specified)
+	scheme, host, port, path, default = helper.parseurl("https://example.com:443/path")
+	testaux.asserteq(port, "443", "Test 41.37: explicit 443")
+	testaux.asserteq(default, false, "Test 41.38: explicit port not default")
+end)
+
+testaux.case("Test 42: parsetarget comprehensive", function()
+	-- Path only
+	local path, query = helper.parsetarget("/path")
+	testaux.asserteq(path, "/path", "Test 42.1: path only")
+	testaux.asserteq(next(query), nil, "Test 42.2: no query params")
+
+	-- Path with single query param
+	path, query = helper.parsetarget("/path?key=value")
+	testaux.asserteq(path, "/path", "Test 42.3: path before query")
+	testaux.asserteq(query["key"], "value", "Test 42.4: single query param")
+
+	-- Path with multiple query params
+	path, query = helper.parsetarget("/path?a=1&b=2&c=3")
+	testaux.asserteq(path, "/path", "Test 42.5: path with multi params")
+	testaux.asserteq(query["a"], "1", "Test 42.6: param a")
+	testaux.asserteq(query["b"], "2", "Test 42.7: param b")
+	testaux.asserteq(query["c"], "3", "Test 42.8: param c")
+
+	-- Query only (no path before ?)
+	path, query = helper.parsetarget("?key=value")
+	testaux.asserteq(path, "/", "Test 42.9: empty path becomes /")
+	testaux.asserteq(query["key"], "value", "Test 42.10: query from empty path")
+
+	-- Path with empty query string
+	path, query = helper.parsetarget("/path?")
+	testaux.asserteq(path, "/path", "Test 42.11: path with empty query")
+	testaux.asserteq(next(query), nil, "Test 42.12: empty query string")
+
+	-- Percent-encoded value (UTF-8)
+	path, query = helper.parsetarget("/search?q=%E4%BD%A0%E5%A5%BD&lang=zh")
+	testaux.asserteq(path, "/search", "Test 42.13: path")
+	testaux.asserteq(query["q"], "你好", "Test 42.14: UTF-8 value decoded")
+	testaux.asserteq(query["lang"], "zh", "Test 42.15: plain value")
+
+	-- Percent-encoded key and value
+	path, query = helper.parsetarget("/path?key%20name=val%26ue")
+	testaux.asserteq(query["key name"], "val&ue", "Test 42.16: encoded key and value")
+
+	-- Root path
+	path, query = helper.parsetarget("/")
+	testaux.asserteq(path, "/", "Test 42.17: root path")
+	testaux.asserteq(next(query), nil, "Test 42.18: root path no query")
+
+	-- & without ? should be treated as path
+	path, query = helper.parsetarget("/path&key=value")
+	testaux.asserteq(path, "/path&key=value", "Test 42.19: & without ? stays in path")
+	testaux.asserteq(next(query), nil, "Test 42.20: no query without ?")
+
+	-- Duplicate keys (last value wins)
+	path, query = helper.parsetarget("/path?a=1&a=2")
+	testaux.asserteq(path, "/path", "Test 42.21: path with duplicate keys")
+	testaux.assertneq(query["a"], nil, "Test 42.22: duplicate key exists")
+
+	-- Space encoded as +
+	-- Note: parsetarget uses urldecode which handles %XX but not +
+	path, query = helper.parsetarget("/path?q=hello+world")
+	testaux.asserteq(query["q"], "hello+world", "Test 42.23: + not decoded as space")
+
+	-- Space encoded as %20
+	path, query = helper.parsetarget("/path?q=hello%20world")
+	testaux.asserteq(query["q"], "hello world", "Test 42.24: %20 decoded as space")
+
+	-- Value with encoded equals sign
+	path, query = helper.parsetarget("/path?expr=a%3Db")
+	testaux.asserteq(query["expr"], "a=b", "Test 42.25: %3D decoded as =")
+
+	-- Multi-segment path with query
+	path, query = helper.parsetarget("/api/v1/users?page=1&limit=10")
+	testaux.asserteq(path, "/api/v1/users", "Test 42.26: multi-segment path")
+	testaux.asserteq(query["page"], "1", "Test 42.27: page param")
+	testaux.asserteq(query["limit"], "10", "Test 42.28: limit param")
+end)
+
+testaux.case("Test 43: urlencode comprehensive", function()
+	-- Safe chars pass through
+	local result = helper.urlencode("hello")
+	testaux.asserteq(result, "hello", "Test 43.1: safe chars unchanged")
+
+	-- Space encoded
+	result = helper.urlencode("hello world")
+	testaux.asserteq(result, "hello%20world", "Test 43.2: space encoded as %20")
+
+	-- Special chars
+	result = helper.urlencode("a&b=c")
+	testaux.asserteq(result, "a%26b%3Dc", "Test 43.3: & and = encoded")
+
+	-- Empty string
+	result = helper.urlencode("")
+	testaux.asserteq(result, "", "Test 43.4: empty string unchanged")
+
+	-- Safe special chars (should NOT be encoded)
+	result = helper.urlencode("a.b_c$d!e*f(g)h,i-j")
+	testaux.asserteq(result, "a.b_c$d!e*f(g)h,i-j", "Test 43.5: safe specials unchanged")
+
+	-- Slash is encoded
+	result = helper.urlencode("a/b")
+	testaux.asserteq(result, "a%2Fb", "Test 43.6: slash encoded")
+
+	-- Alphanumeric pass through
+	result = helper.urlencode("ABCDEFxyz0123456789")
+	testaux.asserteq(result, "ABCDEFxyz0123456789", "Test 43.7: alphanumeric unchanged")
+
+	-- Table input - simple pair
+	result = helper.urlencode({key = "value"})
+	testaux.asserteq(result, "key=value", "Test 43.8: simple table")
+
+	-- Table input - special chars in key and value
+	result = helper.urlencode({["a b"] = "c&d"})
+	testaux.assertneq(result:find("a%20b=c%26d", 1, true), nil, "Test 43.9: table key and value encoded")
+
+	-- Non-ASCII chars get encoded
+	result = helper.urlencode("你")
+	testaux.assertneq(result, "你", "Test 43.10: non-ASCII encoded")
+
+	-- Round-trip: encode then decode restores original
+	local original = "hello world & 你好"
+	result = helper.urldecode(helper.urlencode(original))
+	testaux.asserteq(result, original, "Test 43.11: round-trip encode/decode")
+
+	-- @ sign is encoded
+	result = helper.urlencode("user@host")
+	testaux.asserteq(result, "user%40host", "Test 43.12: @ encoded")
+
+	-- Hash/pound is encoded
+	result = helper.urlencode("a#b")
+	testaux.asserteq(result, "a%23b", "Test 43.13: # encoded")
+
+	-- Percent itself is encoded
+	result = helper.urlencode("100%")
+	testaux.asserteq(result, "100%25", "Test 43.14: % encoded as %25")
+end)
+
+testaux.case("Test 44: urldecode comprehensive", function()
+	-- Basic decode
+	local result = helper.urldecode("hello%20world")
+	testaux.asserteq(result, "hello world", "Test 44.1: %20 decoded to space")
+
+	-- No encoding
+	result = helper.urldecode("hello")
+	testaux.asserteq(result, "hello", "Test 44.2: no encoding unchanged")
+
+	-- UTF-8 multibyte decode
+	result = helper.urldecode("%E4%BD%A0%E5%A5%BD")
+	testaux.asserteq(result, "你好", "Test 44.3: UTF-8 decoded")
+
+	-- Empty string
+	result = helper.urldecode("")
+	testaux.asserteq(result, "", "Test 44.4: empty string")
+
+	-- Mixed encoded and plain
+	result = helper.urldecode("a%26b%3Dc")
+	testaux.asserteq(result, "a&b=c", "Test 44.5: mixed decode")
+
+	-- Lowercase hex
+	result = helper.urldecode("a%2fb")
+	testaux.asserteq(result, "a/b", "Test 44.6: lowercase hex")
+
+	-- Uppercase hex
+	result = helper.urldecode("a%2Fb")
+	testaux.asserteq(result, "a/b", "Test 44.7: uppercase hex")
+
+	-- Trailing percent (not followed by hex)
+	result = helper.urldecode("100%")
+	testaux.asserteq(result, "100%", "Test 44.8: trailing % unchanged")
+
+	-- Percent followed by non-hex
+	result = helper.urldecode("100%GG")
+	testaux.asserteq(result, "100%GG", "Test 44.9: non-hex after % unchanged")
+
+	-- Decode %25 → %
+	result = helper.urldecode("100%25")
+	testaux.asserteq(result, "100%", "Test 44.10: %25 decoded to %")
+
+	-- Multiple consecutive encodings
+	result = helper.urldecode("%20%20%20")
+	testaux.asserteq(result, "   ", "Test 44.11: three spaces")
+
+	-- Round-trip with urlencode
+	local original = "a/b@c&d=e f"
+	result = helper.urldecode(helper.urlencode(original))
+	testaux.asserteq(result, original, "Test 44.12: round-trip")
+end)
+
+testaux.case("Test 45: htmlunescape comprehensive", function()
+	-- Named entities
+	testaux.asserteq(helper.htmlunescape("&amp;"), "&", "Test 45.1: &amp;")
+	testaux.asserteq(helper.htmlunescape("&lt;"), "<", "Test 45.2: &lt;")
+	testaux.asserteq(helper.htmlunescape("&gt;"), ">", "Test 45.3: &gt;")
+	testaux.asserteq(helper.htmlunescape("&quot;"), '"', "Test 45.4: &quot;")
+	testaux.asserteq(helper.htmlunescape("&nbsp;"), " ", "Test 45.5: &nbsp;")
+
+	-- Numeric entities
+	testaux.asserteq(helper.htmlunescape("&#65;"), "A", "Test 45.6: &#65; = A")
+	testaux.asserteq(helper.htmlunescape("&#20320;"), "你", "Test 45.7: &#20320; = 你")
+	testaux.asserteq(helper.htmlunescape("&#48;"), "0", "Test 45.8: &#48; = 0")
+
+	-- Mixed entities in HTML
+	local result = helper.htmlunescape("&lt;b&gt;Hello &amp; World&lt;/b&gt;")
+	testaux.asserteq(result, "<b>Hello & World</b>", "Test 45.9: mixed HTML")
+
+	-- No entities
+	testaux.asserteq(helper.htmlunescape("hello world"), "hello world", "Test 45.10: no entities")
+
+	-- Empty string
+	testaux.asserteq(helper.htmlunescape(""), "", "Test 45.11: empty string")
+
+	-- Numeric + named mixed
+	result = helper.htmlunescape("&#60;p&#62;text&amp;more&#60;/p&#62;")
+	testaux.asserteq(result, "<p>text&more</p>", "Test 45.12: numeric and named mixed")
+
+	-- Multiple same entity
+	result = helper.htmlunescape("&amp;&amp;&amp;")
+	testaux.asserteq(result, "&&&", "Test 45.13: repeated entity")
+
+	-- Entity-like but unknown name (should remain unchanged)
+	result = helper.htmlunescape("&unknown;")
+	testaux.asserteq(result, "&unknown;", "Test 45.14: unknown named entity unchanged")
+end)
+
 if server then
 	server:close()
 end

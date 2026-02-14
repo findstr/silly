@@ -6,6 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Silly is a lightweight, high-performance Lua server framework with coroutine-based async/await. It handles 200,000+ requests/second with single-threaded business logic and supports TCP, UDP, HTTP, WebSocket, gRPC, TLS, MySQL, Redis, and more.
 
+## Lua Interpreter
+
+The standalone Lua interpreter is at `deps/lua/lua`. Use it for running pure Lua scripts (benchmarks, utilities) that don't need the silly runtime:
+
+```bash
+deps/lua/lua script.lua
+```
+
+For scripts that use silly modules (network, coroutines, etc.), use the silly runtime instead:
+
+```bash
+./silly script.lua
+```
+
 ## Build Commands
 
 ```bash

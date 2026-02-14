@@ -7,6 +7,7 @@ local dns = require "silly.net.dns"
 local tcp = require "silly.net.tcp"
 local tls = require "silly.net.tls"
 local h1 = require "silly.net.http.h1"
+local addr = require "silly.net.addr"
 
 local pairs = pairs
 local tostring = tostring
@@ -19,6 +20,7 @@ local format = string.format
 local xor = utils.xor
 local randomkey = utils.randomkey
 local parseurl = helper.parseurl
+local join_addr = addr.join
 
 ---@class silly.net.websocket
 local M = {}
@@ -286,12 +288,15 @@ end
 function M.connect(url, header)
 	local conn, err
 	local scheme, host, port, path = parseurl(url)
+	if not scheme then
+		return nil, host
+	end
 	local ip = dns.lookup(host, dns.A)
 	if not ip then
 		return nil, "dns lookup failed"
 	end
 	assert(ip, host)
-	local addr = format("%s:%s", ip, port)
+	local addr = join_addr(ip, port)
 	if scheme == "wss" then
 		conn, err = tls.connect(addr, {hostname = host})
 	else

@@ -3,9 +3,10 @@ local time = require "silly.time"
 local task = require "silly.task"
 local logger = require "silly.logger.c"
 local c = require "silly.net.c"
+local addr = require "silly.net.addr"
 
 local assert = assert
-local smatch = string.match
+local parse_addr = addr.parse
 
 local task_wait = task.wait
 local task_running = task.running
@@ -32,8 +33,6 @@ local accept_callback = {}
 local data_callback = {}
 local close_callback = {}
 
-local ip_pattern = "%[-([0-9A-Fa-f:%.]*)%]-:([0-9a-zA-Z]+)$"
-
 local tcp_listen = assert(c.tcp_listen)
 local tcp_connect = assert(c.tcp_connect)
 local udp_bind = assert(c.udp_bind)
@@ -53,8 +52,11 @@ local function listen_wrap(listen)
 	---@param backlog integer|nil
 	---@return integer|nil, string|nil
 	return function(addr, event, backlog)
-		local ip, port = smatch(addr, ip_pattern)
-		if ip == "" then
+		local ip, port = parse_addr(addr)
+		if not port then
+			return nil, "invalid address"
+		end
+		if not ip then
 			ip = "0::0"
 		end
 		if not backlog then
@@ -94,15 +96,15 @@ local function connect_wrap(connect)
 	---@param timeout integer?
 	---@return integer? fd, string? error
 	return function(addr, event, bind, timeout)
-		local ip, port = smatch(addr, ip_pattern)
+		local ip, port = parse_addr(addr)
 		if not ip or not port then
-			return nil, "invalid address:" .. addr
+			return nil, "invalid address"
 		end
 		local bindip, bindport
 		if bind then
-			bindip, bindport = smatch(bind, ip_pattern)
+			bindip, bindport = parse_addr(bind)
 			if not bindip or not bindport then
-				return nil, "invalid bind address:" .. bind
+				return nil, "invalid bind address"
 			end
 		else
 			bindip, bindport = "", "0"

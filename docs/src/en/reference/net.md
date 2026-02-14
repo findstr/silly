@@ -25,7 +25,7 @@ local net = require "silly.net"
 
 ## Address Format
 
-All network addresses use a unified format: `"[IP]:Port"`
+Addresses use the `host:port` form. Parsing is tolerant, and output should be normalized with `silly.net.addr.join()`.
 
 **IPv4 Examples**:
 - `"127.0.0.1:8080"` - Local loopback address
@@ -33,9 +33,12 @@ All network addresses use a unified format: `"[IP]:Port"`
 - `":8080"` - Shorthand form, equivalent to `"0.0.0.0:8080"`
 
 **IPv6 Examples**:
-- `"[::1]:8080"` - IPv6 local loopback
-- `"[2001:db8::1]:9000"` - IPv6 address
+- `"[::1]:8080"` - IPv6 local loopback (recommended form)
+- `"::1:8080"` - Tolerant input (uses the last `:` as port separator)
 - `"[::]:8080"` - Listen on all IPv6 interfaces
+
+**Domain Example**:
+- `"example.com:80"`
 
 ## TCP Functions
 

@@ -23,3 +23,6 @@ The `silly.net` module provides network-related functionality, including impleme
 ### Network Services
 - [dns](dns.md) - DNS domain name resolution
 - [cluster](cluster.md) - Cluster node communication
+
+### Utilities
+- [addr](addr.md) - Address parsing and joining helpers

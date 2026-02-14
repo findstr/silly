@@ -14,8 +14,8 @@ local function assert_eof(dat, err, msg_data, msg_err)
 		local ok = (dat == "" or dat == nil) and err ~= nil
 		testaux.asserteq(ok, true, msg_err)
 	else
-		testaux.asserteq(dat, "", msg_data)
 		testaux.asserteq(err, "end of file", msg_err)
+		testaux.asserteq(dat, "", msg_data)
 	end
 end
 
@@ -116,6 +116,7 @@ testaux.case("Test 3.1: TLS read after peer closes", function()
 		ch:pop()
 		-- Subsequent read after client closes should return EOF
 		local dat2, err2 = conn:read(1)
+		print("--------err2", err2)
 		assert_eof(dat2, err2,
 			"Test 3.1.2: TLS read after close returns empty string",
 			"Test 3.1.3: TLS read after close returns 'end of file'")
