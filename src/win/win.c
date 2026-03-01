@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <io.h>
 #include <afunix.h>
+#include <lua.h>
+#include <lauxlib.h>
 
 #include "log.h"
 #include "win.h"
@@ -272,4 +274,74 @@ fallback:
 
 	socks[0] = socks[1] = -1;
 	return SOCKET_ERROR;
+}
+
+int dns_push_resolvconf(struct lua_State *L)
+{
+	DWORD result;
+	FIXED_INFO stk;
+	FIXED_INFO *info = &stk;
+	ULONG buf_len = sizeof(stk);
+	result = GetNetworkParams(info, &buf_len);
+	if (result == ERROR_BUFFER_OVERFLOW) {
+		info = (FIXED_INFO *)malloc(buf_len);
+		result = GetNetworkParams(info, &buf_len);
+	}
+	if (result == NO_ERROR) {
+		luaL_Buffer b;
+		IP_ADDR_STRING *addr;
+		luaL_buffinit(L, &b);
+		for (addr = &info->DnsServerList; addr; addr = addr->Next) {
+			if (addr->IpAddress.String[0]) {
+				luaL_addstring(&b, "nameserver ");
+				luaL_addstring(&b, addr->IpAddress.String);
+				luaL_addchar(&b, '\n');
+			}
+		}
+		if (info->DomainName[0]) {
+			luaL_addstring(&b, "domain ");
+			luaL_addstring(&b, info->DomainName);
+			luaL_addchar(&b, '\n');
+		}
+		luaL_pushresult(&b);
+	} else {
+		lua_pushnil(L);
+	}
+	if (info != &stk)
+		free(info);
+	return 1;
+}
+
+static int
+push_file(lua_State *L, const char *path)
+{
+	FILE *f;
+	size_t n;
+	char buf[1024];
+	luaL_Buffer b;
+	f = fopen(path, "r");
+	if (!f) {
+		lua_pushnil(L);
+	} else {
+		luaL_buffinit(L, &b);
+		while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+			luaL_addlstring(&b, buf, n);
+		fclose(f);
+		luaL_pushresult(&b);
+	}
+	return 1;
+}
+
+int dns_push_hosts(struct lua_State *L)
+{
+	char syspath[MAX_PATH];
+	char hostspath[MAX_PATH];
+	UINT len = GetSystemDirectoryA(syspath, MAX_PATH);
+	if (len == 0 || len >= MAX_PATH) {
+		lua_pushnil(L);
+		return 1;
+	}
+	snprintf(hostspath, sizeof(hostspath),
+		"%s\\drivers\\etc\\hosts", syspath);
+	return push_file(L, hostspath);
 }

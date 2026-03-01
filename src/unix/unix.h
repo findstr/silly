@@ -51,4 +51,11 @@ static inline int cpu_count(void)
 #endif
 }
 
+/* DNS system configuration defaults */
+#define DNS_RESOLVCONF "/etc/resolv.conf"
+#define DNS_HOSTS "/etc/hosts"
+struct lua_State;
+int dns_push_resolvconf(struct lua_State *L);
+int dns_push_hosts(struct lua_State *L);
+
 #endif

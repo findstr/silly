@@ -1,9 +1,13 @@
 #include <string.h>
+#ifdef __WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 #include <lua.h>
 #include <lauxlib.h>
 
 #include "silly.h"
-#include "platform.h"
 
 static inline int
 is_port_char(unsigned char c)

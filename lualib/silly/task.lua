@@ -163,7 +163,7 @@ local wakeup_task_param = {}
 function task.fork(func, ud)
 	local t = task_create(func)
 	task_status[t] = "READY"
-	if ud then
+	if ud ~= nil then
 		wakeup_task_param[t] = ud
 	end
 	qpush(wakeup_task_queue, t)
@@ -192,7 +192,7 @@ function task.wakeup(t, res)
 		error("BUG: wakeup on task stat:" .. tostring(status))
 	end
 	task_status[t] = "READY"
-	if res then
+	if res ~= nil then
 		wakeup_task_param[t] = res
 	end
 	qpush(wakeup_task_queue, t)

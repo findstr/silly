@@ -136,6 +136,7 @@ LIB_SRC = lsilly.c \
 	lhttp.c \
 	lnet.c \
 	lsignal.c \
+	ldns.c \
 	laddr.c \
 	mysql/lmysql.c \
 	lcompress.c \
@@ -147,7 +148,6 @@ ifeq ($(OPENSSL), ON)
 endif
 
 all: \
-	fmt \
 	$(TARGET) \
 	$(LUACLIB_PATH)/silly.$(SO) \
 	$(LUACLIB_PATH)/zproto.$(SO) \

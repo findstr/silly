@@ -5,7 +5,7 @@ local env = require "silly.env"
 local dns = require "silly.net.dns"
 local testaux = require "test.testaux"
 
-dns.server("223.5.5.5:53")
+dns.conf { nameservers = {"223.5.5.5:53"} }
 
 log.info {
 	version = silly.version,
