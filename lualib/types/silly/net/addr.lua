@@ -14,6 +14,10 @@ function M.parse(addr) end
 function M.join(host, port) end
 
 ---@param host string
+---@return 4|6|0 type  -- 4 for IPv4, 6 for IPv6, 0 for hostname
+function M.iptype(host) end
+
+---@param host string
 ---@return boolean
 function M.isv4(host) end
 
