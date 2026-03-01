@@ -136,6 +136,7 @@ LIB_SRC = lsilly.c \
 	lhttp.c \
 	lnet.c \
 	lsignal.c \
+	laddr.c \
 	mysql/lmysql.c \
 	lcompress.c \
 	adt/lqueue.c \
