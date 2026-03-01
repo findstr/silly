@@ -42,4 +42,9 @@ static inline void signal_block_usr2(void) {}
 static inline void signal_register_usr2(void (*handler)(int)) { (void)handler; }
 static inline void signal_kill_usr2(void *tid) { (void)tid; }
 
+/* DNS system configuration defaults (synthesized at runtime) */
+struct lua_State;
+int dns_push_resolvconf(struct lua_State *L);
+int dns_push_hosts(struct lua_State *L);
+
 #endif

@@ -236,3 +236,11 @@ SILLY_API const struct silly_message_id *silly_messages()
 	};
 	return &p;
 }
+SILLY_API int silly_push_resolvconf(lua_State *L)
+{
+	return dns_push_resolvconf(L);
+}
+SILLY_API int silly_push_hosts(lua_State *L)
+{
+	return dns_push_hosts(L);
+}

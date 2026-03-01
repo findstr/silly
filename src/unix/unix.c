@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <lua.h>
+#include <lauxlib.h>
+
 #include "log.h"
 #include "compiler.h"
 #include "unix.h"
@@ -129,4 +132,34 @@ size_t memory_rss_(void)
 	*end = '\0';
 	rss = strtoll(p, NULL, 10) * page;
 	return rss;
+}
+
+static int
+push_file(lua_State *L, const char *path)
+{
+	FILE *f;
+	size_t n;
+	char buf[1024];
+	luaL_Buffer b;
+	f = fopen(path, "r");
+	if (!f) {
+		lua_pushnil(L);
+	} else {
+		luaL_buffinit(L, &b);
+		while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+			luaL_addlstring(&b, buf, n);
+		fclose(f);
+		luaL_pushresult(&b);
+	}
+	return 1;
+}
+
+int dns_push_resolvconf(lua_State *L)
+{
+	return push_file(L, DNS_RESOLVCONF);
+}
+
+int dns_push_hosts(lua_State *L)
+{
+	return push_file(L, DNS_HOSTS);
 }
