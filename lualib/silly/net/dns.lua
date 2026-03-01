@@ -1,373 +1,445 @@
+local c = require "silly.net.dns.c"
 local task = require "silly.task"
 local time = require "silly.time"
-local env = require "silly.env"
 local logger = require "silly.logger"
 local udp = require "silly.net.udp"
 local addr = require "silly.net.addr"
-local assert = assert
+local tcp = require "silly.net.tcp"
+
 local pairs = pairs
-local sub = string.sub
-local concat = table.concat
+local ipairs = ipairs
+local tonumber = tonumber
 local pack = string.pack
 local unpack = string.unpack
-local format = string.format
-local gmatch = string.gmatch
-local setmetatable = setmetatable
+local lower = string.lower
 local timenow = time.monotonic
 local maxinteger = math.maxinteger
-local isv6 = addr.isv6
-local ishost = addr.ishost
+local iptype = addr.iptype
 local join_addr = addr.join
+local parse_addr = addr.parse
+local question = c.question
+local answer = c.answer
+local validname = c.validname
+local running = task.running
+local wakeup = task.wakeup
+local wait = task.wait
 
-local session = 0
-local dns_server
-local connectfd
+global _
 
-local resolv_conf = env.get("sys.dns.resolv_conf") or "/etc/resolv.conf"
-local hosts = env.get("sys.dns.hosts") or "/etc/hosts"
+---@class silly.net.dns.server
+---@field addr string
+---@field udp_conn silly.net.udp.conn?
+---@field tcp_conn silly.net.tcp.conn?
+---@field tcp_time integer? last TCP activity timestamp (monotonic ms)
+
+local servers = {}     ---@type silly.net.dns.server[]
+local search_list = {} ---@type string[]
+
+---@class silly.net.dns.conf
+---@field nameservers string[]?
+---@field search string[]?
+---@field timeout integer?    per-attempt timeout in seconds (default 5, max 30)
+---@field attempts integer?   retry rounds (default 2, max 5)
+---@field ndots integer?      search list threshold (default 1, max 15)
+
+---@class silly.net.dns.ctx
+---@field request silly.net.dns.req
+---@field co thread
+
+---@class silly.net.dns.req
+---@field rr table          interned rr object (inflight key)
+---@field pkt string        wire-format query packet
+---@field attempt integer   current attempt number
+---@field timer integer?    retry timer handle
+---@field version integer    query ID (matches rr.version)
+---@field waiting table<thread, silly.net.dns.ctx>  set of waiting coroutines
+---@field error string?       error message if request failed
+
+local conf_timeout = 5000   ---@type integer per-attempt timeout (ms)
+local conf_attempts = 2     ---@type integer retry rounds
+local conf_ndots = 1        ---@type integer search list dot threshold
 
 local name_cache = {}
-local wait_coroutine = {}
+
+local inflight = {}       ---@type table<table, silly.net.dns.req>
 
 local RR_A<const> = 1
 local RR_CNAME<const> = 5
 local RR_AAAA<const> = 28
 local RR_SRV<const> = 33
 
-local function guesstype(str)
-	if ishost(str) then
-		return RR_CNAME
-	end
-	if isv6(str) then
-		return RR_AAAA
-	end
-	return RR_A
+local TCP_SCAN<const> = 10000     -- 10s TCP cleanup scan interval
+local TCP_IDLE<const> = 30000     -- 30s idle timeout for TCP connections
+local DEFAULT_TTL<const> = 5000   -- 5s default cache TTL (ms)
+local TIMEOUT<const> = {}
+
+--- Normalize a nameserver address: add port 53 if not specified.
+---@param s string
+---@return string
+local function ns_addr(s)
+	local host, port = parse_addr(s)
+	return join_addr(host, port or "53")
 end
 
---[[
-	ID:16
-
-	QR:1		0 -> request 1-> acknowledge
-	OPCODE:4	0 -> QUERY 1 -> IQUERY 2 -> STATUS
-	AA:1		authoriative Answer
-	TC:1		trun cation
-	RD:1		recursion desiered
-	RA:1		rescursion availavle
-	Z:3		0
-	RCODE:4		0 -> ok 1 -> FormatError 2 -> Server Failure 3 -> NameError
-				4 -> NotEmplemented 5 -> Refresued
-	QDCOUNT:16	quest descriptor count
-	ANCOUNT:16	anser RRs
-	NSCOUNT:16	authority RRs
-	ARCOUNT:16	Additional RRs
-
-	QNAME:z		question name
-	QTYPE:16	0x01 -> IP... 0x05 -> CNAME
-	QCLASS:16	0x01 -> IN
-]]--
-
-local parseformat  = ">I2I2I2I2I2I2zI2I2"
-local headerformat = ">I2I2I2I2I2I2"
-
-local function QNAME(name, n)
-	local i = #n
-	for k in gmatch(name, "([^%.]+)") do
-		i = i + 1
-		n[i] = pack(">I1", #k)
-		i = i + 1
-		n[i] = k
+--- Get or create an interned rr object for name+qtype.
+--- The rr serves as both cache entry and inflight dedup key.
+---@param name string
+---@param qtype integer
+---@return table
+local function try_create_rr(name, qtype)
+	local by_name = name_cache[name]
+	if not by_name then
+		by_name = {}
+		name_cache[name] = by_name
 	end
-	i = i + 1
-	n[i] = '\0'
+	local rr = by_name[qtype]
+	if not rr then
+		rr = {name = name, qtype = qtype, ttl = -1, version = 0}
+		by_name[qtype] = rr
+	end
+	return rr
 end
 
----@param typ silly.net.dns.type
-local function question(name, typ)
-	session = session % 65535 + 1
-	local ID = session
-	--[[ FLAG
-		QR = 0,
-		OPCODE = 0, (4bit)
-		AA = 0,
-		TC = 0,
-		RD = 1,
-		RA = 0,
-		--3 bit zero
-		RCCODE = 0,
-	]]--
-	local FLAG = 0x0100
-	local QDCOUNT = 1
-	local ANCOUNT = 0
-	local NSCOUNT = 0
-	local ARCOUNT = 0
-	local QTYPE = typ
-	local QCLASS = 1
-	local dat = {
-		pack(headerformat,
-			ID, FLAG,
-			QDCOUNT, ANCOUNT,
-			NSCOUNT, ARCOUNT)
-	}
-	QNAME(name, dat)
-	dat[#dat + 1] = pack(">I2I2", QTYPE, QCLASS)
-	return ID, concat(dat)
-end
 
-local function readptr(init, dat, pos)
-	local n, pos = unpack(">I1", dat, pos)
-	if n >= 0xc0 then
-		n = n & 0x3f
-		local l, pos = unpack(">I1", dat, pos)
-		n = n  << 8 | l
-		return readptr(init, dat, n + 1)
-	elseif n > 0 then
-		local nxt = pos + n
-		init[#init + 1] = sub(dat, pos, nxt - 1)
-		init[#init + 1] = "."
-		return readptr(init, dat, nxt)
-	else
+local tcp_timer_started = false
+
+--- Periodically scan servers and release idle TCP connections.
+local function start_tcp_timer()
+	local exist_tcp = false
+	local now = timenow()
+	for _, srv in ipairs(servers) do
+		local conn = srv.tcp_conn
+		if conn then
+			if now - srv.tcp_time >= TCP_IDLE then
+				conn:close()
+				srv.tcp_conn = nil
+			else
+				exist_tcp = true
+			end
+		end
+	end
+	if not exist_tcp then
+		tcp_timer_started = false
 		return
 	end
+	time.after(TCP_SCAN, start_tcp_timer)
 end
 
-local function readname(dat, i)
-	local tbl = {}
-	while true do	--first
-		local n, j = unpack(">I1", dat, i)
-		if n >= 0xc0 then
-			readptr(tbl, dat, i)
-			i = i + 2
-			break
-		elseif n == 0 then
-			i = j
-			break
-		end
-		tbl[#tbl + 1] = sub(dat, j, i + n)
-		tbl[#tbl + 1] = "."
-		i = j + n
+--- Finish an inflight request: cancel timer, clean tables, wake all waiters.
+---@param req silly.net.dns.req
+---@param errmsg string? nil = success, string = failure reason
+local function finish_req(req, errmsg)
+	local timer = req.timer
+	if timer then
+		time.cancel(timer)
+		req.timer = nil
 	end
-	tbl[#tbl] = nil
-	return concat(tbl), i
-end
-
-local parser = {
-	[RR_A] = function(dat, pos)
-		local d1, d2, d3, d4 = unpack(">I1I1I1I1", dat, pos)
-		return format("%d.%d.%d.%d", d1, d2, d3, d4)
-	end,
-	[RR_AAAA] = function(dat, pos)
-		local x1, x2, x3, x4, x5, x6, x7, x8 =
-			unpack(">I2I2I2I2I2I2I2I2", dat, pos)
-		return format(
-			"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
-			x1, x2, x3, x4, x5, x6, x7, x8
-		)
-	end,
-	[RR_CNAME] = function(dat, pos)
-		return readname(dat, pos)
-	end,
-	[RR_SRV] = function(dat, pos)
-		local priority, weight, port = unpack(">I2I2I2", dat, pos)
-		local target = readname(dat, pos + 6)
-		return {
-			priority = priority,
-			weight = weight,
-			port = port,
-			target = target,
-		}
-	end
-}
-
-local newrrmt = {__index = function(t, k)
-	local v = {
-		TTL = maxinteger
-	}
-	t[k] = v
-	return v
-end}
-
-local answers = setmetatable({}, {__index = function(t, k)
-	local v = setmetatable({}, newrrmt)
-	t[k] = v
-	return v
-end})
-
-local function merge_answers()
-	for name, rrs in pairs(answers) do
-		answers[name] = nil
-		local dst = name_cache[name]
-		if not dst then
-			setmetatable(rrs, nil)
-			name_cache[name] = rrs
-		else
-			for k, v in pairs(rrs) do
-				dst[k] = v
-			end
-		end
+	inflight[req.rr] = nil
+	req.rr = nil
+	req.error = errmsg
+	local ok = not errmsg
+	local waiting = req.waiting
+	for co, v in pairs(waiting) do
+		v.co = nil
+		waiting[co] = nil
+		wakeup(co, ok)
 	end
 end
 
-local function answer(dat, start, n)
-	local now = timenow() // 1000
-	for i = 1, n do
-		local name, pos = readname(dat, start)
-		local qtype, qclass, ttl, rdlen, pos = unpack(">I2I2I4I2", dat, pos)
-		local parse = parser[qtype]
-		if parse then
-			local rr = answers[name][qtype]
-			rr[#rr + 1] = parse(dat, pos)
-			ttl = now + ttl
-			if rr.TTL > ttl then
-				rr.TTL = ttl
-			end
-		end
-		start = pos + rdlen
+local tcp_fallback
+
+--- Dispatch a DNS response message.
+--- Returns the matched req if TC bit is set (for UDP to trigger TCP fallback).
+---@param msg string
+---@return silly.net.dns.req?
+local function dispatch_resp(msg)
+	local id, name, qtype, tc, records = answer(msg)
+	if not id then
+		return nil
 	end
-	merge_answers()
-end
-
-
-do --parse hosts
-	local f<close> = io.open(hosts)
-	if f then
-		for line in f:lines() do
-			local ip, names = line:match("^%s*([%[%]%x%.%:]+)%s+([^#;]+)")
-			if not ip or not names then
-				goto continue
-			end
-
-			local typename = guesstype(ip)
-			if typename == RR_CNAME then
-				goto continue
-			end
-
-			for name in names:gmatch("%S+") do
-				local name = name:lower()
-				local rr = answers[name][typename]
-				rr[#rr + 1] = ip
-			end
-			::continue::
-		end
-		merge_answers()
+	local by_name = name_cache[name]
+	local rr = by_name and by_name[qtype]
+	local req = rr and inflight[rr]
+	if not req or rr.version ~= id then
+		return nil
 	end
-end
-
-local function suspend(session, timeout)
-	local co = task.running()
-	wait_coroutine[session] = co
-	task.fork(function()
-		time.sleep(timeout)
-		local co = wait_coroutine[session]
-		if not co then
-			return
+	if tc then -- TC (truncated)
+		return req
+	end
+	local now = timenow()
+	rr.ttl = now + DEFAULT_TTL
+	for i = 1, #rr do
+		rr[i] = nil
+	end
+	if #records > 0 then
+		local seen = {}
+		for _, rec in ipairs(records) do
+			local rname, rqtype, ttl, rdata = rec[1], rec[2], rec[3], rec[4]
+			local cache_rr = try_create_rr(rname, rqtype)
+			if not seen[cache_rr] then
+				seen[cache_rr] = true
+				for i = 1, #cache_rr do
+					cache_rr[i] = nil
+				end
+				cache_rr.ttl = now + ttl
+			end
+			if rdata then
+				cache_rr[#cache_rr + 1] = rdata
+			end
 		end
-		wait_coroutine[session] = nil
-		task.wakeup(co, false)
-	end)
-	return task.wait()
+		-- Invalidate rr not updated by this response (e.g. CNAME-only reply)
+		-- so findcache won't serve a stale positive entry
+		if not seen[rr] then
+			rr.ttl = -1
+		end
+	end
+	local first = rr[1]
+	local errmsg = not first and "nxdomain" or nil
+	finish_req(req, errmsg)
+	return nil
 end
 
-local function find_dns_server()
-	local f<close> = io.open(resolv_conf, "r")
-	if not f then
+---@param srv silly.net.dns.server
+local function udp_recv_loop(srv)
+	local conn = srv.udp_conn
+	if not conn then
 		return
 	end
-	for l in f:lines() do
-		dns_server = l:match("^%s*nameserver%s+([^%s]+)")
-		if dns_server then
-			dns_server = join_addr(dns_server, "53")
+	while true do
+		local msg, err = conn:recvfrom()
+		if not msg then
+			logger.info("[dns] udp error:", err)
 			break
 		end
+		local tc_req = dispatch_resp(msg)
+		if tc_req then
+			task.fork(tcp_fallback, {srv = srv, req = tc_req})
+		end
 	end
+	conn:close()
+	srv.udp_conn = nil
 end
 
-local function connectserver()
-	if connectfd then
+---@param srv silly.net.dns.server
+local function tcp_recv_loop(srv)
+	local conn = srv.tcp_conn
+	if not conn then
 		return
 	end
-	if not dns_server then
-		find_dns_server()
+	while true do
+		local len_data, err = conn:read(2)
+		if err then
+			break
+		end
+		local len = unpack(">I2", len_data)
+		if len == 0 then
+			break
+		end
+		local msg, err = conn:read(len)
+		if err then
+			break
+		end
+		srv.tcp_time = timenow()
+		dispatch_resp(msg)
 	end
-	assert(dns_server)
-	logger.info("[dns] server ip:", dns_server)
-	local fd = udp.connect(dns_server)
-	connectfd = fd
-	task.fork(function()
-		while true do
-			local msg, err = udp.recvfrom(fd)
-			if not msg then
-				logger.info("[dns] udp error:", err)
-				break
-			end
-			local ID, FLAG,
-			QDCOUNT, ANCOUNT,
-			NSCOUNT, ARCOUNT,
-			QNAME,
-			QTYPE, QCLASS, pos = unpack(parseformat, msg)
-			answer(msg, pos, ANCOUNT)
-			local co = wait_coroutine[ID]
-			if not co then --already timeout
-				return
-			end
-			wait_coroutine[ID] = nil
-			task.wakeup(co, ANCOUNT > 0)
-		end
-		-- udp error, wakeup all
-		for k, co in pairs(wait_coroutine) do
-			task.wakeup(co, false)
-			wait_coroutine[k] = nil
-		end
-		udp.close(connectfd)
-		connectfd = nil
-	end)
-	return fd
+	conn:close()
+	srv.tcp_conn = nil
 end
 
-local function query(name, typ, timeout)
-	connectserver()
-	if not connectfd then
+--- TCP fallback: re-send a query over TCP when UDP response had TC=1.
+---@param args {srv:silly.net.dns.server, req:silly.net.dns.req}
+tcp_fallback = function(args)
+	local srv = args.srv
+	local req = args.req
+	local rr = req.rr
+	if not rr or inflight[rr] ~= req then
 		return false
 	end
-	local retry = 1
-	local s, r = question(name, typ)
-	--RFC 1123 #page-76, the default timeout
-	--should be less than 5 seconds
-	timeout = timeout or 5000
-	while true do
-		local ok = udp.sendto(connectfd, r)
-		if not ok then
+	local now = timenow()
+	local conn = srv.tcp_conn
+	if not conn then
+		local err
+		conn, err = tcp.connect(srv.addr)
+		if not conn then
+			logger.error("[dns] tcp connect", srv.addr, "failed:", err)
 			return false
 		end
-		local ok = suspend(s, timeout)
-		if ok then
-			return ok
+		srv.tcp_conn = conn
+		srv.tcp_time = now
+		task.fork(tcp_recv_loop, srv)
+		if not tcp_timer_started then
+			tcp_timer_started = true
+			time.after(TCP_SCAN, start_tcp_timer)
 		end
-		retry = retry + 1
-		if retry > 3 then
+		-- Re-check: request might have been resolved while connecting
+		if inflight[rr] ~= req then
 			return false
 		end
-		time.sleep(timeout * retry)
 	end
+	srv.tcp_time = now
+	local pkt = req.pkt
+	local ok, err = conn:write(pack(">I2", #pkt) .. pkt)
+	if not ok then
+		logger.error("[dns] tcp write to", srv.addr, "failed:", err)
+		conn:close()
+		--let recv loop clear srv.tcp_conn
+	end
+	return ok
+end
+
+local send_udp_req
+
+--- Timer-driven retry callback.
+---@param req silly.net.dns.req
+local function retry_cb(req)
+	local rr = req.rr
+	if not rr or rr.version ~= req.version then
+		return  -- this request is too late, already superseded by a newer one
+	end
+	req.timer = nil  -- this timer just fired
+	if req.attempt < conf_attempts then
+		req.attempt = req.attempt + 1
+		if send_udp_req(req) then
+			return
+		end
+	end
+	finish_req(req, "timeout")
+end
+
+---@param req silly.net.dns.req
+---@return boolean
+send_udp_req = function(req)
+	local sent = false
+	local pkt = req.pkt
+	for i, srv in ipairs(servers) do
+		local err
+		local conn = srv.udp_conn
+		if not conn then
+			conn, err = udp.connect(srv.addr)
+			if not conn then
+				logger.error("[dns] connect", srv.addr, "failed:", err)
+			else
+				task.fork(udp_recv_loop, srv)
+				srv.udp_conn = conn
+			end
+		end
+		if conn then
+			local ok = conn:sendto(pkt)
+			if ok then
+				sent = true
+			end
+		end
+	end
+	if sent then
+		req.timer = time.after(conf_timeout, retry_cb, req)
+	end
+	return sent
+end
+
+local function close_servers()
+	for _, req in pairs(inflight) do
+		finish_req(req, "dns reconfigured")
+	end
+	for i, srv in ipairs(servers) do
+		servers[i] = nil -- clear server list to prevent new queries and reconnect
+		local udp_conn = srv.udp_conn
+		if udp_conn then
+			udp_conn:close()
+			srv.udp_conn = nil
+		end
+		local tcp_conn = srv.tcp_conn
+		if tcp_conn then
+			tcp_conn:close()
+			srv.tcp_conn = nil
+		end
+	end
+end
+
+local function query_timer(ctx)
+	local co = ctx.co
+	ctx.co = nil
+	ctx.request.waiting[co] = nil
+	wakeup(co, TIMEOUT)
+end
+
+--- Send a DNS query with inflight deduplication and timer-driven retry.
+--- If timeout is provided, the caller gives up after that many ms
+--- (the inflight query continues for the benefit of other/future callers).
+---@async
+---@param name string
+---@param qtype silly.net.dns.type
+---@param timeout integer   per-call user timeout (ms)
+---@return boolean, string? error
+local function query(name, qtype, timeout)
+	local ctx
+	local rr = try_create_rr(name, qtype)
+	local co = running()
+	local request = inflight[rr]
+	if not request then
+		local version = (rr.version + 1) & 0xFFFF
+		rr.version = version
+		local pkt = question(name, qtype, version)
+		local waiting = {}
+		request = {
+			rr = rr,
+			pkt = pkt,
+			attempt = 1,
+			waiting = waiting,
+			version = version,
+		}
+		-- Set inflight BEFORE send_udp_req: udp.connect yields, so
+		-- concurrent callers must see the inflight entry to join rather
+		-- than issuing duplicate queries.
+		ctx = {request = request, co = co}
+		waiting[co] = ctx
+		inflight[rr] = request
+		local ok = send_udp_req(request)
+		if not ok then
+			-- Remove self from waiting, wake any joiners with failure.
+			ctx.co = nil
+			waiting[co] = nil
+			finish_req(request, "send failed")
+			return false
+		end
+	else
+		ctx = {request = request, co = co}
+		request.waiting[co] = ctx
+	end
+	-- Optional per-call user timeout
+	local timer = time.after(timeout, query_timer, ctx)
+	local ok = wait()
+	if ok == TIMEOUT then
+		return false
+	end
+	time.cancel(timer)
+	return ok
 end
 
 ---@param name string
 ---@param qtype silly.net.dns.type
 ---@return table|nil, string|nil
 local function findcache(name, qtype)
-	local now = timenow() // 1000
+	local now = timenow()
+	local original = name
 	for i = 1, 100 do
 		local rrs = name_cache[name]
 		if not rrs then
+			if name ~= original then
+				return nil, name
+			end
 			return nil, nil
 		end
 		local rr = rrs[qtype]
-		if rr and rr.TTL >= now then
+		if rr and rr.ttl >= now then
 			return rr, nil
 		end
 		local cname = rrs[RR_CNAME]
-		if cname and cname.TTL >= now then
+		if cname and cname.ttl >= now and cname[1] then
 			name = cname[1]
 		else
+			if name ~= original then
+				return nil, name
+			end
 			return nil, nil
 		end
 	end
@@ -377,23 +449,20 @@ end
 ---@async
 ---@param name string
 ---@param qtype silly.net.dns.type
----@param timeout integer|nil
+---@param timeout integer
 ---@param deep integer
 ---@return table|nil
-local function resolve(name, qtype, timeout, deep)
+local function resolve_r(name, qtype, timeout, deep)
 	if deep > 100 then
 		return nil
 	end
 	local rr, cname = findcache(name, qtype)
 	if not rr and not cname then
-		local res = query(name, qtype, timeout)
-		if not res then
-			return nil
-		end
+		query(name, qtype, timeout)
 		rr, cname = findcache(name, qtype)
 	end
 	if cname then
-		return resolve(cname, qtype, timeout, deep + 1)
+		return resolve_r(cname, qtype, timeout, deep + 1)
 	end
 	return rr
 end
@@ -413,36 +482,178 @@ local dns = {
 ---@async
 ---@param name string
 ---@param qtype silly.net.dns.type
----@param timeout integer|nil
----@return string|nil
-function dns.lookup(name, qtype, timeout)
-	if not ishost(name) then
-		return name
+---@param timeout integer?   per-call user timeout (ms)
+---@return table|nil
+local function resolve(name, qtype, timeout)
+	if iptype(name) ~= 0 then
+		return {name}
 	end
-	local rr = resolve(name, qtype, timeout, 1)
-	if not rr then
+	name = lower(name)
+	if not validname(name) then
 		return nil
 	end
-	return rr[1]
+	timeout = timeout or conf_timeout
+	local rr = resolve_r(name, qtype, timeout, 1)
+	if rr then
+		return rr
+	end
+	if conf_ndots > 0 and conf_ndots > c.dotcount(name) then
+		for _, suffix in ipairs(search_list) do
+			rr = resolve_r(name .. "." .. suffix, qtype, timeout, 1)
+			if rr then
+				return rr
+			end
+		end
+	end
+	return nil
 end
+
 
 ---@async
 ---@param name string
 ---@param qtype silly.net.dns.type
----@param timeout integer|nil
----@return table
-function dns.resolve(name, qtype, timeout)
-	if not ishost(name) then
-		return {name}
+---@param timeout integer?   per-call user timeout (ms)
+---@return string|nil
+function dns.lookup(name, qtype, timeout)
+	if iptype(name) ~= 0 then
+		return name
 	end
-	return resolve(name, qtype, timeout, 1)
+	local rr = resolve(name, qtype, timeout)
+	return rr and rr[1]
 end
 
----@param ip string
-function dns.server(ip)
-	dns_server = ip
+dns.resolve = resolve
+
+dns.isname = function(name) return iptype(name) == 0 end
+
+---------------------------------
+--dns configuration and resolvconf parsing
+
+local function parse_resolvconf(content)
+	for line in content:gmatch("[^\n]+") do
+		local ns = line:match("^%s*nameserver%s+([^%s]+)")
+		if ns then
+			servers[#servers + 1] = { addr = ns_addr(ns) }
+		end
+		local search = line:match("^%s*search%s+(.+)")
+		if search then
+			search_list = {}
+			for domain in search:gmatch("%S+") do
+				search_list[#search_list + 1] = lower(domain)
+			end
+		end
+		local domain = line:match("^%s*domain%s+(%S+)")
+		if domain then
+			search_list = {lower(domain)}
+		end
+		local opts = line:match("^%s*options%s+(.+)")
+		if opts then
+			local t = opts:match("timeout:(%d+)")
+			if t then
+				t = tonumber(t)
+				if t > 30 then t = 30 end
+				conf_timeout = t * 1000
+			end
+			local a = opts:match("attempts:(%d+)")
+			if a then
+				a = tonumber(a)
+				if a > 5 then a = 5 end
+				conf_attempts = a
+			end
+			local n = opts:match("ndots:(%d+)")
+			if n then
+				n = tonumber(n)
+				if n > 15 then n = 15 end
+				conf_ndots = n
+			end
+		end
+	end
 end
 
-dns.isname = ishost
+local function parse_hosts(content)
+	local seen = {}
+	for line in content:gmatch("[^\n]+") do
+		local ip, names = line:match("^%s*([%[%]%x%.%:]+)%s+([^#;]+)")
+		if not ip or not names then
+			goto continue
+		end
+
+		local typename
+		local t = iptype(ip)
+		if t == 4 then
+			typename = RR_A
+		elseif t == 6 then
+			typename = RR_AAAA
+		else
+			goto continue
+		end
+
+		for name in names:gmatch("%S+") do
+			local lname = name:lower()
+			local rr = try_create_rr(lname, typename)
+			if not seen[rr] then
+				seen[rr] = true
+				for i = 1, #rr do
+					rr[i] = nil
+				end
+			end
+			rr[#rr + 1] = ip
+			rr.ttl = maxinteger
+		end
+		::continue::
+	end
+end
+
+do
+	local content = c.resolvconf()
+	if not content then
+		logger.warn("[dns] no resolvconf content, use 8.8.8.8")
+		content = "nameserver 8.8.8.8"
+	end
+	parse_resolvconf(content)
+	local content = c.hosts()
+	if content then
+		parse_hosts(content)
+	end
+end
+
+dns.sethosts = parse_hosts
+
+--- Configure the DNS resolver.
+--- Replaces all existing servers and options.
+---@param opts silly.net.dns.conf
+function dns.conf(opts)
+	close_servers()
+	servers = {}
+	search_list = {}
+	conf_timeout = 5000
+	conf_attempts = 2
+	conf_ndots = 1
+	if opts.nameservers then
+		for i, a in ipairs(opts.nameservers) do
+			servers[i] = { addr = ns_addr(a) }
+		end
+	end
+	if opts.search then
+		for _, s in ipairs(opts.search) do
+			search_list[#search_list + 1] = lower(s)
+		end
+	end
+	if opts.timeout then
+		local t = opts.timeout
+		if t > 30 then t = 30 end
+		conf_timeout = t * 1000
+	end
+	if opts.attempts then
+		local a = opts.attempts
+		if a > 5 then a = 5 end
+		conf_attempts = a
+	end
+	if opts.ndots then
+		local n = opts.ndots
+		if n > 15 then n = 15 end
+		conf_ndots = n
+	end
+end
 
 return dns

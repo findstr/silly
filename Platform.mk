@@ -40,8 +40,8 @@ endif
 endif
 
 ifeq ($(findstring _NT, $(uname_S)),_NT)
-	LDFLAGS += -lws2_32 -Wl,--out-implib,$(SRC_PATH)/lib$(TARGET).lib,--export-all-symbols
-	SHARED += --share -fPIC -L$(SRC_PATH) -l$(TARGET) -lws2_32 -DSILLY_BUILD_SHARED
+	LDFLAGS += -lws2_32 -liphlpapi -Wl,--out-implib,$(SRC_PATH)/lib$(TARGET).lib,--export-all-symbols
+	SHARED += --share -fPIC -L$(SRC_PATH) -l$(TARGET) -lws2_32 -liphlpapi -DSILLY_BUILD_SHARED
 	SO = dll
 	A = lib
 	LIBPREFIX =

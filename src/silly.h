@@ -158,4 +158,7 @@ SILLY_API void silly_cpu_usage(float *stime, float *utime);
 SILLY_API void silly_fd_open_limit(int *soft, int *hard);
 SILLY_API int silly_open_fd_count(void);
 SILLY_API int silly_cpu_count(void);
+SILLY_API int silly_push_resolvconf(lua_State *L);
+SILLY_API int silly_push_hosts(lua_State *L);
+
 #endif
