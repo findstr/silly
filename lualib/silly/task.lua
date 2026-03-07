@@ -232,7 +232,9 @@ function task._dispatch_wakeup()
 			return
 		end
 		local param = wakeup_task_param[co]
-		wakeup_task_param[co] = nil
+		if param ~= nil then
+			wakeup_task_param[co] = nil
+		end
 		task_resume(co, param)
 	end
 end
