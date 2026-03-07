@@ -53,8 +53,8 @@ endif
 ifeq ($(TEST),ON)
 	CFLAGS += -DSILLY_TEST
 ifneq ($(findstring _NT, $(uname_S)),_NT)
-	CFLAGS += -fsanitize=address -fno-omit-frame-pointer
-	LDFLAGS += -fsanitize=address -fno-omit-frame-pointer
+	CFLAGS += -fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer -fno-sanitize-recover=all
+	LDFLAGS += -fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer
 endif
 endif
 

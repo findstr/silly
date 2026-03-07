@@ -143,6 +143,12 @@ C modules in `luaclib-src/` expose APIs to Lua:
 - `lualib-time.c`: Timer operations
 - `crypto/*.c`: Cryptographic functions (AES, RSA, HMAC, etc.)
 
+### Lua Stack Safety in Recursive C Code
+
+Lua guarantees `LUA_MINSTACK` (20) free stack slots when entering a C function — sufficient for normal, non-recursive operations. However, when C code **recurses to process nested structures** (e.g., encoding nested tables in JSON), the entire recursion shares the same initial stack allocation. Each level consumes a few slots (`lua_pushnil`, `lua_next`, `lua_rawgeti`, etc.), and after ~5 levels the stack silently overflows, causing undefined behavior — `lua_next` returns wrong results, data is corrupted, but the program doesn't crash.
+
+**Fix**: Call `lua_checkstack()` or `luaL_checkstack()` before stack operations in recursive functions. Use `lua_checkstack` (returns 0) when there are C-allocated resources to clean up; use `luaL_checkstack` (raises error) when all resources are GC-managed.
+
 ### Platform Headers
 
 `src/platform.h` is for engine internals (`src/`) only. It pulls in event loop types, errno overrides, and other engine-specific details that `.so` modules should not depend on.

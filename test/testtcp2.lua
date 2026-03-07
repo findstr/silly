@@ -2,6 +2,7 @@ local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
 local tcp = require "silly.net.tcp"
+local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
 local listen_cb
 local ip = "127.0.0.1"
@@ -228,6 +229,7 @@ end)
 testaux.case("Test 9: Connection Failure", function()
 	local invalid_port = 54321
 	local invalid_addr = string.format("%s:%d", ip, invalid_port)
+	local ch = channel.new()
 
 	-- This test checks the async tcp.connect API, so it must be run in a coroutine.
 	task.fork(function()
@@ -241,10 +243,10 @@ testaux.case("Test 9: Connection Failure", function()
 			-- Connection failed as expected.
 			testaux.assertneq(err, nil, "Test 9.1: Connection failure returned an error")
 		end
+		ch:push(true)
 	end)
 
-	time.sleep(200) -- Allow time for the async connection to fail.
-	wait_done()
+	ch:pop() -- Wait for the forked task to complete.
 	testaux.success("Test 9 passed")
 end)
 

@@ -131,7 +131,8 @@ LIB_SRC = lsilly.c \
 	ldebugger.c \
 	ltrace.c\
 	lcluster.c \
-	lencoding.c \
+	encoding/lbase64.c \
+	encoding/ljson.c \
 	lhive.c \
 	lhttp.c \
 	lnet.c \
@@ -211,3 +212,4 @@ fmt:
 	-clang-format -style=file -i $(SRC_PATH)/*.c
 	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/l*.c
 	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/crypto/l*.c
+	-clang-format -style=file -i $(LUACLIB_SRC_PATH)/encoding/l*.c
