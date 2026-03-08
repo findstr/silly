@@ -244,3 +244,10 @@ SILLY_API int silly_push_hosts(lua_State *L)
 {
 	return dns_push_hosts(L);
 }
+
+#ifdef SILLY_TEST
+SILLY_API void silly_debug_ctrl(const char *cmd, const char *key, int val)
+{
+	socket_debug_ctrl(cmd, key, val);
+}
+#endif

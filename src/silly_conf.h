@@ -40,6 +40,12 @@
 #define SOCKET_POOL_EXP (16)
 #endif
 
+#ifndef SOCKET_WLIST_CACHE_SIZE
+#define SOCKET_WLIST_CACHE_SIZE 128
+#endif
+
+
+
 #ifndef TCP_READ_BUF_SIZE
 #define TCP_READ_BUF_SIZE (2 * 1024 * 1024) //2MB
 #endif
