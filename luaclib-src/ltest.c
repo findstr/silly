@@ -235,6 +235,35 @@ static int lpointer(lua_State *L)
 	return 1;
 }
 
+#ifdef SILLY_TEST
+static int ldebugctrl(lua_State *L)
+{
+	const char *cmd = luaL_checkstring(L, 1);
+	if (strcmp(cmd, "socket.conf") == 0) {
+		luaL_checktype(L, 2, LUA_TTABLE);
+		lua_pushnil(L);
+		while (lua_next(L, 2) != 0) {
+			const char *key = lua_tostring(L, -2);
+			int val;
+			if (lua_isboolean(L, -1))
+				val = lua_toboolean(L, -1);
+			else
+				val = (int)lua_tointeger(L, -1);
+			silly_debug_ctrl("socket.conf", key, val);
+			lua_pop(L, 1);
+		}
+		silly_debug_ctrl("socket.apply", NULL, 0);
+	} else if (strcmp(cmd, "socket.reset") == 0) {
+		silly_debug_ctrl("socket.reset", NULL, 0);
+	} else if (strcmp(cmd, "socket.kick") == 0) {
+		silly_debug_ctrl("socket.kick", NULL, 0);
+	} else {
+		return luaL_error(L, "unknown debugctrl command: %s", cmd);
+	}
+	return 0;
+}
+#endif
+
 SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 {
 	luaL_Reg tbl[] = {
@@ -250,6 +279,9 @@ SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 		{ "recv",        lrecv        },
 		{ "close",       lclose       },
 		{ "pointer",     lpointer     },
+#ifdef SILLY_TEST
+		{ "debugctrl",   ldebugctrl   },
+#endif
 		{ NULL,          NULL         },
 	};
 

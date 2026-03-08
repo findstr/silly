@@ -533,4 +533,300 @@ testaux.case("Test 17: Listen Failure FD Leak", function()
 	testaux.success("Test 17 passed")
 end)
 
+local test = require "test.aux.c"
+
+-- Helper: generate position-dependent data so offset bugs cause visible corruption
+local function make_data(size, seed)
+	seed = seed or 0
+	local buf = {}
+	for i = 1, size do
+		buf[i] = string.char((seed + i) % 256)
+	end
+	return table.concat(buf)
+end
+
+-- Test 18: Partial write with sendv_cap
+testaux.case("Test 18: Partial write with sendv_cap", function()
+	local data_size = 8192 -- 8KB
+	local data = make_data(data_size)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { sendv_cap = 1024 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 18.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 18.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 18.3: Connect to server")
+	wait_done()
+	testaux.success("Test 18 passed")
+end)
+
+-- Test 19: Partial write mid-node (wloffset tracking)
+testaux.case("Test 19: Partial write mid-node (wloffset tracking)", function()
+	local chunk_size = 4096
+	local num_chunks = 4
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 37)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { sendv_cap = 1000 })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 19.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 19.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 19.3: Connect to server")
+	wait_done()
+	testaux.success("Test 19 passed")
+end)
+
+-- Test 20: Single-byte partial writes
+testaux.case("Test 20: Single-byte partial writes", function()
+	local data_size = 256
+	local data = ""
+	do
+		local buf = {}
+		for i = 1, data_size do
+			buf[i] = string.char(i % 256)
+		end
+		data = table.concat(buf)
+	end
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { sendv_cap = 1 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 20.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 20.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 20.3: Connect to server")
+	wait_done()
+	testaux.success("Test 20 passed")
+end)
+
+-- Test 21: EAGAIN injection triggers EPOLLOUT retry
+testaux.case("Test 21: EAGAIN injection triggers EPOLLOUT retry", function()
+	local data_size = 16384 -- 16KB
+	local data = make_data(data_size, 21)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { eagain_every = 2 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 21.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 21.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 21.3: Connect to server")
+	wait_done()
+	testaux.success("Test 21 passed")
+end)
+
+-- Test 22: EAGAIN + partial write combined
+testaux.case("Test 22: EAGAIN + partial write combined", function()
+	local data_size = 8192 -- 8KB
+	local data = make_data(data_size, 22)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { eagain_every = 3, sendv_cap = 2048 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 22.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 22.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 22.3: Connect to server")
+	wait_done()
+	testaux.success("Test 22 passed")
+end)
+
+-- Test 23: Batched sends via defer_trigger
+testaux.case("Test 23: Batched sends via defer_trigger", function()
+	local chunk_size = 1024
+	local num_chunks = 10
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 41)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { defer_trigger = true })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		test.debugctrl("socket.kick")
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 23.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 23.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 23.3: Connect to server")
+	wait_done()
+	testaux.success("Test 23 passed")
+end)
+
+-- Test 24: Batched sends + partial write
+testaux.case("Test 24: Batched sends + partial write", function()
+	local chunk_size = 2048
+	local num_chunks = 8
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 53)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { defer_trigger = true, sendv_cap = 1024 })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		test.debugctrl("socket.kick")
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 24.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 24.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 24.3: Connect to server")
+	wait_done()
+	testaux.success("Test 24 passed")
+end)
+
+-- Test 25: Closewait with partial writes
+testaux.case("Test 25: Closewait with partial writes", function()
+	local data_size = 32768 -- 32KB
+	local data = make_data(data_size, 25)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { sendv_cap = 512 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 25.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 25.2: Client received correct data despite partial writes")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 25.3: Connect to server")
+	wait_done()
+	testaux.success("Test 25 passed")
+end)
+
+-- Test 26: Closewait with EAGAIN + partial write
+testaux.case("Test 26: Closewait with EAGAIN + partial write", function()
+	local data_size = 16384 -- 16KB
+	local data = make_data(data_size, 26)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { sendv_cap = 1024, eagain_every = 2 })
+		tcp.write(sfd, data)
+		tcp.close(sfd)
+		local received = testaux.recv(cfd, data_size)
+		testaux.asserteq(#received, data_size, "Test 26.1: Client received correct amount of data")
+		testaux.asserteq(received, data, "Test 26.2: Client received correct data despite EAGAIN + partial writes")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 26.3: Connect to server")
+	wait_done()
+	testaux.success("Test 26 passed")
+end)
+
+-- Test 27: Closewait with multi-node wlist (send+close in same op batch)
+testaux.case("Test 27: Closewait with multi-node wlist", function()
+	local chunk_size = 4096
+	local num_chunks = 4
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 67)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		-- defer_trigger ensures all OP_TCP_SENDs + OP_CLOSE land in one op_process batch
+		-- sendv_cap forces partial writes across node boundaries during closewait drain
+		test.debugctrl("socket.conf", { defer_trigger = true, sendv_cap = 1000 })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		tcp.close(sfd) -- OP_CLOSE queued, trigger still suppressed
+		test.debugctrl("socket.kick") -- fire trigger: all ops processed together
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 27.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 27.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 27.3: Connect to server")
+	wait_done()
+	testaux.success("Test 27 passed")
+end)
+
+-- Test 28: Closewait with multi-node wlist + EAGAIN
+testaux.case("Test 28: Closewait with multi-node wlist + EAGAIN", function()
+	local chunk_size = 4096
+	local num_chunks = 4
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 71)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		test.debugctrl("socket.conf", { defer_trigger = true, sendv_cap = 1000, eagain_every = 3 })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		tcp.close(sfd)
+		test.debugctrl("socket.kick")
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 28.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 28.2: Client received correct data")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 28.3: Connect to server")
+	wait_done()
+	testaux.success("Test 28 passed")
+end)
+
 print("testtcp2 all tests passed!")
