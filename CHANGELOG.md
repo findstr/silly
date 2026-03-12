@@ -1,8 +1,27 @@
-## Unreleased
+## v0.7.1 (Unreleased)
+
+### Added
+- `sync.singleflight` to suppress duplicate concurrent work.
+- `perf.hrtime` for high-resolution timing.
+- `net.addr` module extracted, centralized host:port handling.
+- Snappy and LZ4 codecs in `compress`.
 
 ### Changed
-- Refactor timer to use unified command buffer instead of separate after/cancel buffers.
-- Refactor shutdown sequence with explicit thread termination via OP_EXIT commands.
+- Logger redesigned with a ring buffer and async flushing.
+- JSON encoding module rewritten in C for performance and RFC 8259 compliance.
+- DNS resolver reimplemented with a C-based wire format parser.
+- Cluster packet header expanded to 4 bytes and packet size limits enforced (may affect protocol compatibility).
+- Hive workers now inherit package path and restrict module access.
+- Profiler renamed to `perf`.
+- Timer refactored to use unified command buffer instead of separate after/cancel buffers.
+- Timer shutdown sequence refactored with explicit thread termination via OP_EXIT commands.
+
+### Fixed
+- TLS: propagate handshake/write errors to callers; fix UAF in server ALPN handling.
+- Signal: fix async-signal-unsafe handler and cross-thread `lua_sethook` race.
+- HTTP/2: validate `:status` in responses; skip content-length validation for no-body responses; mask `WINDOW_UPDATE` reserved bit; remove duplicate SETTINGS ACK during handshake.
+- Worker: fix `lua_close` order to prevent use-after-free.
+- Timer: refine locking in flipbuf and timer pool.
 
 ## v0.7.0 (Dec 28, 2025)
 
