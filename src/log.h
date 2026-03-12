@@ -8,23 +8,30 @@
 void log_init(const struct boot_args *config);
 void log_open_file(const char *path);
 void log_set_level(enum silly_log_level level);
-enum silly_log_level log_get_level();
-void log_head(enum silly_log_level level);
-void log_vfmt(const char *fmt, va_list ap);
-void log_fmt(const char *fmt, ...);
-void log_append(const char *str, size_t sz);
-void log_flush();
+enum silly_log_level log_get_level(void);
+void log_flush(void);
+void log_exit(void);
 
-#define log_visible(level) (level >= log_get_level())
-#define log_(level, ...)                   \
-	do {                               \
-		if (!log_visible(level)) { \
-			break;             \
-		}                          \
-		log_head(level);           \
-		log_fmt(__VA_ARGS__);      \
+void log_write_(enum silly_log_level level, const char *msg, size_t len);
+void log_writef_(enum silly_log_level level, const char *fmt, ...);
+
+#define log_visible(level) ((level) >= log_get_level())
+
+#define log_write(level, msg, len) \
+	do { \
+		if (!log_visible(level)) \
+			break; \
+		log_write_(level, msg, len); \
 	} while (0)
 
+#define log_writef(level, fmt, ...) \
+	do { \
+		if (!log_visible(level)) \
+			break; \
+		log_writef_(level, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+#define log_(level, ...) log_writef(level, __VA_ARGS__)
 #define log_debug(...) log_(SILLY_LOG_DEBUG, __VA_ARGS__)
 #define log_info(...) log_(SILLY_LOG_INFO, __VA_ARGS__)
 #define log_warn(...) log_(SILLY_LOG_WARN, __VA_ARGS__)

@@ -153,6 +153,8 @@ static void signal_handler(int sig)
 			    LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT, 1);
 		return;
 	}
+#else
+	(void)warn_hook;
 #endif
 	atomic_fetch_or(&W->signal_pending, 1U << sig);
 }

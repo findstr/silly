@@ -53,7 +53,7 @@ static inline void pidfile_write()
 	char pid[128];
 	if (pidfile == -1)
 		return;
-	sz = sprintf(pid, "%d\n", (int)getpid());
+	sz = snprintf(pid, sizeof(pid), "%d\n", (int)getpid());
 	writen = write(pidfile, pid, sz);
 	if (writen == -1 || writen != sz) {
 		perror("write pidfile");

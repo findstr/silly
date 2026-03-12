@@ -193,14 +193,9 @@ int main(int argc, char *argv[])
 	timer_init();
 	status = engine_run(&args);
 	daemon_stop(&args);
-	if (log_visible(SILLY_LOG_INFO)) {
-		log_head(SILLY_LOG_INFO);
-	}
-	// NOTE: log_header depend timer_now
+	// NOTE: log_writef depends on timer_now
+	log_writef(SILLY_LOG_INFO, "%s exit, leak memory size:%zu\n", argv[0], mem_used());
 	timer_exit();
-	if (log_visible(SILLY_LOG_INFO)) {
-		log_fmt("%s exit, leak memory size:%zu\n", argv[0], mem_used());
-	}
-	log_flush();
+	log_exit();
 	return status;
 }

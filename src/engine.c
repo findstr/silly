@@ -78,7 +78,6 @@ static void *thread_worker(void *arg)
 			pthread_cond_wait(&R.cond, &R.mutex);
 		R.workerstatus = 1;
 		worker_dispatch();
-		log_flush();
 	}
 	log_info("[worker] stop\n");
 	pthread_mutex_unlock(&R.mutex);
@@ -96,6 +95,7 @@ static void thread_monitor()
 			break;
 		nanosleep(&req, NULL);
 		monitor_check();
+		log_flush();
 	}
 	log_info("[monitor] stop\n");
 	return;

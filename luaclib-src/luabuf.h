@@ -5,6 +5,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include "silly.h"
+
+#define CBUF_INLINE_SIZE LUAL_BUFFERSIZE
 #include "cbuf.h"
 
 /* Lua-aware buffer wrapping cbuf, adding:
@@ -61,7 +63,7 @@ static void *luabuf_falloc(void *ud, void *ptr, size_t osize, size_t nsize)
 /* Push result onto Lua stack; uses zero-copy for heap buffers */
 static inline void luabuf_pushresult(struct luabuf *lb)
 {
-	if (lb->cb.data == lb->cb.b) {
+	if (lb->cb.data == CBUF_INLINE_BUF(&lb->cb)) {
 		/* Small buffer: copy into Lua string */
 		lua_pushlstring(lb->L, lb->cb.data, lb->cb.len);
 	} else {

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <lua.h>
 #include <lauxlib.h>
 
@@ -207,7 +208,7 @@ static inline int validate_payload(struct incomplete *ic)
 	if ((resp_hdr.session & ACK_BIT) == ACK_BIT)
 		return 0;
 	if (unlikely(ic->header.psize < sizeof(struct request_header))) {
-		silly_log_error("[cluster] request size %u too small from fd %llu\n",
+		silly_log_error("[cluster] request size %u too small from fd %" PRIu64 "\n",
 			ic->header.psize, (uint64_t)ic->fd);
 		return ERR_PSIZE;
 	}
@@ -395,12 +396,12 @@ static inline int validate_pack_size(struct netpacket *np, cmd_t cmd,
 				     uint64_t size)
 {
 	if (unlikely(size > np->hardlimit)) {
-		silly_log_error("[cluster] %d size %u exceeds hardlimit %u\n",
+		silly_log_error("[cluster] %d size %" PRIu64 " exceeds hardlimit %u\n",
 				cmd, size, np->hardlimit);
 		return ERR_HARDLIMIT;
 	}
 	if (unlikely(size > np->softlimit)) {
-		silly_log_warn("[cluster] %d size %u exceeds softlimit %u\n",
+		silly_log_warn("[cluster] %d size %" PRIu64 " exceeds softlimit %u\n",
 			       cmd, size, np->softlimit);
 	}
 	return 0;

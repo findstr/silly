@@ -52,20 +52,9 @@ SILLY_API enum silly_log_level silly_log_get_level()
 {
 	return log_get_level();
 }
-SILLY_API void silly_log_head(enum silly_log_level level)
+SILLY_API void silly_log_write(enum silly_log_level level, const char *buf, size_t len)
 {
-	log_head(level);
-}
-SILLY_API void silly_log_fmt(const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	log_vfmt(fmt, ap);
-	va_end(ap);
-}
-SILLY_API void silly_log_append(const char *str, size_t sz)
-{
-	log_append(str, sz);
+	log_write(level, buf, len);
 }
 SILLY_API int silly_signal_watch(int signum)
 {

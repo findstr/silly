@@ -25,4 +25,24 @@
 #define container_of(ptr, type, member) \
 	((type *)((char *)(ptr) - offsetof(type, member)))
 
+#ifndef min
+
+#if defined(__GNUC__) || defined(__clang__)
+#define min(a, b) __extension__ ({ \
+	__typeof__(a) _a = (a); \
+	__typeof__(b) _b = (b); \
+	_a < _b ? _a : _b; \
+})
+#define max(a, b) __extension__ ({ \
+	__typeof__(a) _a = (a); \
+	__typeof__(b) _b = (b); \
+	_a > _b ? _a : _b; \
+})
+#else
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#endif
+
 #endif

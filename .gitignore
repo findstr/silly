@@ -16,6 +16,7 @@ server
 /deps/zlib/Makefile
 /.cache
 /.claude
+/.codex
 /build
 luac
 *.ko
@@ -56,3 +57,4 @@ node_modules/
 .vuepress/.cache/
 .vuepress/.temp/
 .vuepress/dist/
+.worktrees/

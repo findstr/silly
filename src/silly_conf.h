@@ -63,7 +63,7 @@
 #endif
 
 #ifndef LOG_BUF_SIZE
-#define LOG_BUF_SIZE (4 * 1024)
+#define LOG_BUF_SIZE (1024 * 1024) //1MB
 #endif
 
 #ifndef LOG_DISABLE_FILE_LINE

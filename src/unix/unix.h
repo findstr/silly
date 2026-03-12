@@ -39,6 +39,7 @@ void signal_ignore_pipe(void);
 void signal_block_usr2(void);
 void signal_register_usr2(void (*handler)(int));
 void signal_kill_usr2(pthread_t tid);
+void set_eh(void (*handler)(void));
 
 static inline int cpu_count(void)
 {

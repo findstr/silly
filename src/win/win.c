@@ -276,6 +276,22 @@ fallback:
 	return SOCKET_ERROR;
 }
 
+static void (*eh_fn)(void) = NULL;
+
+static LONG WINAPI eh_handler(EXCEPTION_POINTERS *ep)
+{
+	(void)ep;
+	if (eh_fn)
+		eh_fn();
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void set_eh(void (*handler)(void))
+{
+	eh_fn = handler;
+	SetUnhandledExceptionFilter(eh_handler);
+}
+
 int dns_push_resolvconf(struct lua_State *L)
 {
 	DWORD result;

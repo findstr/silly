@@ -9,6 +9,7 @@
 
 #include "silly.h"
 #include "luastr.h"
+#include "luafmt.h"
 
 #define LOG_TRUE_STR "true"
 #define LOG_FALSE_STR "false"
@@ -19,111 +20,49 @@
 
 #define LOG_TABLE_DEEP (5)
 
-struct log_buffer {
-	char buf[LOG_BUF_SIZE];
-	char *b;
-	size_t n;
-	size_t size;
-};
+#define BUF_UPVALUE lua_upvalueindex(1)
 
-static inline void log_buffer_init(struct log_buffer *b)
+/* Use cbuf as the log buffer (lazy allocation, 1024 initial capacity) */
+#define CBUF_INIT_SIZE 1024
+#include "cbuf.h"
+
+static int lbuf_gc(lua_State *L)
 {
-	b->b = b->buf;
-	b->n = 0;
-	b->size = LOG_BUF_SIZE;
+	struct cbuf *b = (struct cbuf *)lua_touserdata(L, 1);
+	cbuf_free(b);
+	return 0;
 }
 
-static inline void log_buffer_free(struct log_buffer *b)
+/* ---- formatting helpers ---- */
+
+static inline void lbuf_addbool(struct cbuf *b, lua_State *L, int arg)
 {
-	if (b->b != b->buf) {
-		silly_free(b->b);
-		log_buffer_init(b);
+	if (lua_toboolean(L, arg)) {
+		cbuf_addlstr(b, LOG_TRUE_STR, sizeof(LOG_TRUE_STR) - 1);
+	} else {
+		cbuf_addlstr(b, LOG_FALSE_STR, sizeof(LOG_FALSE_STR) - 1);
 	}
 }
 
-static inline void *log_buffer_prepbuffsize(struct log_buffer *b, size_t len)
+static inline void lbuf_addnil(struct cbuf *b)
 {
-	size_t need = b->n + len;
-	if (need > b->size) {
-		if (b->b == b->buf) {
-			b->b = silly_malloc(need);
-			memcpy(b->b, b->buf, b->n);
-		} else {
-			b->b = silly_realloc(b->b, need);
-		}
-		b->size = need;
-	}
-	return b->b + b->n;
+	cbuf_addlstr(b, LOG_NIL_STR, sizeof(LOG_NIL_STR) - 1);
 }
 
-static inline void log_buffer_addsize(struct log_buffer *b, size_t len)
-{
-	b->n += len;
-	assert(b->n <= b->size);
-}
-
-static inline void log_buffer_append(struct log_buffer *b, const char *str,
-				     size_t len)
-{
-	char *ptr = log_buffer_prepbuffsize(b, len);
-	memcpy(ptr, str, len);
-	b->n += len;
-	return;
-}
-
-static void log_buffer_addchar(struct log_buffer *b, char c)
-{
-	log_buffer_prepbuffsize(b, 1);
-	b->b[b->n++] = c;
-}
-
-static void log_buffer_addvalue(struct log_buffer *b, lua_State *L, int arg)
+static inline void lbuf_addvalue(struct cbuf *b, lua_State *L, int arg)
 {
 	size_t len;
 	int top = lua_gettop(L);
 	const char *s = luaL_tolstring(L, arg, &len);
-	log_buffer_addchar(b, '"');
-	char *ptr = log_buffer_prepbuffsize(b, len);
-	memcpy(ptr, s, len);
-	log_buffer_addsize(b, len);
-	log_buffer_addchar(b, '"');
+	cbuf_addchar(b, '"');
+	cbuf_addlstr(b, s, len);
+	cbuf_addchar(b, '"');
 	if (top != lua_gettop(L)) {
 		lua_settop(L, top);
 	}
 }
 
-static void log_buffer_addbool(struct log_buffer *b, lua_State *L, int arg)
-{
-	if (lua_toboolean(L, arg)) {
-		log_buffer_append(b, LOG_TRUE_STR, sizeof(LOG_TRUE_STR) - 1);
-	} else {
-		log_buffer_append(b, LOG_FALSE_STR, sizeof(LOG_FALSE_STR) - 1);
-	}
-}
-
-static void log_buffer_addnil(struct log_buffer *b)
-{
-	log_buffer_append(b, LOG_NIL_STR, sizeof(LOG_NIL_STR) - 1);
-}
-
-static char *inttostr(lua_Integer n, char *begin, char *end)
-{
-	int neg = 0;
-	if (n < 0) {
-		neg = 1;
-		n = -n;
-	}
-	do {
-		int m = n % 10;
-		n /= 10;
-		*(--end) = m + '0';
-	} while (begin < end && n > 0);
-	if (neg && begin < end)
-		*(--end) = '-';
-	return end;
-}
-
-static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
+static inline void log_field(lua_State *L, struct cbuf *b, int stk,
 			     int type, int deep)
 {
 	size_t sz;
@@ -132,39 +71,39 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 	if (unlikely(deep > LOG_TABLE_DEEP)) {
 		return;
 	}
+	luaL_checkstack(L, deep + LUA_MINSTACK, "too many nested tables");
 	switch (type) {
 	case LUA_TSTRING:
 		str = lua_tolstring(L, stk, &sz);
-		log_buffer_append(b, str, sz);
+		cbuf_addlstr(b, str, sz);
 		break;
 	case LUA_TNUMBER:
 		if (lua_isinteger(L, stk)) {
 			char buf[32];
 			lua_Integer n = lua_tointeger(L, stk);
-			char *end = &buf[sizeof(buf) / sizeof(buf[0])];
-			char *start = inttostr(n, buf, end);
-			log_buffer_append(b, start, end - start);
+			int len = luafmt_int64(buf, (int64_t)n);
+			cbuf_addlstr(b, buf, len);
 		} else {
 			int len;
 			char buf[32];
 			lua_Number n = lua_tonumber(L, stk);
 			len = snprintf(buf, sizeof(buf), LUA_NUMBER_FMT, n);
 			if (len > 0 && len < (int)sizeof(buf)) {
-				log_buffer_append(b, buf, len);
+				cbuf_addlstr(b, buf, len);
 			} else {
-				log_buffer_addvalue(b, L, stk);
+				lbuf_addvalue(b, L, stk);
 			}
 		}
 		break;
 	case LUA_TBOOLEAN:
-		log_buffer_addbool(b, L, stk);
+		lbuf_addbool(b, L, stk);
 		break;
 	case LUA_TTABLE:
 		first = 1;
-		log_buffer_addchar(b, '{');
+		cbuf_addchar(b, '{');
 		if (deep == LOG_TABLE_DEEP) {
-			log_buffer_append(b, "...", 3);
-			log_buffer_addchar(b, '}');
+			cbuf_addlstr(b, "...", 3);
+			cbuf_addchar(b, '}');
 			break;
 		}
 		lua_pushnil(L);
@@ -172,7 +111,7 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 			if (first) {
 				first = 0;
 			} else {
-				log_buffer_addchar(b, ',');
+				cbuf_addchar(b, ',');
 			}
 			int key_stk = lua_absindex(L, -2);
 			int key_type = lua_type(L, key_stk);
@@ -181,69 +120,69 @@ static inline void log_field(lua_State *L, struct log_buffer *b, int stk,
 			if (key_type == LUA_TSTRING) {
 				log_field(L, b, key_stk, key_type, deep + 1);
 			} else {
-				log_buffer_addchar(b, '[');
+				cbuf_addchar(b, '[');
 				log_field(L, b, key_stk, key_type, deep + 1);
-				log_buffer_addchar(b, ']');
+				cbuf_addchar(b, ']');
 			}
-			log_buffer_addchar(b, '=');
+			cbuf_addchar(b, '=');
 			if (val_type == LUA_TSTRING) {
-				log_buffer_addchar(b, '"');
+				cbuf_addchar(b, '"');
 				log_field(L, b, val_stk, val_type, deep + 1);
-				log_buffer_addchar(b, '"');
+				cbuf_addchar(b, '"');
 			} else {
 				log_field(L, b, val_stk, val_type, deep + 1);
 			}
 			lua_pop(L, 1);
 		}
-		log_buffer_addchar(b, '}');
+		cbuf_addchar(b, '}');
 		break;
 	case LUA_TNIL:
-		log_buffer_addnil(b);
+		lbuf_addnil(b);
 		break;
 	default:
-		log_buffer_addvalue(b, L, stk);
+		lbuf_addvalue(b, L, stk);
 		break;
 	}
 }
 
-static inline void log_file_line(lua_State *L, struct log_buffer *buffer)
+static inline void log_file_line(lua_State *L, struct cbuf *b)
 {
 	lua_Debug ar;
 	if (lua_getstack(L, 1, &ar)) {     /* check function at level */
 		lua_getinfo(L, "Sl", &ar); /* get info about it */
 		if (ar.currentline > 0) {  /* is there info? */
 			size_t maxsize = PATH_MAX + 32;
-			char *buf = log_buffer_prepbuffsize(buffer, maxsize);
-			int n = snprintf(buf, maxsize, "%s:%d ", ar.short_src,
-					 ar.currentline);
-			if (n >= 0 && n < (int)maxsize) {
-				log_buffer_addsize(buffer, n);
-			}
+			char *ptr = cbuf_prepbuffsize(b, maxsize);
+			int n = snprintf(ptr, maxsize, "%s:%d ",
+					 ar.short_src, ar.currentline);
+			if (n > 0 && (size_t)n < maxsize)
+				cbuf_addsize(b, n);
 		}
 	}
 }
 
+/* ---- log entry formatting ---- */
+
+/// log(...)
 static int llog(lua_State *L, enum silly_log_level log_level)
 {
 	int stk, top;
-	struct log_buffer buffer;
+	struct cbuf *b = (struct cbuf *)lua_touserdata(L, BUF_UPVALUE);
 	if (!silly_log_visible(log_level)) {
 		return 0;
 	}
 	top = lua_gettop(L);
-	log_buffer_init(&buffer);
+	cbuf_reset(b);
 #ifdef LOG_ENABLE_FILE_LINE
-	log_file_line(L, &buffer);
+	log_file_line(L, b);
 #endif
 	for (stk = 1; stk <= top; stk++) {
 		int type = lua_type(L, stk);
-		log_field(L, &buffer, stk, type, 0);
-		log_buffer_addchar(&buffer, ' ');
+		log_field(L, b, stk, type, 0);
+		cbuf_addchar(b, ' ');
 	}
-	log_buffer_addchar(&buffer, '\n');
-	silly_log_head(log_level);
-	silly_log_append(buffer.b, buffer.n);
-	log_buffer_free(&buffer);
+	cbuf_addchar(b, '\n');
+	silly_log_write(log_level, b->data, b->len);
 	return 0;
 }
 
@@ -253,25 +192,25 @@ static int llogf(lua_State *L, enum silly_log_level log_level)
 	int top;
 	int arg = 1;
 	struct luastr fmt;
-	struct log_buffer buffer;
+	struct cbuf *b = (struct cbuf *)lua_touserdata(L, BUF_UPVALUE);
 	const char *strfmt, *strfmt_end;
 	if (!silly_log_visible(log_level)) {
 		return 0;
 	}
 	top = lua_gettop(L);
-	luastr_check(L, arg, &fmt);
-	log_buffer_init(&buffer);
+	cbuf_reset(b);
 #ifdef LOG_ENABLE_FILE_LINE
-	log_file_line(L, &buffer);
+	log_file_line(L, b);
 #endif
+	luastr_check(L, 1, &fmt);
 	strfmt = (const char *)fmt.str;
 	strfmt_end = strfmt + fmt.len;
 	while (strfmt < strfmt_end) {
-		if (*strfmt != LOG_ESC)
-			log_buffer_addchar(&buffer, *strfmt++);
-		else if (*++strfmt == LOG_ESC)
-			log_buffer_addchar(&buffer, *strfmt++); /* %% */
-		else { /* format item */
+		if (*strfmt != LOG_ESC) {
+			cbuf_addchar(b, *strfmt++);
+		} else if (*++strfmt == LOG_ESC) {
+			cbuf_addchar(b, *strfmt++); /* %% */
+		} else { /* format item */
 			if (*strfmt != 's') {
 				const char *err = "invalid option "
 						  "'%%%c' to 'format',"
@@ -282,16 +221,16 @@ static int llogf(lua_State *L, enum silly_log_level log_level)
 			if (++arg > top) {
 				luaL_error(L, "no value");
 			}
-			log_field(L, &buffer, arg, lua_type(L, arg), 0);
-			log_buffer_addchar(&buffer, ' ');
+			log_field(L, b, arg, lua_type(L, arg), 0);
+			cbuf_addchar(b, ' ');
 		}
 	}
-	log_buffer_addchar(&buffer, '\n');
-	silly_log_head(log_level);
-	silly_log_append(buffer.b, buffer.n);
-	log_buffer_free(&buffer);
+	cbuf_addchar(b, '\n');
+	silly_log_write(log_level, b->data, b->len);
 	return 0;
 }
+
+/* ---- Lua exports ---- */
 
 static int lopenfile(lua_State *L)
 {
@@ -373,8 +312,19 @@ SILLY_MOD_API int luaopen_silly_logger_c(lua_State *L)
 		//end
 		{ NULL,       NULL      },
 	};
-
+	struct cbuf *b;
 	luaL_checkversion(L);
-	luaL_newlib(L, tbl);
+	luaL_newlibtable(L, tbl);
+	/* create logger_buf userdata as shared upvalue */
+	b = (struct cbuf *)lua_newuserdatauv(L, sizeof(struct cbuf), 0);
+	cbuf_init(b);
+	/* set __gc metamethod */
+	lua_newtable(L);
+	lua_pushcfunction(L, lbuf_gc);
+	lua_setfield(L, -2, "__gc");
+	lua_setmetatable(L, -2);
+	/* stack: lib, udata */
+	luaL_setfuncs(L, tbl, 1);
+	/* stack: lib */
 	return 1;
 }

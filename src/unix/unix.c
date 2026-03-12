@@ -98,6 +98,23 @@ void signal_kill_usr2(pthread_t tid)
 	pthread_kill(tid, SIGUSR2);
 }
 
+static void (*eh_fn)(void) = NULL;
+
+static void eh_handler(int sig)
+{
+	if (eh_fn)
+		eh_fn();
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
+void set_eh(void (*handler)(void))
+{
+	eh_fn = handler;
+	signal(SIGSEGV, eh_handler);
+	signal(SIGABRT, eh_handler);
+}
+
 size_t memory_rss_(void)
 {
 	size_t rss;

@@ -90,17 +90,24 @@ SILLY_API int silly_mallctl(const char *name, void *oldp, size_t *oldlenp,
 SILLY_API void silly_log_open_file(const char *path);
 SILLY_API void silly_log_set_level(enum silly_log_level level);
 SILLY_API enum silly_log_level silly_log_get_level();
-SILLY_API void silly_log_head(enum silly_log_level level);
-SILLY_API void silly_log_fmt(const char *fmt, ...);
-SILLY_API void silly_log_append(const char *str, size_t sz);
+SILLY_API void silly_log_write(enum silly_log_level level, const char *buf, size_t len);
 #define silly_log_visible(level) (level >= silly_log_get_level())
-#define silly_log_(level, ...)                   \
-	do {                                     \
-		if (!silly_log_visible(level)) { \
-			break;                   \
-		}                                \
-		silly_log_head(level);           \
-		silly_log_fmt(__VA_ARGS__);      \
+#define silly_log_(level, ...)                                                \
+	do {                                                                  \
+		if (!silly_log_visible(level))                                \
+			break;                                                \
+		char _logbuf[1024];                                           \
+		char *_lbuf = _logbuf;                                        \
+		int _blen = snprintf(_logbuf, sizeof(_logbuf), __VA_ARGS__);   \
+		if (_blen >= (int)sizeof(_logbuf)) {                          \
+			size_t _need = (size_t)_blen + 1;                     \
+			_lbuf = (char *)silly_malloc(_need);                  \
+			_blen = snprintf(_lbuf, _need, __VA_ARGS__);          \
+		}                                                             \
+		if (_blen > 0)                                                \
+			silly_log_write(level, _lbuf, _blen);                 \
+		if (_lbuf != _logbuf)                                         \
+			silly_free(_lbuf);                                    \
 	} while (0)
 
 #define silly_log_debug(...) silly_log_(SILLY_LOG_DEBUG, __VA_ARGS__)
