@@ -17,7 +17,6 @@
 #include "engine.h"
 #include "platform.h"
 
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 static void print_help(const char *selfname)
 {

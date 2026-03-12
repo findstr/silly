@@ -81,7 +81,6 @@ EAGAIN:           \
 #define SOCKET_POOL_SIZE (1 << SOCKET_POOL_EXP)
 #define HASH(sid) (sid & (SOCKET_POOL_SIZE - 1))
 
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 #define STATE_POLLING (1 << 0)
 #define STATE_PENDING (1 << 1)

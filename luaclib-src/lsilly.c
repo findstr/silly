@@ -71,7 +71,7 @@ static int lsignalmap(lua_State *L)
 		SIG_NAME(SIGPROF), SIG_NAME(SIGUSR1), SIG_NAME(SIGUSR2),
 #endif
 	};
-	for (i = 0; i < sizeof(signals) / sizeof(signals[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE(signals); i++) {
 		lua_pushinteger(L, signals[i].signum);
 		lua_setfield(L, -2, signals[i].name);
 		lua_pushstring(L, signals[i].name);

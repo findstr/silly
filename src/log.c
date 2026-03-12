@@ -346,7 +346,7 @@ void log_init(const struct boot_args *config)
 
 void log_set_level(enum silly_log_level level)
 {
-	if (level >= sizeof(level_names) / sizeof(level_names[0])) {
+	if (level >= ARRAY_SIZE(level_names)) {
 		fprintf(stderr, "Invalid log level: %d\n", level);
 		return;
 	}

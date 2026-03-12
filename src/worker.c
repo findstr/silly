@@ -22,9 +22,7 @@
 #include "worker.h"
 #include "platform.h"
 
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
+
 #define WARNING_THRESHOLD (64)
 
 #define STK_TRACEBACK (1)

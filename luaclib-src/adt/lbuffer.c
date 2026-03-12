@@ -9,13 +9,6 @@
 #include "luastr.h"
 #include "idpool.h"
 
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
 
 #define BUFFER (1)
 #define METANAME "silly.adt.buffer"

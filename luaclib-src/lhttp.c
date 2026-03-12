@@ -233,7 +233,7 @@ static void create_huffman_tree(lua_State *L)
 	huffman->free = 0;
 	huffman->pool = silly_malloc(sizeof(struct node) * huffman->size);
 	memset(huffman->node.children, -1, sizeof(huffman->node.children));
-	for (i = 0; i < sizeof(huffman_codes) / sizeof(huffman_codes[0]); i++)
+	for (i = 0; i < ARRAY_SIZE(huffman_codes); i++)
 		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
@@ -796,7 +796,7 @@ static void create_static_table(lua_State *L)
 	size_t i, t;
 	lua_createtable(L, STATIC_TBL_SIZE, STATIC_TBL_SIZE);
 	t = lua_gettop(L);
-	for (i = 0; i < sizeof(static_tbl) / sizeof(static_tbl[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE(static_tbl); i++) {
 		int type;
 		int id = i + 1;
 		const char *k = static_tbl[i][0];
