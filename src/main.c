@@ -173,6 +173,7 @@ static const char *selfname(const char *path)
 int main(int argc, char *argv[])
 {
 	int status;
+	uint64_t now;
 	struct boot_args args;
 	memset(&args, 0, sizeof(args));
 	args.argc = argc;
@@ -192,9 +193,11 @@ int main(int argc, char *argv[])
 	timer_init();
 	status = engine_run(&args);
 	daemon_stop(&args);
-	// NOTE: log_writef depends on timer_now
-	log_writef(SILLY_LOG_INFO, "%s exit, leak memory size:%zu\n", argv[0], mem_used());
+	now = timer_now();
 	timer_exit();
 	log_exit();
+	log_directf(now, SILLY_LOG_INFO,
+		"%s exit, leak memory size:%zu\n",
+		argv[0], mem_used());
 	return status;
 }

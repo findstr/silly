@@ -358,6 +358,7 @@ testaux.case("Test 13: Multi-server parallel query", function()
 	server2:start()
 	local server1_hit = false
 	local server2_hit = false
+	local hit_ch = channel.new()
 	server:set_handler(function(query, respond)
 		if query.name == "t13.mock.test" then
 			server1_hit = true
@@ -366,6 +367,7 @@ testaux.case("Test 13: Multi-server parallel query", function()
 					{type = mock.A, rdata = "13.13.13.13", ttl = 10},
 				},
 			})
+			hit_ch:push(true)
 		end
 	end)
 	server2:set_handler(function(query, respond)
@@ -376,6 +378,7 @@ testaux.case("Test 13: Multi-server parallel query", function()
 					{type = mock.A, rdata = "13.13.13.13", ttl = 10},
 				},
 			})
+			hit_ch:push(true)
 		end
 	end)
 	-- Set both servers
@@ -383,7 +386,9 @@ testaux.case("Test 13: Multi-server parallel query", function()
 	local ip = dns.lookup("t13.mock.test", dns.A, 2000)
 	testaux.asserteq(ip, "13.13.13.13",
 		"Test 13.1: Multi-server query should resolve")
-	-- Both servers should receive the query (parallel send)
+	-- lookup returns on the first response; wait for both handlers
+	hit_ch:pop()
+	hit_ch:pop()
 	testaux.asserteq(server1_hit, true,
 		"Test 13.2: Server1 should receive query")
 	testaux.asserteq(server2_hit, true,
@@ -478,9 +483,11 @@ testaux.case("Test 17: dns.conf() with list", function()
 	local server2 = mock.new(PORT2)
 	server2:start()
 	local hit_count = 0
+	local hit_ch = channel.new()
 	server:set_handler(function(query, respond)
 		if query.name == "t17.mock.test" then
 			hit_count = hit_count + 1
+			hit_ch:push(true)
 		end
 	end)
 	server2:set_handler(function(query, respond)
@@ -491,12 +498,16 @@ testaux.case("Test 17: dns.conf() with list", function()
 					{type = mock.A, rdata = "17.17.17.17", ttl = 10},
 				},
 			})
+			hit_ch:push(true)
 		end
 	end)
 	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2} }
 	local ip = dns.lookup("t17.mock.test", dns.A, 2000)
 	testaux.asserteq(ip, "17.17.17.17",
 		"Test 17.1: dns.server with list should work")
+	-- lookup returns on the first response; wait for both handlers
+	hit_ch:pop()
+	hit_ch:pop()
 	testaux.asserteq(hit_count, 2,
 		"Test 17.2: Both servers should receive query")
 	server2:stop()

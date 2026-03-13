@@ -45,7 +45,7 @@ local netstat = testaux.netstat
 local M = ""
 local gprint = print
 local function print(...)
-	gprint(M, ...)
+	log.info(M, ...)
 end
 assert(not env.load("test/test.conf"))
 assert(env.get("hello.1.1") == "world")

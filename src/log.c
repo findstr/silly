@@ -64,12 +64,11 @@ static char hex[] = {
 };
 
 
-static inline void fmttime()
+static inline void fmttime(uint64_t now)
 {
 	int n;
 	char *end;
 	struct tm tm;
-	uint64_t now = timer_now();
 	time_t sec = now / 1000;
 	silly_traceid_t traceid = trace_current();
 	int build_step;
@@ -245,9 +244,9 @@ static size_t ring_write(const char *data, size_t len)
 }
 
 /* Format log head (thread-local, lock-free) */
-static void build_head(enum silly_log_level level)
+static void build_head(uint64_t now, enum silly_log_level level)
 {
-	fmttime();
+	fmttime(now);
 	head_cache.term[0] = level_names[level];
 	head_cache.term[1] = ' ';
 }
@@ -255,7 +254,7 @@ static void build_head(enum silly_log_level level)
 /* Write head (from head_cache) + body in one lock acquisition */
 void log_write_(enum silly_log_level level, const char *body, size_t body_len)
 {
-	build_head(level);
+	build_head(timer_now(), level);
 	pthread_mutex_lock(&LB->lock);
 	if (unlikely(ring_write(body, body_len) == 0)) {
 		size_t head_len = HEAD_LEN(head_cache);
@@ -372,4 +371,18 @@ void log_exit()
 	pthread_mutex_destroy(&LB->lock);
 	mem_free(LB);
 	LB = NULL;
+}
+
+void log_directf_(uint64_t now, enum silly_log_level level, const char *fmt, ...)
+{
+	va_list ap;
+	build_head(now, level);
+	fflush(stdout);
+	if (LB != NULL)
+		ring_flush();
+	fwrite(head_cache.buf, 1, HEAD_LEN(head_cache), stdout);
+	va_start(ap, fmt);
+	vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	fflush(stdout);
 }
