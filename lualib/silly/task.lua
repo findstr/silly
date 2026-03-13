@@ -243,8 +243,7 @@ end
 function task._exit(status)
 	wakeup_task_queue = queue.new()
 	wakeup_task_param = {}
-	task_status = {}
-	task_traceid = {}
+	qpush = function() end
 	task.wakeup = function()end
 	task.fork = function()end
 	c.exit(status)

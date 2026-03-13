@@ -157,6 +157,8 @@ int engine_run(const struct boot_args *config)
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
 	worker_exit();
+	if (R.exitstatus == 0 && worker_warn_count() > 0)
+		R.exitstatus = 1;
 	socket_exit();
 	log_info("%s has already exit...\n", config->selfname);
 	return R.exitstatus;

@@ -661,11 +661,7 @@ end
 local h1c_mt = {
 	__index = h1c,
 	__gc = function(s)
-		local conn = s.conn
-		if conn then
-			s.conn = nil
-			s.release(conn, true)
-		end
+		s:close()
 	end,
 	__close = h1c.close,
 }

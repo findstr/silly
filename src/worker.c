@@ -290,6 +290,32 @@ static void setlibpath(lua_State *L, const char *pathname, const char *libpath)
 	return;
 }
 
+#define WARN_BUF_SIZE 512
+
+static char warn_buf[WARN_BUF_SIZE];
+static size_t warn_len = 0;
+static int warn_error_count = 0;
+
+static void lua_warnf(void *ud, const char *msg, int tocont)
+{
+	(void)ud;
+	/* skip control messages (single-piece, starting with '@') */
+	if (!tocont && warn_len == 0 && msg[0] == '@')
+		return;
+	size_t len = strlen(msg);
+	size_t avail = WARN_BUF_SIZE - 1 - warn_len;
+	if (len > avail)
+		len = avail;
+	memcpy(warn_buf + warn_len, msg, len);
+	warn_len += len;
+	if (!tocont) {
+		warn_buf[warn_len] = '\0';
+		log_warn("[worker] %s\n", warn_buf);
+		warn_error_count++;
+		warn_len = 0;
+	}
+}
+
 static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
 	(void)ud;
@@ -345,6 +371,7 @@ void worker_start(const struct boot_args *config)
 	 * it from monitor for endless loop detection */
 	signal_register_usr2(signal_handler);
 	lua_State *L = lua_newstate(lua_alloc, NULL, luaL_makeseed(NULL));
+	lua_setwarnf(L, lua_warnf, L);
 	luaL_openlibs(L);
 	W->argc = config->argc;
 	W->argv = config->argv;
@@ -472,4 +499,9 @@ void worker_exit()
 	lua_close(W->L); // lua close may call worker_push during gc
 	queue_free(W->queue);
 	mem_free(W);
+}
+
+int worker_warn_count()
+{
+	return warn_error_count;
 }

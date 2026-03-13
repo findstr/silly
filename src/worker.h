@@ -6,6 +6,7 @@
 
 void worker_init();
 void worker_exit();
+int worker_warn_count();
 void worker_start(const struct boot_args *config);
 
 void worker_push(struct silly_message *msg);
