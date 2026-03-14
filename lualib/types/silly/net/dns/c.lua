@@ -35,7 +35,7 @@ function M.validname(name) end
 ---Returns nil (single value) on any parse failure (too short, QR=0, qdcount≠1,
 ---malformed question name, or RR count overflow).
 ---@param msg string  full DNS response packet
----@return integer id, string name, integer qtype, boolean tc, {[1]:string, [2]:integer, [3]:integer, [4]:(string|table)?}[]? records
+---@return integer id, string name, integer qtype, boolean tc, {[1]:string, [2]:integer, [3]:integer, [4]:(string|table)?}[] records
 function M.answer(msg) end
 
 return M

@@ -24,6 +24,7 @@
 #define DNS_FLAG_RD      0x0100
 #define DNS_FLAG_TC_BIT  9
 #define DNS_RCODE_MASK   0x000F
+#define DNS_RCODE_NXDOMAIN 3
 
 // Name compression
 #define DNS_MAX_NAME     256
@@ -52,6 +53,7 @@
 
 // TTL conversion
 #define DNS_TTL_TO_MS    1000
+#define DNS_DEFAULT_NEG_TTL  5000  // 5s default negative cache TTL (ms)
 
 static inline uint16_t unpack_u16(const uint8_t *p, size_t pos)
 {
@@ -283,6 +285,18 @@ static inline void rr_begin(struct rr_ctx *ctx)
 	lua_rawseti(ctx->L, -2, 3);
 }
 
+static inline void push_negative_rr(lua_State *L, struct buf *qname,
+	int qtype, lua_Integer ttl_ms)
+{
+	lua_createtable(L, 4, 0);
+	lua_pushlstring(L, (const char *)qname->p, qname->offset);
+	lua_rawseti(L, -2, 1);
+	lua_pushinteger(L, qtype);
+	lua_rawseti(L, -2, 2);
+	lua_pushinteger(L, ttl_ms);
+	lua_rawseti(L, -2, 3);
+}
+
 /* Parse RR header: read owner name, TYPE, CLASS, TTL, RDLEN.
  * Populates ctx->rname/namelen, rtype, ttl, rdlen, rdpos.
  * Returns 0 on success, -1 on error. */
@@ -497,7 +511,7 @@ static int push_rrs(lua_State *L, struct buf *msgb,
 /* c.answer(msg) -> id, name, qtype, tc, records
  * Parse a complete DNS response: header, question section, and resource records.
  * tc is true when the response is truncated (TC bit set).
- * records is always a table (possibly empty); caller uses #records > 0.
+ * records is a table for positive/negative answers, nil for server failures.
  * Returns nil (single) if msg is not a valid DNS response. */
 static int lanswer(lua_State *L)
 {
@@ -559,14 +573,22 @@ static int lanswer(lua_State *L)
 	if (tc) {
 		return 4;
 	}
+	if (rcode != 0 && rcode != DNS_RCODE_NXDOMAIN) {
+		lua_pushnil(L);
+		return 5;
+	}
 	// Parse resource records (authority section has SOA for negative)
-	int total_rr = (rcode != 0 ? 0 : ancount) + nscount + arcount;
+	int total_rr = ancount + nscount + arcount;
 	if (total_rr > DNS_MAX_RR) {
 		lua_settop(L, top);
 		lua_pushnil(L);
 		return 1;
 	}
-	push_rrs(L, &msgb, total_rr, &qname, (int)qtype);
+	int n = push_rrs(L, &msgb, total_rr, &qname, (int)qtype);
+	if (n == 0 && rcode == DNS_RCODE_NXDOMAIN) {
+		push_negative_rr(L, &qname, (int)qtype, DNS_DEFAULT_NEG_TTL);
+		lua_seti(L, -2, 1);
+	}
 	return 5;
 }
 

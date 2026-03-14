@@ -183,12 +183,19 @@ testaux.case("Test 7: RCODE handling", function()
 				rcode = 3, -- NXDOMAIN
 				answers = {},
 			})
+		elseif query.name == "t7b.mock.test" then
+			respond({
+				-- rcode = 0 (NOERROR, default)
+				answers = {},
+			})
 		end
 	end)
 	local ip = dns.lookup("t7.mock.test", dns.A, 2000)
-	-- After fix: NXDOMAIN should return nil
 	testaux.asserteq(ip, nil,
 		"Test 7.1: NXDOMAIN should return nil")
+	local ip2 = dns.lookup("t7b.mock.test", dns.A, 2000)
+	testaux.asserteq(ip2, nil,
+		"Test 7.2: NOERROR empty response should return nil")
 end)
 
 -----------------------------------------------------------------
@@ -352,7 +359,7 @@ testaux.case("Test 12: SRV record", function()
 end)
 
 -----------------------------------------------------------------
-testaux.case("Test 13: Multi-server parallel query", function()
+testaux.case("Test 13: Multi-server query, first success", function()
 	local PORT2 = 15355
 	local server2 = mock.new(PORT2)
 	server2:start()
@@ -378,21 +385,19 @@ testaux.case("Test 13: Multi-server parallel query", function()
 					{type = mock.A, rdata = "13.13.13.13", ttl = 10},
 				},
 			})
-			hit_ch:push(true)
 		end
 	end)
 	-- Set both servers
-	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2} }
-	local ip = dns.lookup("t13.mock.test", dns.A, 2000)
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2}, timeout = 1, }
+	local ip = dns.lookup("t13.mock.test", dns.A, 5000)
 	testaux.asserteq(ip, "13.13.13.13",
 		"Test 13.1: Multi-server query should resolve")
 	-- lookup returns on the first response; wait for both handlers
 	hit_ch:pop()
-	hit_ch:pop()
 	testaux.asserteq(server1_hit, true,
 		"Test 13.2: Server1 should receive query")
-	testaux.asserteq(server2_hit, true,
-		"Test 13.3: Server2 should receive query")
+	testaux.asserteq(server2_hit, false,
+		"Test 13.3: Server2 should not receive query")
 	server2:stop()
 	dns.conf { nameservers = {"127.0.0.1:" .. PORT} }
 end)
@@ -400,26 +405,137 @@ end)
 -----------------------------------------------------------------
 testaux.case("Test 14: Multi-server failover", function()
 	local PORT2 = 15356
+	local PORT3 = 15358
 	local server2 = mock.new(PORT2)
+	local server3 = mock.new(PORT3)
 	server2:start()
+	server3:start()
 	-- Server1 doesn't respond
 	server:set_handler(function(query, respond)
 		-- no response
 	end)
 	server2:set_handler(function(query, respond)
-		if query.name == "t14.mock.test" then
+		if query.name == "t14.mock.test" or query.name == "t14b.mock.test" then
 			respond({
 				answers = {
-					{type = mock.A, rdata = "14.14.14.14", ttl = 10},
+					{type = mock.A, rdata = "14.14.14.14", ttl = 0},
 				},
 			})
 		end
 	end)
-	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2} }
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2}, timeout = 1, attempts = 1 }
 	local ip = dns.lookup("t14.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 14.1: Should get nil response from server1")
+	ip = dns.lookup("t14b.mock.test", dns.A, 2000)
 	testaux.asserteq(ip, "14.14.14.14",
-		"Test 14.1: Should get response from server2 when server1 silent")
+		"Test 14.2: Should get response from server2 when server1 silent")
+	-- 14.3-14.4: Recovery — server1 comes back, failcount resets, traffic returns
+	local server1_hit = false
+	server:set_handler(function(query, respond)
+		if query.name == "t14c.mock.test" then
+			server1_hit = true
+			respond({
+				answers = {
+					{type = mock.A, rdata = "14.1.1.1", ttl = 0},
+				},
+			})
+		end
+	end)
+	ip = dns.lookup("t14c.mock.test", dns.A, 2000)
+	-- server2 has failcount=0 (just succeeded), server1 has failcount>0
+	-- so this query should go to server2, which has failcount=0
+	testaux.asserteq(server1_hit, false,
+		"Test 14.3: Server1 should not be selected (failcount > 0)")
+	-- After server2 success, server2 failcount stays 0.
+	-- Now reconfigure to reset failcounts so server1 gets a fresh start
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2}, timeout = 1, attempts = 1 }
+	server1_hit = false
+	ip = dns.lookup("t14c.mock.test", dns.A, 2000)
+	testaux.asserteq(server1_hit, true,
+		"Test 14.4: After conf reset, server1 should be selected first again")
+	testaux.asserteq(ip, "14.1.1.1",
+		"Test 14.5: Server1 should respond after recovery")
+	-- 14.6-14.7: All servers fail then recover
+	server:set_handler(function(query, respond)
+		-- no response
+	end)
+	server2:set_handler(function(query, respond)
+		-- no response
+	end)
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2}, timeout = 1, attempts = 1 }
+	ip = dns.lookup("t14d.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 14.6: First server fails")
+	ip = dns.lookup("t14e.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 14.7: Second server also fails")
+	-- Now recover server2 (server1 still dead)
+	server2:set_handler(function(query, respond)
+		if query.name == "t14f.mock.test" then
+			respond({
+				answers = {
+					{type = mock.A, rdata = "14.2.2.2", ttl = 0},
+				},
+			})
+		end
+	end)
+	-- Both have failcount=1; resolver picks server1 (first), which still fails
+	ip = dns.lookup("t14f.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 14.8: Server1 still dead (equal failcount, picked first)")
+	-- Now server1.failcount=2 > server2.failcount=1 → server2 selected
+	ip = dns.lookup("t14f.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, "14.2.2.2",
+		"Test 14.9: Should recover via server2 (lower failcount)")
+	-- 14.10-14.12: Failcount-based selection with 3 servers
+	-- Add server3, which should have failcount=0
+	server3:set_handler(function(query, respond)
+		if query.name == "t14g.mock.test" then
+			respond({
+				answers = {
+					{type = mock.A, rdata = "14.3.3.3", ttl = 0},
+				},
+			})
+		end
+	end)
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2, "127.0.0.1:" .. PORT3}, timeout = 1, attempts = 1 }
+	-- All failcounts are 0 after conf reset, server1 is first → selected
+	server:set_handler(function(query, respond)
+		-- no response (server1 fails)
+	end)
+	ip = dns.lookup("t14g.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 14.10: Server1 fails (failcount becomes 1)")
+	-- Now server1 has failcount=1, server2 and server3 have failcount=0
+	-- server2 is first with failcount=0 → should be selected
+	local server3_hit = false
+	server2:set_handler(function(query, respond)
+		if query.name == "t14h.mock.test" then
+			respond({
+				answers = {
+					{type = mock.A, rdata = "14.2.2.2", ttl = 0},
+				},
+			})
+		end
+	end)
+	server3:set_handler(function(query, respond)
+		if query.name == "t14h.mock.test" then
+			server3_hit = true
+			respond({
+				answers = {
+					{type = mock.A, rdata = "14.3.3.3", ttl = 0},
+				},
+			})
+		end
+	end)
+	ip = dns.lookup("t14h.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, "14.2.2.2",
+		"Test 14.11: Server2 (failcount=0) preferred over server1 (failcount=1)")
+	testaux.asserteq(server3_hit, false,
+		"Test 14.12: Server3 should not be hit (server2 selected first)")
 	server2:stop()
+	server3:stop()
 	dns.conf { nameservers = {"127.0.0.1:" .. PORT} }
 end)
 
@@ -501,8 +617,9 @@ testaux.case("Test 17: dns.conf() with list", function()
 			hit_ch:push(true)
 		end
 	end)
-	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2} }
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2}, timeout=1, attempts=1 }
 	local ip = dns.lookup("t17.mock.test", dns.A, 2000)
+	ip = dns.lookup("t17.mock.test", dns.A, 2000)
 	testaux.asserteq(ip, "17.17.17.17",
 		"Test 17.1: dns.server with list should work")
 	-- lookup returns on the first response; wait for both handlers
@@ -822,13 +939,158 @@ testaux.case("Test 28: Multiple AAAA records", function()
 end)
 
 -----------------------------------------------------------------
-testaux.case("Test 29: dns.isname()", function()
+testaux.case("Test 29: Failcount-based server selection", function()
+	local PORT2 = 15358
+	local PORT3 = 15359
+	local server2 = mock.new(PORT2)
+	local server3 = mock.new(PORT3)
+	server2:start()
+	server3:start()
+	local server1_count = 0
+	local server2_count = 0
+	local server3_count = 0
+	-- Server1: never responds (will accumulate failcount)
+	server:set_handler(function(query, respond)
+		if query.name:match("^t29") then
+			server1_count = server1_count + 1
+			-- no response → timeout
+		end
+	end)
+	server2:set_handler(function(query, respond)
+		if query.name:match("^t29") then
+			server2_count = server2_count + 1
+			respond({
+				answers = {
+					{type = mock.A, rdata = "29.29.29.29", ttl = 0},
+				},
+			})
+		end
+	end)
+	server3:set_handler(function(query, respond)
+		if query.name:match("^t29") then
+			server3_count = server3_count + 1
+			respond({
+				answers = {
+					{type = mock.A, rdata = "29.29.29.30", ttl = 0},
+				},
+			})
+		end
+	end)
+	-- 3 servers: server1 will fail, server2 and server3 respond
+	dns.conf {
+		nameservers = {
+			"127.0.0.1:" .. PORT,
+			"127.0.0.1:" .. PORT2,
+			"127.0.0.1:" .. PORT3,
+		},
+		timeout = 1, attempts = 1,
+	}
+	-- 29.1: First query goes to server1 (failcount=0), times out
+	local ip = dns.lookup("t29a.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 29.1: First query to server1 should timeout")
+	testaux.asserteq(server1_count, 1,
+		"Test 29.2: Server1 should have received query")
+	-- 29.3: After server1 failure, server2 (failcount=0) should be preferred
+	local ip2 = dns.lookup("t29b.mock.test", dns.A, 2000)
+	testaux.asserteq(ip2, "29.29.29.29",
+		"Test 29.3: Should resolve via server2 after server1 failure")
+	testaux.asserteq(server2_count, 1,
+		"Test 29.4: Server2 should have received query")
+	-- 29.5: Server2 succeeded so failcount=0, still preferred
+	local ip3 = dns.lookup("t29c.mock.test", dns.A, 2000)
+	testaux.asserteq(ip3, "29.29.29.29",
+		"Test 29.5: Server2 should still be preferred (failcount=0)")
+	testaux.asserteq(server3_count, 0,
+		"Test 29.6: Server3 should not have been queried")
+	server2:stop()
+	server3:stop()
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT} }
+end)
+
+-----------------------------------------------------------------
+testaux.case("Test 30: Failcount recovery", function()
+	local PORT2 = 15358
+	local server2 = mock.new(PORT2)
+	server2:start()
+	local server1_count = 0
+	local server2_count = 0
+	local server1_respond = true
+	server:set_handler(function(query, respond)
+		if query.name:match("^t30") then
+			server1_count = server1_count + 1
+			if server1_respond then
+				respond({
+					answers = {
+						{type = mock.A, rdata = "30.0.0.1", ttl = 0},
+					},
+				})
+			end
+			-- else: no response → timeout
+		end
+	end)
+	server2:set_handler(function(query, respond)
+		if query.name:match("^t30") then
+			server2_count = server2_count + 1
+			respond({
+				answers = {
+					{type = mock.A, rdata = "30.0.0.2", ttl = 0},
+				},
+			})
+		end
+	end)
+	dns.conf {
+		nameservers = {"127.0.0.1:" .. PORT, "127.0.0.1:" .. PORT2},
+		timeout = 1, attempts = 1,
+	}
+	-- Phase 1: server1 fails
+	server1_respond = false
+	local ip = dns.lookup("t30a.mock.test", dns.A, 2000)
+	testaux.asserteq(ip, nil,
+		"Test 30.1: Server1 should timeout")
+	-- Phase 2: now server2 is preferred
+	local ip2 = dns.lookup("t30b.mock.test", dns.A, 2000)
+	testaux.asserteq(ip2, "30.0.0.2",
+		"Test 30.2: Server2 should be preferred after server1 failure")
+	-- Phase 3: server1 recovers — make it respond again
+	-- To reset server1's failcount, we need it to handle a query successfully.
+	-- But server2 is currently preferred (failcount=0). Make server2 fail so
+	-- server1 (lower failcount) gets tried and succeeds.
+	server1_respond = true
+	server2:set_handler(function(query, respond)
+		if query.name:match("^t30") then
+			server2_count = server2_count + 1
+			-- no response → timeout
+		end
+	end)
+	local ip3 = dns.lookup("t30c.mock.test", dns.A, 2000)
+	-- server2 times out (failcount was 0, now 1), server1 had failcount 1
+	-- Next query: both have failcount>=1, server1 has failcount=1, server2 has failcount=1
+	-- server1 is first in list with equal failcount, so it's picked
+	testaux.asserteq(ip3, nil,
+		"Test 30.3: Server2 should timeout")
+	local ip4 = dns.lookup("t30d.mock.test", dns.A, 2000)
+	testaux.asserteq(ip4, "30.0.0.1",
+		"Test 30.4: Server1 should recover and be selected")
+	-- After successful query, server1's failcount resets to 0
+	server1_count = 0
+	local ip5 = dns.lookup("t30e.mock.test", dns.A, 2000)
+	testaux.asserteq(ip5, "30.0.0.1",
+		"Test 30.5: Server1 should remain preferred after recovery")
+	testaux.asserteq(server1_count, 1,
+		"Test 30.6: Server1 should receive the query")
+	server2:stop()
+	dns.conf { nameservers = {"127.0.0.1:" .. PORT} }
+end)
+
+-----------------------------------------------------------------
+testaux.case("Test 31: dns.isname()", function()
 	testaux.asserteq(dns.isname("example.mock.test"), true,
-		"Test 29.1: Hostname should return true")
+		"Test 31.1: Hostname should return true")
 	testaux.asserteq(dns.isname("127.0.0.1"), false,
-		"Test 29.2: IPv4 address should return false")
+		"Test 31.2: IPv4 address should return false")
 	testaux.asserteq(dns.isname("::1"), false,
-		"Test 29.3: IPv6 address should return false")
+		"Test 31.3: IPv6 address should return false")
 end)
 
 -----------------------------------------------------------------
