@@ -55,6 +55,9 @@ ifeq ($(TEST),ON)
 ifneq ($(findstring _NT, $(uname_S)),_NT)
 	CFLAGS += -fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer -fno-sanitize-recover=all
 	LDFLAGS += -fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer
+	# Coverage instrumentation
+	CFLAGS += --coverage
+	LDFLAGS += --coverage
 endif
 endif
 

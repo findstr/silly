@@ -95,6 +95,84 @@ if [ -n "$OVERRIDE_SET" ]; then
     SET_ARG="--set=$OVERRIDE_SET"
 fi
 
+# ---- Setup luarocks and luacov (optional, for Lua coverage) ----
+if [ -x "tools/setup-luarocks.sh" ] && [ "$PLATFORM" != "mingw" ]; then
+    tools/setup-luarocks.sh 2>/dev/null || true
+fi
+
+# ---- Coverage configuration ----
+# Lcov options
+LCOV_BRANCH_COVERAGE=0
+LCOV_EXCLUDE_PATTERNS="*/deps/* */test/* /usr/* */lua-5.4.4/* */pb.c */pb.h"
+
+# Genhtml options (HTML report styling)
+GENHTML_TITLE="Silly C Coverage"
+GENHTML_HI_LIMIT=90
+GENHTML_MED_LIMIT=75
+GENHTML_LEGEND=1
+GENHTML_SHOW_DETAILS=1
+
+# ---- Coverage expectations and validation ----
+coverage_expected() {
+    if [ -n "${SILLY_SKIP_COVERAGE+x}" ]; then
+        return 1
+    fi
+    if [ "$PLATFORM" = "mingw" ]; then
+        return 1
+    fi
+    if [ "$PARALLEL_MODE" -eq 1 ]; then
+        return 1
+    fi
+    return 0
+}
+
+validate_lcov_file() {
+    file="$1"
+    label="$2"
+    if [ ! -s "$file" ]; then
+        echo "❌ $label coverage file missing or empty: $file"
+        return 1
+    fi
+    if ! grep -q "^SF:" "$file"; then
+        echo "❌ $label coverage missing SF records: $file"
+        return 1
+    fi
+    if ! grep -q "^end_of_record" "$file" && ! grep -q "^DA:" "$file"; then
+        echo "❌ $label coverage missing DA/end_of_record records: $file"
+        return 1
+    fi
+    return 0
+}
+
+lcov_capture() {
+    gcov_tool="$1"
+    if [ -n "$gcov_tool" ]; then
+        lcov --capture --directory . --output-file "$COV_DIR/coverage.info" \
+             --gcov-tool "$gcov_tool" \
+             --rc lcov_branch_coverage=$LCOV_BRANCH_COVERAGE \
+             --ignore-errors source,path,gcov >"$LCOV_LOG" 2>&1
+    else
+        lcov --capture --directory . --output-file "$COV_DIR/coverage.info" \
+             --rc lcov_branch_coverage=$LCOV_BRANCH_COVERAGE \
+             --ignore-errors source,path,gcov >"$LCOV_LOG" 2>&1
+    fi
+    return $?
+}
+
+lcov_print_log() {
+    grep -v "^Scanning\|^Found\|^geninfo\|^Using\|^Recording\|^Writing\|^Message" "$LCOV_LOG" || true
+}
+
+# ---- Clean old coverage data ----
+# Remove old runtime coverage data (.gcda) but keep compile-time coverage notes (.gcno)
+# lcov needs both .gcno and .gcda files to generate reports
+echo "🧹 Cleaning old coverage data..."
+find . -name "*.gcda" -delete 2>/dev/null || true
+rm -f luacov.report.out 2>/dev/null || true
+rm -f luacov.stats.out 2>/dev/null || true
+rm -rf coverage/ 2>/dev/null || true
+echo "✅ Coverage data cleaned"
+
 # ---- Locate test files ----
 TEST_DIR="test"
 TEST_SCRIPT="test/test.lua"
@@ -157,6 +235,145 @@ run_endless_test() {
     done
     return 0
 }
+
+# ---- Generate coverage report ----
+generate_coverage_report() {
+    if ! coverage_expected; then
+        echo "⚠️  Coverage skipped (not expected in this mode)"
+        return 0
+    fi
+
+    echo "📊 Generating coverage report..."
+
+    # Use CI-specified directory or default to coverage/
+    if [ -n "${SILLY_COVERAGE_OUTDIR+x}" ]; then
+        COV_DIR="$SILLY_COVERAGE_OUTDIR"
+    else
+        COV_DIR="coverage"
+    fi
+    mkdir -p "$COV_DIR"
+
+    # Check if lcov is available
+    if ! command -v lcov >/dev/null 2>&1; then
+        echo "❌ lcov not found. Install with: apt install lcov (Linux) or brew install lcov (macOS)"
+        return 1
+    fi
+
+    echo "🔧 lcov path: $(command -v lcov)"
+    lcov --version 2>/dev/null || true
+    if command -v gcov >/dev/null 2>&1; then
+        echo "🔧 gcov path: $(command -v gcov)"
+        gcov --version 2>/dev/null || true
+    else
+        echo "⚠️  gcov not found in PATH"
+    fi
+
+    # Collect C coverage data (allow lcov warnings, validate output afterward)
+    LCOV_LOG="$COV_DIR/lcov.capture.log"
+    if [ "$PLATFORM" = "darwin" ]; then
+        if ! lcov_capture "llvm-cov gcov"; then
+            lcov_print_log
+            echo "⚠️  lcov failed with llvm-cov gcov; retrying with default gcov"
+            if ! lcov_capture ""; then
+                lcov_print_log
+                echo "❌ lcov capture failed"
+                return 1
+            fi
+            lcov_print_log
+        else
+            lcov_print_log
+        fi
+    else
+        if ! lcov_capture ""; then
+            lcov_print_log
+            echo "❌ lcov capture failed"
+            return 1
+        fi
+        lcov_print_log
+    fi
+
+    if [ ! -s "$COV_DIR/coverage.info" ]; then
+        echo "❌ No C coverage data collected (missing $COV_DIR/coverage.info)"
+        return 1
+    fi
+
+    # Filter out dependencies and test code
+    lcov --remove "$COV_DIR/coverage.info" \
+         $LCOV_EXCLUDE_PATTERNS \
+         --output-file "$COV_DIR/coverage.info.filtered" \
+         --ignore-errors unused 2>/dev/null || true
+
+    # If filtering failed, use the original file
+    if [ ! -s "$COV_DIR/coverage.info.filtered" ]; then
+        cp "$COV_DIR/coverage.info" "$COV_DIR/coverage.info.filtered"
+    fi
+    if ! validate_lcov_file "$COV_DIR/coverage.info.filtered" "C"; then
+        return 1
+    fi
+
+    # Generate Lua coverage report in lcov format (skip on macOS)
+    if [ "$PLATFORM" = "darwin" ]; then
+        echo "⚠️  Skipping Lua coverage on macOS"
+    else
+        if [ ! -f "luacov.stats.out" ]; then
+            echo "❌ Lua coverage stats missing (luacov.stats.out)"
+            return 1
+        fi
+
+        if [ -x ".lua_modules/bin/luacov" ]; then
+            LUACOV_BIN=".lua_modules/bin/luacov"
+        elif command -v luacov >/dev/null 2>&1; then
+            LUACOV_BIN="luacov"
+        else
+            LUACOV_BIN=""
+        fi
+
+        if [ -z "$LUACOV_BIN" ]; then
+            echo "❌ luacov not found. Install with: luarocks install luacov"
+            return 1
+        fi
+
+        echo "📊 Generating Lua coverage report..."
+        if ! "$LUACOV_BIN" -r lcov; then
+            echo "❌ luacov failed to generate report"
+            return 1
+        fi
+        if [ ! -f "luacov.report.out" ]; then
+            echo "❌ Lua coverage report missing (luacov.report.out)"
+            return 1
+        fi
+        mv luacov.report.out "$COV_DIR/luacov.report.out"
+        if ! validate_lcov_file "$COV_DIR/luacov.report.out" "Lua"; then
+            return 1
+        fi
+        echo "📋 Lua coverage report: $COV_DIR/luacov.report.out"
+    fi
+
+    # Generate HTML report (C only, for local viewing)
+    if [ -s "$COV_DIR/coverage.info.filtered" ]; then
+        set +e
+        genhtml "$COV_DIR/coverage.info.filtered" \
+                --output-directory "$COV_DIR/html" \
+                --title "$GENHTML_TITLE" \
+                --rc genhtml_hi_limit=$GENHTML_HI_LIMIT \
+                --rc genhtml_med_limit=$GENHTML_MED_LIMIT \
+                --rc genhtml_legend=$GENHTML_LEGEND \
+                --rc genhtml_show_details=$GENHTML_SHOW_DETAILS \
+                2>&1 | grep -v "^Processing\|bytes of data" || true
+        set -e
+        echo "✅ C coverage report: file://$COV_DIR/html/index.html"
+        echo "📄 C coverage data: $COV_DIR/coverage.info.filtered"
+        if [ -f "$COV_DIR/luacov.report.out" ]; then
+            echo "📋 Lua coverage data: $COV_DIR/luacov.report.out (upload to Codecov for merged report)"
+        fi
+    fi
+
+    if [ -z "${SILLY_COVERAGE_OUTDIR+x}" ]; then
+        echo "💡 Skip coverage with: SILLY_SKIP_COVERAGE=1 ./test/test.sh"
+    fi
+    echo ""
+}
+
 # ---- Detect parallelism ----
 JOBS=1
 if [ "$PARALLEL_MODE" -eq 1 ] && [ "$PLATFORM" = "linux" ]; then
@@ -284,6 +501,10 @@ if [ $JOBS -eq 1 ]; then
         fi
     done
     echo "🎉 All tests passed: $PASSED/$TOTAL (skipped: $SKIPPED)"
+
+    # ---- Generate coverage report ----
+    generate_coverage_report
+
     exit 0
 else
     # Parallel execution in batches
@@ -544,6 +765,17 @@ else
         exit 1
     else
         printf "${GREEN}🎉 All tests passed: %d/%d${NC} (skipped: %d)\n" "$PASSED" "$TOTAL" "$SKIPPED"
+
+        # ---- Generate coverage report ----
+        # Skip coverage in parallel mode to prevent .gcda file write conflicts
+        if [ $PARALLEL_MODE -eq 1 ] && [ "$PLATFORM" != "mingw" ]; then
+            echo "⚠️  Coverage disabled in parallel mode"
+            echo "💡 For coverage report, run tests serially: ./test/test.sh"
+            echo ""
+        else
+            generate_coverage_report
+        fi
+
         exit 0
     fi
 fi

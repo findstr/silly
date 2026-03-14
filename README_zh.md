@@ -6,6 +6,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat)](LICENSE)
 [![CI](https://github.com/findstr/silly/actions/workflows/ci.yml/badge.svg)](https://github.com/findstr/silly/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/findstr/silly/graph/badge.svg?token=VKS7HXU2QH)](https://codecov.io/github/findstr/silly)
 [![Documentation](https://img.shields.io/badge/docs-最新版-blue.svg)](https://findstr.github.io/silly/)
 
 [English](README.md) | [简体中文](README_zh.md)

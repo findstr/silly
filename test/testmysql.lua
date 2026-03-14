@@ -496,7 +496,9 @@ do
 	}
 	local res, err = pool:ping()
 	assert(err)
-	testaux.asserteq(err.message:lower():find("connection refused") ~= nil, true, "Test 11: Should handle connection timeout")
+	local msg = err.message:lower()
+	local f = msg:find("connection refused") or msg:find("connection timed out")
+	testaux.asserteq(f ~= nil, true, "Test 11: Should handle connection timeout:" .. err.message)
 	pool:close()
 end
 

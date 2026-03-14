@@ -30,19 +30,29 @@ jobs:
   build-macosx:
     runs-on: macos-latest
     steps:
-    - name: Install dependencies
-      run: |
-        brew update
-        brew install openssl autoconf
-        pkg-config --cflags openssl
-        pkg-config --libs openssl
     - uses: actions/checkout@v5
       with:
         submodules: recursive
-    - name: make
+    - name: Install dependencies
       run: |
+        brew update
+        brew install openssl autoconf lcov wget unzip
+        pkg-config --cflags openssl
+        pkg-config --libs openssl
+    - name: make and test
+      run: |
+        export SILLY_COVERAGE_OUTDIR=coverage
         make test
         sh ./test/test.sh
+    - name: Upload C coverage to Codecov
+      if: success()
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage/coverage.info.filtered
+        flags: macos-c
+        name: macos-c-coverage
+        fail_ci_if_error: false
   build-linux:
     runs-on: ubuntu-latest
     services:
@@ -59,17 +69,44 @@ jobs:
           - 6379:6379
         options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
     steps:
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libssl-dev autoconf
     - uses: actions/checkout@v5
       with:
         submodules: recursive
-    - name: make
+    - name: Install dependencies
       run: |
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev autoconf lcov wget unzip
+    - name: make and test
+      run: |
+        export SILLY_COVERAGE_OUTDIR=coverage
         make test
         sh ./test/test.sh
+    - name: Prepare Lua coverage for upload
+      if: success()
+      run: |
+        if [ -f "coverage/luacov.report.out" ]; then
+          echo "✅ Lua coverage data ready (lcov format)"
+        else
+          echo "⚠️  No Lua coverage data found"
+        fi
+    - name: Upload C coverage to Codecov
+      if: success()
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage/coverage.info.filtered
+        flags: linux-c
+        name: linux-c-coverage
+        fail_ci_if_error: false
+    - name: Upload Lua coverage to Codecov
+      if: success()
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage/luacov.report.out
+        flags: linux-lua
+        name: linux-lua-coverage
+        fail_ci_if_error: false
 
   build-linux-sql:
     name: build-linux-sql

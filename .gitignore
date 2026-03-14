@@ -58,3 +58,13 @@ node_modules/
 .vuepress/.temp/
 .vuepress/dist/
 .worktrees/
+
+# Lua modules (local luarocks installations)
+.lua_modules/
+tools/luarocks/
+tools/luarocks*.zip
+
+# Code coverage (all in coverage/ directory)
+*.gcda
+*.gcno
+coverage/

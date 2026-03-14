@@ -191,6 +191,8 @@ clean:
 	-rm -rf $(LUACLIB_PATH)
 	-rm $(SRC_PATH)/*.lib
 	-rm $(LZ4_DIR)/lz4.o
+	-find . -name "*.gcno" -delete 2>/dev/null || true
+	-find . -name "*.gcda" -delete 2>/dev/null || true
 
 cleanall: clean
 	make -C $(LUA_DIR) clean

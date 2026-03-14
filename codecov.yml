@@ -1,0 +1,45 @@
+# Codecov configuration
+# See: https://docs.codecov.com/docs/codecov-yaml
+
+# Coverage thresholds
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+
+# Ignore paths
+ignore:
+  - "deps/**"
+  - "test/**"
+  - "**/test_*.c"
+  - "**/*.gcno"
+  - "**/*.gcda"
+  - "**/pb.c"
+  - "**/pb.h"
+
+# Comment settings
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# Flag management
+flags:
+  ubuntu:
+    carryforward: false
+  macos:
+    carryforward: false
+
+# GitHub checks
+github_checks:
+  annotations: true

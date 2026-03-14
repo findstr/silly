@@ -348,6 +348,21 @@ static void require_silly_autoload(lua_State *L)
 	lua_pop(L, 1);
 }
 
+#ifdef SILLY_TEST
+static void require_test_module(lua_State *L)
+{
+	lua_pushcfunction(L, ltraceback);
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "test.prepare");
+	if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
+		log_error("[worker] require test fail,%s\n",
+			  lua_tostring(L, -1));
+		exit(-1);
+	}
+	lua_pop(L, 1);
+}
+#endif
+
 static void fetch_silly(lua_State *L, const char *func)
 {
 	lua_getglobal(L, "require");
@@ -397,6 +412,9 @@ void worker_start(const struct boot_args *config)
 	lua_pushcfunction(L, ltraceback);
 	new_error_table(L);
 	new_callback_table(L);
+#ifdef SILLY_TEST
+	require_test_module(L);
+#endif
 	fetch_silly(L, "_dispatch_wakeup");
 	// exec silly._start()
 	require_silly_autoload(L);
