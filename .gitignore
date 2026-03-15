@@ -50,6 +50,8 @@ luac
 /silly
 /silly.asan
 /silly.tsan
+/benchmark/perf_lock
+/benchmark/perf_timer
 # Debug files
 *.dSYM/
 
