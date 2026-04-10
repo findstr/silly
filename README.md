@@ -129,7 +129,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
         local sock, err = websocket.upgrade(stream)
@@ -240,9 +240,18 @@ Core Options:
   -d, --daemon              Run as daemon
 
 Logging:
-  -p, --logpath PATH        Log file path
-  -l, --loglevel LEVEL      Log level (debug/info/warn/error)
-  -f, --pidfile FILE        PID file path
+  -l, --log-level LEVEL     Log level (debug/info/warn/error)
+      --log-path PATH       Log file path (effective with --daemon)
+      --pid-file FILE       PID file path (effective with --daemon)
+
+Lua Library Paths:
+  -L, --lualib-path PATH    Lua library path (package.path)
+  -C, --lualib-cpath PATH   Lua C library path (package.cpath)
+
+Thread Affinity:
+  -S, --socket-affinity CPU Bind socket thread to CPU core
+  -W, --worker-affinity CPU Bind worker thread to CPU core
+  -T, --timer-affinity CPU  Bind timer thread to CPU core
 
 Custom Options:
   --key=value               Custom key-value pairs
