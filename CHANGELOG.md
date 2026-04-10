@@ -1,4 +1,6 @@
-## v0.7.1 (Unreleased)
+## Unreleased
+
+## v0.7.1 (Apr 10, 2026)
 
 ### Added
 - `sync.singleflight` to suppress duplicate concurrent work.
