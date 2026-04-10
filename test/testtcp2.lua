@@ -829,4 +829,35 @@ testaux.case("Test 28: Closewait with multi-node wlist + EAGAIN", function()
 	testaux.success("Test 28 passed")
 end)
 
+-- Test 29: Closewait with >64 wlist nodes and full first writev
+testaux.case("Test 29: Closewait with >64 wlist nodes and full first writev", function()
+	local chunk_size = 512
+	local num_chunks = 70
+	local total_size = chunk_size * num_chunks
+	local chunks = {}
+	for i = 1, num_chunks do
+		chunks[i] = make_data(chunk_size, i * 73)
+	end
+	local expected = table.concat(chunks)
+	local cfd
+	listen_cb = function(sfd)
+		-- First drain should send exactly 64 whole nodes, leaving the rest for the next writable retry.
+		test.debugctrl("socket.conf", { defer_trigger = true, sendv_cap = chunk_size * 64 })
+		for i = 1, num_chunks do
+			tcp.write(sfd, chunks[i])
+		end
+		tcp.close(sfd)
+		test.debugctrl("socket.kick")
+		local received = testaux.recv(cfd, total_size)
+		testaux.asserteq(#received, total_size, "Test 29.1: Client received correct amount of data")
+		testaux.asserteq(received, expected, "Test 29.2: Client received remaining nodes after first full writev")
+		testaux.close(cfd)
+		test.debugctrl("socket.reset")
+	end
+	cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 29.3: Connect to server")
+	wait_done()
+	testaux.success("Test 29 passed")
+end)
+
 print("testtcp2 all tests passed!")
