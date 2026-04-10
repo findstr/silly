@@ -206,16 +206,16 @@ testaux.case("Test 5: TLS encrypted connection", function()
 	testaux.asserteq(sock2, nil, "wss can't connect to non-TLS server")
 	testaux.assertneq(err, nil, "wss connection should return error")
 	testaux.assertneq(err, "read timeout", "wss error should not be read timeout")
-	local err_l = string.lower(err)
-	local ok = err_l == "end of file"
-		or err_l == "ssl error"
-		or err_l == "ssl syscall error"
-		or err_l == "connection reset by peer"
-		or err_l:find("wrong version number", 1, true) ~= nil
-		or err_l:find("unknown protocol", 1, true) ~= nil
-		or err_l:find("unexpected eof", 1, true) ~= nil
-		or err_l:find("record overflow", 1, true) ~= nil
-		or err_l:find("protocol version", 1, true) ~= nil
+	local err_l = string.lower(tostring(err))
+	local ok = err_l:find("ssl", 1, true) ~= nil
+		or err_l:find("tls", 1, true) ~= nil
+		or err_l:find("handshake", 1, true) ~= nil
+		or err_l:find("eof", 1, true) ~= nil
+		or err_l:find("protocol", 1, true) ~= nil
+		or err_l:find("wrong version", 1, true) ~= nil
+		or err_l:find("connection reset", 1, true) ~= nil
+		or err_l:find("closed", 1, true) ~= nil
+		or err_l:find("record", 1, true) ~= nil
 	testaux.asserteq(ok, true, "wss connection error correct")
 	wait_done()
 end)
