@@ -1010,7 +1010,9 @@ end)
 
 -----------------------------------------------------------------
 testaux.case("Test 30: Failcount recovery", function()
-	local PORT2 = 15358
+	-- Use a different port from Test 29 to avoid transient bind conflicts
+	-- when the previous mock server is shutting down on some platforms.
+	local PORT2 = 15360
 	local server2 = mock.new(PORT2)
 	server2:start()
 	local server1_count = 0
