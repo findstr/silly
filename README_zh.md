@@ -135,7 +135,7 @@ http.listen {
     handler = function(stream)
         if stream.header["upgrade"] ~= "websocket" then
             stream:respond(404, {})
-            stream:close("Not Found")
+            stream:closewrite("Not Found")
             return
         end
         local sock, err = websocket.upgrade(stream)
@@ -245,9 +245,18 @@ Silly 使用混合线程模型以获得最佳性能：
   -d, --daemon              以守护进程运行
 
 日志选项:
-  -p, --logpath PATH        日志文件路径
-  -l, --loglevel LEVEL      日志级别 (debug/info/warn/error)
-  -f, --pidfile FILE        PID 文件路径
+  -l, --log-level LEVEL     日志级别 (debug/info/warn/error)
+      --log-path PATH       日志文件路径（仅在 --daemon 时生效）
+      --pid-file FILE       PID 文件路径（仅在 --daemon 时生效）
+
+Lua 库路径:
+  -L, --lualib-path PATH    Lua 库路径 (package.path)
+  -C, --lualib-cpath PATH   Lua C 库路径 (package.cpath)
+
+线程亲和性:
+  -S, --socket-affinity CPU 绑定 socket 线程到指定 CPU 核心
+  -W, --worker-affinity CPU 绑定 worker 线程到指定 CPU 核心
+  -T, --timer-affinity CPU  绑定 timer 线程到指定 CPU 核心
 
 自定义选项:
   --key=value               自定义键值对
