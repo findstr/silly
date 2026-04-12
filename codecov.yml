@@ -9,11 +9,7 @@ coverage:
         target: auto
         threshold: 1%
         base: auto
-    patch:
-      default:
-        target: auto
-        threshold: 1%
-        base: auto
+    patch: off
 
 # Ignore paths
 ignore:

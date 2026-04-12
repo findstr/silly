@@ -792,7 +792,7 @@ static void nodelay(fd_t fd)
 	err = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void *)&on, sizeof(on));
 	if (err >= 0)
 		return;
-	log_error("[socket] nodelay error:%s\n", strerror(errno));
+	log_error("[socket] nodelay error:%s\n", strerror(socketerrno));
 	return;
 }
 
@@ -803,7 +803,7 @@ static void keepalive(fd_t fd)
 	err = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&on, sizeof(on));
 	if (err >= 0)
 		return;
-	log_error("[socket] keepalive error:%s\n", strerror(errno));
+	log_error("[socket] keepalive error:%s\n", strerror(socketerrno));
 }
 
 static void exec_accept(struct socket_manager *ss, struct socket *listen)
@@ -818,7 +818,7 @@ static void exec_accept(struct socket_manager *ss, struct socket *listen)
 	fd = accept4(listen->fd, &addr.sa, &len, SOCK_NONBLOCK);
 #endif
 	if (unlikely(fd < 0)) {
-		if (errno != EMFILE && errno != ENFILE)
+		if (socketerrno != EMFILE && socketerrno != ENFILE)
 			return;
 		closesocket(ss->reservefd);
 		fd = accept(listen->fd, NULL, NULL);
@@ -886,8 +886,10 @@ static inline int get_sock_error(struct socket *s)
 	assert(s->fd > 0);
 	ret = getsockopt(s->fd, SOL_SOCKET, SO_ERROR, (void *)&err, &len);
 	if (unlikely(ret < 0)) {
-		err = errno;
-		log_error("[socket] get_sock_error:%s\n", strerror(errno));
+		err = socketerrno;
+		log_error("[socket] get_sock_error:%s\n", strerror(err));
+	} else {
+		err = translate_socket_errno(err);
 	}
 	return err;
 }
@@ -897,7 +899,6 @@ static inline int checkconnected(struct socket_manager *ss, struct socket *s)
 	int err;
 	err = get_sock_error(s);
 	if (unlikely(err != 0)) {
-		err = translate_socket_errno(err);
 		log_error("[socket] checkconnected:%s\n", strerror(err));
 		goto err;
 	}
@@ -939,7 +940,7 @@ static ssize_t sendv(fd_t fd, struct iovec *iov, int iovcnt)
 		ssize_t len;
 		len = writev(fd, iov, iovcnt);
 		if (len == -1) {
-			switch (errno) {
+			switch (socketerrno) {
 			case EINTR:
 				continue;
 			case ETRYAGAIN:
@@ -972,7 +973,7 @@ static ssize_t sendudp(fd_t fd, uint8_t *data, size_t sz,
 		n = sendto(fd, (void *)data, sz, 0, sa, sa_len);
 		if (n >= 0)
 			return n;
-		switch (errno) {
+		switch (socketerrno) {
 		case EINTR:
 			continue;
 		case ETRYAGAIN:
@@ -1005,7 +1006,7 @@ static enum read_result forward_msg_tcp(struct socket_manager *ss,
 		ssize_t len;
 		len = recv(s->fd, (void *)ss->readbuf, sizeof(ss->readbuf), 0);
 		if (len < 0) {
-			switch (errno) {
+			switch (socketerrno) {
 			case EINTR:
 				continue;
 			case ETRYAGAIN:
@@ -1040,7 +1041,7 @@ static enum read_result forward_msg_udp(struct socket_manager *ss,
 		n = recvfrom(s->fd, (void *)ss->readbuf, sizeof(ss->readbuf), 0,
 			     (struct sockaddr *)&addr, &len);
 		if (n < 0) {
-			switch (errno) {
+			switch (socketerrno) {
 			case EINTR:
 				continue;
 			case ETRYAGAIN:
@@ -1203,7 +1204,7 @@ static void flush_dirty(struct socket_manager *ss)
 		if (s->type != SOCKET_TCP_CONNECTION)
 			continue;
 		if (drain_wlist_tcp(ss, s) < 0) {
-			report_close(ss, s, errno);
+			report_close(ss, s, socketerrno);
 			zombine_socket(s);
 		}
 	}
@@ -1273,9 +1274,9 @@ static int bindfd(fd_t fd, int protocol, const char *ip, const char *port)
 		return err;
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (err < 0) {
-		err = -errno;
+		err = -socketerrno;
 		log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip, port,
-			  strerror(errno));
+			  strerror(-err));
 	}
 	freeaddrinfo(info);
 	return err;
@@ -1292,19 +1293,19 @@ static int dolisten(const char *ip, const char *port, int backlog)
 		return err;
 	fd = socket(info->ai_family, SOCK_STREAM, 0);
 	if (unlikely(fd < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&reuse, sizeof(reuse));
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	nonblock(fd);
 	err = listen(fd, backlog);
 	if (unlikely(err < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	freeaddrinfo(info);
@@ -1313,7 +1314,7 @@ end:
 	freeaddrinfo(info);
 	if (fd >= 0)
 		closesocket(fd);
-	log_error("[socket] dolisten error:%s\n", strerror(errno));
+	log_error("[socket] dolisten error:%s\n", strerror(-err));
 	return err;
 }
 
@@ -1372,12 +1373,12 @@ silly_socket_id_t socket_udp_bind(const char *ip, const char *port)
 		return err;
 	fd = socket(info->ai_family, SOCK_DGRAM, 0);
 	if (unlikely(fd < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	nonblock(fd);
@@ -1398,7 +1399,7 @@ end:
 	if (fd >= 0)
 		closesocket(fd);
 	freeaddrinfo(info);
-	log_error("[socket] udplisten error:%s\n", strerror(errno));
+	log_error("[socket] udplisten error:%s\n", strerror(-err));
 	return err;
 }
 
@@ -1435,7 +1436,7 @@ silly_socket_id_t socket_tcp_connect(const char *ip, const char *port,
 		return err;
 	fd = socket(info->ai_family, SOCK_STREAM, 0);
 	if (unlikely(fd < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	err = bindfd(fd, IPPROTO_TCP, bindip, bindport);
@@ -1476,13 +1477,13 @@ static void op_tcp_connect(struct socket_manager *ss, struct op_connect *op,
 	nodelay(fd);
 	addr = &op->addr;
 	cret = connect(fd, &addr->sa, sockaddr_len(addr));
-	if (unlikely(cret == -1 && errno != CONNECT_IN_PROGRESS)) { //error
+	if (unlikely(cret == -1 && socketerrno != CONNECT_IN_PROGRESS)) { //error
 		char namebuf[SILLY_SOCKET_NAMELEN];
 		const char *fmt = "[socket] connect %s,errno:%d\n";
-		report_connect(ss, s, errno);
+		report_connect(ss, s, socketerrno);
 		free_socket(ss, s);
 		ntop(addr, namebuf);
-		log_error(fmt, namebuf, errno);
+		log_error(fmt, namebuf, socketerrno);
 		return;
 	}
 	sret = add_to_sp(ss, s);
@@ -1518,7 +1519,7 @@ silly_socket_id_t socket_udp_connect(const char *ip, const char *port,
 		return err;
 	fd = socket(info->ai_family, SOCK_DGRAM, 0);
 	if (unlikely(fd < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	err = bindfd(fd, IPPROTO_UDP, bindip, bindport);
@@ -1527,7 +1528,7 @@ silly_socket_id_t socket_udp_connect(const char *ip, const char *port,
 	//udp connect will return immediately
 	err = connect(fd, info->ai_addr, info->ai_addrlen);
 	if (unlikely(err < 0)) {
-		err = -errno;
+		err = -socketerrno;
 		goto end;
 	}
 	s = pool_alloc(&SM->pool, fd, SOCKET_UDP_CONNECTION);
@@ -1546,7 +1547,7 @@ end:
 	if (fd >= 0)
 		closesocket(fd);
 	freeaddrinfo(info);
-	log_error(fmt, ip, port, errno);
+	log_error(fmt, ip, port, -err);
 	return err;
 }
 
@@ -1827,7 +1828,7 @@ static void eventwait(struct socket_manager *ss)
 	return;
 }
 
-static void parse_read_error(enum read_result ret, int *eof, int *has_error,
+static void parse_read_error(enum read_result ret, int *eof, int *err,
 			     int *has_data_to_read)
 {
 	switch (ret) {
@@ -1835,7 +1836,7 @@ static void parse_read_error(enum read_result ret, int *eof, int *has_error,
 		*eof = 1;
 		break;
 	case READ_ERROR:
-		*has_error = errno;
+		*err = socketerrno;
 		break;
 	case READ_SOME:
 		*has_data_to_read = 1;
@@ -1887,7 +1888,7 @@ int socket_poll()
 			}
 			if (SP_WRITE(e)) {
 				if (drain_wlist_tcp(ss, s) < 0) {
-					err = errno;
+					err = socketerrno;
 				}
 			}
 			if (has_data_to_read) // if has data to read, delay the error process to next wait

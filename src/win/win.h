@@ -39,8 +39,8 @@ static inline ssize_t writev(fd_t fd, const struct iovec *iov, int iovcnt)
 	}
 
 	/* Non-socket path: emulate writev with repeated _write for file fds. */
-	size_t total = 0;
 	int i;
+	size_t total = 0;
 	for (i = 0; i < iovcnt; i++) {
 		const char *p = (const char *)iov[i].iov_base;
 		size_t remain = iov[i].iov_len;
