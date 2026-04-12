@@ -31,11 +31,11 @@
 
 #ifdef __WIN32
 #define CONNECT_IN_PROGRESS EWOULDBLOCK
-#undef errno
-#define errno translate_socket_errno(WSAGetLastError())
+#define socketerrno translate_socket_errno(WSAGetLastError())
 #else
 #define CONNECT_IN_PROGRESS EINPROGRESS
 #define closesocket close
+#define socketerrno errno
 #endif
 
 #endif
