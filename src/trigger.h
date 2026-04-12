@@ -24,7 +24,8 @@ static inline int trigger_init(struct trigger *t)
 	t->recvfd = -1;
 	atomic_init(&t->fired, 0);
 	if (pipe(fds) != 0) {
-		log_error("[trigger] pipe create error:%s\n", strerror(errno));
+		log_error("[trigger] pipe create error:%s\n",
+			  strerror(socketerrno));
 		return -1;
 	}
 	// Note: Non-blocking is not set here since pipe_blockwrite/read are used
@@ -56,10 +57,10 @@ static inline int trigger_fire(struct trigger *t)
 	for (;;) {
 		ssize_t err = pipe_write(t->sendfd, (void *)&n, 1);
 		if (err == -1) {
-			if (likely(errno == EINTR))
+			if (likely(socketerrno == EINTR))
 				continue;
 			log_error("[trigger] pipe write error:%s\n",
-				  strerror(errno));
+				  strerror(socketerrno));
 			return -1;
 		}
 		assert(err == 1);
@@ -76,10 +77,10 @@ static inline int trigger_consume(struct trigger *t)
 	for (;;) {
 		ssize_t err = pipe_read(t->recvfd, &n, sizeof(n));
 		if (err == -1) {
-			if (likely(errno == EINTR))
+			if (likely(socketerrno == EINTR))
 				continue;
 			log_error("[trigger] pipe read error:%s\n",
-				  strerror(errno));
+				  strerror(socketerrno));
 			return -1;
 		}
 		assert(err == 1);
