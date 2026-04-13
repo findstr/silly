@@ -34,14 +34,12 @@ local function escape(a)
 		local l = {}
 		for k, v in pairs(a) do
 			local t = type(v)
-			if t == "function" then
-				v = tostring(v)
-			elseif t == "number" then
+			if t == "number" then
 				v = string.format("%g", v)
 			else
 				v = tostring(v)
 			end
-			l[#l + 1] = {k, v}
+			l[#l + 1] = { k, v }
 		end
 		table.sort(l, function(a, b)
 			return tostring(a[1]) < tostring(b[1])
@@ -52,6 +50,42 @@ local function escape(a)
 	else
 		return tostring(a)
 	end
+end
+
+local function number_eq(a, b)
+	if math.type(a) == "integer" and math.type(b) == "integer" then
+		return a == b
+	end
+	return math.abs(a - b) < 1e-9
+end
+
+local function val_eq(a, b, travel)
+	travel = travel or {}
+	if type(a) ~= type(b) then
+		return false
+	end
+	if type(a) == "number" then
+		return number_eq(a, b)
+	end
+	if type(a) ~= "table" then
+		return a == b
+	end
+	local tag = tostring(a) .. ":" .. tostring(b)
+	if travel[tag] then
+		return true
+	end
+	travel[tag] = true
+	for k, v in pairs(a) do
+		if not val_eq(v, b[k], travel) then
+			return false
+		end
+	end
+	for k in pairs(b) do
+		if a[k] == nil then
+			return false
+		end
+	end
+	return true
 end
 
 local bee = hive.spawn [[
@@ -69,7 +103,7 @@ end
 function testaux.randomdata(sz)
 	local tbl = {}
 	for i = 1, sz do
-		tbl[#tbl+1] = meta[rand(#meta)]
+		tbl[#tbl + 1] = meta[rand(#meta)]
 	end
 	return table.concat(tbl, "")
 end
@@ -107,12 +141,12 @@ function testaux.success(str)
 	print(format('\27[32m%sSUCCESS\t"%s"\27[0m', m, str))
 end
 
-function testaux.asserteq(a, b, str)
-	local aa = escape(a)
-	local bb = escape(b)
-	a = tostringx(aa, 60)
-	b = tostringx(bb, 60)
-	if aa == bb then
+function testaux.asserteq(xa, xb, str)
+	local aa = escape(xa)
+	local bb = escape(xb)
+	local a = tostringx(aa, 60)
+	local b = tostringx(bb, 60)
+	if val_eq(xa, xb) then
 		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" == "%s"\27[0m', m, str, a, b))
@@ -121,12 +155,12 @@ function testaux.asserteq(a, b, str)
 	end
 end
 
-function testaux.assertneq(a, b, str)
-	local aa = escape(a)
-	local bb = escape(b)
-	a = tostringx(aa, 30)
-	b = tostringx(bb, 30)
-	if aa ~= bb then
+function testaux.assertneq(xa, xb, str)
+	local aa = escape(xa)
+	local bb = escape(xb)
+	local a = tostringx(aa, 60)
+	local b = tostringx(bb, 60)
+	if not val_eq(xa, xb) then
 		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
 	else
 		print(format('\27[31m%sFAIL\t"%s"\t"%s" ~= "%s"\27[0m', m, str, a, b))
@@ -190,7 +224,6 @@ function testaux.asserteq_hex(actual, expected, message)
 		return (s:gsub('.', function(c) return string.format('%02x', string.byte(c)) end))
 	end
 	testaux.asserteq(to_hex(actual), to_hex(expected), message)
-
 end
 
 function testaux.assert_error(fn, str)
@@ -391,5 +424,3 @@ mUUZr4V3vliQKy5C0whB3QgiaboJnQS45YyddKWYI114RaF5iwzniw==
 ]]
 
 return testaux
-
-

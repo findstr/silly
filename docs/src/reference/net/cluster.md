@@ -70,9 +70,8 @@ cluster 模块不绑定特定的序列化格式，通过配置回调函数支持
     - **仅在对端关闭连接时触发**，主动调用 `cluster.close()` 不会触发此回调
     - `peer`：连接的 peer 对象
     - `errno`：错误码
-  - `accept` (function) - 可选，新连接回调：`function(peer, addr)`
-    - `peer`：新连接的 peer 对象
-    - `addr`：客户端地址
+  - `accept` (function) - 可选，新连接回调：`function(peer)`
+    - `peer`：新连接的 peer 对象（含 `remoteaddr` 字段表示客户端地址）
   - `timeout` (number) - 可选，RPC 超时时间（毫秒），默认 5000
 
 **返回值：**
@@ -82,7 +81,7 @@ cluster 模块不绑定特定的序列化格式，通过配置回调函数支持
 **注意：**
 
 - `cluster.serve()` 必须在使用其他 cluster 函数之前调用
-- peer 对象包含 `fd` 和 `addr` 字段（accept 的 peer 无 addr）
+- peer 对象包含 `fd`、`remoteaddr` 字段，connect 返回的 peer 还有 `addr` 字段用于自动重连
 - 有 addr 的 peer 支持自动重连
 
 **示例：**
@@ -142,8 +141,8 @@ cluster.serve {
     timeout = 3000,
     marshal = marshal,
     unmarshal = unmarshal,
-    accept = function(peer, addr)
-        print("新连接来自:", addr)
+    accept = function(peer)
+        print("新连接来自:", peer.remoteaddr)
     end,
     call = function(peer, cmd, body)
         print("收到请求:", body.msg)
@@ -227,8 +226,8 @@ cluster.serve {
         local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
-    accept = function(peer, addr)
-        print(string.format("接受连接来自 %s", addr))
+    accept = function(peer)
+        print(string.format("接受连接来自 %s", peer.remoteaddr))
     end,
     call = function(peer, cmd, body)
         return body
@@ -646,8 +645,8 @@ end
 cluster.serve {
     marshal = marshal,
     unmarshal = unmarshal,
-    accept = function(peer, addr)
-        print("新连接来自:", addr)
+    accept = function(peer)
+        print("新连接来自:", peer.remoteaddr)
     end,
     call = function(peer, cmd, body)
         print("收到:", body.msg)
@@ -725,9 +724,9 @@ local function create_node(node_id, port)
         timeout = 5000,
         marshal = marshal,
         unmarshal = unmarshal,
-        accept = function(peer, addr)
-            print(string.format("[%s] 接受连接: %s", node_id, addr))
-            nodes[addr] = peer
+        accept = function(peer)
+            print(string.format("[%s] 接受连接: %s", node_id, peer.remoteaddr))
+            nodes[peer.remoteaddr] = peer
         end,
         call = function(peer, cmd, body)
             if cmd == 0x01 then  -- register
@@ -1042,13 +1041,12 @@ end)
 ### Peer Handle 和自动重连
 
 - **connect 返回的 peer handle**：支持自动重连
-  - peer handle 保存了地址信息
+  - peer handle 保存了地址信息（`addr` 和 `remoteaddr`）
   - 当**对端关闭连接**时，下次 `call()` 或 `send()` 会自动重连
   - **主动调用 `cluster.close()` 关闭的连接不会自动重连**
-  - 通过地址缓存机制，防止重复连接同一地址
 
 - **accept 回调的 peer handle**：不支持自动重连
-  - 入站连接的 peer handle 不保存地址信息
+  - 入站连接的 peer handle 有 `remoteaddr` 但无 `addr`
   - 连接断开后无法自动重连，会返回 `nil, "peer closed"`
 
 - **listener handle**：用于监听端口

@@ -70,9 +70,8 @@ Configure the global behavior of the cluster module, setting encoding/decoding, 
     - **Only triggered when the remote peer closes the connection**, actively calling `cluster.close()` does not trigger this callback
     - `peer`: Peer object of the connection
     - `errno`: Error code
-  - `accept` (function) - Optional, new connection callback: `function(peer, addr)`
-    - `peer`: Peer object of the new connection
-    - `addr`: Client address
+  - `accept` (function) - Optional, new connection callback: `function(peer)`
+    - `peer`: Peer object of the new connection (contains `remoteaddr` field for client address)
   - `timeout` (number) - Optional, RPC timeout in milliseconds, default 5000
 
 **Returns:**
@@ -82,7 +81,7 @@ Configure the global behavior of the cluster module, setting encoding/decoding, 
 **Notes:**
 
 - `cluster.serve()` must be called before using other cluster functions
-- Peer objects contain `fd` and `addr` fields (peers from accept have no addr)
+- Peer objects contain `fd`, `remoteaddr` fields, and connect-returned peers also have `addr` field for auto-reconnect
 - Peers with addr support automatic reconnection
 
 **Example:**
@@ -142,8 +141,8 @@ cluster.serve {
     timeout = 3000,
     marshal = marshal,
     unmarshal = unmarshal,
-    accept = function(peer, addr)
-        print("New connection from:", addr)
+    accept = function(peer)
+        print("New connection from:", peer.remoteaddr)
     end,
     call = function(peer, cmd, body)
         print("Received request:", body.msg)
@@ -227,8 +226,8 @@ cluster.serve {
         local dat, sz = proto:unpack(buf, #buf, true)
         return proto:decode(cmd, dat, sz)
     end,
-    accept = function(peer, addr)
-        print(string.format("Accept connection from %s", addr))
+    accept = function(peer)
+        print(string.format("Accept connection from %s", peer.remoteaddr))
     end,
     call = function(peer, cmd, body)
         return body
@@ -646,8 +645,8 @@ end
 cluster.serve {
     marshal = marshal,
     unmarshal = unmarshal,
-    accept = function(peer, addr)
-        print("New connection from:", addr)
+    accept = function(peer)
+        print("New connection from:", peer.remoteaddr)
     end,
     call = function(peer, cmd, body)
         print("Received:", body.msg)
@@ -725,9 +724,9 @@ local function create_node(node_id, port)
         timeout = 5000,
         marshal = marshal,
         unmarshal = unmarshal,
-        accept = function(peer, addr)
-            print(string.format("[%s] Accept connection: %s", node_id, addr))
-            nodes[addr] = peer
+        accept = function(peer)
+            print(string.format("[%s] Accept connection: %s", node_id, peer.remoteaddr))
+            nodes[peer.remoteaddr] = peer
         end,
         call = function(peer, cmd, body)
             if cmd == 0x01 then  -- register
@@ -1042,13 +1041,12 @@ end)
 ### Peer Handles and Auto-Reconnection
 
 - **Peer handles from connect**: Support auto-reconnection
-  - Peer handles save address information
+  - Peer handles save address information (`addr` and `remoteaddr`)
   - When **remote peer closes connection**, next `call()` or `send()` will automatically reconnect
   - **Connections closed by actively calling `cluster.close()` do not auto-reconnect**
-  - Address caching mechanism prevents duplicate connections to the same address
 
 - **Peer handles from accept callback**: Do not support auto-reconnection
-  - Inbound connection peer handles do not save address information
+  - Inbound connection peer handles have `remoteaddr` but no `addr`
   - After disconnection, cannot auto-reconnect, will return `nil, "peer closed"`
 
 - **Listener handles**: Used for listening on ports

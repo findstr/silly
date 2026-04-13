@@ -305,9 +305,9 @@ cluster.serve {
 	softlimit = CLUSTER_SOFTLIMIT,
 	marshal = marshal,
 	unmarshal = unmarshal,
-	accept = function(peer, addr)
+	accept = function(peer)
 		accept_peer = peer
-		accept_addr = addr
+		accept_addr = peer.remoteaddr
 	end,
 	call = function(peer, cmd, msg)
 		return case(peer, cmd, msg)
@@ -353,6 +353,14 @@ testaux.case("Test 13: Cluster listen/connect", function()
 	testaux.assertneq(listener, nil, "listener should start")
 	client_peer = cluster.connect("127.0.0.1:8989")
 	testaux.assertneq(client_peer, nil, "client connect should succeed")
+	testaux.asserteq(client_peer.fd, nil, "fd should be nil before first call (lazy connect)")
+	testaux.asserteq(client_peer.addr, "127.0.0.1:8989", "peer should have addr")
+	testaux.asserteq(client_peer.remoteaddr, "127.0.0.1:8989", "peer should have remoteaddr")
+	-- Trigger lazy connect so accept callback fires on the server side.
+	case = case_one
+	local ack = cluster.call(client_peer, "foo", { name = "x", age = 1, rand = "z" })
+	testaux.assertneq(ack, nil, "first call should establish connection")
+	testaux.assertneq(client_peer.fd, nil, "fd should be set after first call")
 	wait_done(function()
 		return accept_peer ~= nil
 	end, 2000, "accept")
@@ -404,10 +412,6 @@ testaux.case("Test 17: Server callback", function()
 	local ack, _ = cluster.call(accept_peer, "foo", req)
 	testaux.assertneq(ack, nil, "rpc timeout")
 	testaux.asserteq(req.rand, ack and ack.rand, "rpc match request/response")
-end)
-
-testaux.case("Test 18: Reconnect after remote close", function()
-	case = case_one
 	local old_fd = accept_peer.fd
 	cluster.close(accept_peer)
 	wait_done(function()
@@ -467,7 +471,94 @@ testaux.case("Test 20: Cluster call oversize response", function()
 	case = case_one
 end)
 
-testaux.case("Test 21: Cluster cleanup", function()
+testaux.case("Test 21: Multiple connections to same address", function()
+	case = case_one
+	-- Connect two peers to the same listener
+	local p1 = cluster.connect("127.0.0.1:8989")
+	testaux.assertneq(p1, nil, "p1 connect should succeed")
+	testaux.asserteq(p1.fd, nil, "p1 fd should be nil before first call (lazy connect)")
+	testaux.asserteq(p1.addr, "127.0.0.1:8989", "p1 should have addr")
+	testaux.asserteq(p1.remoteaddr, "127.0.0.1:8989", "p1 should have remoteaddr")
+	local p2 = cluster.connect("127.0.0.1:8989")
+	testaux.assertneq(p2, nil, "p2 connect should succeed")
+	testaux.asserteq(p2.fd, nil, "p2 fd should be nil before first call (lazy connect)")
+	-- First call triggers the actual connection for each peer independently
+	local r1, _ = cluster.call(p1, "foo", { name = "a", age = 1, rand = "x" })
+	testaux.assertneq(r1, nil, "p1 call should succeed")
+	testaux.asserteq(r1.rand, "x", "p1 call should match")
+	testaux.assertneq(p1.fd, nil, "p1 fd should be set after first call")
+	local r2, _ = cluster.call(p2, "bar", { name = "b", age = 2, rand = "y" })
+	testaux.assertneq(r2, nil, "p2 call should succeed")
+	testaux.asserteq(r2.rand, "y", "p2 call should match")
+	testaux.assertneq(p2.fd, nil, "p2 fd should be set after first call")
+	-- Two connections to same address must hold independent fds
+	testaux.assertneq(p1.fd, p2.fd, "two peers should have different fds")
+	cluster.close(p1)
+	cluster.close(p2)
+end)
+
+testaux.case("Test 22: Call after active close returns peer closed", function()
+	case = case_one
+	local p = cluster.connect("127.0.0.1:8989")
+	-- Establish the connection so we exercise the active-close path, not
+	-- just the never-connected path.
+	local r, _ = cluster.call(p, "foo", { name = "c", age = 1, rand = "z" })
+	testaux.assertneq(r, nil, "first call should succeed")
+	testaux.assertneq(p.fd, nil, "fd should be set after first call")
+	cluster.close(p)
+	testaux.asserteq(p.fd, nil, "fd should be cleared after close")
+	testaux.asserteq(p.addr, nil, "addr should be cleared after close")
+	local r2, err = cluster.call(p, "foo", { name = "c", age = 1, rand = "z" })
+	testaux.asserteq(r2, nil, "call after close should fail")
+	testaux.asserteq(err, "peer closed", "call after close should return peer closed")
+	-- Never-connected peer: close immediately, then call.
+	local q = cluster.connect("127.0.0.1:8989")
+	cluster.close(q)
+	local r3, err2 = cluster.call(q, "foo", { name = "c", age = 1, rand = "z" })
+	testaux.asserteq(r3, nil, "call on never-connected closed peer should fail")
+	testaux.asserteq(err2, "peer closed", "call on never-connected closed peer should return peer closed")
+end)
+
+testaux.case("Test 23: Close during in-flight connect", function()
+	case = case_one
+	accept_peer = nil
+	local p = cluster.connect("127.0.0.1:8989")
+	-- Task A calls on a peer with fd == nil, so it yields inside
+	-- net.tcpconnect waiting for the CONNECT event. Task B is scheduled
+	-- while A is yielded and clears peer.addr. When A resumes, its
+	-- in-flight fd must be discarded and the call must surface
+	-- "peer closed" rather than returning a live connection on a peer
+	-- the user already closed.
+	local wg = waitgroup.new()
+	local call_result, call_err
+	wg:fork(function()
+		call_result, call_err = cluster.call(p, "foo",
+			{ name = "r", age = 1, rand = "z" })
+	end)
+	wg:fork(function()
+		cluster.close(p)
+	end)
+	wg:wait()
+	testaux.asserteq(call_result, nil,
+		"concurrent close must abort the in-flight call")
+	testaux.asserteq(call_err, "peer closed",
+		"concurrent close must surface peer closed")
+	testaux.asserteq(p.fd, nil,
+		"peer.fd must remain nil after concurrent close")
+	testaux.asserteq(p.addr, nil,
+		"peer.addr must remain cleared after concurrent close")
+	-- The race closes the client-side fd after the server has already
+	-- accepted it. Wait for the server-side accept to fire and then for
+	-- its peer fd to be cleaned up before the netstat check runs.
+	wait_done(function()
+		return accept_peer ~= nil
+	end, 2000, "server accept after race")
+	wait_done(function()
+		return accept_peer.fd == nil
+	end, 2000, "server cleanup after race")
+end)
+
+testaux.case("Test 24: Cluster cleanup", function()
 	cluster.close(client_peer)
 	cluster.close(accept_peer)
 	cluster.close(listener)
