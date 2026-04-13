@@ -4,9 +4,14 @@ local time = require "silly.time"
 local net = require "silly.net"
 local logger = require "silly.logger"
 local buffer = require "silly.adt.buffer"
+local errno = require "silly.errno"
+
 local type = type
+local error = error
 local assert = assert
 local setmetatable = setmetatable
+
+global _
 
 local bnew = buffer.new
 local bappend = buffer.append
@@ -18,6 +23,9 @@ local wait = task.wait
 local wakeup = task.wakeup
 local TIMEOUT<const> = {}
 
+local ECLOSED<const> = errno.CLOSED
+local ETIMEDOUT<const> = errno.TIMEDOUT
+
 ---@class silly.net.tcp
 local M = {}
 
@@ -25,7 +33,7 @@ local M = {}
 ---@field fd integer?
 ---@field remoteaddr string
 ---@field package co thread?
----@field package err string?
+---@field package err silly.errno?
 ---@field package buf silly.adt.buffer
 ---@field package buflimit integer?
 ---@field package delim string|integer|nil
@@ -89,6 +97,7 @@ local function check_limit(s, buflimit, size)
 	end
 end
 
+---@type silly.net.event
 local EVENT = {
 
 accept = function(fd, listenid, addr)
@@ -101,12 +110,12 @@ accept = function(fd, listenid, addr)
 	end
 end,
 
-close = function(fd, errno)
+close = function(fd, err)
 	local s = conn_pool[fd]
 	if s == nil then
 		return
 	end
-	s.err = errno
+	s.err = err
 	local co = s.co
 	if co then
 		s.co = nil
@@ -146,7 +155,7 @@ end
 ---@field accept async fun(c:silly.net.tcp.conn)
 
 ---@param conf silly.net.tcp.listen.conf
----@return silly.net.tcp.listener?, string? error
+---@return silly.net.tcp.listener?, silly.errno? error
 function M.listen(conf)
 	local addr = conf.addr
 	local accept = conf.accept
@@ -166,10 +175,12 @@ function M.listen(conf)
 	return s, err
 end
 
+---@param s silly.net.tcp.listener
+---@return boolean, silly.errno? error
 function listener.close(s)
 	local fd = s.fd
 	if not fd then
-		return false, "closed"
+		return false, ECLOSED
 	end
 	s.fd = nil
 	listener_pool[fd] = nil
@@ -182,7 +193,7 @@ end
 
 ---@param addr string
 ---@param opts silly.net.tcp.connect.opts?
----@return silly.net.tcp.conn?, string? error
+---@return silly.net.tcp.conn?, silly.errno? error
 function M.connect(addr, opts)
 	if not addr then
 		error("tcp.connect missing addr", 2)
@@ -214,17 +225,17 @@ function conn.limit(s, limit)
 end
 
 ---@param s silly.net.tcp.conn
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.close(s)
 	local fd = s.fd
 	if not fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	s.fd = nil
 	conn_pool[fd] = nil
 	local co = s.co
 	if co then
-		s.err = "active closed"
+		s.err = ECLOSED
 		s.co = nil
 		s.delim = nil
 		wakeup(co, nil)
@@ -248,10 +259,10 @@ end
 ---@param s silly.net.tcp.conn
 ---@param n integer|string
 ---@param timeout integer? --milliseconds
----@return string?, string? error
+---@return string?, silly.errno? error
 function conn.read(s, n, timeout)
 	if not s.fd then
-		return nil, "socket closed"
+		return nil, ECLOSED
 	end
 	local r, size = bread(s.buf, n)
 	if r then
@@ -277,7 +288,7 @@ function conn.read(s, n, timeout)
 			local timer = time.after(timeout, read_timer, s)
 			dat = wait()
 			if dat == TIMEOUT then
-				return nil, "read timeout"
+				return nil, ETIMEDOUT
 			end
 			time.cancel(timer)
 		end
@@ -285,9 +296,6 @@ function conn.read(s, n, timeout)
 			return dat, nil
 		end
 		err = s.err
-	end
-	if #err == 0 then
-		return "", "end of file"
 	end
 	return nil, err
 end
@@ -297,11 +305,11 @@ conn.readline = conn.read
 
 ---@param s silly.net.tcp.conn
 ---@param data string|string[]
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.write(s, data)
 	local fd = s.fd
 	if not fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	return net.tcpsend(fd, data)
 end
@@ -329,16 +337,24 @@ function conn.unsentbytes(s)
 end
 
 -- for compatibility
+---@deprecated
 M.limit = conn.limit
+---@deprecated
+---@param s silly.net.tcp.conn|silly.net.tcp.listener
 M.close = function(s)
 	return s:close()
 end
+---@deprecated
 M.read = conn.read
+---@deprecated
 M.write = conn.write
+---@deprecated
 M.isalive = conn.isalive
 ---@deprecated
 M.readline = conn.readline
+---@deprecated
 M.recvsize = conn.unreadbytes
+---@deprecated
 M.sendsize = conn.unsentbytes
 
 return M

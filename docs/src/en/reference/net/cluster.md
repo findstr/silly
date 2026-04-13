@@ -233,7 +233,7 @@ cluster.serve {
         return body
     end,
     close = function(peer, errno)
-        print(string.format("Connection closed, errno: %d", errno))
+        print(string.format("Connection closed, error: %s", errno))
     end,
 }
 
@@ -1101,18 +1101,12 @@ task.fork(function()
     -- cluster.connect always returns peer handle
     local peer = cluster.connect(addr)
 
-    -- Error handling is done in call/send
+    -- cluster.call's error return is declared as `string?`, so treat
+    -- `err` as an opaque diagnostic string — log it, but do not branch
+    -- on its content.
     local resp, err = cluster.call(peer, cmd, data)
     if not resp then
-        -- Call failed
-        if err == "timeout" then
-            -- Timeout handling
-        elseif err == "peer closed" then
-            -- Connection closed (inbound connections cannot reconnect)
-        else
-            -- Other errors (such as connection failure, DNS resolution failure, etc.)
-            print("Call error:", err)
-        end
+        print("Call error:", err)
         return
     end
 

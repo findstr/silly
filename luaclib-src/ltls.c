@@ -62,29 +62,33 @@ static inline void push_error(lua_State *L, int code)
 	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
 }
 
-static void push_ssl_error(lua_State *L, int err)
+static void push_ssl_error(lua_State *L, silly_socket_id_t fd, int err)
 {
 	if (err == SSL_ERROR_SSL) {
 		unsigned long e = ERR_get_error();
 		if (e != 0) {
 			char buf[256];
 			ERR_error_string_n(e, buf, sizeof(buf));
-			lua_pushstring(L, buf);
+			silly_log_error("[tls] openssl fd:%lu error: %s\n", (uint64_t)fd, buf);
+			push_error(L, EXTLS);
 			return;
 		}
 	}
 	switch (err) {
 	case SSL_ERROR_ZERO_RETURN:
-		lua_pushliteral(L, "end of file");
+		push_error(L, EXEOF);
 		break;
 	case SSL_ERROR_SYSCALL:
-		if (errno != 0)
-			lua_pushstring(L, strerror(errno));
-		else
-			lua_pushliteral(L, "ssl syscall error");
+		if (errno != 0) {
+			push_error(L, errno);
+		} else {
+			silly_log_error("[tls] openssl fd:%lu syscall error (errno=0)\n", (uint64_t)fd);
+			push_error(L, EXTLS);
+		}
 		break;
 	default:
-		lua_pushliteral(L, "ssl error");
+		silly_log_error("[tls] openssl fd:%lu ssl error code:%d\n", (uint64_t)fd, err);
+		push_error(L, EXTLS);
 		break;
 	}
 }
@@ -592,7 +596,7 @@ static int ltls_write(lua_State *L)
 	if (ret <= 0) {
 		sslerr = SSL_get_error(tls->ssl, ret);
 		lua_pushboolean(L, 0);
-		push_ssl_error(L, sslerr);
+		push_ssl_error(L, tls->fd, sslerr);
 		return 2;
 	}
 	ret = flushwrite(tls);
@@ -627,7 +631,7 @@ static int ltls_handshake(lua_State *L)
 			lua_pushnil(L);
 		} else {
 			lua_pushinteger(L, 0);
-			push_ssl_error(L, sslerr);
+			push_ssl_error(L, tls->fd, sslerr);
 		}
 	}
 	ret = flushwrite(tls);

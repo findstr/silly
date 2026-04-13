@@ -567,9 +567,9 @@ print("Remote address:", conn.remoteaddr)
 
 ### 常见错误
 
-**错误**: "socket closed" 或 "handshake failed"
+**错误**: `errno.TLS`（TLS 协议错误——具体的 OpenSSL 原因写入服务器日志）、`errno.CLOSED`，或其他传输层 `silly.errno` 值
 - **原因**: 证书配置错误、客户端不信任证书、加密套件不匹配
-- **解决**: 检查证书格式、使用正确的 CA 证书、配置兼容的加密套件
+- **解决**: 检查证书格式、使用正确的 CA 证书、配置兼容的加密套件。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
 
 **错误**: "certificate verify failed"
 - **原因**: 客户端无法验证服务器证书

@@ -71,19 +71,19 @@ function helper.parseurl(url)
 	local default = false
 	local scheme, hostport, path = match(url, "^([^:]+)://([^/?]*)(.*)")
 	if not scheme then
-		return nil, "invalid url"
+		return nil, "Invalid url"
 	end
 	if path == "" or byte(path, 1) == 63 then -- '?'
 		path = "/" .. path
 	end
 	local host, port = parse_addr(hostport)
 	if not host then
-		return nil, "invalid url"
+		return nil, "Invalid url"
 	end
 	if not port then
 		port = default_port[scheme]
 		if not port then
-			return nil, "unsupported scheme"
+			return nil, "Unsupported scheme"
 		end
 		default = true
 	end

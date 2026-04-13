@@ -25,7 +25,7 @@ local function stream_read(s)
 	if h2stream:eof() then
 		s.status = code.OK
 	else
-		s.status = code.Internal
+		s.status = code.INTERNAL
 	end
 	s.message = err
 end
@@ -93,12 +93,12 @@ local function unary(fullname, method, fn)
 		local ok, output, err = pcall(fn, req)
 		if not ok then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = code.Internal,
+				['grpc-status'] = code.INTERNAL,
 				['grpc-message'] = err,
 			})
 		elseif err then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = err.code or code.Unknown,
+				['grpc-status'] = err.code or code.UNKNOWN,
 				['grpc-message'] = err.message,
 			})
 			return
@@ -135,13 +135,13 @@ local function sstreaming(fullname, method, fn)
 		local ok, err = pcall(fn, req, s)
 		if not ok then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = code.Internal,
+				['grpc-status'] = code.INTERNAL,
 				['grpc-message'] = err,
 			})
 			return
 		elseif err then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = err.code or code.Unknown,
+				['grpc-status'] = err.code or code.UNKNOWN,
 				['grpc-message'] = err.message,
 			})
 			return
@@ -171,12 +171,12 @@ local function cstreaming(fullname, method, fn)
 		local ok, output, err = pcall(fn, s)
 		if not ok then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = code.Internal,
+				['grpc-status'] = code.INTERNAL,
 				['grpc-message'] = err,
 			})
 		elseif err then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = err.code or code.Unknown,
+				['grpc-status'] = err.code or code.UNKNOWN,
 				['grpc-message'] = err.message,
 			})
 			return
@@ -209,13 +209,13 @@ local function bstreaming(fullname, method, fn)
 		local ok, err = pcall(fn, s)
 		if not ok then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = code.Internal,
+				['grpc-status'] = code.INTERNAL,
 				['grpc-message'] = err,
 			})
 			return
 		elseif err then
 			h2stream:closewrite(nil, {
-				['grpc-status'] = err.code or code.Unknown,
+				['grpc-status'] = err.code or code.UNKNOWN,
 				['grpc-message'] = err.message,
 			})
 			return

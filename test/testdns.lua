@@ -76,10 +76,12 @@ testaux.case("Test 4: Receive loop survives stale response", function()
 	-- Strategy: query t4a with very short timeout so retries exhaust quickly,
 	-- save the respond function, then send a stale response to kill the loop.
 	local stale_respond = nil
+	local captured = channel.new()
 	server:set_handler(function(query, respond)
 		if query.name == "t4a.mock.test" then
 			if not stale_respond then
 				stale_respond = respond
+				captured:push(true)
 			end
 			-- Don't respond - let the client timeout on all retries
 		elseif query.name == "t4b.mock.test" then
@@ -94,6 +96,10 @@ testaux.case("Test 4: Receive loop survives stale response", function()
 	local ip = dns.lookup("t4a.mock.test", dns.A, 100)
 	testaux.asserteq(ip, nil,
 		"Test 4.1: First query should timeout")
+	-- Under heavy load (parallel test runs) the mock server may not have
+	-- processed the UDP packet before lookup() times out. Wait explicitly
+	-- for the handler to run so the test is deterministic.
+	captured:pop()
 	-- Now send a stale response - this triggers `return` on line 310
 	-- which kills the receive loop
 	assert(stale_respond, "should have captured respond function")

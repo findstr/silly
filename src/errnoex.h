@@ -3,12 +3,17 @@
 
 #include <errno.h>
 
-#define EX_BASE (10000)
+#define EXBASE (10000)
 
-#define EX_ADDRINFO (EX_BASE + 0)
-#define EX_NOSOCKET (EX_BASE + 1)
-#define EX_CLOSING (EX_BASE + 2)
-#define EX_CLOSED (EX_BASE + 3)
-#define EX_EOF (EX_BASE + 4)
+#define EXRESOLVE (EXBASE + 0)
+#define EXNOSOCKET (EXBASE + 1)
+#define EXCLOSING  (EXBASE + 2)
+#define EXCLOSED   (EXBASE + 3)
+#define EXEOF      (EXBASE + 4)
+#define EXTLS      (EXBASE + 5)
+
+#ifndef ETIMEDOUT
+#define ETIMEDOUT  (EXBASE + 6)
+#endif
 
 #endif

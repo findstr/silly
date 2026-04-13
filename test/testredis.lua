@@ -5,6 +5,15 @@ local waitgroup = require "silly.sync.waitgroup"
 local redis = require "silly.store.redis"
 local testaux = require "test.testaux"
 local fakeredis = require "test.fake_redis_server"
+local errno = require "silly.errno"
+
+-- NOTE (test-only use of silly.errno):
+-- ECLOSED is used here to white-box test that silly.store.redis
+-- surfaces silly.errno.CLOSED when operating on a closed connection.
+-- Production code must NOT compare redis errors against silly.errno —
+-- redis's public contract is `string?`. Only redis protocol-level error
+-- codes (defined by redis itself) are legitimate for application logic.
+local ECLOSED<const> = errno.CLOSED
 
 local function asserteq(cmd, expect_success, expect_value, success, value)
 	if type(value) == "table" then
@@ -750,17 +759,17 @@ testaux.case("Test 16: Operations after close should fail and not reconnect", fu
 	-- Second request should fail (closed state) and NOT reconnect
 	local ok2, err2 = db:get("key")
 	testaux.asserteq(ok2, false, "Test 16.3: Operation after close should fail")
-	testaux.asserteq(err2, "active closed", "Test 16.4: Should return 'active close' error")
+	testaux.asserteq(err2, ECLOSED, "Test 16.4: Should return 'active close' error")
 	testaux.asserteq(connect_count, 1, "Test 16.5: Should NOT create new connection after close")
 
 	-- Multiple operations after close should all fail
 	local ok3, err3 = db:set("key", "value")
 	testaux.asserteq(ok3, false, "Test 16.6: SET after close should fail")
-	testaux.asserteq(err3, "active closed", "Test 16.7: Should return 'active close' error")
+	testaux.asserteq(err3, ECLOSED, "Test 16.7: Should return 'active close' error")
 
 	local ok4, err4 = db:ping()
 	testaux.asserteq(ok4, false, "Test 16.8: PING after close should fail")
-	testaux.asserteq(err4, "active closed", "Test 16.9: Should return 'active close' error")
+	testaux.asserteq(err4, ECLOSED, "Test 16.9: Should return 'active close' error")
 
 	-- Verify no new connections were created
 	testaux.asserteq(connect_count, 1, "Test 16.10: Total connections should remain 1")
@@ -826,7 +835,7 @@ testaux.case("Test 17: Concurrent close and reconnect", function()
 	-- But after close, all operations should fail with "active closed"
 	local ok_final, err_final = db:ping()
 	testaux.asserteq(ok_final, false, "Test 17.4: Operation after close should fail")
-	testaux.asserteq(err_final, "active closed", "Test 17.5: Should return 'active closed' error")
+	testaux.asserteq(err_final, ECLOSED, "Test 17.5: Should return 'active closed' error")
 
 	-- Verify at most 2 connections were created (initial + one reconnect)
 	testaux.assertle(connect_count, 2, "Test 17.6: Should create at most 2 connections")
@@ -917,7 +926,7 @@ testaux.case("Test 18: First reconnect closes, queued coroutines get 'active clo
 	for i = 1, 5 do
 		if results[i].ok then
 			success_count = success_count + 1
-		elseif results[i].err == "active closed" then
+		elseif results[i].err == ECLOSED then
 			active_close_count = active_close_count + 1
 		end
 	end

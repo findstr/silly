@@ -4,8 +4,18 @@ local np = require "silly.net.cluster.c"
 local waitgroup = require "silly.sync.waitgroup"
 local cluster = require "silly.net.cluster"
 local crypto = require "silly.crypto.utils"
+local errno = require "silly.errno"
 local testaux = require "test.testaux"
 local zproto = require "zproto"
+
+-- NOTE (test-only use of silly.errno):
+-- ETIMEDOUT is used here to white-box test that silly.net.cluster
+-- surfaces silly.errno.TIMEDOUT when an RPC call times out. Production
+-- code must NOT compare cluster errors against silly.errno — cluster's
+-- public contract is `string?`, and it may rewrap errors in the future.
+-- Only silly.net / silly.net.{tcp,tls,udp} callers may branch on
+-- silly.errno values.
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 local BUFF
 local CLUSTER_HARDLIMIT = 4096
@@ -341,7 +351,7 @@ local function timeout(fd, index, count, cmd)
 			}
 			local body, err = cluster.call(fd, cmd, test)
 			testaux.asserteq(body, nil, err)
-			testaux.asserteq(err, "timeout", "rpc timeout, ack is timeout")
+			testaux.asserteq(err, ETIMEDOUT, "rpc timeout, ack is timeout")
 		end
 	end
 end
@@ -467,7 +477,7 @@ testaux.case("Test 20: Cluster call oversize response", function()
 	}
 	local body, err = cluster.call(client_peer, "foo", test)
 	testaux.asserteq(body, nil, "oversize response should fail")
-	testaux.asserteq(err, "timeout", "oversize response should timeout")
+	testaux.asserteq(err, ETIMEDOUT, "oversize response should timeout")
 	case = case_one
 end)
 
@@ -510,13 +520,13 @@ testaux.case("Test 22: Call after active close returns peer closed", function()
 	testaux.asserteq(p.addr, nil, "addr should be cleared after close")
 	local r2, err = cluster.call(p, "foo", { name = "c", age = 1, rand = "z" })
 	testaux.asserteq(r2, nil, "call after close should fail")
-	testaux.asserteq(err, "peer closed", "call after close should return peer closed")
+	testaux.asserteq(err, "Peer closed", "call after close should return peer closed")
 	-- Never-connected peer: close immediately, then call.
 	local q = cluster.connect("127.0.0.1:8989")
 	cluster.close(q)
 	local r3, err2 = cluster.call(q, "foo", { name = "c", age = 1, rand = "z" })
 	testaux.asserteq(r3, nil, "call on never-connected closed peer should fail")
-	testaux.asserteq(err2, "peer closed", "call on never-connected closed peer should return peer closed")
+	testaux.asserteq(err2, "Peer closed", "call on never-connected closed peer should return peer closed")
 end)
 
 testaux.case("Test 23: Close during in-flight connect", function()
@@ -541,7 +551,7 @@ testaux.case("Test 23: Close during in-flight connect", function()
 	wg:wait()
 	testaux.asserteq(call_result, nil,
 		"concurrent close must abort the in-flight call")
-	testaux.asserteq(call_err, "peer closed",
+	testaux.asserteq(call_err, "Peer closed",
 		"concurrent close must surface peer closed")
 	testaux.asserteq(p.fd, nil,
 		"peer.fd must remain nil after concurrent close")
@@ -562,4 +572,33 @@ testaux.case("Test 24: Cluster cleanup", function()
 	cluster.close(client_peer)
 	cluster.close(accept_peer)
 	cluster.close(listener)
+end)
+
+testaux.case("Test 25: Cluster DNS failure returns host-specific string", function()
+	testaux.with_mocked_dns(function(host, qtype)
+		return nil, "Query timed out (10001)"
+	end, {"silly.net.cluster"}, function(reloaded)
+		local mock_cluster = reloaded["silly.net.cluster"]
+		mock_cluster.serve {
+			timeout = 1000,
+			marshal = function(kind, cmd, obj)
+				return 1, ""
+			end,
+			unmarshal = function(kind, cmd, body)
+				return {}, nil
+			end,
+			call = function(fd, cmd, obj)
+				return {}
+			end,
+		}
+		local peer = mock_cluster.connect("dns-fail.test:8989")
+		local resp, err = mock_cluster.call(peer, "foo", {})
+		testaux.asserteq(resp, nil, "Test 25.1: Cluster call should fail on DNS error")
+		testaux.assertcontains(err, "dns lookup",
+			"Test 25.2: Error should mention dns lookup")
+		testaux.assertcontains(err, "dns-fail.test",
+			"Test 25.3: Error should include the failing host")
+		testaux.assertcontains(err, "timed out",
+			"Test 25.4: Error should propagate underlying DNS reason")
+	end)
 end)

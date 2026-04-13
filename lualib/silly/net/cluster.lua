@@ -23,6 +23,8 @@ local after = time.after
 local cancel = time.cancel
 local trace_propagate = trace.propagate
 local trace_attach = trace.attach
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 ---@class silly.net.cluster.peer
 ---@field fd integer?
@@ -178,7 +180,7 @@ end
 local function connect(peer)
 	local addr = peer.addr
 	if not addr then
-		return nil, "peer closed"
+		return nil, "Peer closed"
 	end
 	local l<close> = connect_lock:lock(peer)
 	local fd = peer.fd
@@ -187,12 +189,12 @@ local function connect(peer)
 	end
 	local name, port = parse_addr(addr)
 	if not name or not port then
-		return nil, "invalid address:" .. addr
+		return nil, "Invalid address:" .. addr
 	end
 	if is_host(name) then
-		local ip = dns.lookup(name, dns.A)
+		local ip, err = dns.lookup(name, dns.A)
 		if not ip then
-			return nil, format("dns lookup:%s fail", name)
+			return nil, format("dns lookup %s failed: %s", name, err)
 		end
 		addr = join_addr(ip, port)
 	end
@@ -208,7 +210,7 @@ local function connect(peer)
 	-- the caller a live connection on a peer it considers closed.
 	if not peer.addr then
 		tcp_close(fd)
-		return nil, "peer closed"
+		return nil, "Peer closed"
 	end
 	peer.fd = fd
 	fd_to_peer[fd] = peer
@@ -266,7 +268,7 @@ local waitfor = function(session, cmd)
 		local obj, err = unmarshal("response", cmd, body)
 		return obj, err
 	end
-	return nil, "timeout"
+	return nil, ETIMEDOUT
 end
 
 local function callx(is_send)

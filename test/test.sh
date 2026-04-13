@@ -4,29 +4,33 @@
 set -eu
 
 # Parse parallel flag
+# User args are preserved as positional parameters ("$@") so that arguments
+# containing spaces (e.g. --case="Test 23") survive through to silly without
+# being re-split by the shell.
 PARALLEL_MODE=0
-ARGS_LIST=""
 OVERRIDE_SET=""
-while [ $# -gt 0 ]; do
-    case "$1" in
+orig_argc=$#
+i=0
+while [ $i -lt $orig_argc ]; do
+    arg="$1"; shift
+    i=$((i + 1))
+    case "$arg" in
         -j|--parallel)
             PARALLEL_MODE=1
-            shift
             ;;
         --set=*)
-            OVERRIDE_SET=$(printf "%s" "$1" | sed 's/^--set=//')
-            ARGS_LIST="$ARGS_LIST $1"
-            shift
+            OVERRIDE_SET=${arg#--set=}
+            set -- "$@" "$arg"
             ;;
         --set)
-            shift
+            # consume the next positional as the value
             OVERRIDE_SET="$1"
-            ARGS_LIST="$ARGS_LIST --set=$1"
+            set -- "$@" "--set=$1"
             shift
+            i=$((i + 1))
             ;;
         *)
-            ARGS_LIST="$ARGS_LIST $1"
-            shift
+            set -- "$@" "$arg"
             ;;
     esac
 done
@@ -85,9 +89,17 @@ case "$PLATFORM" in
         ;;
 esac
 
-# Merge extra arguments from command line
-if [ -n "$ARGS_LIST" ]; then
-    ARGS="$ARGS $ARGS_LIST"
+# User args live in "$@" (space-preserving). Write them one-per-line to a
+# temp file so the parallel xargs subshell can reload them into its own
+# positional params without going through word-splitting.
+USER_ARGS_FILE=$(mktemp)
+# Ensure the temp file is cleaned on exit in all paths that don't already
+# install their own trap (serial/parallel modes install one later).
+trap 'rm -f "$USER_ARGS_FILE"' EXIT
+if [ $# -gt 0 ]; then
+    for _a in "$@"; do
+        printf '%s\n' "$_a" >> "$USER_ARGS_FILE"
+    done
 fi
 
 SET_ARG=""
@@ -439,7 +451,7 @@ if [ $JOBS -eq 1 ]; then
     PASSED=0
     FAILED=0
     LOGDIR=$(mktemp -d)
-    trap 'rm -rf "$LOGDIR"' EXIT
+    trap 'rm -rf "$LOGDIR"; rm -f "$USER_ARGS_FILE"' EXIT
     # Combine all tests (parallel-eligible and serial tests)
     all_tests="$FILTERED_TESTS $SERIAL_TESTS"
 
@@ -473,7 +485,18 @@ if [ $JOBS -eq 1 ]; then
             # Run test with output to both terminal and log file.
             # Use a status file to capture the real exit code through tee pipe.
             rcfile="$LOGDIR/$base.$(basename "$b").rc"
-            ( $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS 2>&1; echo $? > "$rcfile" ) | tee "$logfile"
+            (
+                # Rebuild user args in this subshell so spaces in values
+                # (e.g. --case="Test 23") are preserved.
+                set --
+                if [ -s "$USER_ARGS_FILE" ]; then
+                    while IFS= read -r _ua; do
+                        set -- "$@" "$_ua"
+                    done < "$USER_ARGS_FILE"
+                fi
+                $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS "$@" 2>&1
+                echo $? > "$rcfile"
+            ) | tee "$logfile"
             rc=$(cat "$rcfile" 2>/dev/null || echo 1)
             set -e
             if [ $rc -eq 0 ] && grep -Eq "(^|[^A-Za-z0-9_])FAIL([^A-Za-z0-9_]|$)" "$logfile"; then
@@ -509,7 +532,7 @@ if [ $JOBS -eq 1 ]; then
 else
     # Parallel execution in batches
     TMPDIR=$(mktemp -d)
-    trap 'rm -rf "$TMPDIR"' EXIT
+    trap 'rm -rf "$TMPDIR"; rm -f "$USER_ARGS_FILE"' EXIT
 
     # Create subdirectories for test cases with paths (e.g., adt/testqueue)
     for t in $FILTERED_TESTS $SERIAL_TESTS; do
@@ -630,10 +653,19 @@ else
         export _TS_ARGS="$ARGS"
         export _TS_BINARIES="$BINARIES"
         export _TS_OVERRIDE_SET="$OVERRIDE_SET"
+        export _TS_USER_ARGS_FILE="$USER_ARGS_FILE"
         echo "$batch_tests" | tr ' ' '\n' | grep -v '^$' | xargs -P "$JOBS" -I {} sh -c '
             base={}
             logfile="$_TS_TMPDIR/$base.log"
             echo "🔹 Running test: $base" > "$logfile"
+
+            # Reload user args into positional params (space-preserving).
+            set --
+            if [ -n "$_TS_USER_ARGS_FILE" ] && [ -s "$_TS_USER_ARGS_FILE" ]; then
+                while IFS= read -r _ua; do
+                    set -- "$@" "$_ua"
+                done < "$_TS_USER_ARGS_FILE"
+            fi
 
             rc=0
             failed_bin=""
@@ -653,7 +685,7 @@ else
                     setarg="--set=$base"
                 fi
                 set +e
-                $b "$_TS_TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $_TS_ARGS >> "$logfile" 2>&1
+                $b "$_TS_TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $_TS_ARGS "$@" >> "$logfile" 2>&1
                 rc=$?
                 set -e
                 if [ $rc -ne 0 ]; then
@@ -703,7 +735,7 @@ else
                     setarg="--set=$t"
                 fi
                 set +e
-                $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS >> "$logfile" 2>&1
+                $b "$TEST_SCRIPT" $setarg --lualib-cpath="./$cpath/?.so;./$cpath/?.dll" $ARGS "$@" >> "$logfile" 2>&1
                 rc=$?
                 set -e
                 if [ $rc -ne 0 ]; then

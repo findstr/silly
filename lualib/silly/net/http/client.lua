@@ -9,7 +9,6 @@ local gzip = require "silly.compress.gzip"
 local addr = require "silly.net.addr"
 local parseurl = helper.parseurl
 local join_addr = addr.join
-
 local assert = assert
 local pairs = pairs
 local setmetatable = setmetatable
@@ -189,13 +188,13 @@ local function connect(client, scheme, host, port)
 		return stream, nil
 	end
 
-	local ip = dns.lookup(host, dns.A)
+	local ip, err = dns.lookup(host, dns.A)
 	if not ip then
-		return nil, "dns lookup failed"
+		return nil, format("dns lookup %s failed: %s", host, err)
 	end
 	assert(ip, host)
 	local addr = join_addr(ip, port)
-	local conn, err
+	local conn
 	if scheme == "https" then
 		conn, err = tls.connect(addr, {
 			hostname = host,

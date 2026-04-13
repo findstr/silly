@@ -14,7 +14,7 @@ local M = {}
 ---@field tls boolean?
 ---@field certs table<number, {
 ---		cert:string,
----		cert_key:string,
+---		key:string,
 ---	}>?,
 ---@field alpnprotos string[]?
 ---}

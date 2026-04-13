@@ -6,16 +6,19 @@ local dns = require "silly.net.dns"
 local tls = require "silly.net.tls"
 local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
+local EEOF<const> = errno.EOF
 
 local is_iocp = silly.multiplexer == "iocp"
 
 local function assert_eof(dat, err, msg_data, msg_err)
 	if is_iocp then
-		local ok = (dat == "" or dat == nil) and err ~= nil
+		local ok = (dat == nil) and err == EEOF
 		testaux.asserteq(ok, true, msg_err)
 	else
-		testaux.asserteq(err, "end of file", msg_err)
-		testaux.asserteq(dat, "", msg_data)
+		testaux.asserteq(err, EEOF, msg_err)
+		testaux.asserteq(dat, nil, msg_data)
 	end
 end
 
@@ -118,8 +121,8 @@ testaux.case("Test 3.1: TLS read after peer closes", function()
 		local dat2, err2 = conn:read(1)
 		print("--------err2", err2)
 		assert_eof(dat2, err2,
-			"Test 3.1.2: TLS read after close returns empty string",
-			"Test 3.1.3: TLS read after close returns 'end of file'")
+			"Test 3.1.2: TLS read after close returns nil",
+			"Test 3.1.3: TLS read after close returns EOF")
 
 		conn:close()
 	end
@@ -145,8 +148,8 @@ testaux.case("Test 3.2: TLS readline interrupted by close", function()
 		end)
 		local data, err = conn:readline("\n")
 		assert_eof(data, err,
-			"Test 3.2.1: TLS readline returns empty data",
-			"Test 3.2.2: TLS readline returns `end of file` error")
+			"Test 3.2.1: TLS readline returns nil data",
+			"Test 3.2.2: TLS readline returns EOF error")
 		conn:close()
 	end
 
@@ -170,7 +173,7 @@ testaux.case("Test 3.3: TLS abrupt close", function()
 		local dat2, err2 = conn:read(1)
 		assert_eof(dat2, err2,
 			"Test 3.3.2: TLS read after abrupt close returns empty string",
-			"Test 3.3.3: TLS read after abrupt close returns 'end of file'")
+			"Test 3.3.3: TLS read after abrupt close returns EOF")
 		conn:close()
 	end
 
@@ -190,13 +193,13 @@ testaux.case("Test 3.4: Multiple reads after EOF", function()
 		local dat1, err1 = conn:read(1)
 		assert_eof(dat1, err1,
 			"Test 3.4.1: First read returns empty string",
-			"Test 3.4.2: First read returns 'end of file'")
+			"Test 3.4.2: First read returns EOF")
 
 		-- Second read should also get EOF
 		local dat2, err2 = conn:read(1)
 		assert_eof(dat2, err2,
 			"Test 3.4.3: Second read returns empty string",
-			"Test 3.4.4: Second read returns 'end of file'")
+			"Test 3.4.4: Second read returns EOF")
 
 		conn:close()
 	end
@@ -215,7 +218,7 @@ testaux.case("Test 4: Basic read timeout", function()
 		local dat, err = conn:read(10, 500)
 		ch:push("ready")
 		testaux.asserteq(dat, nil, "Test 4.1: Read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 4.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 4.2: Should return 'read timeout' error")
 		conn:close()
 	end
 
@@ -235,7 +238,7 @@ testaux.case("Test 5: Partial data then timeout then continue reading", function
 		local dat, err = conn:read(5, 500)
 		ch:push("timeout")
 		testaux.asserteq(dat, nil, "Test 5.1: First read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 5.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 5.2: Should return 'read timeout' error")
 		-- This read should succeed immediately with the 5 bytes in buffer
 		local dat2, err2 = conn:read(5)
 		testaux.asserteq(dat2, "12345", "Test 5.3: Second read should get complete data")
@@ -244,7 +247,7 @@ testaux.case("Test 5: Partial data then timeout then continue reading", function
 		local dat3, err3 = conn:read(10, 500)
 		ch:push("timeout")
 		testaux.asserteq(dat3, nil, "Test 5.5: Third read should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 5.6: Should return 'read timeout' error")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 5.6: Should return 'read timeout' error")
 		-- Read the buffered 8 bytes
 		local dat4, err4 = conn:read(8)
 		testaux.asserteq(dat4, "abcdefgh", "Test 5.7: Fourth read should get buffered data")
@@ -275,7 +278,7 @@ testaux.case("Test 6: Readline timeout", function()
 		-- Try to readline with timeout, but no newline sent
 		local dat, err = conn:readline("\n", 500)
 		testaux.asserteq(dat, nil, "Test 6.1: Readline should timeout")
-		testaux.asserteq(err, "read timeout", "Test 6.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 6.2: Should return 'read timeout' error")
 		ch:push("timeout")
 		-- Now complete line is available, should succeed
 		local dat2, err2 = conn:readline("\n")
@@ -303,7 +306,7 @@ testaux.case("Test 7: Mixed read and readline with timeout", function()
 		-- Try to read 10 bytes with timeout, only 5 available
 		local dat, err = conn:read(10, 500)
 		testaux.asserteq(dat, nil, "Test 7.1: Read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 7.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 7.2: Should return 'read timeout' error")
 		-- Now read the buffered 5 bytes
 		local dat2, err2 = conn:read(5)
 		testaux.asserteq(dat2, "HELLO", "Test 7.3: Should read buffered data")
@@ -311,7 +314,7 @@ testaux.case("Test 7: Mixed read and readline with timeout", function()
 		local dat3, err3 = conn:readline("\n", 500)
 		ch:push("ready")
 		testaux.asserteq(dat3, nil, "Test 7.4: Readline should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 7.5: Should return 'read timeout' error")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 7.5: Should return 'read timeout' error")
 		-- Complete the line
 		local dat4, err4 = conn:readline("\n")
 		testaux.asserteq(dat4, "WORLD\n", "Test 7.6: Readline should succeed")
@@ -320,7 +323,7 @@ testaux.case("Test 7: Mixed read and readline with timeout", function()
 		local dat5, err5 = conn:read(3, 500)
 		ch:push("ready")
 		testaux.asserteq(dat5, nil, "Test 7.7: Read should timeout")
-		testaux.asserteq(err5, "read timeout", "Test 7.8: Should return 'read timeout' error")
+		testaux.asserteq(err5, ETIMEDOUT, "Test 7.8: Should return 'read timeout' error")
 		-- Readline should get the buffered "ab" plus "c\n"
 		local dat6, err6 = conn:readline("\n")
 		testaux.asserteq(dat6, "abc\n", "Test 7.9: Readline should get buffered + new data")
@@ -356,7 +359,7 @@ testaux.case("Test 8: Connection closed during timeout wait", function()
 		local dat, err = conn:read(100, 2000)
 		assert_eof(dat, err,
 			"Test 8.1: Read should return empty string on close",
-			"Test 8.2: Should return 'end of file' error")
+			"Test 8.2: Should return EOF error")
 		conn:close()
 	end
 
@@ -373,15 +376,15 @@ testaux.case("Test 9: Multiple sequential timeouts", function()
 		-- First timeout
 		local dat1, err1 = conn:read(5, 300)
 		testaux.asserteq(dat1, nil, "Test 9.1: First read should timeout")
-		testaux.asserteq(err1, "read timeout", "Test 9.2: Should return 'read timeout'")
+		testaux.asserteq(err1, ETIMEDOUT, "Test 9.2: Should return 'read timeout'")
 		-- Second timeout
 		local dat2, err2 = conn:read(5, 300)
 		testaux.asserteq(dat2, nil, "Test 9.3: Second read should timeout")
-		testaux.asserteq(err2, "read timeout", "Test 9.4: Should return 'read timeout'")
+		testaux.asserteq(err2, ETIMEDOUT, "Test 9.4: Should return 'read timeout'")
 		-- Third timeout
 		local dat3, err3 = conn:read(5, 300)
 		testaux.asserteq(dat3, nil, "Test 9.5: Third read should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 9.6: Should return 'read timeout'")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 9.6: Should return 'read timeout'")
 		ch:push("ready")
 		-- Finally succeed
 		local dat4, err4 = conn:read(5)
@@ -428,7 +431,7 @@ testaux.case("Test 11: TLS Handshake Timeout", function()
 	-- Connect with timeout
 	local fd, err = tls.connect("127.0.0.1:" .. port, {timeout = 200})
 	testaux.asserteq(fd, nil, "Test 11.1: Connect should fail due to handshake timeout")
-	testaux.asserteq(err, "read timeout", "Test 11.2: Error should be 'read timeout'")
+	testaux.asserteq(err, ETIMEDOUT, "Test 11.2: Error should be 'read timeout'")
 	ch:pop()
 	tcp.close(listenfd)
 	testaux.success("Test 11 passed")
@@ -487,7 +490,7 @@ testaux.case("Test 13: TLS handshake error", function()
 	local c, err = tls.connect("127.0.0.1:" .. port, {timeout = 500})
 	testaux.asserteq(c, nil, "Test 13.1: TLS connect should fail")
 	testaux.assertneq(err, nil, "Test 13.2: TLS connect should return error")
-	testaux.assertneq(err, "read timeout", "Test 13.3: handshake error should not be read timeout")
+	testaux.assertneq(err, ETIMEDOUT, "Test 13.3: handshake error should not be read timeout")
 	listener:close()
 	testaux.success("Test 13 passed")
 end)

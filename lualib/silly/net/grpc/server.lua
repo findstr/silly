@@ -14,8 +14,8 @@ local function dispatch(registrar)
 		if not fn then
 			stream:respond(200, {
 				['content-type'] = 'application/grpc',
-				['grpc-status'] = code.Unimplemented,
-				['grpc-message'] = "grpc: method not found"
+				['grpc-status'] = code.UNIMPLEMENTED,
+				['grpc-message'] = "Method not found: " .. path
 			})
 			return
 		end
@@ -32,7 +32,7 @@ end
 ---	addr:string,
 ---	ciphers:string?,
 ---	registrar:silly.net.grpc.registrar,
----	certs:{cert:string, cert_key:string}[],
+---	certs:{cert:string, key:string}[],
 ---}
 ---@return silly.net.tcp.listener|silly.net.tls.listener|nil, string? error
 local function listen(conf)

@@ -74,7 +74,7 @@ Establishes a connection to a TCP server (asynchronous).
     - `timeout`: `integer|nil` - Connection timeout in milliseconds, no timeout if not set
 - **Returns**:
   - Success: `silly.net.tcp.conn` - Connection object
-  - Failure: `nil, string` - nil and error message ("connect timeout" if timed out)
+  - Failure: `nil, silly.errno` - nil and errno value; timeout returns `errno.TIMEDOUT`
 - **Async**: This function is asynchronous and waits for connection or timeout
 - **Example**:
 
@@ -100,7 +100,7 @@ Closes a TCP connection.
 
 - **Returns**:
   - Success: `true`
-  - Failure: `false, string` - false and error message (if socket is already closed or invalid)
+  - Failure: `false, silly.errno` - false and errno value (for example `errno.CLOSED` if the socket is already closed)
 - **Example**:
 
 ```lua validate
@@ -149,8 +149,8 @@ Reads exactly `n` bytes or reads data from the socket until a delimiter is found
     - If string: read until delimiter is encountered (including delimiter)
 - **Returns**:
   - Success: `string` - Data read
-  - Failure: `nil, string` - nil and error message
-  - **EOF**: `"", "end of file"` - Empty string and "end of file" error message
+  - Failure: `nil, silly.errno` - nil and transport-layer error
+  - **EOF**: `nil, errno.EOF` - End of stream
 - **Async**: Suspends coroutine if data is not ready until data arrives
 - **Example**:
 
@@ -189,7 +189,7 @@ end)
 ```
 
 ::: tip Error Handling Best Practice
-You should use `if err then` to check for connection closure, not `if not data then`. This is because on EOF, `conn:read()` returns `"", "end of file"`, where `data` is an empty string (truthy), but `err` is not nil.
+`conn:read`'s error return is declared as `silly.errno?`, so you may compare `err` directly against `silly.errno` constants — e.g. `if err == errno.EOF then ...`. EOF returns `nil, errno.EOF`.
 :::
 
 ### conn:readline(delim)

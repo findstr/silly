@@ -42,14 +42,14 @@ do
 	-- Tampered signature
 	local tampered_token = valid_token_hs256:gsub(".$", "x")
 	local decoded, err = jwt.decode(tampered_token, hmac_key)
-	testaux.asserteq(err, "signature verification failed", "Case 3.1: Tampered signature")
+	testaux.asserteq(err, "Signature verification failed", "Case 3.1: Tampered signature")
 
 	-- Tampered payload
 	local parts = {valid_token_hs256:match("([^.]+).([^.]+).([^.]+)")}
 	parts[2] = base64.urlsafe_encode(json.encode({name = "Attacker"}))
 	local modified_token = table.concat(parts, ".")
 	decoded, err = jwt.decode(modified_token, hmac_key)
-	testaux.asserteq(err, "signature verification failed", "Case 3.2: Modified payload")
+	testaux.asserteq(err, "Signature verification failed", "Case 3.2: Modified payload")
 end
 
 -- Test 4: Invalid base64 encodings
@@ -194,7 +194,7 @@ do
 	local wrong_pub = ec_pubkey
 	local decoded, err = jwt.decode(token, wrong_pub)
 	testaux.asserteq(decoded, nil, "Case11.4: Detect wrong key type")
-	testaux.asserteq(err, "signature verification failed", "Case11.4: Detect wrong key type")
+	testaux.asserteq(err, "Signature verification failed", "Case11.4: Detect wrong key type")
 end
 
 -- Test 12: ECDSA algorithm family (ES256/ES384/ES512)
@@ -213,7 +213,7 @@ do
 	local token = jwt.encode(test_payload, ec_privkey, "ES256")
 	local tampered = token:gsub(".[^.]*$", "invalid_signature")
 	local decoded, err = jwt.decode(tampered, ec_pubkey)
-	testaux.asserteq(err, "signature verification failed", "Case12.4: Detect ECDSA tampering")
+	testaux.asserteq(err, "Signature verification failed", "Case12.4: Detect ECDSA tampering")
 end
 
 -- Test 13: Key type validation

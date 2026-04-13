@@ -1,3 +1,4 @@
+local require = require
 local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
@@ -5,24 +6,33 @@ local net = require "silly.net"
 local tls = require "silly.tls.tls"
 local ctx = require "silly.tls.ctx"
 local logger = require "silly.logger"
+local errno = require "silly.errno"
 
 local error = error
+local ipairs = ipairs
 local type = type
 local pairs = pairs
 local assert = assert
-local concat = table.concat
 local setmetatable = setmetatable
-local monotonic = time.monotonic
+local concat = table.concat
+local char = string.char
+
+global _
 
 local wait = task.wait
 local running = task.running
 local readenable = net.readenable
 local wakeup = task.wakeup
+local monotonic = time.monotonic
 
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1
 local HANDSHAKE_ERROR<const> = 0
 local TIMEOUT<const> = {}
+
+local EINVAL<const> = errno.INVAL
+local ECLOSED<const> = errno.CLOSED
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 local client_ctx = ctx.client()
 
@@ -38,7 +48,7 @@ local M = {}
 ---@field fd integer?
 ---@field remoteaddr string
 ---@field package co thread?
----@field package err string?
+---@field package err silly.errno?
 ---@field package alpn string?
 ---@field package ssl any
 ---@field package buflimit integer?
@@ -59,7 +69,6 @@ local conn_pool = setmetatable({}, {__mode = "v"})
 local listener_pool = {}
 
 ---@alias silly.net.tls.alpn_proto "http/1.1" | "h2"
-local char = string.char
 local alpnwired = setmetatable({}, {__index = function(t, k)
 	local v = char(#k) .. k
 	t[k] = v
@@ -156,7 +165,7 @@ local function read_timer(s)
 end
 
 ---@param s silly.net.tls.conn
----@return string?, string? error
+---@return string?, silly.errno? error
 local function block_read(s, delim, timeout)
 	local err = s.err
 	if not err then
@@ -170,7 +179,7 @@ local function block_read(s, delim, timeout)
 			local timer = time.after(timeout, read_timer, s)
 			dat = wait()
 			if dat == TIMEOUT then
-				return nil, "read timeout"
+				return nil, ETIMEDOUT
 			end
 			time.cancel(timer)
 		end
@@ -179,15 +188,12 @@ local function block_read(s, delim, timeout)
 		end
 		err = s.err
 	end
-	if err == "end of file" or #err == 0 then
-		return "", "end of file"
-	end
 	return nil, err
 end
 
 ---@param s silly.net.tls.conn
 ---@param timeout integer? --milliseconds
----@return string?, string? error
+---@return string?, silly.errno? error
 local function handshake(s, timeout)
 	local ret, alpnproto = tls.handshake(s.ssl)
 	if ret == HANDSHAKE_OK then
@@ -200,6 +206,7 @@ local function handshake(s, timeout)
 	return block_read(s, HANDSHAKE, timeout)
 end
 
+---@type silly.net.event
 local EVENT = {
 accept = function(fd, listenid, addr)
 	local lc = listener_pool[listenid]
@@ -217,13 +224,13 @@ accept = function(fd, listenid, addr)
 end,
 
 ---@param fd integer
----@param errno string?
-close = function(fd, errno)
+---@param err silly.errno
+close = function(fd, err)
 	local s = conn_pool[fd]
 	if s == nil then
 		return
 	end
-	s.err = errno
+	s.err = err
 	local co = s.co
 	if co then
 		s.co = nil
@@ -280,7 +287,7 @@ end
 
 ---@param addr string
 ---@param opts silly.net.tls.connect.opts?
----@return silly.net.tls.conn?, string? error
+---@return silly.net.tls.conn?, silly.errno? error
 function M.connect(addr, opts)
 	local bind, hostname, alpnprotos, timeout
 	if not addr then
@@ -303,6 +310,10 @@ function M.connect(addr, opts)
 	local s = new_socket(fd, addr, client_ctx, hostname, alpnprotos)
 	if deadline then
 		timeout = deadline - monotonic()
+		if timeout <= 0 then
+			s:close()
+			return nil, ETIMEDOUT
+		end
 	end
 	local ok, err = handshake(s, timeout)
 	if not ok then
@@ -331,7 +342,7 @@ end
 ---@field accept async fun(s:silly.net.tls.conn)
 
 ---@param opts silly.net.tls.listen.opts
----@return silly.net.tls.listener?, string? error
+---@return silly.net.tls.listener?, silly.errno? error
 function M.listen(opts)
 	local addr = opts.addr
 	local accept = opts.accept
@@ -357,7 +368,7 @@ end
 function listener.close(s)
 	local fd = s.fd
 	if not fd then
-		return false, "closed"
+		return false, ECLOSED
 	end
 	s.fd = nil
 	listener_pool[fd] = nil
@@ -366,14 +377,14 @@ end
 
 ---@param l silly.net.tls.listener
 ---@param conf silly.net.tls.conf?
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function listener.reload(l, conf)
 	if not l.fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	local old_conf = l.conf
 	if not old_conf then
-		return false, "not listen socket"
+		return false, EINVAL
 	end
 	if conf then
 		for k, v in pairs(conf) do
@@ -397,17 +408,17 @@ function conn.limit(s, limit)
 end
 
 ---@param s silly.net.tls.conn
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.close(s)
 	local fd = s.fd
 	if not fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	s.fd = nil
 	conn_pool[fd] = nil
 	local co = s.co
 	if co then
-		s.err = "active closed"
+		s.err = ECLOSED
 		s.co = nil
 		s.delim = nil
 		wakeup(co, nil)
@@ -420,10 +431,10 @@ conn_mt.__close = conn.close
 ---@param s silly.net.tls.conn
 ---@param n integer|string
 ---@param timeout integer? --milliseconds
----@return string?, string? error
+---@return string?, silly.errno? error
 function conn.read(s, n, timeout)
 	if not s.fd then
-		return nil, "socket closed"
+		return nil, ECLOSED
 	end
 	local r, size = tls.read(s.ssl, n)
 	if r then
@@ -440,10 +451,10 @@ conn.readline = conn.read
 
 ---@param s silly.net.tls.conn
 ---@param data string|string[]
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.write(s, data)
 	if not s.fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	return tls.write(s.ssl, data)
 end

@@ -333,7 +333,7 @@ Called when connection closes.
 
 **Parameters**:
 - `fd` (integer): Socket file descriptor
-- `errno` (integer): Error code (0 means normal close)
+- `errno` (`silly.errno`): Close reason. A normal peer close is typically reported as `errno.EOF`; other cases use the corresponding low-level error
 
 ## Notes
 

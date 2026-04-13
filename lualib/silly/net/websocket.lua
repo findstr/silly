@@ -148,7 +148,7 @@ function s.read(sock)
 		end
 		local format = data_type[op]
 		if not format then
-			return nil, "unknown frame type:" .. tostring(op), ""
+			return nil, "Unknown frame type:" .. tostring(op), ""
 		end
 		if fin ~= 0 then
 			return dat, format
@@ -183,7 +183,7 @@ function s.write(sock, dat, typ)
 	typ = typ or "binary"
 	dat = dat or NIL
 	if #dat > 125 and typ ~= "text" and typ ~= "binary" then
-		return false, "all control frames MUST have a payload length of 125 bytes or less"
+		return false, "All control frames MUST have a payload length of 125 bytes or less"
 	end
 	local ok, err
 	local conn = sock.conn
@@ -229,24 +229,24 @@ local function handshake(stream)
 	local respond = stream.respond
 	if stream.method ~= "GET" then
 		respond(stream, 400, {})
-		return false, "method not GET"
+		return false, "Method not GET"
 	end
 	local header = stream.header
 	if not header then
 		respond(stream, 400, {})
-		return false, "header not found"
+		return false, "Header not found"
 	end
 	for k, v in pairs(checklist) do
 		local verify = header[k]
 		if verify and verify ~= v then
 			respond(stream, 400, {})
-			return false, "header " .. k .. " mismatch"
+			return false, "Header " .. k .. " mismatch"
 		end
 	end
 	local key = header["sec-websocket-key"]
 	if not key then
 		respond(stream, 400, {})
-		return false, "sec-websocket-key not found"
+		return false, "Sec-websocket-key not found"
 	end
 	key = base64.encode(sha1:digest(key .. guid))
 	local ack = {
@@ -291,11 +291,10 @@ function M.connect(url, header)
 	if not scheme then
 		return nil, host
 	end
-	local ip = dns.lookup(host, dns.A)
+	local ip, err = dns.lookup(host, dns.A)
 	if not ip then
-		return nil, "dns lookup failed"
+		return nil, format("dns lookup %s failed: %s", host, err)
 	end
-	assert(ip, host)
 	local addr = join_addr(ip, port)
 	if scheme == "wss" then
 		conn, err = tls.connect(addr, {hostname = host})
@@ -343,4 +342,3 @@ function M.upgrade(stream)
 end
 
 return M
-

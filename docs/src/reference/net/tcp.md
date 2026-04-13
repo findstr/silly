@@ -74,7 +74,7 @@ end
     - `timeout`: `integer|nil` - 连接超时时间（毫秒），如果未设置则无超时限制
 - **返回值**:
   - 成功: `silly.net.tcp.conn` - 连接对象
-  - 失败: `nil, string` - nil 和错误信息（"connect timeout" 表示连接超时）
+  - 失败: `nil, silly.errno` - nil 和错误码；超时返回 `errno.TIMEDOUT`
 - **异步**: 此函数是异步的，会等待连接建立或超时
 - **示例**:
 
@@ -96,7 +96,7 @@ task.fork(function()
     -- 带超时的连接（1秒超时）
     local conn2, err2 = tcp.connect("192.0.2.1:80", {timeout = 1000})
     if not conn2 then
-        print("Connect failed:", err2)  -- 可能输出 "connect timeout"
+        print("Connect failed:", err2)  -- 可能输出 errno.TIMEDOUT
         return
     end
     conn2:close()
@@ -109,7 +109,7 @@ end)
 
 - **返回值**:
   - 成功: `true`
-  - 失败: `false, string` - false 和错误信息（如果套接字已关闭或无效）
+  - 失败: `false, silly.errno` - false 和错误码（例如套接字已关闭时返回 `errno.CLOSED`）
 - **示例**:
 
 ```lua validate
@@ -158,8 +158,8 @@ conn:write({"HTTP/1.1 200 OK\r\n", "Content-Length: 5\r\n\r\n", "Hello"})
     - 如果是字符串：读取直到遇到该分隔符（包含分隔符）
 - **返回值**:
   - 成功: `string` - 读取的数据
-  - 失败: `nil, string` - nil 和错误信息
-  - **EOF**: `"", "end of file"` - 空字符串和 "end of file" 错误信息
+  - 失败: `nil, silly.errno` - nil 和传输层错误
+  - **EOF**: `nil, errno.EOF` - 到达流末尾
 - **异步**: 如果数据未就绪，会挂起协程直到数据到达
 - **示例**:
 
@@ -198,7 +198,7 @@ end)
 ```
 
 ::: tip 错误处理最佳实践
-应该使用 `if err then` 来判断连接断开，而不是 `if not data then`。因为在 EOF 时，`conn:read()` 会返回 `"", "end of file"`，此时 `data` 是空字符串（真值），但 `err` 不为 nil。
+`conn:read` 的错误返回类型声明为 `silly.errno?`，因此可以直接用 `err == errno.XXX` 与常量比较，例如 `if err == errno.EOF then ...`。EOF 会返回 `nil, errno.EOF`。
 :::
 
 ### conn:readline(delim)

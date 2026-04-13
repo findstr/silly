@@ -1,12 +1,15 @@
 local silly = require "silly"
+local c = require "silly.net.c"
 local time = require "silly.time"
 local task = require "silly.task"
 local logger = require "silly.logger.c"
-local c = require "silly.net.c"
-local addr = require "silly.net.addr"
+local naddr = require "silly.net.addr"
+local errno = require "silly.errno"
 
 local assert = assert
-local parse_addr = addr.parse
+local parse_addr = naddr.parse
+
+global _
 
 local task_wait = task.wait
 local task_running = task.running
@@ -14,18 +17,21 @@ local task_create = task._create
 local task_resume = task._resume
 
 local log_info = assert(logger.info)
-local log_error = assert(logger.error)
 
 local TIMEOUT<const> = {}
 local time_after = time.after
 local time_cancel = time.cancel
 
+local EINVAL<const> = errno.INVAL
+local ETIMEDOUT<const> = errno.TIMEDOUT
+local ECLOSED<const> = errno.CLOSED
+
 local M = {}
 
 ---@class silly.net.event
 ---@field accept fun(fd:integer, listenid:integer, addr:string)?
----@field close fun(fd:integer, errno:integer)
----@field data fun(fd:integer, msg:lightuserdata, size:integer)|fun(fd:integer, msg:lightuserdata, addr:string?)
+---@field close fun(fd:integer, errno:silly.errno)
+---@field data fun(fd:integer, msg:lightuserdata, size:integer)|fun(fd:integer, msg:lightuserdata, size:integer, addr:string?)
 
 --socket
 local socket_pending = {}
@@ -50,11 +56,11 @@ local function listen_wrap(listen)
 	---@param addr string
 	---@param event silly.net.event
 	---@param backlog integer|nil
-	---@return integer|nil, string|nil
+	---@return integer? fd, silly.errno? error
 	return function(addr, event, backlog)
 		local ip, port = parse_addr(addr)
 		if not port then
-			return nil, "invalid address"
+			return nil, EINVAL
 		end
 		if not ip then
 			ip = "0::0"
@@ -62,8 +68,8 @@ local function listen_wrap(listen)
 		if not backlog then
 			backlog = 256 --this constant come from linux kernel comment
 		end
-		local fd, err = listen(ip, port, backlog);
-		if fd  then
+		local fd, err = listen(ip, port, backlog)
+		if fd then
 			assert(socket_pending[fd] == nil)
 			socket_pending[fd] = task_running()
 			err = task_wait()
@@ -76,7 +82,6 @@ local function listen_wrap(listen)
 			data_callback[fd] = assert(event.data)
 			return fd, nil
 		end
-		log_error("[net] listen", port, "error", err)
 		return nil, err
 	end
 end
@@ -94,17 +99,17 @@ local function connect_wrap(connect)
 	---@param event silly.net.event
 	---@param bind string?
 	---@param timeout integer?
-	---@return integer? fd, string? error
+	---@return integer? fd, silly.errno? error
 	return function(addr, event, bind, timeout)
 		local ip, port = parse_addr(addr)
 		if not ip or not port then
-			return nil, "invalid address"
+			return nil, EINVAL
 		end
 		local bindip, bindport
 		if bind then
 			bindip, bindport = parse_addr(bind)
 			if not bindip or not bindport then
-				return nil, "invalid bind address"
+				return nil, EINVAL
 			end
 		else
 			bindip, bindport = "", "0"
@@ -117,7 +122,7 @@ local function connect_wrap(connect)
 				local timer = time_after(timeout, connect_timer, fd)
 				err = task_wait()
 				if err == TIMEOUT then
-					err = "connect timeout"
+					err = ETIMEDOUT
 				else
 					time_cancel(timer)
 				end
@@ -143,11 +148,11 @@ M.tcpconnect = connect_wrap(tcp_connect)
 M.udpconnect = connect_wrap(udp_connect)
 
 ---@param fd integer
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function M.close(fd)
 	local sc = close_callback[fd]
 	if sc == nil then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	accept_callback[fd] = nil
 	data_callback[fd] = nil
@@ -173,33 +178,40 @@ silly.register(c.ACCEPT, function(fd, listenid, addr)
 end)
 
 ---@param fd integer
----@param errno integer
-silly.register(c.CLOSE, function(fd, errno)
+---@param err silly.errno
+silly.register(c.CLOSE, function(fd, err)
 	local f = close_callback[fd]
 	if f then
 		local t = task_create(f)
-		task_resume(t, fd, errno)
+		task_resume(t, fd, err)
 	end
 end)
 
-silly.register(c.LISTEN, function(fd, errno)
+---@param fd integer
+---@param err silly.errno
+silly.register(c.LISTEN, function(fd, err)
 	local t = socket_pending[fd]
 	if t == nil then --have already closed
 		assert(accept_callback[fd] == nil)
 		return
 	end
-	task_resume(t, errno)
+	task_resume(t, err)
 end)
 
-silly.register(c.CONNECT, function(fd, errno)
+---@param fd integer
+---@param err silly.errno
+silly.register(c.CONNECT, function(fd, err)
 	local t = socket_pending[fd]
 	if t == nil then	--have already closed
 		assert(data_callback[fd] == nil)
 		return
 	end
-	task_resume(t, errno)
+	task_resume(t, err)
 end)
 
+---@param fd integer
+---@param ptr lightuserdata
+---@param size integer
 silly.register(c.TCPDATA, function(fd, ptr, size)
 	local f = data_callback[fd]
 	if f then
@@ -211,6 +223,10 @@ silly.register(c.TCPDATA, function(fd, ptr, size)
 	end
 end)
 
+---@param fd integer
+---@param ptr lightuserdata
+---@param size integer
+---@param addr string
 silly.register(c.UDPDATA, function(fd, ptr, size, addr)
 	local f = data_callback[fd]
 	if f then

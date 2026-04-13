@@ -153,7 +153,7 @@ static int llz4_decompress(lua_State *L)
 	osize = luaL_checkinteger(L, 2);
 	if (osize < 0) {
 		lua_pushnil(L);
-		lua_pushliteral(L, "invalid original_size");
+		lua_pushliteral(L, "Invalid original_size");
 		return 2;
 	}
 	if (osize == 0) {

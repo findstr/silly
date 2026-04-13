@@ -11,6 +11,9 @@ local format = string.format
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
+local errno = require "silly.errno"
+local EEOF<const> = errno.EOF
+
 local M = {}
 
 --- @class silly.net.http.h1.stream
@@ -113,13 +116,10 @@ local function readheader(conn, header, timeout)
 	if not tmp then
 		return false, err
 	end
-	if #tmp == 0 then
-		return false, "broken header"
-	end
 	while tmp ~= "\r\n" do
 		local k, v = tmp:match("^(%S+):%s*(.-)%s*$")
 		if not k then
-			return false, "invalid header"
+			return false, "Invalid header"
 		end
 		k = lower(k)
 		local value = header[k]
@@ -161,6 +161,7 @@ local function read_chunk(s, conn, timeout)
 	if err then
 		return nil, err
 	end
+	---@cast line string
 	local hex = line:match("^([0-9A-Fa-f]+)")
 	local sz = tonumber(hex, 16)
 	if not sz then
@@ -196,27 +197,24 @@ end
 ---@return number?, string? error
 local function read_eof(s, conn, bytes, timeout)
 	local b, err = conn:read(bytes, timeout)
-	if not b then --we need process eof
-		return nil, err
-	end
-	if #b == 0 then
+	if not b then
+		if err ~= EEOF then
+			return nil, err
+		end
+		s.eof = true
 		bytes = conn:unreadbytes()
 		if bytes > 0 then
 			b, err = conn:read(bytes, timeout)
-			if err then
+			if not b then
 				return nil, err
 			end
+			s.recvbytes = s.recvbytes + #b
+			return s.recvbuf:append(b), nil
 		end
-		s.eof = true
+		return s.recvbuf:size(), nil
 	end
-	local size
-	if #b > 0 then
-		s.recvbytes = s.recvbytes + #b
-		size = s.recvbuf:append(b)
-	else
-		size = s.recvbuf:size()
-	end
-	return size, nil
+	s.recvbytes = s.recvbytes + #b
+	return s.recvbuf:append(b), nil
 end
 
 ---@param s silly.net.http.h1.stream
@@ -233,7 +231,7 @@ local function read(s, size, timeout)
 		return nil, err
 	end
 	if s.eof then
-		return "", "end of file"
+		return nil, EEOF
 	end
 	local conn = s.conn
 	local len = s.readexpect
@@ -256,7 +254,7 @@ local function read(s, size, timeout)
 	end
 	if totalsize then
 		if totalsize < size then
-			return "", "end of file"
+			return nil, EEOF
 		end
 		return recvbuf:read(size), nil
 	end
@@ -292,7 +290,7 @@ local function read_all_body(s, conn, len, timeout)
 		end
 		if size < left then
 			assert(s.eof)
-			return false, "body broken"
+			return false, "Body broken"
 		end
 		s.eof = true
 	end
@@ -312,7 +310,8 @@ local function readall(s, timeout)
 	end
 	if s.eof then
 		local dat = s.recvbuf:readall()
-		return dat, #dat == 0 and "end of file" or nil
+
+		return dat, nil
 	end
 	local conn = s.conn
 	local len = s.readexpect
@@ -322,7 +321,7 @@ local function readall(s, timeout)
 		return nil, err
 	end
 	local dat = s.recvbuf:readall()
-	return dat, #dat == 0 and "end of file" or nil
+	return dat, nil
 end
 
 ---@param s silly.net.http.h1.stream
@@ -378,13 +377,13 @@ local function write(s, data)
 		return false, err
 	end
 	if s.writeclosed then
-		return false, "write closed"
+		return false, "Write closed"
 	end
 	flush_header(s, false)
 	local writeexpect = s.writeexpect
 	if writeexpect == 0 then
 		-- No body expected, writing is an error
-		return false, "write not allowed (no body expected)"
+		return false, "Write not allowed (no body expected)"
 	end
 	local buf = s.sendbuf
 	local size = s.sendsize
@@ -395,7 +394,7 @@ local function write(s, data)
 		buf[#buf + 1] = "\r\n"
 	else
 		if size + s.writebytes > writeexpect then
-			return false, "write exceed content-length size"
+			return false, "Write exceed content-length size"
 		end
 		buf[#buf + 1] = data
 	end
@@ -434,20 +433,20 @@ local function check_close_error(s)
 	local writeexpect = s.writeexpect
 	if writeexpect ~= chunked then
 		if s.writebytes < writeexpect then
-			return "write not complete"
+			return "Write not complete"
 		end
 	end
 	if not s.writeclosed then
-		return "writing not closed"
+		return "Writing not closed"
 	end
 	local readexpect = s.readexpect
 	if readexpect == chunked or readexpect == eof then
 		if not s.eof then
-			return "read not complete"
+			return "Read not complete"
 		end
 	else
 		if s.recvbytes < readexpect then
-			return "read not complete"
+			return "Read not complete"
 		end
 	end
 	return nil
@@ -495,13 +494,14 @@ local function waitresponse(s, timeout)
 	if err then
 		return false, err
 	end
+	---@cast first string
 	local ok, err = readheader(conn, s.header, timeout)
 	if not ok then
 		return false, err
 	end
 	local ver, status = first:match("HTTP/([%d|.]+)%s+(%d+)")
 	if not ver or not status then
-		return false, "invalid response line"
+		return false, "Invalid response line"
 	end
 	status = tonumber(status)
 	s.version = ver
@@ -514,7 +514,7 @@ local function waitresponse(s, timeout)
 		if cl then
 			local n = tonumber(cl)
 			if not n or n < 0 then
-				return false, "invalid content-length"
+				return false, "Invalid content-length"
 			end
 			s.readexpect = n
 		elseif header["transfer-encoding"] == chunked then
@@ -588,7 +588,7 @@ h1c.waitresponse = client_waitresponse
 ---@return string?, string? error
 function h1c.read(s, size, timeout)
 	if not s.writeclosed then
-		return nil, "should closewirte first"
+		return nil, "Should closewrite first"
 	end
 	local ok, err = client_waitresponse(s, timeout)
 	if not ok then
@@ -602,7 +602,7 @@ end
 ---@return string?, string? error
 function h1c.readall(s, timeout)
 	if not s.writeclosed then
-		return nil, "should closewirte first"
+		return nil, "Should closewrite first"
 	end
 	local ok, err = client_waitresponse(s, timeout)
 	if not ok then
@@ -616,7 +616,7 @@ end
 ---@return boolean, string? error
 function h1c.write(s, data)
 	if s.writeclosed then
-		return false, "write closed"
+		return false, "Write closed"
 	end
 	return write(s, data)
 end
@@ -703,7 +703,7 @@ h1s.readall = readall
 ---@param s silly.net.http.h1.stream.server
 function h1s.write(s, data)
 	if s.writeclosed then
-		return false, "write closed"
+		return false, "Write closed"
 	end
 	return write(s, data)
 end
@@ -748,6 +748,7 @@ function M.httpd(handler, conn, scheme)
 		if err then
 			break
 		end
+		---@cast first string
 		local header = {}
 		local ok, err = readheader(conn, header)
 		if not ok then

@@ -7,6 +7,7 @@ local logger = require "silly.logger"
 local helper = require "silly.net.http.helper"
 local hpack = require "silly.http2.hpack"
 local builder = require "silly.http2.framebuilder"
+local errno = require "silly.errno"
 
 local next = next
 local error = error
@@ -18,6 +19,8 @@ local format = string.format
 local wakeup = task.wakeup
 local pack = string.pack
 local unpack = string.unpack
+local EEOF<const> = errno.EOF
+local ETIMEDOUT<const> = errno.TIMEDOUT
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
@@ -563,7 +566,7 @@ local function channel_clearstream(ch)
 		-- Set state before waking up coroutines to ensure consistent state
 		v.closed = true
 		v.channel = nil
-		v.errstr = "channel goaway"
+		v.errstr = "Channel goaway"
 		v.localstate = STATE_RST
 		v.remotestate = STATE_RST
 		-- Wakeup readco with nil, it will read errstr
@@ -651,13 +654,13 @@ function C.openstream(ch)
 		add = 0
 	end
 	if ch.goaway then
-		return nil, "channel goaway"
+		return nil, "Channel goaway"
 	end
 	-- RFC 7540: Stream identifiers cannot be reused
 	-- If we've exhausted the stream ID space, the connection must be closed
 	local id = ch.streamidx
 	if id + streamcount >= MAX_STREAM_ID then
-		return nil, "stream id exhausted"
+		return nil, "Stream id exhausted"
 	end
 	id = id + 2
 	local stream = channel_newstream(ch, id, true, "", "", {})
@@ -771,7 +774,7 @@ local function stream_readwait(s, state, size, timeout)
 		local timer = time.after(timeout, read_timer, s)
 		dat = task.wait()
 		if dat == TIMEOUT then
-			return nil, "read timeout"
+			return nil, ETIMEDOUT
 		end
 		time.cancel(timer)
 	else
@@ -872,7 +875,7 @@ local function stream_reset(id, ch, errorcode)
 	end
 	local err = err_str[errorcode]
 	s.localstate = STATE_RST
-	s.errstr = "local reset"
+	s.errstr = "Local reset"
 	stream_readwakeup(s, nil)
 	stream_writewakeup(s, err)
 end
@@ -955,7 +958,7 @@ function S.write(s, data)
 		return true, nil
 	end
 	if s.localstate >= STATE_END then
-		return false, "local closed"
+		return false, "Local closed"
 	end
 	local ch = s.channel
 	if not ch then
@@ -976,7 +979,7 @@ end
 ---@return boolean, string? error
 function S.closewrite(s, data, trailer)
 	if s.localstate >= STATE_CLOSE then
-		return false, "local closed"
+		return false, "Local closed"
 	end
 	if s.writeco then
 		error("[h2] closewrite can't be called while write is pending", 2)
@@ -1050,11 +1053,11 @@ function S.close(s)
 	else --not send request, just clear
 		s.localstate = STATE_RST
 		s.remotestate = STATE_RST
-		s.errstr = "local closed"
+		s.errstr = "Local closed"
 		ch.streams[s.id] = nil
 		s.channel = nil
 		stream_readwakeup(s, nil)
-		stream_writewakeup(s, "local closed")
+		stream_writewakeup(s, "Local closed")
 	end
 	ch.streamcount = ch.streamcount - 1
 	if channel_checkclose(ch) then
@@ -1078,11 +1081,11 @@ function S.read(s, size, timeout)
 		return dat, nil
 	end
 	if s.localstate == STATE_RST then
-		return nil, "local reset"
+		return nil, "Local reset"
 	end
 	local remotestate = s.remotestate
 	if remotestate == STATE_END then
-		return "", "end of stream"
+		return nil, EEOF
 	elseif remotestate == STATE_RST then
 		return nil, s.errstr
 	end
@@ -1098,9 +1101,9 @@ function S.readall(s, timeout)
 		local dat = s.recvbuf:readall()
 		if #dat > 0 then
 			return dat, nil
-		end
-		if remotestate == STATE_END then
-			return "", "end of stream"
+		elseif remotestate == STATE_END then
+			-- For empty body (like HEAD requests), return empty string
+			return "", nil
 		else
 			return nil, s.errstr
 		end
@@ -1185,7 +1188,7 @@ local function frame_data(ch, id, flag, dat)
 		end
 	end
 	if flag & END_STREAM == END_STREAM then
-		stream_remoteend(s, STATE_END, "end of stream")
+		stream_remoteend(s, STATE_END, EEOF)
 	end
 end
 
@@ -1478,7 +1481,7 @@ local function frame_header_client(ch, streamid, flag, dat)
 		map_header(hlist, s.trailer)
 	end
 	if flag & END_STREAM == END_STREAM then
-		stream_remoteend(s, STATE_END, "end of stream")
+		stream_remoteend(s, STATE_END, EEOF)
 	end
 end
 
@@ -1509,13 +1512,13 @@ local function handshake_as_client(ch)
 	end
 	local t, f, dat, id = read_frame(conn, ch)
 	if not t or t ~= FRAME_SETTINGS then
-		return false, "expect settings"
+		return false, "Expect settings"
 	end
 	frame_settings(ch, id, f, dat)
 	while true do
 		local t,f,dat,id = read_frame(conn, ch)
 		if not t then
-			return false, "handshake closed"
+			return false, "Handshake closed"
 		end
 		local cb = frame_client[t]
 		if cb then
@@ -1609,7 +1612,7 @@ local function frame_header_server(ch, id, flag, dat)
 		s.query = query
 		if flag & END_STREAM == END_STREAM then
 			-- RFC 7540 Section 8.1.2.6: Validate content-length for requests without body
-			stream_remoteend(s, STATE_END, "end of stream")
+			stream_remoteend(s, STATE_END, EEOF)
 		else
 			s.remotestate = STATE_HEADER
 		end
@@ -1628,7 +1631,7 @@ local function frame_header_server(ch, id, flag, dat)
 			return
 		end
 		map_header(hlist, s.trailer)
-		stream_remoteend(s, STATE_END, "end of stream")
+		stream_remoteend(s, STATE_END, EEOF)
 	end
 end
 
