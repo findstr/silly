@@ -69,7 +69,7 @@ registrar:register(proto, "TestService", {
 				data = "item_" .. i
 			})
 			if not ok then
-				return {code = code.Internal, message = err}
+				return {code = code.INTERNAL, message = err}
 			end
 		end
 	end,
@@ -102,7 +102,7 @@ registrar:register(proto, "TestService", {
 				value = req.value * 2
 			})
 			if not ok then
-				return {code = code.Internal, message = err}
+				return {code = code.INTERNAL, message = err}
 			end
 		end
 	end,
@@ -222,7 +222,7 @@ testaux.case("Test 4: Bidirectional Streaming RPC", function()
 end)
 
 testaux.case("Test 5: Error Handling", function()
-	local resp, err = client:ErrorTest({error_code = code.InvalidArgument})
+	local resp, err = client:ErrorTest({error_code = code.INVALID_ARGUMENT})
 	testaux.asserteq(resp, nil, "Test 5.1: Response should be nil on error")
 	testaux.assertneq(err, nil, "Test 5.2: Error should not be nil")
 	testaux.asserteq(type(err), "string", "Test 5.3: Error should be string")
@@ -239,7 +239,7 @@ testaux.case("Test 6: Timeout Handling", function()
 		value = 1
 	}, 1000)
 	testaux.asserteq(resp, nil, "Test 6.1: Response should be nil on timeout")
-	testaux.asserteq(err, "grpc: deadline exceeded", "Test 6.2: Error should be deadline exceeded")
+	testaux.asserteq(err, "Deadline exceeded", "Test 6.2: Error should be deadline exceeded")
 
 	local resp, err = client:SlowCall({
 		message = "no timeout",
@@ -284,6 +284,24 @@ testaux.case("Test 8: Large Message Handling", function()
 	testaux.assertneq(resp, nil, "Test 8.1: Response should not be nil for large message")
 	testaux.asserteq(#resp.message, #large_msg + 6, "Test 8.2: Response message length should match")
 	testaux.asserteq(resp.value, 1998, "Test 8.3: Value should be doubled")
+end)
+
+testaux.case("Test 9: gRPC DNS failure returns host-specific string", function()
+	testaux.with_mocked_dns(function(host, qtype)
+		return nil, "Query timed out (10001)"
+	end, {"silly.net.grpc.client.conn", "silly.net.grpc"}, function(reloaded)
+		local mock_grpc = reloaded["silly.net.grpc"]
+		local conn2, err = mock_grpc.newclient({
+			targets = {"dns-fail.test:8991"},
+		})
+		testaux.asserteq(conn2, nil, "Test 9.1: gRPC client creation should fail on DNS error")
+		testaux.assertcontains(err, "dns lookup",
+			"Test 9.2: Error should mention dns lookup")
+		testaux.assertcontains(err, "dns-fail.test",
+			"Test 9.3: Error should include the failing host")
+		testaux.assertcontains(err, "timed out",
+			"Test 9.4: Error should propagate underlying DNS reason")
+	end)
 end)
 
 time.sleep(1000)

@@ -389,7 +389,7 @@ local data, err = conn:read(conn:unreadbytes())
 
 **Return Values**:
 - Success: Returns data string
-- Failure: Returns `nil` and error message (might be `nil`, indicating connection closed)
+- Failure: Returns `nil` and an error string (`errno.EOF` on clean peer close, other transport errno on failure)
 
 ### Write Operations
 
@@ -411,13 +411,17 @@ local ok, err = conn:write(data)
 Network programming must handle various error conditions:
 
 ```lua
+local errno = require "silly.errno"
+
 -- Read errors
 local data, err = conn:read("\n")
-if err then
-    if err then
-        print("Network error:", err)
-    else
+if not data then
+    -- conn:read is declared as `---@return string?, silly.errno?`,
+    -- so it is safe to compare `err` against silly.errno constants.
+    if err == errno.EOF then
         print("Client closed connection normally")
+    else
+        print("Network error:", err)
     end
     conn:close()
     return
@@ -433,9 +437,13 @@ end
 ```
 
 **Common Errors**:
-- Connection closed: `err` is `nil` or `"socket closed"`
-- Network error: `err` contains specific error message (e.g., `"Connection reset by peer"`)
-- Active close: `err` is `"active closed"`
+- EOF (peer closed cleanly): `conn:read()` returns `nil, errno.EOF`
+- Reset / network error: `err` carries the underlying transport reason (e.g. `errno.CONNRESET`)
+- Local close: `err` is `errno.CLOSED`
+
+::: tip Branching on `err`
+The rule is simple: **look at the function's `---@return` annotation**. If it declares the error as `silly.errno?`, you may compare `err == errno.XXX`. If it declares `string?`, treat `err` as an opaque string and log it — never branch on its content.
+:::
 
 ## Extension Exercises
 

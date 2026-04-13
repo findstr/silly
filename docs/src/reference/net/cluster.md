@@ -233,7 +233,7 @@ cluster.serve {
         return body
     end,
     close = function(peer, errno)
-        print(string.format("连接关闭，错误码: %d", errno))
+        print(string.format("连接关闭，错误: %s", errno))
     end,
 }
 
@@ -1101,18 +1101,12 @@ task.fork(function()
     -- cluster.connect 总是返回 peer handle
     local peer = cluster.connect(addr)
 
-    -- 错误处理在 call/send 时进行
+    -- cluster.call 的错误返回类型声明为 `string?`，因此把 err
+    -- 当作不透明的诊断字符串——打印到日志即可，不要对其内容
+    -- 做分支判断。
     local resp, err = cluster.call(peer, cmd, data)
     if not resp then
-        -- 调用失败
-        if err == "timeout" then
-            -- 超时处理
-        elseif err == "peer closed" then
-            -- 连接已关闭（入站连接断开后无法重连）
-        else
-            -- 其他错误（如连接失败、DNS解析失败等）
-            print("调用错误:", err)
-        end
+        print("调用错误:", err)
         return
     end
 

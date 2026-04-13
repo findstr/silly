@@ -33,7 +33,7 @@ end
 ---@return boolean, string? error
 function channel.push(self, dat)
 	if not dat then
-		return false, "nil data"
+		return false, "Nil data"
 	end
 	local reason = self.reason
 	if reason then
@@ -61,7 +61,7 @@ function channel.pop(self)
 		end
 		local co = self.co
 		if co then
-			return nil, "channel is mpsc"
+			return nil, "Channel is mpsc"
 		end
 		self.co = task.running()
 		local dat = task.wait()

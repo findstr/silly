@@ -317,17 +317,17 @@ local function read_packet(conn)
 	local data, err = tcp_read(fd, 4)
 	if not data then
 		conn.is_broken = true
-		return nil, "failed to receive packet header: " .. err
+		return nil, "Failed to receive packet header: " .. err
 	end
 	conn.packet_no = strbyte(data, 4)
 	local len, _ = strunpack("<I3", data, 1)
 	if len == 0 then
-		return nil, "empty packet"
+		return nil, "Empty packet"
 	end
 	data, err = tcp_read(fd, len)
 	if not data then
 		conn.is_broken = true
-		return nil, "failed to read packet content: " .. err
+		return nil, "Failed to read packet content: " .. err
 	end
 	return data, nil
 end

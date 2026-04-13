@@ -389,7 +389,7 @@ local data, err = conn:read(conn:unreadbytes())
 
 **返回值**:
 - 成功: 返回数据字符串
-- 失败: 返回 `nil` 和错误信息(可能是 `nil`,表示连接关闭)
+- 失败: 返回 `nil` 和错误字符串（对端正常关闭时为 `errno.EOF`，其他情况为对应的传输层 errno）
 
 ### 写入操作
 
@@ -411,13 +411,17 @@ local ok, err = conn:write(data)
 网络编程中必须处理各种错误情况:
 
 ```lua
+local errno = require "silly.errno"
+
 -- 读取错误
 local data, err = conn:read("\n")
-if err then
-    if err then
-        print("网络错误:", err)
-    else
+if not data then
+    -- conn:read 的注解是 `---@return string?, silly.errno?`，
+    -- 因此可以安全地把 err 和 silly.errno 常量比较。
+    if err == errno.EOF then
         print("客户端正常关闭连接")
+    else
+        print("网络错误:", err)
     end
     conn:close()
     return
@@ -433,9 +437,13 @@ end
 ```
 
 **常见错误**:
-- 连接关闭: `err` 为 `nil` 或 `"socket closed"`
-- 网络错误: `err` 包含具体错误信息(如 `"Connection reset by peer"`)
-- 主动关闭: `err` 为 `"active closed"`
+- EOF（对端正常关闭）: `conn:read()` 会返回 `nil, errno.EOF`
+- Reset / 网络错误: `err` 携带底层传输层原因（如 `errno.CONNRESET`）
+- 本端主动关闭: `err` 为 `errno.CLOSED`
+
+::: tip 关于 `err` 的分支判断
+规则很简单：**看函数的 `---@return` 注解**。如果错误类型声明为 `silly.errno?`，就可以用 `err == errno.XXX` 比较；如果声明为 `string?`，则把 err 当作不透明字符串仅用于日志，不要对其内容做判断。
+:::
 
 ## 扩展练习
 

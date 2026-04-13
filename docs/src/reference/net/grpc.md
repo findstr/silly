@@ -72,15 +72,15 @@ service MyService {
 gRPC 使用标准的状态码表示操作结果，定义在 `silly.net.grpc.code` 模块：
 
 - `code.OK` (0): 成功
-- `code.Canceled` (1): 操作被取消
-- `code.Unknown` (2): 未知错误
-- `code.InvalidArgument` (3): 无效参数
-- `code.DeadlineExceeded` (4): 超时
-- `code.NotFound` (5): 资源未找到
-- `code.AlreadyExists` (6): 资源已存在
-- `code.PermissionDenied` (7): 权限不足
-- `code.ResourceExhausted` (8): 资源耗尽
-- `code.Unauthenticated` (16): 未认证
+- `code.CANCELLED` (1): 操作被取消
+- `code.UNKNOWN` (2): 未知错误
+- `code.INVALID_ARGUMENT` (3): 无效参数
+- `code.DEADLINE_EXCEEDED` (4): 超时
+- `code.NOT_FOUND` (5): 资源未找到
+- `code.ALREADY_EXISTS` (6): 资源已存在
+- `code.PERMISSION_DENIED` (7): 权限不足
+- `code.RESOURCE_EXHAUSTED` (8): 资源耗尽
+- `code.UNAUTHENTICATED` (16): 未认证
 
 ---
 

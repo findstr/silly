@@ -10,6 +10,15 @@ local http = require "silly.net.http"
 local crypto = require "silly.crypto.utils"
 local gzip = require "silly.compress.gzip"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+
+-- NOTE (test-only use of silly.errno):
+-- EEOF is used here to white-box test that silly.net.http.h2 actually
+-- surfaces silly.errno values internally. Production code must NOT
+-- compare h2 stream errors against silly.errno — h2's public contract
+-- is `string?`, and only silly.net / silly.net.{tcp,tls,udp} callers
+-- may branch on silly.errno values.
+local EEOF<const> = errno.EOF
 
 local set_nil = true
 local server_handler
@@ -363,9 +372,10 @@ testaux.case("Test 13: stream:read(n) - partial reads with small data", function
 	local chunk4, err = stream:read(5)
 	testaux.asserteq(chunk4, "67890", "Test 13.5: Fourth read should get 5 bytes")
 
-	-- Read after EOF should return empty string
+	-- Read after EOF should return nil, EOF
 	local chunk5, err = stream:read(5)
-	testaux.asserteq(chunk5, "", "Test 13.6: Read after EOF should return empty string")
+	testaux.asserteq(chunk5, nil, "Test 13.6: Read after EOF should return nil")
+	testaux.asserteq(err, EEOF, "Test 13.7: err should be EOF after stream ended")
 
 	wait_done()
 end)
@@ -399,16 +409,17 @@ testaux.case("Test 14: stream:read(n) - partial reads with multiple writes", fun
 
 	-- Read rest (2 bytes left)
 	local chunk4, err = stream:read(10)
-	testaux.asserteq(chunk4, "", "Test 14.5: Fourth read should get empty string")
-	testaux.asserteq(err, "end of stream", "Test 14.6: err should be end of stream")
+	testaux.asserteq(chunk4, nil, "Test 14.5: Fourth read should get nil")
+	testaux.asserteq(err, EEOF, "Test 14.6: err should be EOF")
 
 	local chunk5, err = stream:readall()
 	testaux.asserteq(chunk5, "DD", "Test 14.7: Fifth read should get exactly 	2 bytes")
 	testaux.asserteq(err, nil, "Test 14.8: err should be nil")
 
 	-- Concatenate and verify total
-	local total = chunk1 .. chunk2 .. chunk3 .. chunk4 .. chunk5
-	testaux.asserteq(total, "AAAAABBBBBCCCCCDDDDD", "Test 14.6: Total should be exactly 20 bytes")
+	local total = chunk1 .. chunk2 .. chunk3 .. (chunk4 or "") .. chunk5
+	testaux.asserteq(total, "AAAAABB" .. "BBBCCCCC" .. "DDD" .. "" .. "DD", "Test 14.6: Total should be all data read")
+	testaux.asserteq(#total, 20, "Test 14.7: Total should be exactly 20 bytes")
 
 	wait_done()
 end)
@@ -428,12 +439,12 @@ testaux.case("Test 15: stream:read(n) - read more than available", function()
 
 	-- Try to read 100 bytes, but only 5 available before EOF
 	local chunk, err = stream:read(100)
-	testaux.asserteq(chunk, "", "Test 15.2: Should read all 5 available bytes")
-	testaux.asserteq(err, "end of stream", "Test 15.3: err should be end of stream")
+	testaux.asserteq(chunk, nil, "Test 15.2: read should return nil when requesting more than available")
+	testaux.asserteq(err, EEOF, "Test 15.3: err should be EOF when requesting more than available")
 
-	local chunk, err = stream:readall()
-	testaux.asserteq(chunk, "SHORT", "Test 15.4: Should read all 5 available bytes")
-	testaux.asserteq(err, nil, "Test 15.5: err should be nil")
+	local chunk2, err2 = stream:readall()
+	testaux.asserteq(chunk2, "SHORT", "Test 15.4: readall should return remaining data")
+	testaux.asserteq(err2, nil, "Test 15.5: err should be nil")
 
 	wait_done()
 end)
@@ -624,7 +635,7 @@ testaux.case("Test 20: Connection broken during read", function()
 
 	local body, err = stream:readall()
 	testaux.asserteq(body, nil, "Test 20.2: Should fail to read")
-	testaux.asserteq(err, "channel goaway", "Test 20.3: Should have error")
+	testaux.asserteq(err, "Channel goaway", "Test 20.3: Should have error")
 
 	-- server_handler already set to nil by broken connection
 	server_handler = nil
@@ -794,11 +805,11 @@ testaux.case("Test 26: HTTP/2 opensream on a closed channel", function()
 	s:closewrite("foo")
 	local body, err = s:readall()
 	testaux.asserteq(body, nil, "Test 26.4: Request should fail")
-	testaux.asserteq(err, "channel goaway", "Test 26.4: Request should fail")
+	testaux.asserteq(err, "Channel goaway", "Test 26.4: Request should fail")
 
 	local s, err = ch:openstream()
 	testaux.asserteq(s, nil, "Test 26.5: Openstream should fail")
-	testaux.asserteq(err, "channel goaway", "Test 26.5: Openstream should fail")
+	testaux.asserteq(err, "Channel goaway", "Test 26.5: Openstream should fail")
 end)
 
 testaux.case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function()

@@ -6,7 +6,6 @@ local M = {}
 local HDR_SIZE<const> = 5
 local REQ_MAX_LEN<const> = 4*1024*1024
 
-local assert = assert
 local pack = string.pack
 local unpack = string.unpack
 
@@ -21,14 +20,24 @@ function M.readbody(h2stream, isreq, pbtype)
 		return nil, err
 	end
 	local compress, frame_size = unpack(">I1I4", data)
-	-- TODO:
-	assert(compress == 0, "grpc: compression not supported")
 	if isreq and frame_size > REQ_MAX_LEN then
 		h2stream:respond(200, {
 			['content-type'] = 'application/grpc',
-			['grpc-status'] = code.ResourceExhausted,
+			['grpc-status'] = code.RESOURCE_EXHAUSTED,
 		})
-		return nil, "grpc: received message larger than max"
+		return nil, "Received message larger than max"
+	end
+	-- TODO:
+	if compress ~= 0 then
+		h2stream:read(frame_size) -- drain compressed payload to keep stream aligned
+		if isreq then
+			h2stream:respond(200, {
+				['content-type'] = 'application/grpc',
+				['grpc-status'] = code.UNIMPLEMENTED,
+				['grpc-message'] = "Compression not supported",
+			})
+		end
+		return nil, "Compression not supported yet"
 	end
 	data, err = h2stream:read(frame_size)
 	if err then
@@ -36,7 +45,7 @@ function M.readbody(h2stream, isreq, pbtype)
 	end
 	local resp = pb.decode(pbtype, data)
 	if not resp then
-		return nil, "decode error"
+		return nil, "Decode error"
 	end
 	return resp, nil
 end

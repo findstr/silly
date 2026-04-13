@@ -24,6 +24,8 @@ local validname = c.validname
 local running = task.running
 local wakeup = task.wakeup
 local wait = task.wait
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 global _
 
@@ -221,7 +223,7 @@ local function dispatch_resp(name_cache, msg)
 	if not records then
 		-- Server failure is not a negative answer,
 		-- so do not clear or overwrite cache.
-		finish_req(req, "server failure")
+		finish_req(req, "Server failure")
 		return nil
 	end
 	local now = timenow()
@@ -359,7 +361,7 @@ local function retry_cb(req)
 			return
 		end
 	end
-	finish_req(req, "timeout")
+	finish_req(req, ETIMEDOUT)
 end
 
 ---@param req silly.net.dns.req
@@ -391,7 +393,7 @@ end
 
 local function close_servers()
 	for _, req in pairs(inflight) do
-		finish_req(req, "dns reconfigured")
+		finish_req(req, "Dns reconfigured")
 	end
 	for i, server in ipairs(servers) do
 		servers[i] = nil -- clear server list to prevent new queries and reconnect
@@ -452,8 +454,8 @@ local function query(server, trans, name, qtype, timeout)
 		inflight[rr] = request
 		local ok = send_udp_req(request)
 		if not ok then
-			finish_req(request, "send failed")
-			return false, "send failed"
+			finish_req(request, "Send failed")
+			return false, "Send failed"
 		end
 	end
 	-- Optional per-call user timeout
@@ -463,7 +465,7 @@ local function query(server, trans, name, qtype, timeout)
 	local timer = time.after(timeout, query_timer, trans)
 	local ok = wait()
 	if ok == TIMEOUT then
-		return false, "timeout"
+		return false, ETIMEDOUT
 	end
 	time.cancel(timer)
 	if ok then
@@ -551,7 +553,7 @@ end
 ---@return table? res, string? error
 local function resolve_r(server, trans, name, qtype, timeout, deep)
 	if deep > 100 then
-		return nil, "too deep"
+		return nil, "Too deep"
 	end
 	local name_cache = server.name_cache
 	local trans_cache = trans.name_cache
@@ -590,7 +592,7 @@ local function resolve(name, qtype, timeout)
 	end
 	name = lower(name)
 	if not validname(name) then
-		return nil, "invalid name"
+		return nil, "Invalid name"
 	end
 	if qtype == RR_A or qtype == RR_AAAA then -- try hosts first
 		local rrs = hosts[name]
@@ -618,7 +620,7 @@ local function resolve(name, qtype, timeout)
 		end
 	end
 	if not server then
-		return nil, "no nameserver"
+		return nil, "No nameserver"
 	end
 	---@type silly.net.dns.trans
 	local trans = {req = nil, co = nil, name_cache = {}}
@@ -635,7 +637,7 @@ local function resolve(name, qtype, timeout)
 			end
 		end
 	end
-	return nil, err or "not found"
+	return nil, err or "Not found"
 end
 
 

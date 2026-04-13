@@ -1,7 +1,6 @@
 local time = require "silly.time"
 local code = require "silly.net.grpc.code"
 local helper = require "silly.net.grpc.helper"
-local codename = require "silly.net.grpc.codename"
 
 local tonumber = tonumber
 local setmetatable = setmetatable
@@ -45,10 +44,10 @@ local function check_trailer(h2stream, err)
 	local grpc_status = trailer['grpc-status']
 	if grpc_status then
 		status = tonumber(grpc_status)
-		message = trailer['grpc-message'] or codename[status] or "Unknown"
+		message = trailer['grpc-message'] or code[status] or "Unknown"
 	else
-		status = code.Unknown
-		message = err or "no status in trailer"
+		status = code.UNKNOWN
+		message = err or "No status in trailer"
 	end
 	return status, message
 end
@@ -157,7 +156,7 @@ local function unary(method, fullname)
 		h2stream:readall() -- drain all data
 		if timer then
 			if not waiting_stream[timer] then
-				return nil, "grpc: deadline exceeded"
+				return nil, "Deadline exceeded"
 			end
 			waiting_stream[timer] = nil
 			time.cancel(timer)
@@ -165,12 +164,12 @@ local function unary(method, fullname)
 		local trailer = h2stream.trailer
 		local grpc_status = trailer['grpc-status'] or h2stream.header['grpc-status']
 		if not grpc_status then
-			return nil, err or "grpc: no status in trailer"
+			return nil, err or "No status in trailer"
 		end
 		local n = tonumber(grpc_status)
 		if n ~= code.OK then
 			return nil, format("code = %s desc = %s",
-				codename[n], trailer['grpc-message'])
+				code[n], trailer['grpc-message'])
 		end
 		return resp, err
 	end
@@ -198,7 +197,7 @@ local function sstreaming(method, fullname)
 		writebody(h2stream, itype, req, true)
 		if timer then
 			if not waiting_stream[timer] then
-				return nil, "grpc: deadline exceeded"
+				return nil, "Deadline exceeded"
 			end
 			waiting_stream[timer] = nil
 			time.cancel(timer)
@@ -289,7 +288,7 @@ local function newmt(proto, service_name)
 		end
 	end
 	if not service then
-		return nil, "service not found"
+		return nil, "Service not found"
 	end
 	local mt = mt_cache[service]
 	if mt then

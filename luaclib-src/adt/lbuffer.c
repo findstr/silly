@@ -422,14 +422,20 @@ static int lappend(lua_State *L)
 		switch (type) {
 		case LUA_TSTRING:
 			ptr = lua_tolstring(L, vstk, &len);
-			ref = ref_value(L, b, vstk);
-			bytes = push_data(L, ptr, len, ref);
+			if (len > 0) {
+				ref = ref_value(L, b, vstk);
+				bytes = push_data(L, ptr, len, ref);
+			}
 			vstk++;
 			break;
 		case LUA_TLIGHTUSERDATA:
 			ptr = lua_touserdata(L, vstk);
 			len = luaL_checkinteger(L, vstk+1);
-			bytes = push_data(L, ptr, len, 0);
+			if (len > 0) {
+				bytes = push_data(L, ptr, len, 0);
+			} else {
+				silly_free(ptr);
+			}
 			vstk+=2;
 			break;
 		default:

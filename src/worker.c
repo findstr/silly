@@ -212,15 +212,17 @@ size_t worker_backlog()
 
 static inline void new_error_table(lua_State *L)
 {
-#define def(code, str)           \
-	lua_pushliteral(L, str); \
+#define def(code, str)            \
+	lua_pushfstring(L, str " (%d)", code); \
 	lua_seti(L, -2, code)
 	lua_newtable(L);
-	def(EX_ADDRINFO, "getaddrinfo failed");
-	def(EX_NOSOCKET, "no free socket");
-	def(EX_CLOSING, "socket is closing");
-	def(EX_CLOSED, "socket is closed");
-	def(EX_EOF, "");
+	def(EXRESOLVE, "Address resolution failed");
+	def(EXNOSOCKET, "No free socket available");
+	def(EXCLOSING, "Socket is closing");
+	def(EXCLOSED, "Socket is closed");
+	def(EXEOF, "End of file");
+	def(EXTLS, "TLS error");
+	def(ETIMEDOUT, "Operation timed out");
 #undef def
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
@@ -249,7 +251,7 @@ void worker_push_error(lua_State *L, int stk, int code)
 	}
 	if (lua_rawgeti(L, stk, code) == LUA_TNIL) {
 		lua_pop(L, 1);
-		lua_pushstring(L, strerror(code));
+		lua_pushfstring(L, "%s (%d)", strerror(code), code);
 		lua_pushvalue(L, -1);
 		lua_rawseti(L, stk, code);
 	}

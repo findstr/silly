@@ -580,12 +580,12 @@ static int ldecode(lua_State *L)
 	skip_space(&s);
 	if (s.ptr >= s.end) {
 		lua_pushnil(L);
-		lua_pushliteral(L, "empty input");
+		lua_pushliteral(L, "Empty input");
 		return 2;
 	}
 	if (decode_value(&s) < 0) {
 		lua_pushnil(L);
-		lua_pushliteral(L, "invalid json");
+		lua_pushliteral(L, "Invalid json");
 		return 2;
 	}
 	return 1;

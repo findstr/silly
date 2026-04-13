@@ -237,6 +237,54 @@ function testaux.assert_error(fn, str)
 	end
 end
 
+function testaux.assertcontains(s, sub, str)
+	local aa = escape(s)
+	local a = tostringx(aa, 60)
+	if type(s) == "string" and s:find(sub, 1, true) then
+		print(format('\27[32m%sSUCCESS\t"%s"\t"%s" contains "%s"\27[0m', m, str, a, sub))
+	else
+		print(format('\27[31m%sFAIL\t"%s"\t"%s" should contain "%s"\27[0m', m, str, a, sub))
+		print(debug.traceback(1))
+		silly.exit(1)
+	end
+end
+
+-- Install a mocked silly.net.dns and re-require each listed module so its
+-- local closure captures the mock. package.loaded is restored before body
+-- runs; the tables handed to body still reference the mock via closure,
+-- while subsequent tests see the real modules.
+function testaux.with_mocked_dns(mock_lookup, reload_modules, body)
+	local original_dns = package.loaded["silly.net.dns"]
+	local originals = {}
+	for _, mod in ipairs(reload_modules) do
+		originals[mod] = package.loaded[mod]
+		package.loaded[mod] = nil
+	end
+	package.loaded["silly.net.dns"] = {
+		A = original_dns.A,
+		lookup = mock_lookup,
+	}
+	local reloaded = {}
+	local load_err
+	for _, mod in ipairs(reload_modules) do
+		local ok, result = pcall(require, mod)
+		if not ok then
+			load_err = result
+			break
+		end
+		reloaded[mod] = result
+	end
+	package.loaded["silly.net.dns"] = original_dns
+	for _, mod in ipairs(reload_modules) do
+		package.loaded[mod] = originals[mod]
+	end
+	if load_err then
+		testaux.error("with_mocked_dns reload failed: " .. tostring(load_err))
+		return
+	end
+	body(reloaded)
+end
+
 function testaux.hexdump(s)
 	return (s:gsub('.', function(c) return string.format('%02X', string.byte(c)) end))
 end

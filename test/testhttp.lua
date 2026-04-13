@@ -4,6 +4,21 @@ local http = require "silly.net.http"
 local tcp = require "silly.net.tcp"
 local gzip = require "silly.compress.gzip"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+
+-- NOTE (test-only use of silly.errno):
+-- The EEOF / ETIMEDOUT constants below are used inside this file to
+-- verify that the HTTP layer's internal implementation actually surfaces
+-- silly.errno values at the boundary — i.e. this is a *white-box test*
+-- of silly.net.http's implementation.
+--
+-- Production code must NOT compare errors returned by silly.net.http
+-- (or any other non-transport module) against silly.errno constants.
+-- Those modules' public contract is `string?`, and they may rewrap or
+-- translate errors in the future. Only silly.net / silly.net.{tcp,tls,udp}
+-- callers may branch on silly.errno values.
+local EEOF<const> = errno.EOF
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 local server_handler
 
@@ -420,6 +435,7 @@ testaux.case("Test 15: client.request API - HEAD request", function()
 
 	local body, err = stream:readall()
 	testaux.asserteq(body, "", "Test 15.5: body should be empty for HEAD")
+	testaux.asserteq(err, nil, "Test 15.5.1: err should be nil for HEAD")
 	wait_done()
 end)
 
@@ -446,8 +462,9 @@ testaux.case("Test 16: client.request API - Incremental read from chunked", func
 	local chunk3 = stream:read(6)
 	testaux.asserteq(chunk3, "chunk3", "Test 16.4: third chunk should be 'chunk3'")
 
-	local last = stream:read(6)
-	testaux.asserteq(last, "", "Test 16.5: last read should be empty")
+	local last, err = stream:read(6)
+	testaux.asserteq(last, nil, "Test 16.5: last read should be nil")
+	testaux.asserteq(err, EEOF, "Test 16.5.1: should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 16.6: eof should be true")
 	wait_done()
 end)
@@ -647,9 +664,10 @@ testaux.case("Test 22: stream:read(n) - content-length partial reads", function(
 	testaux.asserteq(chunk4, "67890", "Test 22.8: Fourth read should get 5 bytes")
 	testaux.asserteq(stream.eof, true, "Test 22.9: EOF should be true after reading all")
 
-	-- Read after EOF should return empty string
+	-- Read after EOF should return nil with EOF error
 	local chunk5, err = stream:read(5)
-	testaux.asserteq(chunk5, "", "Test 22.10: Read after EOF should return empty string")
+	testaux.asserteq(chunk5, nil, "Test 22.10: Read after EOF should return nil")
+	testaux.asserteq(err, EEOF, "Test 22.10.1: Should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 22.11: EOF should remain true")
 
 	wait_done()
@@ -687,8 +705,8 @@ testaux.case("Test 23: stream:read(n) - chunked partial reads", function()
 
 	-- Read rest (2 bytes left)
 	local chunk4, err = stream:read(10)
-	testaux.asserteq(chunk4, "", "Test 23.8: Fourth read should get empty string (due to EOF)")
-	testaux.asserteq(err, "end of file", "Test 23.9: Should get end of file error")
+	testaux.asserteq(chunk4, nil, "Test 23.8: Fourth read should return nil (EEOF)")
+	testaux.asserteq(err, EEOF, "Test 23.9: Should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 23.9: EOF should be true after reading all")
 
 	-- Read accurately
@@ -698,12 +716,12 @@ testaux.case("Test 23: stream:read(n) - chunked partial reads", function()
 	testaux.asserteq(stream.eof, true, "Test 23.12: EOF should be true after reading all")
 
 	local chunk6, err = stream:readall()
-	testaux.asserteq(chunk6, "D", "Test 23.13: Sixth read should get 2 byte")
+	testaux.asserteq(chunk6, "D", "Test 23.13: Sixth read should get 1 byte")
 	testaux.asserteq(err, nil, "Test 23.14: Should not get error")
 	testaux.asserteq(stream.eof, true, "Test 23.15: EOF should be true after reading all")
 
-	-- Concatenate and verify total
-	local total = chunk1 .. chunk2 .. chunk3 .. chunk4 .. chunk5 .. chunk6
+	-- Concatenate and verify total (chunk4 is nil, skip it)
+	local total = chunk1 .. chunk2 .. chunk3 .. chunk5 .. chunk6
 	testaux.asserteq(total, "AAAAABBBBBCCCCCDDDDD", "Test 23.16: Total should be exactly 20 bytes")
 
 	wait_done()
@@ -724,8 +742,8 @@ testaux.case("Test 24: stream:read(n) - read more than available with content-le
 
 	-- Try to read 100 bytes, but only 10 available
 	local chunk, err = stream:read(100)
-	testaux.asserteq(chunk, "", "Test 24.2: Should read all 10 available bytes")
-	testaux.asserteq(err, "end of file", "Test 24.3: Should get end of file error")
+	testaux.asserteq(chunk, nil, "Test 24.2: Should return nil (EEOF)")
+	testaux.asserteq(err, EEOF, "Test 24.3: Should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 24.4: EOF should be true")
 
 	local chunk1, err = stream:read(5)
@@ -755,8 +773,8 @@ testaux.case("Test 25: stream:read(n) - read more than available with chunked", 
 
 	-- Try to read 100 bytes, but only 5 available before EOF
 	local chunk, err = stream:read(100)
-	testaux.asserteq(chunk, "", "Test 25.2: Should read empty string")
-	testaux.asserteq(err, "end of file", "Test 25.3: Should get end of file error")
+	testaux.asserteq(chunk, nil, "Test 25.2: Should return nil (EEOF)")
+	testaux.asserteq(err, EEOF, "Test 25.3: Should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 25.4: EOF should be true")
 
 	chunk, err = stream:readall()
@@ -786,19 +804,19 @@ testaux.case("Test 26: Timeout marks stream as broken", function()
 	-- Read with short timeout - should timeout
 	local chunk1, err = stream:read(10, 50)
 	testaux.asserteq(chunk1, nil, "Test 26.2: chunk1 should be nil on timeout")
-	testaux.asserteq(err, "read timeout", "Test 26.3: err should be read timeout")
+	testaux.asserteq(err, ETIMEDOUT, "Test 26.3: err should be TIMEOUT")
 	testaux.assertneq(stream.err, nil, "Test 26.4: stream.err should be set after timeout")
-	testaux.asserteq(stream.err, "read timeout", "Test 26.5: stream.err should be read timeout")
+	testaux.asserteq(stream.err, ETIMEDOUT, "Test 26.5: stream.err should be TIMEOUT")
 
 	-- Subsequent reads should fail immediately with the cached error
 	local chunk2, err2 = stream:read(5)
 	testaux.asserteq(chunk2, nil, "Test 26.6: chunk2 should be nil")
-	testaux.asserteq(err2, "read timeout", "Test 26.7: err should be cached timeout error")
+	testaux.asserteq(err2, ETIMEDOUT, "Test 26.7: err should be cached timeout error")
 
 	-- readall should also fail
 	local body, err3 = stream:readall()
 	testaux.asserteq(body, nil, "Test 26.8: body should be nil")
-	testaux.asserteq(err3, "read timeout", "Test 26.9: readall should return cached error")
+	testaux.asserteq(err3, ETIMEDOUT, "Test 26.9: readall should return cached error")
 
 	wait_done()
 end)
@@ -822,8 +840,8 @@ testaux.case("Test 27: read() exceeding Content-Length", function()
 
 	-- Try to read more
 	local chunk2, err = stream:read(10)
-	testaux.asserteq(chunk2, "", "Test 27.4: Read after EOF should return empty")
-	testaux.asserteq(err, "end of file", "Test 27.5: Should get end of file error")
+	testaux.asserteq(chunk2, nil, "Test 27.4: Read after EOF should return nil")
+	testaux.asserteq(err, EEOF, "Test 27.5: Should get EOF error")
 
 	wait_done()
 end)
@@ -849,8 +867,8 @@ testaux.case("Test 28: read() after chunked ends", function()
 
 	-- Try to read more
 	local chunk, err = stream:read(10)
-	testaux.asserteq(chunk, "", "Test 28.4: Read after EOF should return empty")
-	testaux.asserteq(err, "end of file", "Test 28.5: Should get end of file error")
+	testaux.asserteq(chunk, nil, "Test 28.4: Read after EOF should return nil")
+	testaux.asserteq(err, EEOF, "Test 28.5: Should get EOF error")
 
 	wait_done()
 end)
@@ -974,7 +992,8 @@ testaux.case("Test 33: read() returns buffered data before network read", functi
 
 	-- Read more than available in one request
 	local chunk1, err = stream:read(30)
-	testaux.asserteq(chunk1, "", "Test 33.2: Should read only available 20 bytes")
+	testaux.asserteq(chunk1, nil, "Test 33.2: Should return nil (EEOF)")
+	testaux.asserteq(err, EEOF, "Test 33.2.1: Should get EOF error")
 	testaux.asserteq(stream.eof, true, "Test 33.3: EOF should be true")
 
 	-- Buffer should be empty now
@@ -1422,6 +1441,70 @@ testaux.case("Test 45: htmlunescape comprehensive", function()
 	-- Entity-like but unknown name (should remain unchanged)
 	result = helper.htmlunescape("&unknown;")
 	testaux.asserteq(result, "&unknown;", "Test 45.14: unknown named entity unchanged")
+end)
+
+testaux.case("Test 46: client.request API - empty body with Content-Length 0 and chunked", function()
+	-- Part 1: Content-Length 0
+	server_handler = function(stream)
+		testaux.asserteq(stream.method, "GET", "Test 46.1: Method should be GET")
+		stream:respond(200, {
+			["content-type"] = "text/plain",
+			["content-length"] = 0,
+		})
+	end
+
+	local stream<close>, err = httpc:request("GET", "http://127.0.0.1:8080/empty", {})
+	testaux.assertneq(stream, nil, "Test 46.2: stream should not be nil")
+	testaux.asserteq(err, nil, "Test 46.3: err should be nil")
+	stream:closewrite()
+	local ok, wait_err = stream:waitresponse()
+	testaux.asserteq(ok, true, "Test 46.4: waitresponse should succeed")
+	testaux.asserteq(wait_err, nil, "Test 46.5: waitresponse err should be nil")
+	testaux.asserteq(stream.status, 200, "Test 46.6: status should be 200")
+
+	local body, read_err = stream:readall()
+	testaux.asserteq(body, "", "Test 46.7: body should be empty string")
+	testaux.asserteq(read_err, nil, "Test 46.8: err should be nil for empty body")
+
+	-- Part 2: Chunked transfer encoding
+	server_handler = function(stream)
+		testaux.asserteq(stream.method, "GET", "Test 46.9: Method should be GET (chunked)")
+		stream:respond(200, {
+			["content-type"] = "text/plain",
+			["transfer-encoding"] = "chunked",
+		})
+		stream:closewrite()  -- Close write immediately without sending any chunks
+	end
+
+	local stream2<close>, err2 = httpc:request("GET", "http://127.0.0.1:8080/empty_chunked", {})
+	testaux.assertneq(stream2, nil, "Test 46.10: stream should not be nil (chunked)")
+	testaux.asserteq(err2, nil, "Test 46.11: err should be nil (chunked)")
+	stream2:closewrite()
+	local ok2, wait_err2 = stream2:waitresponse()
+	testaux.asserteq(ok2, true, "Test 46.12: waitresponse should succeed (chunked)")
+	testaux.asserteq(wait_err2, nil, "Test 46.13: waitresponse err should be nil (chunked)")
+	testaux.asserteq(stream2.status, 200, "Test 46.14: status should be 200 (chunked)")
+
+	local body2, read_err2 = stream2:readall()
+	testaux.asserteq(body2, "", "Test 46.15: body should be empty string (chunked)")
+	testaux.asserteq(read_err2, nil, "Test 46.16: err should be nil for empty chunked body")
+	wait_done()
+end)
+
+testaux.case("Test 47: HTTP DNS failure returns contextual string", function()
+	testaux.with_mocked_dns(function(host, qtype)
+		return nil, "Query timed out (10001)"
+	end, {"silly.net.http.client", "silly.net.http"}, function(reloaded)
+		local mock_http = reloaded["silly.net.http"]
+		local stream, err = mock_http.request("GET", "http://dns-fail.test:8080", {})
+		testaux.asserteq(stream, nil, "Test 47.1: HTTP request should fail on DNS error")
+		testaux.assertcontains(err, "dns lookup",
+			"Test 47.2: Error should mention dns lookup")
+		testaux.assertcontains(err, "dns-fail.test",
+			"Test 47.3: Error should include the failing host")
+		testaux.assertcontains(err, "timed out",
+			"Test 47.4: Error should propagate underlying DNS reason")
+	end)
 end)
 
 if server then

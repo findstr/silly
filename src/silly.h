@@ -8,6 +8,7 @@
 
 #include "silly_conf.h"
 #include "compiler.h"
+#include "errnoex.h"
 
 #ifndef SILLY_GIT_SHA1
 #define SILLY_GIT_SHA1 0

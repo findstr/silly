@@ -72,15 +72,15 @@ service MyService {
 gRPC uses standard status codes to represent operation results, defined in the `silly.net.grpc.code` module:
 
 - `code.OK` (0): Success
-- `code.Canceled` (1): Operation canceled
-- `code.Unknown` (2): Unknown error
-- `code.InvalidArgument` (3): Invalid argument
-- `code.DeadlineExceeded` (4): Timeout
-- `code.NotFound` (5): Resource not found
-- `code.AlreadyExists` (6): Resource already exists
-- `code.PermissionDenied` (7): Permission denied
-- `code.ResourceExhausted` (8): Resource exhausted
-- `code.Unauthenticated` (16): Unauthenticated
+- `code.CANCELLED` (1): Operation canceled
+- `code.UNKNOWN` (2): Unknown error
+- `code.INVALID_ARGUMENT` (3): Invalid argument
+- `code.DEADLINE_EXCEEDED` (4): Timeout
+- `code.NOT_FOUND` (5): Resource not found
+- `code.ALREADY_EXISTS` (6): Resource already exists
+- `code.PERMISSION_DENIED` (7): Permission denied
+- `code.RESOURCE_EXHAUSTED` (8): Resource exhausted
+- `code.UNAUTHENTICATED` (16): Unauthenticated
 
 ---
 

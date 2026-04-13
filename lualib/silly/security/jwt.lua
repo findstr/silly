@@ -83,7 +83,7 @@ function jwt.encode(payload, key, algname)
 	algname = algname or "HS256"
 	local alg = alg_map[algname]
 	if not alg then
-		return nil, 'unsupported algorithm: ' .. algname
+		return nil, 'Unsupported algorithm: ' .. algname
 	end
 	local header_b64 = header_cache[algname]
 	-- marshal payload
@@ -102,39 +102,39 @@ end
 function jwt.decode(token, key)
 	local header_b64, payload_b64, signature_b64 = token:match("([^.]+).([^.]+).([^.]+)")
 	if not header_b64 or not payload_b64 or not signature_b64 then
-		return nil, 'invalid token format'
+		return nil, 'Invalid token format'
 	end
 	-- parse header
 	local header_json = b64decode(header_b64)
 	if not header_json then
-		return nil, 'invalid header'
+		return nil, 'Invalid header'
 	end
 	local header, _ = jsondecode(header_json)
 	if not header then
-		return nil, 'invalid header'
+		return nil, 'Invalid header'
 	end
 	local algname = header.alg
 	local alg = alg_map[algname]
 	if not alg then
-		return nil, 'unsupported algorithm: ' .. algname
+		return nil, 'Unsupported algorithm: ' .. algname
 	end
 	-- parse payload
 	local payload_json = b64decode(payload_b64)
 	if not payload_json then
-		return nil, 'invalid payload'
+		return nil, 'Invalid payload'
 	end
 	local payload, _ = jsondecode(payload_json)
 	if not payload then
-		return nil, 'invalid payload'
+		return nil, 'Invalid payload'
 	end
 	-- parse signature
 	local sig = b64decode(signature_b64)
 	if not sig then
-		return nil, 'invalid signature'
+		return nil, 'Invalid signature'
 	end
 	local signing_input = header_b64 .. '.' .. payload_b64
 	if not alg.verify(key, signing_input, sig, alg.hash) then
-		return nil, 'signature verification failed'
+		return nil, 'Signature verification failed'
 	end
 	return payload, nil
 end

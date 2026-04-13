@@ -2,15 +2,23 @@ local task = require "silly.task"
 local time = require "silly.time"
 local net = require "silly.net"
 local queue = require "silly.adt.queue"
+local errno = require "silly.errno"
+
 local assert = assert
 local setmetatable = setmetatable
+
+global _
+
 local qnew = queue.new
 local qpop = queue.pop
 local qpush = queue.push
 local wait = task.wait
 local running = task.running
 local wakeup = task.wakeup
+
 local TIMEOUT<const> = {}
+local ECLOSED<const> = errno.CLOSED
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 ---@class silly.net.udp
 local udp = {}
@@ -22,7 +30,7 @@ local udp = {}
 ---@class silly.net.udp.conn
 ---@field fd integer?
 ---@field package co thread?
----@field package err string?
+---@field package err silly.errno?
 ---@field package stash_bytes integer
 ---@field package stash_packets silly.adt.queue<silly.net.udp.packet>
 local conn = {}
@@ -62,6 +70,7 @@ local function recvfrom_timer(s)
 	end
 end
 
+---@type silly.net.event
 local EVENT = {
 	data = function(fd, ptr, size, addr)
 		local s = socket_pool[fd]
@@ -97,7 +106,7 @@ local EVENT = {
 }
 
 ---@param addr string
----@return silly.net.udp.conn?, string? error
+---@return silly.net.udp.conn?, silly.errno? error
 function udp.bind(addr)
 	assert(addr, "udp.bind missing addr")
 	local fd, err = net.udpbind(addr, EVENT)
@@ -112,7 +121,7 @@ end
 
 ---@param addr string
 ---@param opts silly.net.udp.connect.opts?
----@return silly.net.udp.conn?, string? error
+---@return silly.net.udp.conn?, silly.errno? error
 function udp.connect(addr, opts)
 	assert(addr, "udp.connect missing addr")
 	local bindip = opts and opts.bindaddr
@@ -125,10 +134,10 @@ end
 
 ---@param s silly.net.udp.conn
 ---@param timeout integer? --milliseconds
----@return string?, string? error_or_addr
+---@return string?, string|silly.errno|nil error_or_addr
 function conn.recvfrom(s, timeout)
 	if not s.fd then
-		return nil, "socket closed"
+		return nil, ECLOSED
 	end
 	local packet = qpop(s.stash_packets)
 	if packet then
@@ -148,7 +157,7 @@ function conn.recvfrom(s, timeout)
 		local timer = time.after(timeout, recvfrom_timer, s)
 		dat = wait()
 		if dat == TIMEOUT then
-			return nil, "read timeout"
+			return nil, ETIMEDOUT
 		end
 		time.cancel(timer)
 	end
@@ -159,13 +168,13 @@ function conn.recvfrom(s, timeout)
 end
 
 ---@param s silly.net.udp.conn
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.close(s)
 	local fd = s.fd
 	if not fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
-	s.err = "active closed"
+	s.err = ECLOSED
 	local co = s.co
 	if co then
 		s.co = nil
@@ -173,8 +182,7 @@ function conn.close(s)
 	end
 	socket_pool[fd] = nil
 	s.fd = nil
-	net.close(fd)
-	return true, nil
+	return net.close(fd)
 end
 
 ---@param s silly.net.udp.conn
@@ -186,11 +194,11 @@ end
 ---@param s silly.net.udp.conn
 ---@param data string
 ---@param addr string?
----@return boolean, string? error
+---@return boolean, silly.errno? error
 function conn.sendto(s, data, addr)
 	local fd = s.fd
 	if not fd then
-		return false, "socket closed"
+		return false, ECLOSED
 	end
 	return net.udpsend(fd, data, addr)
 end

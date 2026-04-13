@@ -22,11 +22,11 @@ local function parse_target(target)
 	if scheme == "dns" or scheme == "passthrough" then
 		local host, port = parse_addr(rest)
 		if not host or not port then
-			return nil, "invalid target: " .. target
+			return nil, "Invalid target: " .. target
 		end
 		return host, port
 	end
-	return nil, "unsupported scheme: " .. scheme
+	return nil, "Unsupported scheme: " .. scheme
 end
 
 ---@class silly.net.grpc.client.endpoint
@@ -83,7 +83,7 @@ end
 ---@return silly.net.http.h2.stream?, string?
 function conn.openstream(self)
 	if self.closed then
-		return nil, "closed"
+		return nil, "Closed"
 	end
 	local robin = self.robin
 	self.robin = robin % #self + 1
@@ -127,7 +127,7 @@ local client_mt = {__index = conn, __close = conn.close}
 function conn.new(opts)
 	local targets = opts.targets
 	if #targets == 0 then
-		return nil, "empty targets"
+		return nil, "Empty targets"
 	end
 	---@type silly.net.grpc.client.conn
 	local c = {
@@ -141,9 +141,9 @@ function conn.new(opts)
 		if not host then
 			return nil, port
 		end
-		local ip = dns.lookup(host, dns.A)
+		local ip, err = dns.lookup(host, dns.A)
 		if not ip then
-			return nil, "dns lookup failed"
+			return nil, format("dns lookup %s failed: %s", host, err)
 		end
 		c[i] = {
 			addr = join_addr(ip, port),

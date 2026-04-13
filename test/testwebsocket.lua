@@ -6,6 +6,8 @@ local http = require "silly.net.http"
 local websocket = require "silly.net.websocket"
 local waitgroup = require "silly.sync.waitgroup"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
 
 -- Global test configuration
 local TEST_PORT = 10005
@@ -178,7 +180,7 @@ testaux.case("Test 4: Error condition - abrupt connection close", function()
 	server_handler = function(sock)
 		local data, typ = sock:read()
 		testaux.asserteq(data, nil, "Read broken data returns nil")
-		testaux.asserteq(typ, "end of file", "Read broken returns EOF error")
+		testaux.asserteq(typ, errno.EOF, "Read broken returns EOF error")
 	end
 
 	local sock = websocket.connect("ws://" .. TEST_HOST .. ":" .. TEST_PORT)
@@ -205,7 +207,7 @@ testaux.case("Test 5: TLS encrypted connection", function()
 	local sock2, err = websocket.connect("wss://" .. TEST_HOST .. ":" .. TEST_PORT)
 	testaux.asserteq(sock2, nil, "wss can't connect to non-TLS server")
 	testaux.assertneq(err, nil, "wss connection should return error")
-	testaux.assertneq(err, "read timeout", "wss error should not be read timeout")
+	testaux.assertneq(err, ETIMEDOUT, "wss error should not be read timeout")
 	local err_l = string.lower(tostring(err))
 	local ok = err_l:find("ssl", 1, true) ~= nil
 		or err_l:find("tls", 1, true) ~= nil
@@ -242,6 +244,22 @@ testaux.case("Test 6: Concurrent stress test", function()
 	end
 	wg:wait()
 	wait_done()
+end)
+
+testaux.case("Test 7: WebSocket DNS failure returns contextual string", function()
+	testaux.with_mocked_dns(function(host, qtype)
+		return nil, "Query timed out (10001)"
+	end, {"silly.net.websocket"}, function(reloaded)
+		local mock_ws = reloaded["silly.net.websocket"]
+		local sock, err = mock_ws.connect("ws://dns-fail.test:10005")
+		testaux.asserteq(sock, nil, "Test 7.1: WebSocket connect should fail on DNS error")
+		testaux.assertcontains(err, "dns lookup",
+			"Test 7.2: Error should mention dns lookup")
+		testaux.assertcontains(err, "dns-fail.test",
+			"Test 7.3: Error should include the failing host")
+		testaux.assertcontains(err, "timed out",
+			"Test 7.4: Error should propagate underlying DNS reason")
+	end)
 end)
 
 server:close()

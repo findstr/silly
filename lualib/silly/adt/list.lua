@@ -72,7 +72,7 @@ end
 local function remove(self, v)
 	local present = self.present
 	if not present[v] then
-		return nil, "removed"
+		return nil, "Removed"
 	end
 	local prev = self.prev
 	local next = self.next

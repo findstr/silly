@@ -53,7 +53,7 @@ env.set("hello.1.1", "hello")
 assert(env.get("hello.1.1") == "hello")
 
 _ENV.print = print
-local testset = env.get("set")
+local testset = env.get("set") or "all"
 local case = env.get("case")
 M = testset .. ":"
 print("=========start=========")

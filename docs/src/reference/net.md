@@ -333,7 +333,7 @@ end
 
 **参数**:
 - `fd` (integer): 套接字文件描述符
-- `errno` (integer): 错误码（0 表示正常关闭）
+- `errno` (`silly.errno`): 连接关闭原因。对端正常关闭时通常为 `errno.EOF`，其他情况为对应的底层错误
 
 ## 注意事项
 

@@ -8,6 +8,8 @@ local assert = assert
 local tostring = tostring
 local tonumber = tonumber
 local sub = string.sub
+local errno = require "silly.errno"
+local ECLOSED<const> = errno.CLOSED
 local upper = string.upper
 local format = string.format
 local qnew = queue.new
@@ -44,14 +46,18 @@ response_header[header:byte(5)] = function (sock, res)        --'$'
 	if nr < 0 then
 		return true, true, nil
 	end
-	local param = sock:read(nr + 2)
+	local param, err = sock:read(nr + 2)
+	if not param then
+		return false, err, nil
+	end
 	return true, true, sub(param, 1, -3)
 end
 local function read_response(sock)
 	local data, err = sock:read("\n")
-	if err then
+	if not data then
 		return false, err, nil
 	end
+	---@cast data string
 	local head = data:byte(1)
 	local func = response_header[head]
 	return func(sock, sub(data, 2, -3))
@@ -181,7 +187,7 @@ local function connect_to_redis(redis)
 		return sock, nil
 	end
 	if redis.closed then
-		return nil, "active closed"
+		return nil, ECLOSED
 	end
 	local sock, err = tcp.connect(redis.addr)
 	if not sock then

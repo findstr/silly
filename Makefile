@@ -135,6 +135,7 @@ LIB_SRC = lsilly.c \
 	encoding/ljson.c \
 	lhive.c \
 	lhttp.c \
+	lerrno.c \
 	lnet.c \
 	lsignal.c \
 	ldns.c \

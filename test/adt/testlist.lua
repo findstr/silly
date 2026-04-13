@@ -390,7 +390,7 @@ testaux.case("Test 14: Double remove should return error", function()
 
 	-- Try to remove again
 	local _, err = l:remove(1)
-	testaux.asserteq(err, "removed", "Test 14.2: Should return 'removed' error")
+	testaux.asserteq(err, "Removed", "Test 14.2: Should return 'Removed' error")
 	verify_list_integrity(l, {2}, "Test 14.3")
 end)
 

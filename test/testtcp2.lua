@@ -4,6 +4,10 @@ local time = require "silly.time"
 local tcp = require "silly.net.tcp"
 local channel = require "silly.sync.channel"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
+local EEOF<const> = errno.EOF
+local ECLOSED<const> = errno.CLOSED
 local listen_cb
 local ip = "127.0.0.1"
 local port = 20001
@@ -107,10 +111,10 @@ testaux.case("Test 4: Half-close scenario", function()
 		local dat, err = tcp.read(sfd, 5)
 		testaux.asserteq(dat, "hello", "Test 4.1: Server read initial data")
 
-		-- 2. Subsequent read should immediately return ("", "end of file") due to FIN
+		-- 2. Subsequent read should immediately return nil, errno.EOF due to FIN
 		local dat2, err2 = tcp.read(sfd, 1)
-		testaux.asserteq(dat2, "", "Test 4.2: Server read after FIN returns empty string")
-		testaux.asserteq(err2, "end of file", "Test 4.3: Server read after FIN returns 'end of file'")
+		testaux.asserteq(dat2, nil, "Test 4.2: Server read after FIN returns nil")
+		testaux.asserteq(err2, EEOF, "Test 4.3: Server read after FIN returns EOF error")
 
 		-- 3. Server should still be able to write
 		local ok, err3 = tcp.write(sfd, "world")
@@ -138,8 +142,8 @@ testaux.case("Test 5: Readline interrupted by close", function()
 	listen_cb = function(sfd)
 		local addr = sfd.remoteaddr
 		local data, err = tcp.readline(sfd, "\n")
-		testaux.asserteq(data, "", "Test 5.1: Readline returns empty string on interrupted read")
-		testaux.asserteq(err, "end of file", "Test 5.2: Readline returns 'end of file' error")
+		testaux.asserteq(data, nil, "Test 5.1: Readline returns nil on interrupted read")
+		testaux.asserteq(err, EEOF, "Test 5.2: Readline returns EOF error")
 		tcp.close(sfd)
 	end
 
@@ -160,7 +164,7 @@ testaux.case("Test 6: Double close", function()
 
 		local ok2, err2 = tcp.close(sfd)
 		testaux.asserteq(ok2, false, "Test 6.2: Second close fails")
-		testaux.asserteq(err2, "socket closed", "Test 6.3: Second close returns correct error")
+		testaux.asserteq(err2, ECLOSED, "Test 6.3: Second close returns correct error")
 	end
 
 	local cfd = testaux.connect(ip, port)
@@ -256,7 +260,7 @@ testaux.case("Test 10: Basic read timeout", function()
 		-- Try to read 10 bytes with 500ms timeout, but don't send anything
 		local dat, err = tcp.read(sfd, 10, 500)
 		testaux.asserteq(dat, nil, "Test 10.1: Read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 10.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 10.2: Should return 'read timeout' error")
 		tcp.close(sfd)
 	end
 
@@ -276,7 +280,7 @@ testaux.case("Test 11: Partial data then timeout then continue reading", functio
 		-- Try to read 5 bytes with 500ms timeout, but only 2 bytes available
 		local dat, err = tcp.read(sfd, 5, 500)
 		testaux.asserteq(dat, nil, "Test 11.1: First read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 11.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 11.2: Should return 'read timeout' error")
 
 		-- Now client will send 3 more bytes, total 5 bytes available
 		time.sleep(200)
@@ -292,7 +296,7 @@ testaux.case("Test 11: Partial data then timeout then continue reading", functio
 		-- Try to read 10 bytes with timeout, client will send 8 bytes total
 		local dat3, err3 = tcp.read(sfd, 10, 500)
 		testaux.asserteq(dat3, nil, "Test 11.5: Third read should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 11.6: Should return 'read timeout' error")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 11.6: Should return 'read timeout' error")
 
 		time.sleep(100)
 		-- Read the buffered 8 bytes
@@ -333,7 +337,7 @@ testaux.case("Test 12: Readline timeout", function()
 		-- Try to readline with timeout, but no newline sent
 		local dat, err = tcp.readline(sfd, "\n", 500)
 		testaux.asserteq(dat, nil, "Test 12.1: Readline should timeout")
-		testaux.asserteq(err, "read timeout", "Test 12.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 12.2: Should return 'read timeout' error")
 
 		time.sleep(200)
 
@@ -369,7 +373,7 @@ testaux.case("Test 13: Mixed read and readline with timeout", function()
 		-- Try to read 10 bytes with timeout, only 5 available
 		local dat, err = tcp.read(sfd, 10, 500)
 		testaux.asserteq(dat, nil, "Test 13.1: Read should timeout")
-		testaux.asserteq(err, "read timeout", "Test 13.2: Should return 'read timeout' error")
+		testaux.asserteq(err, ETIMEDOUT, "Test 13.2: Should return 'read timeout' error")
 
 		-- Now read the buffered 5 bytes
 		local dat2, err2 = tcp.read(sfd, 5)
@@ -380,7 +384,7 @@ testaux.case("Test 13: Mixed read and readline with timeout", function()
 		-- Try readline with timeout, no newline yet
 		local dat3, err3 = tcp.readline(sfd, "\n", 500)
 		testaux.asserteq(dat3, nil, "Test 13.4: Readline should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 13.5: Should return 'read timeout' error")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 13.5: Should return 'read timeout' error")
 
 		time.sleep(100)
 
@@ -393,7 +397,7 @@ testaux.case("Test 13: Mixed read and readline with timeout", function()
 		-- Mix: read 3 bytes with timeout, only 2 available
 		local dat5, err5 = tcp.read(sfd, 3, 500)
 		testaux.asserteq(dat5, nil, "Test 13.7: Read should timeout")
-		testaux.asserteq(err5, "read timeout", "Test 13.8: Should return 'read timeout' error")
+		testaux.asserteq(err5, ETIMEDOUT, "Test 13.8: Should return 'read timeout' error")
 
 		-- Readline should get the buffered "ab" plus "c\n"
 		local dat6, err6 = tcp.readline(sfd, "\n")
@@ -435,8 +439,8 @@ testaux.case("Test 14: Connection closed during timeout wait", function()
 	listen_cb = function(sfd)
 		-- Try to read with a long timeout, but connection will close
 		local dat, err = tcp.read(sfd, 100, 2000)
-		testaux.asserteq(dat, "", "Test 14.1: Read should return empty string on close")
-		testaux.asserteq(err, "end of file", "Test 14.2: Should return 'end of file' error")
+		testaux.asserteq(dat, nil, "Test 14.1: Read should return nil on close")
+		testaux.asserteq(err, EEOF, "Test 14.2: Should return EOF error")
 
 		tcp.close(sfd)
 	end
@@ -459,17 +463,17 @@ testaux.case("Test 15: Multiple sequential timeouts", function()
 		-- First timeout
 		local dat1, err1 = tcp.read(sfd, 5, 300)
 		testaux.asserteq(dat1, nil, "Test 15.1: First read should timeout")
-		testaux.asserteq(err1, "read timeout", "Test 15.2: Should return 'read timeout'")
+		testaux.asserteq(err1, ETIMEDOUT, "Test 15.2: Should return 'read timeout'")
 
 		-- Second timeout
 		local dat2, err2 = tcp.read(sfd, 5, 300)
 		testaux.asserteq(dat2, nil, "Test 15.3: Second read should timeout")
-		testaux.asserteq(err2, "read timeout", "Test 15.4: Should return 'read timeout'")
+		testaux.asserteq(err2, ETIMEDOUT, "Test 15.4: Should return 'read timeout'")
 
 		-- Third timeout
 		local dat3, err3 = tcp.read(sfd, 5, 300)
 		testaux.asserteq(dat3, nil, "Test 15.5: Third read should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 15.6: Should return 'read timeout'")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 15.6: Should return 'read timeout'")
 
 		time.sleep(100)
 
@@ -858,6 +862,35 @@ testaux.case("Test 29: Closewait with >64 wlist nodes and full first writev", fu
 	testaux.assertneq(cfd, nil, "Test 29.3: Connect to server")
 	wait_done()
 	testaux.success("Test 29 passed")
+end)
+
+-- Test 30: Peer FIN → close event carries EEOF → subsequent read returns EEOF
+-- Distinct from Test 4 (half-close via closewrite) and Test 5 (blocking read).
+-- Here the FIN arrives while no read is pending, and a later read sees EEOF.
+testaux.case("Test 30: Peer FIN propagates EEOF to non-blocking read", function()
+	local sync = channel.new()
+	listen_cb = function(sfd)
+		-- Read initial payload so all data is drained before FIN.
+		local dat, err = tcp.read(sfd, 5)
+		testaux.asserteq(dat, "hello", "Test 30.1: initial read succeeds")
+		testaux.asserteq(err, nil, "Test 30.2: no error on initial read")
+		-- Signal client to close, then wait a bit for FIN to arrive.
+		sync:push("go")
+		time.sleep(200)
+		-- Buffer drained + peer closed → read must surface EEOF.
+		local dat2, err2 = tcp.read(sfd, 1)
+		testaux.asserteq(dat2, nil, "Test 30.3: read after FIN returns nil")
+		testaux.asserteq(err2, EEOF, "Test 30.4: read after FIN returns EEOF")
+		tcp.close(sfd)
+	end
+
+	local cfd = testaux.connect(ip, port)
+	testaux.assertneq(cfd, nil, "Test 30.5: Connect to server")
+	testaux.send(cfd, "hello")
+	sync:pop()
+	testaux.close(cfd) -- full close → peer sees FIN
+	wait_done()
+	testaux.success("Test 30 passed")
 end)
 
 print("testtcp2 all tests passed!")

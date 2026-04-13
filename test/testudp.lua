@@ -5,6 +5,9 @@ local waitgroup = require "silly.sync.waitgroup"
 local channel = require "silly.sync.channel"
 local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
+local errno = require "silly.errno"
+local ETIMEDOUT<const> = errno.TIMEDOUT
+local ECLOSED<const> = errno.CLOSED
 
 -- Test 1: Basic UDP echo server
 testaux.case("Test 1: Basic UDP echo server", function()
@@ -115,7 +118,7 @@ testaux.case("Test 4: Basic recvfrom timeout", function()
 	-- Try to receive with timeout, but no data sent
 	local dat, err = server_fd:recvfrom(500)
 	testaux.asserteq(dat, nil, "Test 4.2: Recvfrom should timeout")
-	testaux.asserteq(err, "read timeout", "Test 4.3: Should return 'read timeout' error")
+	testaux.asserteq(err, ETIMEDOUT, "Test 4.3: Should return 'read timeout' error")
 
 	server_fd:close()
 	testaux.success("Test 4 passed")
@@ -134,7 +137,7 @@ testaux.case("Test 5: Timeout then successful receive", function()
 		-- First receive times out
 		local dat1, err1 = server_fd:recvfrom(300)
 		testaux.asserteq(dat1, nil, "Test 5.2: First recvfrom should timeout")
-		testaux.asserteq(err1, "read timeout", "Test 5.3: Should return 'read timeout'")
+		testaux.asserteq(err1, ETIMEDOUT, "Test 5.3: Should return 'read timeout'")
 		ch:push("timeout")
 
 		-- Second receive succeeds
@@ -166,17 +169,17 @@ testaux.case("Test 6: Multiple sequential timeouts", function()
 		-- First timeout
 		local dat1, err1 = server_fd:recvfrom(200)
 		testaux.asserteq(dat1, nil, "Test 6.2: First recvfrom should timeout")
-		testaux.asserteq(err1, "read timeout", "Test 6.3: Should return 'read timeout'")
+		testaux.asserteq(err1, ETIMEDOUT, "Test 6.3: Should return 'read timeout'")
 
 		-- Second timeout
 		local dat2, err2 = server_fd:recvfrom(200)
 		testaux.asserteq(dat2, nil, "Test 6.4: Second recvfrom should timeout")
-		testaux.asserteq(err2, "read timeout", "Test 6.5: Should return 'read timeout'")
+		testaux.asserteq(err2, ETIMEDOUT, "Test 6.5: Should return 'read timeout'")
 
 		-- Third timeout
 		local dat3, err3 = server_fd:recvfrom(200)
 		testaux.asserteq(dat3, nil, "Test 6.6: Third recvfrom should timeout")
-		testaux.asserteq(err3, "read timeout", "Test 6.7: Should return 'read timeout'")
+		testaux.asserteq(err3, ETIMEDOUT, "Test 6.7: Should return 'read timeout'")
 		ch:push("ready")
 
 		-- Finally succeed
@@ -224,7 +227,7 @@ testaux.case("Test 7: Receive from stash after timeout", function()
 		-- Now nothing in stash, should timeout
 		local dat4, err4 = server_fd:recvfrom(300)
 		testaux.asserteq(dat4, nil, "Test 7.5: Should timeout when stash is empty")
-		testaux.asserteq(err4, "read timeout", "Test 7.6: Should return 'read timeout'")
+		testaux.asserteq(err4, ETIMEDOUT, "Test 7.6: Should return 'read timeout'")
 
 		server_fd:close()
 	end)
@@ -247,7 +250,7 @@ testaux.case("Test 8: Close during timeout wait", function()
 		-- Try to receive with long timeout
 		local dat, err = server_fd:recvfrom(2000)
 		testaux.asserteq(dat, nil, "Test 8.2: Should fail when closed")
-		testaux.asserteq(err, "active closed", "Test 8.3: Should return 'active closed' error")
+		testaux.asserteq(err, ECLOSED, "Test 8.3: Should return 'active closed' error")
 	end)
 
 	-- Close connection after server starts waiting
@@ -313,6 +316,31 @@ testaux.case("Test 10: Unread bytes tracking", function()
 	server_fd:close()
 	client_fd:close()
 	testaux.success("Test 10 passed")
+end)
+
+-- Test 11: Operations after close return ECLOSED
+-- Test 8 covers recvfrom blocked during close; this covers operations called
+-- on an already-closed socket.
+testaux.case("Test 11: Operations on closed UDP socket return ECLOSED", function()
+	local fd = udp.bind("127.0.0.1:8998")
+	testaux.assertneq(fd, nil, "Test 11.1: UDP bind")
+
+	local ok1, err1 = fd:close()
+	testaux.asserteq(ok1, true, "Test 11.2: First close succeeds")
+
+	local dat, err2 = fd:recvfrom(100)
+	testaux.asserteq(dat, nil, "Test 11.3: recvfrom on closed returns nil")
+	testaux.asserteq(err2, ECLOSED, "Test 11.4: recvfrom on closed returns ECLOSED")
+
+	local ok3, err3 = fd:sendto("x", "127.0.0.1:1")
+	testaux.asserteq(ok3, false, "Test 11.5: sendto on closed returns false")
+	testaux.asserteq(err3, ECLOSED, "Test 11.6: sendto on closed returns ECLOSED")
+
+	local ok4, err4 = fd:close()
+	testaux.asserteq(ok4, false, "Test 11.7: Double close returns false")
+	testaux.asserteq(err4, ECLOSED, "Test 11.8: Double close returns ECLOSED")
+
+	testaux.success("Test 11 passed")
 end)
 
 print("\ntestudp all tests passed!")

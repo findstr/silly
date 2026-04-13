@@ -106,6 +106,7 @@ Network modules implement flow control via coroutines:
 
 - **Timeout Pattern**: Use timer + sentinel value:
   ```lua
+  local errno = require "silly.errno"
   local TIMEOUT = {}
 
   local timer = time.after(timeout_ms, function(s)
@@ -118,7 +119,7 @@ Network modules implement flow control via coroutines:
 
   local data = wait()
   if data == TIMEOUT then
-      return nil, "read timeout"
+      return nil, errno.TIMEDOUT
   end
   time.cancel(timer)
   ```
@@ -139,8 +140,8 @@ Network modules implement flow control via coroutines:
 C modules in `luaclib-src/` expose APIs to Lua:
 - `lnet.c`: Socket operations (connect, listen, send, recv)
 - `lhttp.c`: HTTP parsing
-- `lualib-silly.c`: Core runtime (fork, wait, wakeup)
-- `lualib-time.c`: Timer operations
+- `lsilly.c`: Core runtime (fork, wait, wakeup)
+- `ltime.c`: Timer operations
 - `crypto/*.c`: Cryptographic functions (AES, RSA, HMAC, etc.)
 
 ### Lua Stack Safety in Recursive C Code
@@ -165,78 +166,81 @@ For cross-platform functions that exist on all platforms but live in different h
 
 Header includes are not logic — they just tell the compiler where to find declarations. `#ifdef` for header selection is acceptable and does not violate the goal of eliminating platform-specific code branches.
 
-## API Usage Patterns
+### Error Reporting in Low-Level Code
 
-### TCP
+In low-level modules (C engine, transport layer), pick **one** of: log the error, or return the error code to the caller. Do not do both. If the returned errno already tells the caller what went wrong, an additional `log_error` is redundant noise — the caller decides whether the failure is worth logging and in what context. Only log at the lowest layer when the error cannot be propagated (e.g., inside an event handler with no caller) or when local context (ip/port, sid) adds diagnostic value the caller does not have.
 
-```lua
-local tcp = require "silly.net.tcp"
+## Module Reference Index
 
--- Server
-local server = tcp.listen {
-    addr = "127.0.0.1:8080",
-    accept = function(conn)
-        local data = conn:read(100)
-        conn:write("response")
-        conn:close()
-    end
-}
+For API details (function signatures, options, semantics), read the authoritative doc for the module rather than relying on memory. Paths are relative to the repo root.
 
--- Client
-local conn = tcp.connect("127.0.0.1:8080")
-conn:write("request")
-local response = conn:read(100)
-conn:close()
-```
+Always prefer these over web search or training-data recall — they match the current code. Type stubs in `lualib/types/silly/` complement these with machine-readable signatures.
 
-### HTTP
+### Core runtime
+| Module | Doc |
+|---|---|
+| `silly` | `docs/src/en/reference/silly.md` |
+| `silly.task` | `docs/src/en/reference/task.md` |
+| `silly.time` | `docs/src/en/reference/time.md` |
+| `silly.logger` | `docs/src/en/reference/logger.md` |
+| `silly.env` | `docs/src/en/reference/env.md` |
+| `silly.signal` | `docs/src/en/reference/signal.md` |
+| `silly.trace` | `docs/src/en/reference/trace.md` |
+| `silly.errno` | `lualib/types/silly/errno.lua` (type stub is authoritative) |
 
-```lua
-local http = require "silly.net.http"
+### Network
+| Module | Doc |
+|---|---|
+| `silly.net` | `docs/src/en/reference/net.md` |
+| `silly.net.tcp` | `docs/src/en/reference/net/tcp.md` |
+| `silly.net.tls` | `docs/src/en/reference/net/tls.md` |
+| `silly.net.udp` | `docs/src/en/reference/net/udp.md` |
+| `silly.net.http` | `docs/src/en/reference/net/http.md` |
+| `silly.net.websocket` | `docs/src/en/reference/net/websocket.md` |
+| `silly.net.grpc` | `docs/src/en/reference/net/grpc.md` |
+| `silly.net.cluster` | `docs/src/en/reference/net/cluster.md` |
+| `silly.net.dns` | `docs/src/en/reference/net/dns.md` |
+| `silly.net.addr` | `docs/src/en/reference/net/addr.md` |
 
--- Server
-local server = http.listen {
-    addr = "0.0.0.0:8080",
-    handler = function(stream)
-        local body = stream:readall()
-        stream:respond(200, {["content-type"] = "application/json"})
-        stream:closewrite(response_data)  -- preferred: write + close in one call
-    end
-}
+### Sync / ADT / Storage
+| Module | Doc |
+|---|---|
+| `silly.sync.channel` / `mutex` / `waitgroup` | `docs/src/en/reference/sync/` |
+| `silly.adt.buffer` / `queue` | `docs/src/en/reference/adt/` |
+| `silly.store.mysql` / `redis` / `etcd` | `docs/src/en/reference/store/` |
 
--- Client
-local httpc = http.newclient({max_idle_per_host = 10, idle_timeout = 30000})
-local response = httpc:get("http://example.com/api")
-local response = httpc:post("http://example.com/api", headers, body)
+### Crypto / Encoding / Security / Metrics / Misc
+| Module | Doc |
+|---|---|
+| `silly.crypto.*` | `docs/src/en/reference/crypto/` |
+| `silly.encoding.base64` / `json` | `docs/src/en/reference/encoding/` |
+| `silly.security.jwt` | `docs/src/en/reference/security/jwt.md` |
+| `silly.metrics.*` | `docs/src/en/reference/metrics/` |
+| `silly.console` / `debugger` / `hive` / `patch` / `perf` | `docs/src/en/reference/<name>.md` |
 
--- Streaming
-local stream = httpc:request("POST", "http://example.com/api", headers)
-stream:closewrite(request_data)
-local response_body = stream:readall()
-```
+Tutorials (end-to-end examples) live under `docs/src/en/tutorials/`. Runnable scripts live under `examples/`; CLI flags are documented via `./silly --help`.
 
-### TLS
+### errno Boundary (rule, not reference)
 
-```lua
-local tls = require "silly.net.tls"
+`silly.errno` exists to give network errors a **uniform, human-readable string format with a numeric suffix** (e.g. `"End of file (10004)"`) so logs across modules read the same. It is *not* a typed enum for control flow.
 
--- Server
-local server = tls.listen {
-    addr = "0.0.0.0:443",
-    certs = {{cert = cert_pem_string, key = key_pem_string}},
-    accept = function(conn) end
-}
+The rule users of the library see is simple: **look at the function's `---@return` annotation**. If the error is declared as `silly.errno?`, callers may compare it against `silly.errno` constants. If it is declared as `string?`, callers must treat it as an opaque string for logging only. Everything below is the policy we enforce when writing modules so that this user-facing rule holds.
 
--- Client
-local conn = tls.connect("example.com:443", true)  -- true = verify certificate
-```
+**Who may annotate errors as `silly.errno?`** (and therefore allow callers to branch on them):
+- `silly.net`
+- `silly.net.tcp`
+- `silly.net.tls`
+- `silly.net.udp`
 
-### Important Notes
+Nothing else. Every other module — `silly.net.http` (including `http.h1`, `http.h2`, `http.client`), `silly.net.websocket`, `silly.net.grpc.*`, `silly.net.cluster`, `silly.net.dns`, `silly.store.*`, `silly.sync.*`, application APIs — must annotate error returns as `string?`, even when the value at runtime happens to be a `silly.errno` constant. Their callers are forbidden from comparing the error against `silly.errno`.
 
-- **No `silly.start()` required**: The framework starts the event loop automatically
-- **listen() returns immediately**: Accept connections in background
-- **All I/O is coroutine-based**: Operations yield and resume via the scheduler
-- **Connection objects are tables**: Use method syntax `conn:read()`, `stream:respond()`
+**Producing / propagating vs. typed contract**:
+- Any module may *construct or pass through* a `silly.errno` value internally. Doing so just means "the string surfaced in logs will be uniformly formatted". It does **not** widen the module's typed contract.
+- The contract is whatever the `---@return` annotation says. A module annotated `string?` remains free to rewrap, translate, or replace its error strings in the future without breaking the contract.
+
+**Why this matters**: the moment downstream code branches on `errno.XXX` from a non-transport module, that module loses the freedom to change its error wording — and the wide `silly.errno` table (which surfaces every libc errno on the platform) becomes load-bearing in places it was never meant to be.
+
+**Peer close**: a normal peer close reported through transport `close` callbacks is `errno.EOF`, not `nil`.
 
 ## Code Patterns
 
@@ -273,10 +277,11 @@ end
    ```
 3. In read function:
    ```lua
+   local errno = require "silly.errno"
    local timer = time.after(timeout, read_timer, s)
    local dat = wait()
    if dat == TIMEOUT then
-       return nil, "read timeout"
+       return nil, errno.TIMEDOUT
    end
    time.cancel(timer)
    ```
@@ -306,27 +311,6 @@ end
 client:send(data)
 local result = sync_ch:pop()  -- blocks until handler runs
 testaux.asserteq(result, "done", "Test 1.1: Handler completed")
-```
-
-## Running Examples
-
-```bash
-./silly examples/tcp_echo.lua
-./silly examples/http_server.lua --port=8080
-```
-
-## Command Line Options
-
-```bash
-./silly main.lua [options]
-
--h, --help              Display help
--v, --version           Show version
--d, --daemon            Run as daemon
--p, --logpath PATH      Log file path
--l, --loglevel LEVEL    Log level (debug/info/warn/error)
--f, --pidfile FILE      PID file path
---key=value             Custom args, accessible via env.get("key")
 ```
 
 ## Documentation

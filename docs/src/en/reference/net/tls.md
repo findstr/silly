@@ -567,9 +567,9 @@ print("Remote address:", conn.remoteaddr)
 
 ### Common Errors
 
-**Error**: "socket closed" or "handshake failed"
+**Error**: `errno.TLS` (TLS protocol error — specific OpenSSL detail is written to the server log), `errno.CLOSED`, or another transport-layer `silly.errno` value
 - **Cause**: Certificate configuration error, client doesn't trust certificate, cipher suite mismatch
-- **Solution**: Check certificate format, use correct CA certificates, configure compatible cipher suites
+- **Solution**: Check certificate format, use correct CA certificates, configure compatible cipher suites. For specific OpenSSL reasons, inspect the server log lines prefixed with `[tls] openssl fd:...`.
 
 **Error**: "certificate verify failed"
 - **Cause**: Client cannot verify server certificate

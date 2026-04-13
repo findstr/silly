@@ -887,7 +887,6 @@ static inline int get_sock_error(struct socket *s)
 	ret = getsockopt(s->fd, SOL_SOCKET, SO_ERROR, (void *)&err, &len);
 	if (unlikely(ret < 0)) {
 		err = socketerrno;
-		log_error("[socket] get_sock_error:%s\n", strerror(err));
 	} else {
 		err = translate_socket_errno(err);
 	}
@@ -899,7 +898,6 @@ static inline int checkconnected(struct socket_manager *ss, struct socket *s)
 	int err;
 	err = get_sock_error(s);
 	if (unlikely(err != 0)) {
-		log_error("[socket] checkconnected:%s\n", strerror(err));
 		goto err;
 	}
 	if (wlist_empty(s))
@@ -1255,9 +1253,7 @@ static inline struct addrinfo *getsockaddr(int protocol, const char *ip,
 		hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = protocol;
 	if ((err = getaddrinfo(ip, port, &hints, &res))) {
-		*errp = -EX_ADDRINFO;
-		log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip, port,
-			  gai_strerror(err));
+		*errp = -EXRESOLVE;
 		return NULL;
 	}
 	return res;
@@ -1275,8 +1271,6 @@ static int bindfd(fd_t fd, int protocol, const char *ip, const char *port)
 	err = bind(fd, info->ai_addr, info->ai_addrlen);
 	if (err < 0) {
 		err = -socketerrno;
-		log_error("[socket] bindfd ip:%s port:%s err:%s\n", ip, port,
-			  strerror(-err));
 	}
 	freeaddrinfo(info);
 	return err;
@@ -1314,7 +1308,6 @@ end:
 	freeaddrinfo(info);
 	if (fd >= 0)
 		closesocket(fd);
-	log_error("[socket] dolisten error:%s\n", strerror(-err));
 	return err;
 }
 
@@ -1332,7 +1325,7 @@ silly_socket_id_t socket_tcp_listen(const char *ip, const char *port,
 		log_error("[socket] listen %s:%s:%d pool_alloc fail\n", ip,
 			  port, backlog);
 		closesocket(fd);
-		return -EX_NOSOCKET;
+		return -EXNOSOCKET;
 	}
 	set_listening(s);
 	op.hdr.op = OP_TCP_LISTEN;
@@ -1350,7 +1343,6 @@ static int op_tcp_listen(struct socket_manager *ss, struct op_listen *op,
 	assert(is_listening(s) && s->type == SOCKET_TCP_LISTEN);
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0)) {
-		log_error("[socket] trylisten error:%s\n", strerror(errno));
 		report_listen(ss, s, errno);
 		closesocket(s->fd);
 		free_socket(ss, s);
@@ -1385,7 +1377,7 @@ silly_socket_id_t socket_udp_bind(const char *ip, const char *port)
 	s = pool_alloc(&SM->pool, fd, SOCKET_UDP_LISTEN);
 	if (unlikely(s == NULL)) {
 		log_error("[socket] udpbind %s:%s pool_alloc fail\n", ip, port);
-		err = -EX_NOSOCKET;
+		err = -EXNOSOCKET;
 		goto end;
 	}
 	freeaddrinfo(info);
@@ -1399,7 +1391,6 @@ end:
 	if (fd >= 0)
 		closesocket(fd);
 	freeaddrinfo(info);
-	log_error("[socket] udplisten error:%s\n", strerror(-err));
 	return err;
 }
 
@@ -1411,7 +1402,6 @@ static int op_udp_listen(struct socket_manager *ss, struct op_listen *op,
 	assert(is_listening(s) && s->type == SOCKET_UDP_LISTEN);
 	err = add_to_sp(ss, s);
 	if (unlikely(err < 0)) {
-		log_error("[socket] tryudpbind error:%s\n", strerror(errno));
 		report_listen(ss, s, errno);
 		closesocket(s->fd);
 		free_socket(ss, s);
@@ -1444,7 +1434,7 @@ silly_socket_id_t socket_tcp_connect(const char *ip, const char *port,
 		goto end;
 	s = pool_alloc(&SM->pool, fd, SOCKET_TCP_CONNECTION);
 	if (unlikely(s == NULL)) {
-		err = -EX_NOSOCKET;
+		err = -EXNOSOCKET;
 		goto end;
 	}
 	set_connecting(s);
@@ -1533,7 +1523,7 @@ silly_socket_id_t socket_udp_connect(const char *ip, const char *port,
 	}
 	s = pool_alloc(&SM->pool, fd, SOCKET_UDP_CONNECTION);
 	if (unlikely(s == NULL)) {
-		err = -EX_NOSOCKET;
+		err = -EXNOSOCKET;
 		goto end;
 	}
 	set_connecting(s);
@@ -1576,12 +1566,12 @@ int socket_close(silly_socket_id_t sid)
 	if (unlikely(s == NULL)) {
 		log_warn("[socket] socket_close sid:%llu closed\n",
 			 sid);
-		return -EX_CLOSED;
+		return -EXCLOSED;
 	}
 	if (is_closewait(s)) {
 		log_warn("[socket] socket_close sid:%llu closewait\n",
 			 sid);
-		return -EX_CLOSING;
+		return -EXCLOSING;
 	}
 	if (is_zombine(s)) {
 		if (s->type == SOCKET_TCP_CONNECTION) {
@@ -1631,7 +1621,7 @@ int socket_tcp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 	if (unlikely(s == NULL || is_zombine(s))) {
 		freex(buf);
 		log_warn("[socket] socket_tcp_send sid:%llu closed\n", sid);
-		return -EX_CLOSED;
+		return -EXCLOSED;
 	}
 	if (unlikely(sz == 0)) {
 		freex(buf);
@@ -1679,7 +1669,7 @@ int socket_udp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 	if (unlikely(s == NULL || is_zombine(s))) {
 		freex(buf);
 		log_error("[socket] socket_udp_send invalid sid:%llu\n", sid);
-		return -EX_CLOSED;
+		return -EXCLOSED;
 	}
 	op.hdr.op = OP_UDP_SEND;
 	op.hdr.sid = sid;
@@ -1900,7 +1890,7 @@ int socket_poll()
 				report_close(ss, s, err);
 				zombine_socket(s);
 			} else if (eof || SP_EOF(e)) {
-				report_close(ss, s, EX_EOF);
+				report_close(ss, s, EXEOF);
 				read_enable(ss, s, 0);
 			}
 			break;
