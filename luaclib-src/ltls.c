@@ -553,17 +553,19 @@ static int flushwrite(struct tls *tls)
 
 static int ltls_write(lua_State *L)
 {
-	int ret = 0;
 	size_t sz;
 	struct tls *tls;
 	const char *str;
+	int ret = 1;
 	int sslerr = 0;
 	tls = check_tls(L, 1);
 	ERR_clear_error();
 	switch (lua_type(L, 2)) {
 	case LUA_TSTRING: {
 		str = luaL_checklstring(L, 2, &sz);
-		ret = SSL_write(tls->ssl, str, sz);
+		if (sz > 0) {
+			ret = SSL_write(tls->ssl, str, sz);
+		}
 		break;
 	}
 	case LUA_TTABLE: {
@@ -573,6 +575,10 @@ static int ltls_write(lua_State *L)
 		for (i = 1; i <= n; i++) {
 			lua_geti(L, 2, i);
 			str = luaL_checklstring(L, -1, &sz);
+			if (sz == 0) {
+				lua_pop(L, 1);
+				continue;
+			}
 			ret = SSL_write(tls->ssl, str, sz);
 			lua_pop(L, 1);
 			if (ret <= 0)

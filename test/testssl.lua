@@ -492,5 +492,105 @@ testaux.case("Test 13: TLS handshake error", function()
 	testaux.success("Test 13 passed")
 end)
 
+-- Test 14: Write empty string should not error
+testaux.case("Test 14: Write empty string", function()
+	local port = 10008
+	local ch = channel.new()
+	local listener = tls.listen {
+		addr = "127.0.0.1:" .. port,
+		certs = {
+			{
+				cert = testaux.CERT_A,
+				key = testaux.KEY_A,
+			},
+		},
+		accept = function(conn)
+			local dat = conn:read(5)
+			testaux.asserteq(dat, "hello", "Test 14.1: Server read data")
+			conn:close()
+			ch:push("done")
+		end
+	}
+
+	local conn = tls.connect("127.0.0.1:" .. port)
+	testaux.assertneq(conn, nil, "Test 14.2: Client connected")
+	-- Write empty string should succeed
+	local ok, err = conn:write("")
+	testaux.asserteq(ok, true, "Test 14.3: Write empty string should succeed")
+	-- Write real data after empty string
+	ok, err = conn:write("hello")
+	testaux.asserteq(ok, true, "Test 14.4: Write after empty should succeed")
+	ch:pop()
+	conn:close()
+	listener:close()
+	testaux.success("Test 14 passed")
+end)
+
+-- Test 15: Write table with empty strings
+testaux.case("Test 15: Write table with empty strings", function()
+	local port = 10009
+	local ch = channel.new()
+	local listener = tls.listen {
+		addr = "127.0.0.1:" .. port,
+		certs = {
+			{
+				cert = testaux.CERT_A,
+				key = testaux.KEY_A,
+			},
+		},
+		accept = function(conn)
+			local dat = conn:read(11)
+			testaux.asserteq(dat, "hello world", "Test 15.1: Server read data")
+			conn:close()
+			ch:push("done")
+		end
+	}
+
+	local conn = tls.connect("127.0.0.1:" .. port)
+	testaux.assertneq(conn, nil, "Test 15.2: Client connected")
+	-- Write table with empty strings mixed in
+	local ok, err = conn:write({"", "hello", "", " world", ""})
+	testaux.asserteq(ok, true, "Test 15.3: Write table with empty strings should succeed")
+	ch:pop()
+	conn:close()
+	listener:close()
+	testaux.success("Test 15 passed")
+end)
+
+-- Test 16: Write table of only empty strings
+testaux.case("Test 16: Write table of only empty strings", function()
+	local port = 10010
+	local ch = channel.new()
+	local listener = tls.listen {
+		addr = "127.0.0.1:" .. port,
+		certs = {
+			{
+				cert = testaux.CERT_A,
+				key = testaux.KEY_A,
+			},
+		},
+		accept = function(conn)
+			-- Client sends only empty strings, then real data
+			local dat = conn:read(2)
+			testaux.asserteq(dat, "ok", "Test 16.1: Server read data after empty writes")
+			conn:close()
+			ch:push("done")
+		end
+	}
+
+	local conn = tls.connect("127.0.0.1:" .. port)
+	testaux.assertneq(conn, nil, "Test 16.2: Client connected")
+	-- Write table of only empty strings
+	local ok, err = conn:write({"", "", ""})
+	testaux.asserteq(ok, true, "Test 16.3: Write table of only empty strings should succeed")
+	-- Verify connection still works
+	ok, err = conn:write("ok")
+	testaux.asserteq(ok, true, "Test 16.4: Write after empty table should succeed")
+	ch:pop()
+	conn:close()
+	listener:close()
+	testaux.success("Test 16 passed")
+end)
+
 -- Cleanup EOF server
 eof_server:close()
