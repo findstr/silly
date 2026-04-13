@@ -5,7 +5,7 @@ local lock = require "silly.sync.mutex"
 local time = require "silly.time"
 local net = require "silly.net"
 local dns = require "silly.net.dns"
-local addr = require "silly.net.addr"
+local naddr = require "silly.net.addr"
 local logger = require "silly.logger"
 local c = require "silly.net.cluster.c"
 
@@ -15,9 +15,9 @@ local tcp_connect = net.tcpconnect
 local tcp_send = net.tcpsend
 local tcp_close = net.close
 local tcp_listen = net.tcplisten
-local parse_addr = addr.parse
-local join_addr = addr.join
-local is_host = addr.ishost
+local parse_addr = naddr.parse
+local join_addr = naddr.join
+local is_host = naddr.ishost
 local pcall = silly.pcall
 local after = time.after
 local cancel = time.cancel
@@ -25,8 +25,9 @@ local trace_propagate = trace.propagate
 local trace_attach = trace.attach
 
 ---@class silly.net.cluster.peer
----@field fd integer
----@field addr string? --Incoming connections lack an address and cannot be auto-reconnected.
+---@field fd integer?
+---@field remoteaddr string --Remote address; set for both incoming and outgoing connections.
+---@field addr string? --Set for outgoing connections; used for auto-reconnect. Incoming connections lack this field.
 
 ---@class silly.net.cluster.listener
 ---@field fd integer
@@ -34,7 +35,7 @@ local trace_attach = trace.attach
 ---@alias silly.net.cluster.marshal fun(typ:"request"|"response", cmd:integer|string, obj:table):integer, string
 ---@alias silly.net.cluster.unmarshal fun(typ:"request"|"response", cmd:integer|string, dat:string):table?, string? error
 ---@alias silly.net.cluster.call fun(peer:silly.net.cluster.peer, cmd:integer, obj:table):table?
----@alias silly.net.cluster.accept fun(peer:silly.net.cluster.peer, addr:string)
+---@alias silly.net.cluster.accept fun(peer:silly.net.cluster.peer)
 ---@alias silly.net.cluster.close fun(peer:silly.net.cluster.peer, errno:string)
 
 ---@type silly.net.cluster.marshal
@@ -52,7 +53,6 @@ local expire
 
 local wait_pool = {}
 local fd_to_peer = {}
-local addr_to_peer = {}
 local connect_lock = lock.new()
 ---@type silly.net.cluster.context
 local ctx
@@ -129,20 +129,33 @@ local function close_fd(fd, errno)
 	end
 end
 
+---@param peer silly.net.cluster.peer|silly.net.cluster.listener
+local function close_peer(peer)
+	local fd = peer.fd
+	peer.addr = nil
+	if fd then
+		peer.fd = nil
+		tcp_close(fd)
+		fd_to_peer[fd] = nil
+	end
+	logger.info("[cluster] close peer:", peer.remoteaddr, "fd:", fd)
+end
+
+
 ---@type silly.net.event
 local EVENT = {
 accept = function(fd, addr)
 	local peer = {
 		fd = fd,
+		remoteaddr = addr,
 	}
 	fd_to_peer[fd] = peer
 	logger.info("[cluster] accept", fd, addr)
 	if accept then
-		local ok, err = pcall(accept, peer, addr)
+		local ok, err = pcall(accept, peer)
 		if not ok then
 			logger.error("[cluster] accept addr:", addr, "fd:", fd, "error:", err)
-			tcp_close(fd)
-			fd_to_peer[fd] = nil
+			close_peer(peer)
 		end
 	end
 end,
@@ -161,8 +174,17 @@ data = function(fd, ptr, size)
 end
 }
 
-local function connect(addr)
-	local l<close> = connect_lock:lock(addr)
+---@param peer silly.net.cluster.peer
+local function connect(peer)
+	local addr = peer.addr
+	if not addr then
+		return nil, "peer closed"
+	end
+	local l<close> = connect_lock:lock(peer)
+	local fd = peer.fd
+	if fd then
+		return fd, nil
+	end
 	local name, port = parse_addr(addr)
 	if not name or not port then
 		return nil, "invalid address:" .. addr
@@ -174,52 +196,46 @@ local function connect(addr)
 		end
 		addr = join_addr(ip, port)
 	end
-	local fd, errstr = tcp_connect(addr, EVENT)
-	logger.info("[cluster] connect", addr, "fd:", fd, "err:", errstr)
-	return fd, errstr
+	local err
+	fd, err = tcp_connect(addr, EVENT)
+	logger.info("[cluster] connect", addr, "fd:", fd, "err:", err)
+	if not fd then
+		return nil, err
+	end
+	-- The peer may have been closed by another coroutine while we were
+	-- yielded in dns.lookup or tcp_connect. In that case peer.addr has
+	-- been cleared; discard the just-established fd so we don't hand
+	-- the caller a live connection on a peer it considers closed.
+	if not peer.addr then
+		tcp_close(fd)
+		return nil, "peer closed"
+	end
+	peer.fd = fd
+	fd_to_peer[fd] = peer
+	return fd, nil
 end
 
 ---@param addr string
----@return silly.net.cluster.peer?, string? error
+---@return silly.net.cluster.peer
 function M.connect(addr)
-	local peer = addr_to_peer[addr]
-	if peer then
-		return peer, nil
-	end
-	local fd, errstr = connect(addr)
-	peer = {
-		fd = fd,
+	---@type silly.net.cluster.peer
+	local peer = {
+		fd = nil,
 		addr = addr,
+		remoteaddr = addr,
 	}
-	if fd then
-		fd_to_peer[fd] = peer
-	end
-	addr_to_peer[addr] = peer
-	logger.info("[cluster] connect to", addr)
+	logger.info("[cluster] connect peer", addr)
 	return peer
 end
 
----@param peer silly.net.cluster.peer|silly.net.cluster.listener
-function M.close(peer)
-	local fd = peer.fd
-	if fd then
-		peer.fd = nil
-		tcp_close(fd)
-		fd_to_peer[fd] = nil
-	end
-	local addr = peer.addr
-	if addr then
-		addr_to_peer[addr] = nil
-	end
-	logger.info("[cluster] close addr", addr, "fd:", fd)
-end
-
+M.close = close_peer
 
 ---@param addr string
 ---@param backlog integer?
 ---@return silly.net.cluster.listener?, string? error
 function M.listen(addr, backlog)
 	local fd, errstr = tcp_listen(addr, EVENT, backlog)
+	logger.info("[cluster] listen", addr, "fd:", fd, "err:", errstr)
 	if not fd then
 		return nil, errstr
 	end
@@ -262,16 +278,10 @@ local function callx(is_send)
 		local fd = peer.fd
 		if not fd then
 			local err
-			local addr = peer.addr
-			if not addr then
-				return nil, "peer closed"
-			end
-			fd, err = connect(addr)
+			fd, err = connect(peer)
 			if not fd then
 				return nil, err
 			end
-			peer.fd = fd
-			fd_to_peer[fd] = peer
 		end
 		local cmdn, dat = marshal("request", cmd, obj)
 		if not cmdn then

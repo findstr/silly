@@ -1,5 +1,10 @@
 ## Unreleased
 
+### Changed
+- `cluster.connect` no longer caches peers by address; connecting to the same address now creates independent connections (for load balancing scenarios). It is now lazy (the TCP connection is established on the first `call`/`send`) and its return signature changed from `peer?, err?` to `peer` — errors are surfaced at call time instead.
+- `accept` callback signature changed from `function(peer, addr)` to `function(peer)`; client address available via `peer.remoteaddr`.
+- Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field is only set for outgoing connections.
+
 ## v0.7.1 (Apr 10, 2026)
 
 ### Added
