@@ -43,7 +43,7 @@ Starts a TCP server listening on the given address.
     - `backlog`: `integer|nil` (optional) - Maximum length of pending connection queue
 - **Returns**:
   - Success: `silly.net.tcp.listener` - Listener object
-  - Failure: `nil, string` - nil and error message
+  - Failure: `nil, silly.errno` - nil and a transport-layer error (see [silly.errno](../errno.md))
 - **Example**:
 
 ```lua validate
@@ -74,7 +74,7 @@ Establishes a connection to a TCP server (asynchronous).
     - `timeout`: `integer|nil` - Connection timeout in milliseconds, no timeout if not set
 - **Returns**:
   - Success: `silly.net.tcp.conn` - Connection object
-  - Failure: `nil, silly.errno` - nil and errno value; timeout returns `errno.TIMEDOUT`
+  - Failure: `nil, silly.errno` - nil and a transport-layer error (e.g. `errno.TIMEDOUT` when `opts.timeout` fires, `errno.CONNREFUSED`, `errno.RESOLVE`, …). See [silly.errno](../errno.md).
 - **Async**: This function is asynchronous and waits for connection or timeout
 - **Example**:
 
@@ -100,7 +100,7 @@ Closes a TCP connection.
 
 - **Returns**:
   - Success: `true`
-  - Failure: `false, silly.errno` - false and errno value (for example `errno.CLOSED` if the socket is already closed)
+  - Failure: `false, silly.errno` - typically `errno.CLOSED` if the socket has already been closed
 - **Example**:
 
 ```lua validate
@@ -123,7 +123,7 @@ Writes data to the socket. From the user's perspective, this operation is non-bl
   - `data`: `string|table` - Data to send, can be a string or table of strings
 - **Returns**:
   - Success: `true`
-  - Failure: `false, string` - false and error message
+  - Failure: `false, silly.errno` - nil and a transport-layer error (e.g. `errno.CLOSED`, `errno.PIPE`)
 - **Example**:
 
 ```lua validate
@@ -149,8 +149,8 @@ Reads exactly `n` bytes or reads data from the socket until a delimiter is found
     - If string: read until delimiter is encountered (including delimiter)
 - **Returns**:
   - Success: `string` - Data read
-  - Failure: `nil, silly.errno` - nil and transport-layer error
-  - **EOF**: `nil, errno.EOF` - End of stream
+  - Failure: `nil, silly.errno` - nil and a transport-layer error
+  - **EOF**: `nil, errno.EOF` - Peer half-closed the stream (normal close)
 - **Async**: Suspends coroutine if data is not ready until data arrives
 - **Example**:
 
@@ -204,7 +204,7 @@ Reads from socket until a specific delimiter is found (asynchronous). This is an
   - `delim`: `string` - Delimiter (e.g., `"\n"`)
 - **Returns**:
   - Success: `string` - Line of text (including delimiter)
-  - Failure: `nil, string` - nil and error message
+  - Failure: `nil, silly.errno` - nil and a transport-layer error
 - **Async**: Suspends coroutine if delimiter is not found until complete line is received
 - **Example**:
 

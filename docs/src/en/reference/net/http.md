@@ -46,13 +46,15 @@ Creates an HTTP server and starts listening.
   - `conf`: `table` - Server configuration table
     - `addr`: `string` (required) - Listen address, e.g., `"127.0.0.1:8080"` or `":8080"`
     - `handler`: `function` (required) - Request handler function `function(stream)`
-    - `certs`: `table[]|nil` (optional) - TLS certificate configuration (for HTTPS)
+    - `tls`: `boolean|nil` (optional) - When `true`, listen with TLS (HTTPS / WSS). **Must be set** when you want `certs` to take effect; a `certs`-only config without `tls = true` will listen in plain HTTP.
+    - `certs`: `table[]|nil` (optional) - TLS certificate configuration (for HTTPS, requires `tls = true`)
       - `cert`: `string` - PEM format certificate
       - `key`: `string` - PEM format private key
+    - `alpnprotos`: `string[]|nil` (optional) - ALPN protocols to advertise (e.g. `{"h2", "http/1.1"}`). Only meaningful with `tls = true`.
     - `backlog`: `integer|nil` (optional) - Listen queue size
 - **Returns**:
   - Success: `server` - Server object
-  - Failure: `nil, string` - nil and error message
+  - Failure: `nil, silly.errno` - nil and transport-layer error
 - **Example**:
 
 ```lua validate

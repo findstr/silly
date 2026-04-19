@@ -75,6 +75,7 @@ print("Woke up after 1 second")
 - **回调参数**:
   - 如果提供了 `userdata`，回调接收 `userdata`
   - 如果未提供 `userdata`，回调接收定时器的 `session` ID
+- **执行环境**：定时器到期时，`func` 会在一个 **新协程** 里运行 —— 不会唤醒调用 `time.after` 的协程。可以把它当作 `task.fork` 来理解：注册本身不会 yield，回调里可以放心使用 `time.sleep` / `conn:read` / `task.wait` 等会挂起的 API。
 - **示例**:
 
 ```lua validate
@@ -104,7 +105,8 @@ end, {host = "localhost", port = 8080})
 - **注意**:
   - 只能取消由 `time.after` 创建的定时器
   - 不能取消 `time.sleep` 创建的定时器
-  - 如果定时器已触发但回调尚未执行，取消操作将阻止回调执行
+  - **未知 session 时是 no-op**：如果 `session` 已经被取消、从未注册、或已经触发过，调用会静默返回 —— 没有错误也没有可检查的返回值。
+  - **与 EXPIRE 事件无竞态**：即便内核已经把对应 session 的 EXPIRE 入了队，只要在 worker 处理下一条消息之前，从其他协程调用 `cancel`，就保证回调不会运行。原理是 worker 在每条消息之后都会清空 wakeup 队列 —— 详见 CLAUDE.md 的 *Event Loop Ordering* 一节。
 - **示例**:
 ```lua validate
 local time = require "silly.time"

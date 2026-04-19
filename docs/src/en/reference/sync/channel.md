@@ -52,9 +52,7 @@ Pushes data to the channel. If a coroutine is waiting for data, it wakes that co
   - `data`: `any` - The data to send (cannot be `nil`)
 - **Returns**:
   - `success`: `boolean` - Whether the push was successful
-  - `error`: `string|nil` - Error message (if failed)
-    - `"nil data"` - Attempted to push a nil value
-    - `"channel closed"` - Channel is closed
+  - `error`: `any|nil` - the close reason (whatever was passed to `channel:close(reason)`), or `"Nil data"` if `data` was `nil`. **Treat this value as opaque**: just check `if not ok then break end`; if you need to distinguish closes, pass your own sentinel (e.g. a unique table) as the `reason` argument to `close`.
 
 **Example**:
 ```lua validate
@@ -66,10 +64,9 @@ local ch = channel.new()
 local ok, err = ch:push("hello")
 assert(ok, err)
 
--- Attempt to push nil (will fail)
+-- Pushing nil always fails
 ok, err = ch:push(nil)
 assert(not ok)
-assert(err == "nil data")
 ```
 
 ### channel:pop()
@@ -78,8 +75,7 @@ Reads data from the channel. If the channel is empty, the current coroutine bloc
 
 - **Returns**:
   - `data`: `any|nil` - The data read, or `nil` on failure
-  - `error`: `string|nil` - Error message
-    - `"channel closed"` - Channel is closed and empty
+  - `error`: `any|nil` - the close reason (or "Channel is mpsc" if another coroutine is already popping). **Treat as opaque**: check `if err then break end` rather than comparing against a specific string.
 
 **Note**: This function is asynchronous and suspends the current coroutine.
 
@@ -103,10 +99,12 @@ assert(data == "world", "Should receive 'world'")
 assert(err == nil)
 ```
 
-### channel:close()
+### channel:close([reason])
 
 Closes the channel. After closing, no new data can be pushed, but remaining data in the queue can still be read. If a coroutine is waiting for data, it will be woken and return an error.
 
+- **Parameters**:
+  - `reason`: `any` (optional) - value surfaced as the error by subsequent `push`/`pop` calls; defaults to the string `"channel closed"`. Pass your own value (string tag, sentinel table, etc.) if callers need to distinguish close reasons.
 - **Returns**: None
 
 **Example**:
@@ -123,15 +121,15 @@ ch:close()
 assert(ch:pop() == "message1")
 assert(ch:pop() == "message2")
 
--- Reading from empty closed channel returns error
+-- Reading from empty closed channel returns an error; treat as opaque.
 local data, err = ch:pop()
 assert(data == nil)
-assert(err == "channel closed")
+assert(err)       -- do NOT compare err against a string literal
 
--- Cannot push to closed channel
+-- Push after close fails the same way
 local ok, err = ch:push("message3")
 assert(not ok)
-assert(err == "channel closed")
+assert(err)
 ```
 
 ### channel:clear()
@@ -193,7 +191,7 @@ end)
 wg:fork(function()
     while true do
         local data, err = ch:pop()
-        if err == "channel closed" then
+        if err then
             print("Consumer: channel closed")
             break
         end
@@ -232,7 +230,7 @@ end)
 wg:fork(function()
     while true do
         local task, err = ch:pop()
-        if err == "channel closed" then
+        if err then
             break
         end
         print("Processing task", task.id)

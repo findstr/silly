@@ -166,17 +166,18 @@ task.fork(function()
 end)
 ```
 
-### db:pipeline(requests, results)
+### db:pipeline(requests)
 
-Executes Redis commands in batch, with all commands completed in a single network round trip.
+Send a batch of Redis commands in one TCP round trip and wait for all responses.
 
 - **Parameters**:
-  - `requests`: `table` - Array of commands, each element is an array of command arguments
-  - `results`: `table` (optional) - Results array, if provided it will be populated with all command return values
+  - `requests`: `table[]` - array of commands; each command is itself an array whose first entry is the command name and remaining entries are its arguments (e.g. `{"SET", "key", "value"}`)
 - **Returns**:
-  - Without results: `boolean, result` - Returns result of the last command
-  - With results: `true, count` - Returns true and the result count
-- **Async**: Yes (suspends coroutine)
+  - Success: `table, nil` - a flat array `{ok1, res1, ok2, res2, ...}` with **two** entries per input command:
+    - `okN` (`boolean`): `true` if the server answered success for the Nth command, `false` on `-` error replies
+    - `resN`: the command's value (or the error string when `okN == false`)
+  - Failure: `nil, string` - on I/O or protocol failure, all pending commands are dropped; `err` is the transport error
+- **Async**: Yes (suspends the coroutine until every reply has been read)
 - **Example**:
 
 ```lua validate
@@ -190,25 +191,28 @@ local db = redis.new {
 local task = require "silly.task"
 
 task.fork(function()
-    -- Pipeline without getting results
-    local ok, res = db:pipeline({
+    -- Queue three SETs in one round trip
+    local results, err = db:pipeline({
         {"SET", "p1", "v1"},
         {"SET", "p2", "v2"},
         {"SET", "p3", "v3"},
     })
-    assert(ok)
+    assert(results, err)
+    -- results is {ok1, res1, ok2, res2, ok3, res3}
+    for i = 1, #results, 2 do
+        assert(results[i], tostring(results[i + 1]))
+    end
 
-    -- Get all results
-    local results = {}
-    local ok, count = db:pipeline({
+    -- Queue three GETs in one round trip
+    local results2, err = db:pipeline({
         {"GET", "p1"},
         {"GET", "p2"},
         {"GET", "p3"},
-    }, results)
-    assert(ok and count == 6)  -- 3 commands, each with 2 return values (ok, value)
-    assert(results[2] == "v1")
-    assert(results[4] == "v2")
-    assert(results[6] == "v3")
+    })
+    assert(results2, err)
+    assert(results2[2] == "v1")
+    assert(results2[4] == "v2")
+    assert(results2[6] == "v3")
 
     db:close()
 end)

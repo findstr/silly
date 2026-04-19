@@ -319,7 +319,7 @@ task.fork(function()
     end
 
     -- Service object dynamically provides methods from proto
-    local response, err = client.SayHello({name = "World"})
+    local response, err = client:SayHello({name = "World"})
     if response then
         print("Response:", response.message)
     else
@@ -340,7 +340,7 @@ Create a typed service client from a gRPC connection.
   - Success: `service` - Service client object
   - Failure: `nil, string` - nil and error message
 
-### service.MethodName(request)
+### service:MethodName(request [, timeout])
 
 Call an RPC method (Unary RPC).
 
@@ -385,7 +385,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["math.proto"], "MathService"))
 
     -- Call Multiply method
-    local result, err = client.Multiply({x = 6, y = 7})
+    local result, err = client:Multiply({x = 6, y = 7})
     if result then
         print("6 * 7 =", result.product)
     else
@@ -394,7 +394,7 @@ task.fork(function()
 end)
 ```
 
-### service.StreamMethod()
+### service:StreamMethod([timeout])
 
 Create a streaming RPC connection (Streaming RPC).
 
@@ -433,7 +433,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["stream.proto"], "StreamService"))
 
     -- Create bidirectional stream
-    local stream, err = client.BiStream()
+    local stream, err = client:BiStream()
     if not stream then
         print("Failed to create stream:", err)
         return
@@ -501,7 +501,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["file.proto"], "FileService"))
 
-    local stream = client.Upload()
+    local stream = client:Upload()
 
     -- Upload file in chunks
     for i = 1, 5 do
@@ -562,7 +562,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["log.proto"], "LogService"))
 
-    local stream = client.StreamLogs()
+    local stream = client:StreamLogs()
 
     -- Send query request
     stream:write({query = "error"})
@@ -616,7 +616,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["chat.proto"], "ChatService"))
 
-    local stream = client.Chat()
+    local stream = client:Chat()
 
     -- Send message
     stream:write({text = "Hello"})
@@ -693,10 +693,10 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["greeter.proto"], "Greeter"))
 
     -- Call RPC
-    local resp1 = client.SayHello({name = "Alice"})
+    local resp1 = client:SayHello({name = "Alice"})
     print(resp1.greeting)  -- Hello, Alice!
 
-    local resp2 = client.SayGoodbye({name = "Bob"})
+    local resp2 = client:SayGoodbye({name = "Bob"})
     print(resp2.greeting)  -- Goodbye, Bob!
 
     server:close()
@@ -758,7 +758,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["calculator.proto"], "Calculator"))
 
     -- Normal call
-    local result, err = client.Divide({
+    local result, err = client:Divide({
         dividend = 10,
         divisor = 2
     })
@@ -769,7 +769,7 @@ task.fork(function()
     end
 
     -- Error call (division by zero)
-    local result2, err2 = client.Divide({
+    local result2, err2 = client:Divide({
         dividend = 10,
         divisor = 0
     })
@@ -857,7 +857,7 @@ task.fork(function()
 
     -- Requests will be distributed to both servers
     for i = 1, 4 do
-        local result = client.Increment({delta = 1})
+        local result = client:Increment({delta = 1})
         print("Client got value:", result.value)
     end
 
@@ -918,7 +918,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["slow.proto"], "SlowService"))
 
     -- Fast request (should succeed)
-    local result1, err1 = client.SlowMethod({delay_ms = 100}, 1000)
+    local result1, err1 = client:SlowMethod({delay_ms = 100}, 1000)
     if result1 then
         print("Fast request:", result1.result)
     else
@@ -926,7 +926,7 @@ task.fork(function()
     end
 
     -- Slow request (should timeout)
-    local result2, err2 = client.SlowMethod({delay_ms = 2000}, 1000)
+    local result2, err2 = client:SlowMethod({delay_ms = 2000}, 1000)
     if result2 then
         print("Slow request:", result2.result)
     else
@@ -1049,7 +1049,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["secure.proto"], "SecureService"))
 
-    local result = client.ProcessSecret({
+    local result = client:ProcessSecret({
         secret = "my-sensitive-data"
     })
 
@@ -1121,7 +1121,7 @@ task.fork(function()
 
     for i = 1, 10 do
         wg:fork(function()
-            local result = client.GetData({id = i})
+            local result = client:GetData({id = i})
             if result then
                 results[i] = result.data
                 print("Received:", result.data)
@@ -1193,7 +1193,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["events.proto"], "EventService"))
 
     -- For streaming methods, call returns stream object
-    local stream, err = client.Subscribe()
+    local stream, err = client:Subscribe()
     if stream then
         -- Write request
         stream:write({topic = "notifications"})
@@ -1288,7 +1288,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["user.proto"], "UserService"))
 
-    local response = client.CreateUser({
+    local response = client:CreateUser({
         user = {
             name = "Alice Smith",
             emails = {
@@ -1402,7 +1402,7 @@ task.fork(function()
         return
     end
 
-    local response, err = client.Call({})
+    local response, err = client:Call({})
     if not response then
         print("RPC call failed:", err)
         return
@@ -1450,7 +1450,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- Returns nil and error message on timeout
-    local result, err = client.Ping({}, 5000)  -- 5 second timeout
+    local result, err = client:Ping({}, 5000)  -- 5 second timeout
     if not result then
         print("Request timeout or failed:", err)
     end
@@ -1530,7 +1530,7 @@ task.fork(function()
 
     -- 10 requests will be evenly distributed across 3 servers
     for i = 1, 10 do
-        client.Ping({})
+        client:Ping({})
     end
 end)
 ```
@@ -1572,7 +1572,7 @@ task.fork(function()
 
     -- HTTP/2 connection is automatically reused
     for i = 1, 100 do
-        client.Get({id = i})
+        client:Get({id = i})
     end
     -- All requests share the same TCP connection
 end)
@@ -1615,7 +1615,7 @@ task.fork(function()
     -- Send 20 concurrent requests
     for i = 1, 20 do
         wg:fork(function()
-            local result = client.Get({id = i})
+            local result = client:Get({id = i})
             if result then
                 print("Got result for ID", i)
             end

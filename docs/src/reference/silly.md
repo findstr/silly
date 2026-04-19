@@ -33,6 +33,18 @@ local silly = require "silly"
 - **类型**: `string`
 - **说明**: Silly框架版本号
 
+### silly.allocator
+- **类型**: `string`
+- **说明**: 构建时链接的内存分配器名称（例如 `"jemalloc"`、`"libc"`）
+
+### silly.multiplexer
+- **类型**: `string`
+- **说明**: 底层 I/O 多路复用实现名称（例如 `"epoll"`、`"kqueue"`、`"iocp"`）
+
+### silly.timerresolution
+- **类型**: `integer`
+- **说明**: 定时器分辨率（毫秒），由构建时常量决定（默认 10ms）
+
 ## 核心函数
 
 ### silly.genid()

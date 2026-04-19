@@ -25,17 +25,20 @@ local net = require "silly.net"
 
 ## 地址格式
 
-地址字符串使用 `host:port` 形式，解析规则较宽容，推荐输出使用 `silly.net.addr.join()` 统一格式。
+地址字符串使用 `host:port` 形式，分隔由 `silly.net.addr.parse` 完成：
+
+- **不带 `[...]` 方括号** —— 解析器以 **第一个** `:` 作为 host/port 分隔符。所以 `"127.0.0.1:8080"` 可以工作，但 `"::1:8080"` **不是** IPv6 回环 —— 它会被解析为 `host=""`、`port=":1:8080"`，并在后续校验中失败。
+- **带 `[...]` 方括号** —— 任何含 `:` 的 IPv6 字面量都必须用方括号消歧；`]` 后必须紧跟 `:port`。
 
 **IPv4 示例**:
-- `"127.0.0.1:8080"` - 本地回环地址
-- `"0.0.0.0:9000"` - 监听所有接口
-- `":8080"` - 简写形式，等同于 `"0.0.0.0:8080"`
+- `"127.0.0.1:8080"` —— 本地回环地址
+- `"0.0.0.0:9000"` —— 监听所有 IPv4 接口
+- `":8080"` —— 简写：空 host + 端口 8080（监听包装层会把空 host 规范成 `0::0`，即所有接口）
 
 **IPv6 示例**:
-- `"[::1]:8080"` - IPv6 本地回环（推荐格式）
-- `"::1:8080"` - IPv6 宽容输入（以最后一个 `:` 作为端口分隔）
-- `"[::]:8080"` - 监听所有 IPv6 接口
+- `"[::1]:8080"` —— IPv6 回环（必须方括号）
+- `"[::]:8080"` —— 监听所有 IPv6 接口
+- `"[2001:db8::1]:443"` —— 任何含 `:` 的 IPv6 字面量都必须方括号
 
 **域名示例**:
 - `"example.com:80"`
@@ -56,7 +59,7 @@ local net = require "silly.net"
 
 **返回值**:
 - `fd` (integer): 监听套接字文件描述符
-- `err` (string): 错误信息（失败时）
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -82,19 +85,19 @@ if listenfd then
 end
 ```
 
-### net.tcpconnect(addr, event, bind)
+### net.tcpconnect(addr, event, bind, timeout)
 
 连接到 TCP 服务器。
 
 **参数**:
 - `addr` (string): 服务器地址
 - `event` (table): 事件处理器表（同 `tcplisten`，但不需要 `accept`）
-- `bind` (string, 可选): 本地绑定地址
-- `timeout` (integer, 可选): 连接超时（毫秒）
+- `bind` (string, 可选): 本地绑定地址（`"ip:port"`）
+- `timeout` (integer, 可选): 连接超时（毫秒）；超时时正在建立的 socket 会被关闭并返回 `errno.TIMEDOUT`
 
 **返回值**:
 - `fd` (integer): 连接的文件描述符
-- `err` (string): 错误信息（失败时）
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -116,21 +119,21 @@ if fd then
 end
 ```
 
-### net.tcpsend(fd, data, size)
+### net.tcpsend(fd, data[, size])
 
 向 TCP 套接字发送数据。
 
 **参数**:
 - `fd` (integer): 套接字文件描述符
 - `data` (string|lightuserdata|table): 要发送的数据
-  - `string`: 直接发送字符串
-  - `lightuserdata`: 发送原始内存指针（需指定 `size`）
-  - `table`: 发送字符串表（批量发送）
-- `size` (integer, 可选): 数据大小（`lightuserdata` 时必需）
+  - `string` —— 直接发送，长度取 `#data`
+  - `lightuserdata` —— 原始内存指针，**必须**在下一个参数传 `size`
+  - `table` —— 字符串数组，按顺序拼接为单个缓冲区
+- `size` (integer, 可选): 仅当 `data` 是 `lightuserdata` 时必填
 
 **返回值**:
 - `ok` (boolean): 是否成功
-- `err` (string): 错误信息（失败时）
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -147,27 +150,26 @@ net.tcpsend(fd, "Hello\n")
 net.tcpsend(fd, {"Line 1\n", "Line 2\n", "Line 3\n"})
 ```
 
-### net.tcpmulticast(fd, data, size, addr)
+### net.tcpmulticast(fd, ptr, size)
 
-向多个 TCP 连接广播数据。
+向单个 TCP 连接发送一个共享缓冲区（来自 `net.multipack`），过程中无拷贝。发送完成后内部会递减引用计数；当引用计数归零时缓冲区自动释放。
 
 **参数**:
-- `fd` (integer): 起始文件描述符（实际上是一个占位符）
-- `data` (lightuserdata): 数据指针
-- `size` (integer): 数据大小
-- `addr` (string, 可选): 目标地址过滤
+- `fd` (integer): 目标文件描述符
+- `ptr` (lightuserdata): 由 `net.multipack` 返回的缓冲区
+- `size` (integer): 缓冲区大小（字节）
 
 **返回值**:
-- `ok` (boolean): 是否成功
-- `err` (string): 错误信息
+- `ok` (boolean): 是否成功入队
+- `err` (`silly.errno?`): 失败时返回的错误码
 
-::: tip 高级功能
-此函数用于高效地向多个连接发送相同的数据，内部使用零拷贝技术。
+::: tip 多播模式
+用 `net.multipack(data, fanout)` 一次分配缓冲区（`fanout` 是预期接收者数量，作为初始引用计数），然后对每个目标 fd 调用一次 `net.tcpmulticast(fd, ptr, size)`。所有发送完成后共享缓冲区会自动释放。
 :::
 
 ## UDP 函数
 
-### net.udpbind(addr, event, backlog)
+### net.udpbind(addr, event)
 
 绑定 UDP 套接字到指定地址。
 
@@ -176,11 +178,12 @@ net.tcpsend(fd, {"Line 1\n", "Line 2\n", "Line 3\n"})
 - `event` (table): 事件处理器表：
   - `data` (function): `function(fd, ptr, size, addr)` - 数据接收回调（注意有 `addr` 参数）
   - `close` (function): `function(fd, errno)` - 关闭回调
-- `backlog` (integer, 可选): 未使用（UDP 没有监听队列）
+
+（包装函数为对称性接受第三个 `backlog` 参数，但 UDP 没有监听队列，该参数会被忽略。）
 
 **返回值**:
 - `fd` (integer): UDP 套接字文件描述符
-- `err` (string): 错误信息
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -192,7 +195,7 @@ local udpfd = net.udpbind("[::]:9000", {
         local data = silly.tostring(ptr, size)
         print("UDP from", addr, ":", data)
         -- 回复客户端
-        net.udpsend(fd, data, size, addr)
+        net.udpsend(fd, data, addr)
     end,
     close = function(fd, errno)
         print("UDP closed:", errno)
@@ -211,23 +214,21 @@ local udpfd = net.udpbind("[::]:9000", {
 
 **返回值**:
 - `fd` (integer): UDP 套接字文件描述符
-- `err` (string): 错误信息
+- `err` (`silly.errno?`): 失败时返回的错误码
 
-### net.udpsend(fd, data, size_or_addr, addr)
+### net.udpsend(fd, data, [size,] [addr])
 
-发送 UDP 数据包。
+发送 UDP 数据包。参数布局取决于 `data` 的类型：
 
-**参数**:
-- `fd` (integer): UDP 套接字文件描述符
-- `data` (string|lightuserdata|table): 要发送的数据
-- `size_or_addr` (integer|string, 可选):
-  - 如果 `data` 是 `lightuserdata`，这是数据大小
-  - 如果 `data` 是字符串且套接字未连接，这是目标地址
-- `addr` (string, 可选): 目标地址（当第三参数是 size 时使用）
+| `data` 类型 | 调用形式 | 说明 |
+|---|---|---|
+| `string` | `net.udpsend(fd, str)` 或 `net.udpsend(fd, str, addr)` | 长度取 `#str`；只有未连接的 socket 需要 `addr` |
+| `table`（字符串数组） | `net.udpsend(fd, tbl)` 或 `net.udpsend(fd, tbl, addr)` | 字符串按顺序拼接 |
+| `lightuserdata` | `net.udpsend(fd, ptr, size)` 或 `net.udpsend(fd, ptr, size, addr)` | 发送原始指针时 `size` **必填** |
 
 **返回值**:
 - `ok` (boolean): 是否成功
-- `err` (string): 错误信息
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -255,7 +256,7 @@ net.udpsend(fd, "Hello\n", "127.0.0.1:9000")
 
 **返回值**:
 - `ok` (boolean): 是否成功
-- `err` (string): 错误信息
+- `err` (`silly.errno?`): 失败时返回的错误码
 
 **示例**:
 ```lua validate
@@ -404,10 +405,11 @@ net.tcpsend(saved_fd, "data") -- saved_fd 可能已指向其他连接
 
 ### 4. IPv6 支持
 
-地址格式严格遵循 `[IP]:Port` 格式：
+任何含 `:` 的 IPv6 字面量都必须用 `[IP]:Port` 形式包起来。解析器以 **方括号外的第一个** `:` 作为 host/port 分隔符，所以 `"::1:8080"` 和 `"::1"` 都不是有效的 IPv6 地址：
+
 - IPv4: `"192.168.1.1:8080"`
-- IPv6: `"[2001:db8::1]:8080"` （方括号必需）
-- 简写: `":8080"` 自动选择 IPv4 或 IPv6
+- IPv6: `"[2001:db8::1]:8080"`（必须方括号）
+- 简写: `":8080"` —— 空 host + 端口；监听包装层会把空 host 转换成 `0::0`（同时监听 IPv4/IPv6 所有接口）
 
 ## 高级用法
 

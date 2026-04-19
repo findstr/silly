@@ -63,23 +63,32 @@ logger.info("This will print")
 
 ## 日志输出函数
 
+所有非格式化日志函数（`debug`、`info`、`warn`、`error`）接受任意数量的参数，并按原生类型分别序列化：
+
+- **字符串** 原样输出（不加引号）。
+- **数字** 保留整数/浮点表示（不需要 `tostring()`）。
+- **布尔值** 输出 `true` / `false`。
+- **Nil** 输出 `nil`。
+- **表** 序列化为 `{key=value, [1]=value, ...}` 形式，最大深度为 5；超过部分截断为 `{...}`。
+
+相邻参数之间用空格分隔，行末自动换行。
+
 ### logger.debug(...)
 输出DEBUG级别日志（级别0）。
 
-- **参数**: `...` - 任意数量的参数，会被转换为字符串并连接
+- **参数**: `...` - 任意数量的值（字符串、数字、布尔、nil、表）
 - **示例**:
 ```lua validate
 local logger = require "silly.logger"
 
 local x, y = 10, 20
 logger.debug("Variable x =", x, "y =", y)
+logger.debug("user profile:", {id = 42, name = "alice", roles = {"admin", "owner"}})
 ```
 
 ### logger.info(...)
 输出INFO级别日志（级别1）。
 
-- **参数**: `...` - 任意数量的参数
-- **示例**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -89,8 +98,6 @@ logger.info("Server started on port", 8080)
 ### logger.warn(...)
 输出WARN级别日志（级别2）。
 
-- **参数**: `...` - 任意数量的参数
-- **示例**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -100,8 +107,6 @@ logger.warn("Connection timeout, retrying...")
 ### logger.error(...)
 输出ERROR级别日志（级别3）。
 
-- **参数**: `...` - 任意数量的参数
-- **示例**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -111,16 +116,16 @@ logger.error("Database connection failed:", err)
 
 ## 格式化日志函数
 
+`*f` 系列函数（`debugf`、`infof`、`warnf`、`errorf`）接受一个格式串，**只支持 `%s` 占位符**；用 `%%` 输出字面量 `%`。任何其他转换符都会抛出形如 `invalid option '%d' to 'format', only support '%s'` 的错误。
+
+虽然名为 `%s`，这里的占位符与非格式化日志使用同一个原生序列化器 —— **数字、表都不需要先 `tostring()` 自行转换**。
+
 ### logger.debugf(format, ...)
 输出格式化的DEBUG日志。
 
 - **参数**:
-  - `format`: `string` - 格式字符串（**只支持 `%s` 占位符**）
-  - `...` - 格式化参数
-- **说明**:
-  - **重要**: 只支持 `%s` 占位符，不支持 `%d`、`%f`、`%x` 等其他格式
-  - 所有参数都会使用 `%s` 转换为字符串
-  - 与 `string.format` 不同，需要将数字等类型先转换为字符串
+  - `format`: `string` - 格式字符串，占位符为 `%s`，`%%` 表示字面 `%`
+  - `...` - 每个占位符对应的值（任意可记录类型）
 - **示例**:
 ```lua validate
 local logger = require "silly.logger"
@@ -129,11 +134,17 @@ local username = "alice"
 local user_id = 12345
 local timestamp = 1234567890
 
--- 正确：所有参数使用 %s
-logger.debugf("User %s (ID: %s) logged in at %s", username, tostring(user_id), tostring(timestamp))
+-- 数字会直接序列化，无需 tostring()
+logger.debugf("User %s (ID: %s) logged in at %s", username, user_id, timestamp)
 
--- 错误：不支持 %d、%f 等格式
--- logger.debugf("User ID: %d, time: %f", user_id, timestamp)  -- 不会正确工作
+-- 表也支持
+logger.debugf("Request headers: %s", {["content-type"] = "application/json"})
+
+-- 通过 %% 输出字面量 %
+logger.debugf("progress: %s%%", 42)
+
+-- 不支持 —— 会直接抛错：
+-- logger.debugf("id=%d count=%f", user_id, timestamp)
 ```
 
 ### logger.infof(format, ...)
@@ -169,9 +180,11 @@ local user_id = 12345
 local action = "login"
 local timestamp = os.time()
 
--- 注意：只支持 %s，需要手动转换数字为字符串
-logger.infof("User [%s] performed action '%s' at %s",
-    tostring(user_id), action, tostring(timestamp))
+-- 数字、字符串、表都会原生序列化，无需 tostring()
+logger.infof("User [%s] performed action '%s' at %s", user_id, action, timestamp)
+
+-- 表会被结构化输出
+logger.infof("context: %s", {user = user_id, action = action})
 ```
 
 ### 示例3：动态调整日志级别
@@ -290,17 +303,17 @@ logger.debug("Count:", counter)
 local count = 42
 local ratio = 0.75
 
--- ❌ 错误：不支持 %d, %f, %x 等格式
+-- ❌ 错误：%d, %f, %x 会在调用时直接抛错
 -- logger.infof("Count: %d, Ratio: %.2f", count, ratio)
 
--- ✅ 正确：使用 %s 并手动转换
-logger.infof("Count: %s, Ratio: %s", tostring(count), tostring(ratio))
+-- ✅ 正确：使用 %s —— 数字、布尔、表都会原生序列化
+logger.infof("Count: %s, Ratio: %s", count, ratio)
 
 -- ✅ 或者使用非格式化函数
 logger.info("Count:", count, "Ratio:", ratio)
 ```
 
-这样设计是为了保持与 `string.format` 的一致性，所有字段都可以使用 `%s` 处理。
+与 `string.format` 不同，这里的 `%s` 不会调用 `tostring()` —— 底层 C 序列化器直接打印原生 Lua 值，所以你永远不需要手动转换数字或表。
 :::
 
 ## 参见

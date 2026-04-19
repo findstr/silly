@@ -512,6 +512,10 @@ local http = require "silly.net.http"
 
 local REQUEST_TIMEOUT = 30000 -- 30 秒
 
+-- 用 sentinel table 表示超时原因
+-- （通过 error() 抛字符串会被 Lua 自动加上 `file:line:` 前缀，不适合等值比较）
+local TIMEOUT = {}
+
 local function with_timeout(timeout_ms, func)
     local channel = require("silly.sync.channel").new(1)
     local timer_id
@@ -524,7 +528,7 @@ local function with_timeout(timeout_ms, func)
 
     -- 启动超时定时器
     timer_id = time.after(timeout_ms, function()
-        channel:push({success = false, result = "timeout", completed = false})
+        channel:push({success = false, result = TIMEOUT, completed = false})
     end)
 
     -- 等待结果
@@ -535,7 +539,7 @@ local function with_timeout(timeout_ms, func)
     end
 
     if not result.success then
-        error(result.result)
+        error(result.result, 0)  -- level 0：避免给 sentinel 加上 file:line 前缀
     end
 
     return result.result
@@ -558,7 +562,7 @@ http.listen {
         end)
 
         if not ok then
-            if err == "timeout" then
+            if err == TIMEOUT then
                 stream:respond(408, {}) -- 408 Request Timeout
                 stream:closewrite("Request Timeout")
             else

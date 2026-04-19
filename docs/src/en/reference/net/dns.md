@@ -182,31 +182,50 @@ end)
 
 ### Configuration and Utilities
 
-#### `dns.server(ip)`
+#### `dns.conf(opts)`
 
-Set custom DNS server address.
+Replace all resolver configuration. Any previous nameservers, search list and timing parameters are discarded before `opts` is applied.
 
 - **Parameters**:
-  - `ip`: `string` - DNS server address in format `"IP:PORT"`
-    - IPv4: `"8.8.8.8:53"` or `"223.5.5.5:53"`
-    - IPv6: `"[2001:4860:4860::8888]:53"`
-- **Returns**: None
+  - `opts`: `table` - resolver configuration
+    - `nameservers`: `string[]` - UDP nameserver list (`"ip"` or `"ip:port"`, port defaults to 53). When omitted or empty, falls back to `["8.8.8.8"]`.
+    - `search`: `string[]|nil` - search domain list used for unqualified names
+    - `timeout`: `integer|nil` - per-attempt timeout in **seconds** (default 5, clamped to 30)
+    - `attempts`: `integer|nil` - retry rounds (default 2, clamped to 5)
+    - `ndots`: `integer|nil` - minimum dots in a name before skipping the search list (default 1, clamped to 15)
+- **Returns**: none
 - **Notes**:
-  - Must be called before the first DNS query
-  - Overrides configuration read from `/etc/resolv.conf`
+  - Normally you do not need to call this — `/etc/resolv.conf` is parsed automatically. Use `dns.conf` to override programmatically (tests, alternative nameservers, etc.).
+  - All in-flight queries are immediately finished with the error `"Dns reconfigured"` and their sockets are closed; new queries use the new configuration.
 - **Example**:
 
 ```lua validate
 local dns = require "silly.net.dns"
 
--- Use Aliyun DNS
-dns.server("223.5.5.5:53")
+dns.conf{
+    nameservers = {"8.8.8.8", "1.1.1.1:53"},
+    search      = {"svc.cluster.local"},
+    timeout     = 3,
+    attempts    = 2,
+}
+```
 
--- Use Google DNS
-dns.server("8.8.8.8:53")
+#### `dns.sethosts(content)`
 
--- Use Cloudflare DNS
-dns.server("1.1.1.1:53")
+Parse the given text as an `/etc/hosts`-style mapping and merge the entries into the in-memory hosts table. Pass the raw file contents (not a path).
+
+- **Parameters**:
+  - `content`: `string` - hosts file body (UTF-8 text)
+- **Returns**: none
+- **Example**:
+
+```lua validate
+local dns = require "silly.net.dns"
+
+dns.sethosts([[
+127.0.0.1 db.local
+127.0.0.1 redis.local
+]])
 ```
 
 #### `dns.isname(name)`
@@ -347,7 +366,7 @@ local task = require "silly.task"
 
 task.fork(function()
     -- Use Aliyun public DNS
-    dns.server("223.5.5.5:53")
+    dns.conf{nameservers = {"223.5.5.5:53"}}
 
     local domain = "www.example.com"
     local ip = dns.lookup(domain, dns.A)
@@ -519,7 +538,7 @@ end)
 
 ### 2. DNS Server Configuration Timing
 
-Must configure server before the first DNS query:
+`dns.conf` can be called at any time, but be aware that it cancels all in-flight queries:
 
 ```lua validate
 local silly = require "silly"
@@ -527,12 +546,12 @@ local dns = require "silly.net.dns"
 local task = require "silly.task"
 
 task.fork(function()
-    -- Correct: Configure before query
-    dns.server("8.8.8.8:53")
+    -- Configure before first query (preferred)
+    dns.conf{nameservers = {"8.8.8.8:53"}}
     local ip = dns.lookup("example.com", dns.A)
 
-    -- Wrong: Configuration after first query has no effect
-    -- dns.server("1.1.1.1:53")  -- This call will be ignored
+    -- Reconfiguration is allowed at any time, but cancels in-flight queries
+    -- dns.conf{nameservers = {"1.1.1.1:53"}}  -- In-flight queries fail with "Dns reconfigured"
 end)
 ```
 
@@ -771,12 +790,12 @@ Choose geographically close, fast-responding DNS servers:
 local dns = require "silly.net.dns"
 
 -- Recommended for mainland China: Aliyun or Tencent Cloud DNS
-dns.server("223.5.5.5:53")        -- Aliyun DNS
--- dns.server("119.29.29.29:53")  -- Tencent Cloud DNS
+dns.conf{nameservers = {"223.5.5.5:53"}}        -- Aliyun DNS
+-- dns.conf{nameservers = {"119.29.29.29:53"}}  -- Tencent Cloud DNS
 
 -- Recommended for international: Google or Cloudflare DNS
--- dns.server("8.8.8.8:53")       -- Google DNS
--- dns.server("1.1.1.1:53")       -- Cloudflare DNS
+-- dns.conf{nameservers = {"8.8.8.8:53"}}       -- Google DNS
+-- dns.conf{nameservers = {"1.1.1.1:53"}}       -- Cloudflare DNS
 ```
 
 ### 5. Set Appropriate Timeout

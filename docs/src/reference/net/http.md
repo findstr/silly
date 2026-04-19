@@ -46,13 +46,15 @@ HTTP 模块使用 stream 对象表示 HTTP 连接：
   - `conf`: `table` - 服务器配置表
     - `addr`: `string` (必需) - 监听地址，例如 `"127.0.0.1:8080"` 或 `":8080"`
     - `handler`: `function` (必需) - 请求处理函数 `function(stream)`
-    - `certs`: `table[]|nil` (可选) - TLS 证书配置（用于 HTTPS）
+    - `tls`: `boolean|nil` (可选) - 为 `true` 时使用 TLS 监听（HTTPS / WSS）。要让 `certs` 生效**必须**同时设置 `tls = true`，只给 `certs` 不给 `tls` 会以明文 HTTP 监听。
+    - `certs`: `table[]|nil` (可选) - TLS 证书配置（用于 HTTPS，需要 `tls = true`）
       - `cert`: `string` - PEM 格式证书
       - `key`: `string` - PEM 格式私钥
+    - `alpnprotos`: `string[]|nil` (可选) - 广告的 ALPN 协议（如 `{"h2", "http/1.1"}`），仅在 `tls = true` 时有意义
     - `backlog`: `integer|nil` (可选) - 监听队列大小
 - **返回值**:
   - 成功: `server` - 服务器对象
-  - 失败: `nil, string` - nil 和错误信息
+  - 失败: `nil, silly.errno` - nil 和传输层错误
 - **示例**:
 
 ```lua validate

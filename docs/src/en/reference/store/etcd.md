@@ -547,21 +547,18 @@ task.fork(function()
 end)
 ```
 
-### client:keepalive(req)
+### client:keepalive(id)
 
-Manually sends a single lease keep-alive request (usually not needed as the client automatically keeps leases alive).
+Register a lease ID for automatic keep-alive. The client spawns a background task the first time it is called; subsequent calls on the same ID are idempotent no-ops.
 
 - **Parameters**:
-  - `req`: `table` - Request parameters
-    - `ID`: `integer` (required) - Lease ID to keep alive
-- **Returns**:
-  - Success: `table` - Response object
-    - `header`: `etcd.ResponseHeader` - Response header
-    - `ID`: `integer` - Lease ID
-    - `TTL`: `integer` - New TTL after renewal
-  - Failure: `nil, string` - nil and error message
-- **Async**: Yes
-- **Note**: This method returns a gRPC stream object; you need to call `write()` and `read()` methods
+  - `id`: `integer` - the lease ID to keep alive
+- **Returns**: none
+- **Behavior**:
+  - On first call, spawns a background coroutine that renews the lease periodically (before the server-side TTL halves).
+  - A single client tracks all registered lease IDs through one shared stream.
+  - If the keep-alive task hits `keepalivetimeout` without a successful renewal, the lease is dropped from the registry and the underlying stream is closed.
+  - Use `client:revoke{ID = ...}` when you want to actually expire the lease.
 - **Example**:
 
 ```lua validate
@@ -577,24 +574,17 @@ task.fork(function()
     local lease_res = client:grant {TTL = 60}
     local lease_id = lease_res.ID
 
-    -- Get keep-alive stream
-    local stream = client:keepalive {ID = lease_id}
-    if stream then
-        -- Send keep-alive request
-        stream:write {ID = lease_id}
-
-        -- Read response
-        local ka_res = stream:read()
-        if ka_res then
-            print("Keepalive success, new TTL:", ka_res.TTL)
-        end
-
-        stream:close()
-    end
-
-    -- Note: Usually not needed to manually keep alive, client handles it automatically
+    -- From here on the client renews this lease in the background.
+    client:keepalive(lease_id)
 end)
 ```
+
+### client:close()
+
+Tear the client down: close the watch stream, stop the lease keep-alive coroutine, and release the underlying HTTP/2 connections. Safe to call more than once; subsequent calls return immediately.
+
+- **Returns**: none
+- **Note**: After `close`, ongoing `put`/`get`/`watch`/... calls fail; a brand-new client must be constructed via `etcd.newclient` if you want to talk to the cluster again.
 
 ---
 

@@ -64,32 +64,17 @@ Stop timing a named code section.
   - Throws error if `start` and `stop` are not paired
 
 ### perf.yield()
-Call before coroutine yield to pause current coroutine's timing.
+Pause the current coroutine's profiling clock — call this **right before** a `coroutine.yield`.
 
-- **Usage**: Ensures time spent while coroutine is suspended is not counted
-- **Example**:
-```lua validate
-local perf = require "silly.perf"
-local silly = require "silly"
-
--- Use in custom scheduler
-perf.yield()
-silly.yield()
-```
+- **Usage**: Without it, the time the coroutine spends suspended would be billed to whatever section is currently `start`-ed. This API exists for code that drives its own scheduler (custom dispatch loops, the framework's own `task._yield`, etc.).
+- **Note**: Application code that uses `time.sleep` / `task.wait` / `conn:read` does **not** need to call `perf.yield` — those APIs go through the framework's scheduler, which already pairs `perf.yield` with `perf.resume`.
 
 ### perf.resume(co)
-Call after coroutine resume to restore target coroutine's timing.
+Resume `co`'s profiling clock — call this **right after** the scheduler resumes the coroutine.
 
 - **Parameters**:
-  - `co`: `thread` - The resumed coroutine
-- **Example**:
-```lua validate
-local perf = require "silly.perf"
-
--- Use in custom scheduler
-coroutine.resume(co)
-perf.resume(co)
-```
+  - `co`: `thread` - The coroutine that was just resumed
+- **Note**: Same as `perf.yield`, you only need this if you are writing a custom scheduler. Inside a normal coroutine driven by `task.fork` / `task.wait`, the framework handles bookkeeping for you.
 
 ### perf.dump([name])
 Export performance statistics.

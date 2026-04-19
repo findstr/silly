@@ -319,7 +319,7 @@ task.fork(function()
     end
 
     -- service 对象会按 proto 动态提供方法
-    local response, err = client.SayHello({name = "World"})
+    local response, err = client:SayHello({name = "World"})
     if response then
         print("Response:", response.message)
     else
@@ -340,7 +340,7 @@ end)
   - 成功: `service` - service 客户端对象
   - 失败: `nil, string` - nil 和错误信息
 
-### service.MethodName(request)
+### service:MethodName(request [, timeout])
 
 调用 RPC 方法（Unary RPC）。
 
@@ -385,7 +385,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["math.proto"], "MathService"))
 
     -- 调用 Multiply 方法
-    local result, err = client.Multiply({x = 6, y = 7})
+    local result, err = client:Multiply({x = 6, y = 7})
     if result then
         print("6 * 7 =", result.product)
     else
@@ -394,7 +394,7 @@ task.fork(function()
 end)
 ```
 
-### service.StreamMethod()
+### service:StreamMethod([timeout])
 
 创建流式 RPC 连接（Streaming RPC）。
 
@@ -433,7 +433,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["stream.proto"], "StreamService"))
 
     -- 创建双向流
-    local stream, err = client.BiStream()
+    local stream, err = client:BiStream()
     if not stream then
         print("Failed to create stream:", err)
         return
@@ -501,7 +501,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["file.proto"], "FileService"))
 
-    local stream = client.Upload()
+    local stream = client:Upload()
 
     -- 分块上传文件
     for i = 1, 5 do
@@ -562,7 +562,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["log.proto"], "LogService"))
 
-    local stream = client.StreamLogs()
+    local stream = client:StreamLogs()
 
     -- 发送查询请求
     stream:write({query = "error"})
@@ -616,7 +616,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["chat.proto"], "ChatService"))
 
-    local stream = client.Chat()
+    local stream = client:Chat()
 
     -- 发送消息
     stream:write({text = "Hello"})
@@ -693,10 +693,10 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["greeter.proto"], "Greeter"))
 
     -- 调用 RPC
-    local resp1 = client.SayHello({name = "Alice"})
+    local resp1 = client:SayHello({name = "Alice"})
     print(resp1.greeting)  -- Hello, Alice!
 
-    local resp2 = client.SayGoodbye({name = "Bob"})
+    local resp2 = client:SayGoodbye({name = "Bob"})
     print(resp2.greeting)  -- Goodbye, Bob!
 
     server:close()
@@ -758,7 +758,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["calculator.proto"], "Calculator"))
 
     -- 正常调用
-    local result, err = client.Divide({
+    local result, err = client:Divide({
         dividend = 10,
         divisor = 2
     })
@@ -769,7 +769,7 @@ task.fork(function()
     end
 
     -- 错误调用（除零）
-    local result2, err2 = client.Divide({
+    local result2, err2 = client:Divide({
         dividend = 10,
         divisor = 0
     })
@@ -857,7 +857,7 @@ task.fork(function()
 
     -- 请求会轮询到两个服务器
     for i = 1, 4 do
-        local result = client.Increment({delta = 1})
+        local result = client:Increment({delta = 1})
         print("Client got value:", result.value)
     end
 
@@ -918,7 +918,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["slow.proto"], "SlowService"))
 
     -- 快速请求（应该成功）
-    local result1, err1 = client.SlowMethod({delay_ms = 100}, 1000)
+    local result1, err1 = client:SlowMethod({delay_ms = 100}, 1000)
     if result1 then
         print("Fast request:", result1.result)
     else
@@ -926,7 +926,7 @@ task.fork(function()
     end
 
     -- 慢速请求（应该超时）
-    local result2, err2 = client.SlowMethod({delay_ms = 2000}, 1000)
+    local result2, err2 = client:SlowMethod({delay_ms = 2000}, 1000)
     if result2 then
         print("Slow request:", result2.result)
     else
@@ -1049,7 +1049,7 @@ v1HSCliKZXW8cusnBRD2IOyxuIUV/qiMfARylMvlLBccgJR8+olH9f/yF2EFWhoy
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["secure.proto"], "SecureService"))
 
-    local result = client.ProcessSecret({
+    local result = client:ProcessSecret({
         secret = "my-sensitive-data"
     })
 
@@ -1121,7 +1121,7 @@ task.fork(function()
 
     for i = 1, 10 do
         wg:fork(function()
-            local result = client.GetData({id = i})
+            local result = client:GetData({id = i})
             if result then
                 results[i] = result.data
                 print("Received:", result.data)
@@ -1193,7 +1193,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["events.proto"], "EventService"))
 
     -- 对于流式方法，调用返回流对象
-    local stream, err = client.Subscribe()
+    local stream, err = client:Subscribe()
     if stream then
         -- 写入请求
         stream:write({topic = "notifications"})
@@ -1288,7 +1288,7 @@ task.fork(function()
     }
     local client = assert(grpc.newservice(client_conn, p.loaded["user.proto"], "UserService"))
 
-    local response = client.CreateUser({
+    local response = client:CreateUser({
         user = {
             name = "Alice Smith",
             emails = {
@@ -1402,7 +1402,7 @@ task.fork(function()
         return
     end
 
-    local response, err = client.Call({})
+    local response, err = client:Call({})
     if not response then
         print("RPC call failed:", err)
         return
@@ -1450,7 +1450,7 @@ task.fork(function()
     local client = assert(grpc.newservice(client_conn, p.loaded["test.proto"], "Test"))
 
     -- 超时后返回 nil 和错误信息
-    local result, err = client.Ping({}, 5000)  -- 5秒超时
+    local result, err = client:Ping({}, 5000)  -- 5秒超时
     if not result then
         print("Request timeout or failed:", err)
     end
@@ -1530,7 +1530,7 @@ task.fork(function()
 
     -- 10 个请求会均匀分布到 3 个服务器
     for i = 1, 10 do
-        client.Ping({})
+        client:Ping({})
     end
 end)
 ```
@@ -1572,7 +1572,7 @@ task.fork(function()
 
     -- HTTP/2 连接会被自动复用
     for i = 1, 100 do
-        client.Get({id = i})
+        client:Get({id = i})
     end
     -- 所有请求共享同一个 TCP 连接
 end)
@@ -1615,7 +1615,7 @@ task.fork(function()
     -- 并发发送 20 个请求
     for i = 1, 20 do
         wg:fork(function()
-            local result = client.Get({id = i})
+            local result = client:Get({id = i})
             if result then
                 print("Got result for ID", i)
             end

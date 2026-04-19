@@ -182,31 +182,50 @@ end)
 
 ### 配置和工具
 
-#### `dns.server(ip)`
+#### `dns.conf(opts)`
 
-设置自定义 DNS 服务器地址。
+替换全部 resolver 配置。先清空旧的 nameservers、search 列表和超时参数，再按 `opts` 生效。
 
 - **参数**:
-  - `ip`: `string` - DNS 服务器地址,格式为 `"IP:PORT"`
-    - IPv4: `"8.8.8.8:53"` 或 `"223.5.5.5:53"`
-    - IPv6: `"[2001:4860:4860::8888]:53"`
+  - `opts`: `table` - resolver 配置
+    - `nameservers`: `string[]` - UDP nameserver 列表（`"ip"` 或 `"ip:port"`，省略端口默认 53）。不传或为空时退回 `["8.8.8.8"]`。
+    - `search`: `string[]|nil` - 非全限定名使用的搜索后缀列表
+    - `timeout`: `integer|nil` - 单次尝试超时（**秒**），默认 5，最大 30
+    - `attempts`: `integer|nil` - 重试轮数，默认 2，最大 5
+    - `ndots`: `integer|nil` - 触发跳过 search 列表所需的最少点数，默认 1，最大 15
 - **返回值**: 无
-- **注意**:
-  - 必须在第一次 DNS 查询前调用
-  - 会覆盖从 `/etc/resolv.conf` 读取的配置
+- **说明**:
+  - 一般不必调用——`/etc/resolv.conf` 会自动解析。`dns.conf` 用于程序化覆盖（测试、指定 nameserver 等）。
+  - 所有进行中的查询会被立即以错误 `"Dns reconfigured"` 终止并关闭对应连接，后续新查询按新配置进行。
 - **示例**:
 
 ```lua validate
 local dns = require "silly.net.dns"
 
--- 使用阿里云 DNS
-dns.server("223.5.5.5:53")
+dns.conf{
+    nameservers = {"8.8.8.8", "1.1.1.1:53"},
+    search      = {"svc.cluster.local"},
+    timeout     = 3,
+    attempts    = 2,
+}
+```
 
--- 使用 Google DNS
-dns.server("8.8.8.8:53")
+#### `dns.sethosts(content)`
 
--- 使用 Cloudflare DNS
-dns.server("1.1.1.1:53")
+把传入文本按 `/etc/hosts` 格式解析，条目合并进内存中的 hosts 表。传入的是文件内容字符串，不是路径。
+
+- **参数**:
+  - `content`: `string` - hosts 文件内容（UTF-8 文本）
+- **返回值**: 无
+- **示例**:
+
+```lua validate
+local dns = require "silly.net.dns"
+
+dns.sethosts([[
+127.0.0.1 db.local
+127.0.0.1 redis.local
+]])
 ```
 
 #### `dns.isname(name)`
@@ -347,7 +366,7 @@ local task = require "silly.task"
 
 task.fork(function()
     -- 使用阿里云公共 DNS
-    dns.server("223.5.5.5:53")
+    dns.conf{nameservers = {"223.5.5.5:53"}}
 
     local domain = "www.example.com"
     local ip = dns.lookup(domain, dns.A)
@@ -519,7 +538,7 @@ end)
 
 ### 2. DNS 服务器配置时机
 
-必须在第一次 DNS 查询前配置服务器:
+`dns.conf` 可以在任意时刻调用，但注意它会中断所有进行中的查询：
 
 ```lua validate
 local silly = require "silly"
@@ -527,12 +546,12 @@ local dns = require "silly.net.dns"
 local task = require "silly.task"
 
 task.fork(function()
-    -- 正确：在查询前配置
-    dns.server("8.8.8.8:53")
+    -- 在首次查询前配置（推荐）
+    dns.conf{nameservers = {"8.8.8.8:53"}}
     local ip = dns.lookup("example.com", dns.A)
 
-    -- 错误：第一次查询后配置无效
-    -- dns.server("1.1.1.1:53")  -- 这个调用会被忽略
+    -- 随时可以重新配置，但会中断进行中的查询
+    -- dns.conf{nameservers = {"1.1.1.1:53"}}  -- 进行中的查询将以 "Dns reconfigured" 错误终止
 end)
 ```
 
@@ -771,12 +790,12 @@ end)
 local dns = require "silly.net.dns"
 
 -- 中国大陆推荐使用阿里云或腾讯云 DNS
-dns.server("223.5.5.5:53")        -- 阿里云 DNS
--- dns.server("119.29.29.29:53")  -- 腾讯云 DNS
+dns.conf{nameservers = {"223.5.5.5:53"}}        -- 阿里云 DNS
+-- dns.conf{nameservers = {"119.29.29.29:53"}}  -- 腾讯云 DNS
 
 -- 国际环境推荐使用 Google 或 Cloudflare DNS
--- dns.server("8.8.8.8:53")       -- Google DNS
--- dns.server("1.1.1.1:53")       -- Cloudflare DNS
+-- dns.conf{nameservers = {"8.8.8.8:53"}}       -- Google DNS
+-- dns.conf{nameservers = {"1.1.1.1:53"}}       -- Cloudflare DNS
 ```
 
 ### 5. 合理设置超时时间

@@ -65,8 +65,8 @@ local console = require "silly.console"
 - **语法**: `INFO`
 - **返回**: 包含以下信息：
   - 构建信息：版本号、Git SHA1、多路复用API、内存分配器、定时器分辨率
-  - 进程信息：进程ID
-  - 指标信息：所有Prometheus收集器的指标
+  - 进程信息：进程ID、CPU 使用（系统/用户）、RSS/堆内存（原始字节数 + 易读 MB）
+  - Jemalloc 统计（resident/active/allocated/retained），仅在编译时链接 jemalloc 时输出
 
 ### SOCKET
 显示指定socket的详细信息。
@@ -174,15 +174,25 @@ version:1.0.0
 git_sha1:abc1234
 multiplexing_api:epoll
 memory_allocator:jemalloc
-timer_resolution:10 ms
+timer_resolution:10ms
 
 #Process
 process_id:12345
+used_cpu_sys:0.42
+used_cpu_user:1.18
+used_memory_rss:18874368
+used_memory_rss_human:18.00M
+used_memory_heap:6291456
+used_memory_heap_human:6.00M
 
-#Memory
-lua_memory_used:1234.56 KiB
-...
+#Jemalloc
+jemalloc_resident:20971520
+jemalloc_active:18874368
+jemalloc_allocated:6291456
+jemalloc_retained:1048576
 ```
+
+（`#Jemalloc` 块仅在编译时链接 jemalloc 时输出。）
 
 ### 示例4：查看所有协程任务
 
@@ -275,7 +285,7 @@ function(fd, ...) -> string | table | nil
 ```
 
 - **参数**:
-  - `fd`: `integer` - 客户端socket文件描述符
+  - `fd`：是 console accept 到的 `silly.net.tcp.conn` 对象（旧变量名沿用至今；原样传给其他 `silly.net.tcp` 辅助函数即可）
   - `...`: 命令行参数（空格分隔）
 - **返回值**:
   - `string`: 直接返回给客户端
@@ -318,17 +328,21 @@ console({
 
 ### 与metrics集成
 
-控制台的 `INFO` 命令会自动显示所有注册的Prometheus指标：
+通过 `silly.metrics.prometheus` 注册的指标 **不会** 被 `INFO` 命令自动渲染。需要自己暴露：可以挂到 HTTP 端点，或在 console 注册一个调用 `prometheus.gather()` 的自定义命令：
 
 ```lua
 local console = require "silly.console"
 local prometheus = require "silly.metrics.prometheus"
 
--- 注册自定义指标
 local counter = prometheus.counter("my_requests", "Total requests")
 
 console({
-    addr = "127.0.0.1:8888"
+    addr = "127.0.0.1:8888",
+    cmd = {
+        metrics = function(fd)
+            return prometheus.gather()  -- Prometheus 暴露格式文本
+        end,
+    }
 })
 ```
 

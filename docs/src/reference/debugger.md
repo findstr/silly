@@ -213,29 +213,32 @@ local debugger = require "silly.debugger"
 local tcp = require "silly.net.tcp"
 
 -- 启动调试服务器
-tcp.listen("127.0.0.1:9999", function(fd, addr)
-    print("Debugger connected:", addr)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        print("Debugger connected:", conn.remoteaddr)
 
-    -- 定义读写函数
-    local read = function()
-        return tcp.readline(fd)
+        -- 定义读写函数
+        local read = function()
+            return conn:read("\n")
+        end
+
+        local write = function(data)
+            conn:write(data)
+        end
+
+        -- 启动调试会话
+        local result = debugger.start(read, write)
+
+        if result then
+            print("Debug session ended:", result)
+        else
+            print("Debug session error")
+        end
+
+        conn:close()
     end
-
-    local write = function(data)
-        tcp.write(fd, data)
-    end
-
-    -- 启动调试会话
-    local result = debugger.start(read, write)
-
-    if result then
-        print("Debug session ended:", result)
-    else
-        print("Debug session error")
-    end
-
-    tcp.close(fd)
-end)
+}
 
 print("Debugger listening on 127.0.0.1:9999")
 ```
@@ -303,13 +306,16 @@ Upvalue $1 config = {
 ```lua
 local tcp = require "silly.net.tcp"
 
-tcp.listen("0.0.0.0:8080", function(fd, addr)
-    local data = tcp.read(fd, 1024)
-    -- 在这里设置断点检查接收到的数据
-    local response = process_request(data)
-    tcp.write(fd, response)
-    tcp.close(fd)
-end)
+tcp.listen {
+    addr = "0.0.0.0:8080",
+    accept = function(conn)
+        local data = conn:read(1024)
+        -- 在这里设置断点检查接收到的数据
+        local response = process_request(data)
+        conn:write(response)
+        conn:close()
+    end
+}
 ```
 
 调试：
@@ -398,7 +404,7 @@ debugger handler.lua handler.lua:5> s
 ```lua
 function console.debug(fd)
     local read = function()
-        return tcp.readline(fd)
+        return tcp.read(fd, "\n")
     end
     local write = function(dat)
         return tcp.write(fd, dat)
@@ -406,6 +412,8 @@ function console.debug(fd)
     return debugger.start(read, write)
 end
 ```
+
+（这里的 `fd` 实际上是 console accept 到的 `silly.net.tcp.conn` 对象；已弃用的 `tcp.read` / `tcp.write` 辅助函数会转发到 `conn:read` / `conn:write`。）
 
 这使得通过console进入调试器非常方便。
 

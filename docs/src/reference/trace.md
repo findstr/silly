@@ -96,7 +96,7 @@ local server = http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = 2,
         })
-        stream:write("ok")
+        stream:closewrite("ok")
     end
 }
 ```
@@ -170,7 +170,7 @@ end
 ```lua validate
 local trace = require "silly.trace"
 local http = require "silly.net.http"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 -- 服务启动时设置节点 ID
 trace.setnode(1)
@@ -201,7 +201,7 @@ local server = http.listen {
 ```lua validate
 local trace = require "silly.trace"
 local http = require "silly.net.http"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 -- 服务启动时设置节点 ID（不同于上游）
 trace.setnode(2)
@@ -259,7 +259,7 @@ local result = cluster.call(peer, "api.method", {arg1 = "xxx", arg2 = "YYY"})
 
 ```lua validate
 local trace = require "silly.trace"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 trace.setnode(1)
 trace.spawn()  -- 假设生成的 trace ID 是 0x1234567890ab0001

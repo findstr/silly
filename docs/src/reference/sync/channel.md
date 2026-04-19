@@ -52,9 +52,7 @@ print("Channel created")
   - `data`: `any` - 要发送的数据（不能为 `nil`）
 - **返回值**:
   - `success`: `boolean` - 是否成功推送
-  - `error`: `string|nil` - 错误信息（如果失败）
-    - `"nil data"` - 尝试推送 nil 值
-    - `"channel closed"` - 通道已关闭
+  - `error`: `any|nil` - 关闭原因（即 `channel:close(reason)` 时传入的值），或 `"Nil data"`（`data` 为 `nil` 时）。**请把它视作不透明值**：只需 `if not ok then break end`；如果业务需要区分原因，请在 `close` 时传入自己的 sentinel（例如唯一 table）。
 
 **示例**:
 ```lua validate
@@ -66,10 +64,9 @@ local ch = channel.new()
 local ok, err = ch:push("hello")
 assert(ok, err)
 
--- 尝试推送 nil（会失败）
+-- 推送 nil 始终失败
 ok, err = ch:push(nil)
 assert(not ok)
-assert(err == "nil data")
 ```
 
 ### channel:pop()
@@ -78,8 +75,7 @@ assert(err == "nil data")
 
 - **返回值**:
   - `data`: `any|nil` - 读取到的数据，失败时为 `nil`
-  - `error`: `string|nil` - 错误信息
-    - `"channel closed"` - 通道已关闭且为空
+  - `error`: `any|nil` - 关闭原因（若已有协程在 pop，会得到字符串 `"Channel is mpsc"`）。**视作不透明值**：用 `if err then break end` 判断，不要和字面量比较。
 
 **注意**: 此函数是异步的，会挂起当前协程。
 
@@ -103,10 +99,12 @@ assert(data == "world", "Should receive 'world'")
 assert(err == nil)
 ```
 
-### channel:close()
+### channel:close([reason])
 
 关闭通道。关闭后的通道不能再推送新数据，但可以继续读取队列中的剩余数据。如果有协程正在等待数据，会唤醒该协程并返回错误。
 
+- **参数**:
+  - `reason`: `any` (可选) - 后续 `push`/`pop` 返回的 err 值；默认是字符串 `"channel closed"`。需要让调用方区分多种关闭原因时，请传入自己的标记（字符串 tag、sentinel table 等）。
 - **返回值**: 无
 
 **示例**:
@@ -123,15 +121,15 @@ ch:close()
 assert(ch:pop() == "message1")
 assert(ch:pop() == "message2")
 
--- 读取空的已关闭通道会返回错误
+-- 关闭后 pop/push 会返回错误，请视作不透明值。
 local data, err = ch:pop()
 assert(data == nil)
-assert(err == "channel closed")
+assert(err)   -- 不要拿 err 去和字符串字面量比较
 
--- 不能向已关闭的通道推送数据
+-- 向已关闭通道 push 同样失败
 local ok, err = ch:push("message3")
 assert(not ok)
-assert(err == "channel closed")
+assert(err)
 ```
 
 ### channel:clear()
@@ -193,7 +191,7 @@ end)
 wg:fork(function()
     while true do
         local data, err = ch:pop()
-        if err == "channel closed" then
+        if err then
             print("Consumer: channel closed")
             break
         end
@@ -232,7 +230,7 @@ end)
 wg:fork(function()
     while true do
         local task, err = ch:pop()
-        if err == "channel closed" then
+        if err then
             break
         end
         print("Processing task", task.id)

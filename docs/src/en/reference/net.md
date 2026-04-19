@@ -25,17 +25,20 @@ local net = require "silly.net"
 
 ## Address Format
 
-Addresses use the `host:port` form. Parsing is tolerant, and output should be normalized with `silly.net.addr.join()`.
+Addresses use the `host:port` form. Splitting is done by `silly.net.addr.parse`:
+
+- **No `[...]` brackets** — the parser uses the **first** `:` as the host/port separator. So `"127.0.0.1:8080"` works, but `"::1:8080"` is **not** an IPv6 loopback — it parses as `host=""`, `port=":1:8080"` and fails further validation.
+- **`[...]` brackets** — required to disambiguate any IPv6 literal that contains `:`. The closing `]` must be followed by `:port`.
 
 **IPv4 Examples**:
-- `"127.0.0.1:8080"` - Local loopback address
-- `"0.0.0.0:9000"` - Listen on all interfaces
-- `":8080"` - Shorthand form, equivalent to `"0.0.0.0:8080"`
+- `"127.0.0.1:8080"` — Local loopback address
+- `"0.0.0.0:9000"` — Listen on all IPv4 interfaces
+- `":8080"` — Shorthand: empty host, port `8080` (the listen wrappers normalize empty host to `0::0`, i.e. all interfaces)
 
 **IPv6 Examples**:
-- `"[::1]:8080"` - IPv6 local loopback (recommended form)
-- `"::1:8080"` - Tolerant input (uses the last `:` as port separator)
-- `"[::]:8080"` - Listen on all IPv6 interfaces
+- `"[::1]:8080"` — IPv6 loopback (brackets required)
+- `"[::]:8080"` — Listen on all IPv6 interfaces
+- `"[2001:db8::1]:443"` — Any IPv6 literal containing `:` must use brackets
 
 **Domain Example**:
 - `"example.com:80"`
@@ -56,7 +59,7 @@ Create TCP listener at specified address.
 
 **Returns**:
 - `fd` (integer): Listen socket file descriptor
-- `err` (string): Error message (on failure)
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -82,19 +85,19 @@ if listenfd then
 end
 ```
 
-### net.tcpconnect(addr, event, bind)
+### net.tcpconnect(addr, event, bind, timeout)
 
 Connect to TCP server.
 
 **Parameters**:
 - `addr` (string): Server address
 - `event` (table): Event handler table (same as `tcplisten`, but no `accept` needed)
-- `bind` (string, optional): Local bind address
-- `timeout` (integer, optional): Connection timeout (milliseconds)
+- `bind` (string, optional): Local bind address (`"ip:port"`)
+- `timeout` (integer, optional): Connection timeout in milliseconds; on expiry the in-flight socket is closed and `errno.TIMEDOUT` is returned
 
 **Returns**:
 - `fd` (integer): Connected file descriptor
-- `err` (string): Error message (on failure)
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -116,21 +119,21 @@ if fd then
 end
 ```
 
-### net.tcpsend(fd, data, size)
+### net.tcpsend(fd, data[, size])
 
 Send data to TCP socket.
 
 **Parameters**:
 - `fd` (integer): Socket file descriptor
 - `data` (string|lightuserdata|table): Data to send
-  - `string`: Send string directly
-  - `lightuserdata`: Send raw memory pointer (need to specify `size`)
-  - `table`: Send string table (batch send)
-- `size` (integer, optional): Data size (required for `lightuserdata`)
+  - `string` — sent as-is; size is `#data`
+  - `lightuserdata` — raw memory pointer; **must** pass `size` as the next argument
+  - `table` — array of strings; sent as one combined buffer
+- `size` (integer, optional): Required only when `data` is `lightuserdata`
 
 **Returns**:
 - `ok` (boolean): Whether successful
-- `err` (string): Error message (on failure)
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -147,27 +150,26 @@ net.tcpsend(fd, "Hello\n")
 net.tcpsend(fd, {"Line 1\n", "Line 2\n", "Line 3\n"})
 ```
 
-### net.tcpmulticast(fd, data, size, addr)
+### net.tcpmulticast(fd, ptr, size)
 
-Broadcast data to multiple TCP connections.
+Send a single buffer (a multipack handle from `net.multipack`) to one TCP socket without copying. The buffer's reference count is decremented after the send completes; freeing happens automatically when the count reaches zero.
 
 **Parameters**:
-- `fd` (integer): Starting file descriptor (actually a placeholder)
-- `data` (lightuserdata): Data pointer
-- `size` (integer): Data size
-- `addr` (string, optional): Target address filter
+- `fd` (integer): Target file descriptor
+- `ptr` (lightuserdata): Buffer returned by `net.multipack`
+- `size` (integer): Buffer size in bytes
 
 **Returns**:
-- `ok` (boolean): Whether successful
-- `err` (string): Error message
+- `ok` (boolean): Whether the send was queued successfully
+- `err` (`silly.errno?`): Error code on failure
 
-::: tip Advanced Feature
-This function efficiently sends same data to multiple connections, using zero-copy technique internally.
+::: tip Multicast Pattern
+Allocate one buffer with `net.multipack(data, fanout)` (where `fanout` is the number of intended receivers, used as the initial refcount), then call `net.tcpmulticast(fd, ptr, size)` once per receiver. The shared buffer is freed automatically once every receiver's send completes.
 :::
 
 ## UDP Functions
 
-### net.udpbind(addr, event, backlog)
+### net.udpbind(addr, event)
 
 Bind UDP socket to specified address.
 
@@ -176,11 +178,12 @@ Bind UDP socket to specified address.
 - `event` (table): Event handler table:
   - `data` (function): `function(fd, ptr, size, addr)` - Data receive callback (note has `addr` parameter)
   - `close` (function): `function(fd, errno)` - Close callback
-- `backlog` (integer, optional): Unused (UDP has no listen queue)
+
+(The wrapper accepts a third `backlog` argument for symmetry with `tcplisten`, but UDP has no listen queue and the value is ignored.)
 
 **Returns**:
 - `fd` (integer): UDP socket file descriptor
-- `err` (string): Error message
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -192,7 +195,7 @@ local udpfd = net.udpbind("[::]:9000", {
         local data = silly.tostring(ptr, size)
         print("UDP from", addr, ":", data)
         -- Reply to client
-        net.udpsend(fd, data, size, addr)
+        net.udpsend(fd, data, addr)
     end,
     close = function(fd, errno)
         print("UDP closed:", errno)
@@ -211,23 +214,21 @@ Connect to UDP server (pseudo-connection, only sets default target address).
 
 **Returns**:
 - `fd` (integer): UDP socket file descriptor
-- `err` (string): Error message
+- `err` (`silly.errno?`): Error code on failure
 
-### net.udpsend(fd, data, size_or_addr, addr)
+### net.udpsend(fd, data, [size,] [addr])
 
-Send UDP datagram.
+Send UDP datagram. The argument layout depends on the `data` type:
 
-**Parameters**:
-- `fd` (integer): UDP socket file descriptor
-- `data` (string|lightuserdata|table): Data to send
-- `size_or_addr` (integer|string, optional):
-  - If `data` is `lightuserdata`, this is data size
-  - If `data` is string and socket not connected, this is target address
-- `addr` (string, optional): Target address (used when third arg is size)
+| `data` type | Call form | Notes |
+|---|---|---|
+| `string` | `net.udpsend(fd, str)` or `net.udpsend(fd, str, addr)` | Size is `#str`; `addr` only needed for an unconnected socket |
+| `table` (array of strings) | `net.udpsend(fd, tbl)` or `net.udpsend(fd, tbl, addr)` | Strings are concatenated in order |
+| `lightuserdata` | `net.udpsend(fd, ptr, size)` or `net.udpsend(fd, ptr, size, addr)` | `size` is **required** when sending a raw pointer |
 
 **Returns**:
 - `ok` (boolean): Whether successful
-- `err` (string): Error message
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -255,7 +256,7 @@ Close network socket.
 
 **Returns**:
 - `ok` (boolean): Whether successful
-- `err` (string): Error message
+- `err` (`silly.errno?`): Error code on failure
 
 **Example**:
 ```lua validate
@@ -404,10 +405,11 @@ net.tcpsend(saved_fd, "data") -- saved_fd may point to other connection
 
 ### 4. IPv6 Support
 
-Address format strictly follows `[IP]:Port` format:
+Address format strictly follows `[IP]:Port` for any IPv6 literal that contains `:`. The parser uses the **first** `:` outside brackets as the host/port separator, so `"::1:8080"` and `"::1"` are not valid IPv6 addresses to it:
+
 - IPv4: `"192.168.1.1:8080"`
 - IPv6: `"[2001:db8::1]:8080"` (brackets required)
-- Shorthand: `":8080"` automatically selects IPv4 or IPv6
+- Shorthand: `":8080"` — empty host plus port; the listen wrapper turns the empty host into `0::0` (all interfaces, both families)
 
 ## Advanced Usage
 

@@ -252,7 +252,7 @@ task.fork(function()
     -- 广播协程
     task.fork(function()
         while true do
-            local message = broadcast_chan:recv()
+            local message = broadcast_chan:pop()
             for i, sock in ipairs(clients) do
                 sock:write(message, "text")
             end
@@ -271,7 +271,7 @@ task.fork(function()
                         local data, typ = sock:read()
                         if not data or typ == "close" then break end
                         if typ == "text" then
-                            broadcast_chan:send(data)
+                            broadcast_chan:push(data)
                         end
                     end
 
@@ -312,6 +312,7 @@ task.fork(function()
 
     http.listen {
         addr = ":8443",
+        tls = true,
         certs = certs,
         handler = function(stream)
             if stream.header["upgrade"] == "websocket" then
