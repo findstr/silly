@@ -33,6 +33,18 @@ local silly = require "silly"
 - **Type**: `string`
 - **Description**: Silly framework version number
 
+### silly.allocator
+- **Type**: `string`
+- **Description**: Name of the memory allocator linked at build time (e.g. `"jemalloc"`, `"libc"`)
+
+### silly.multiplexer
+- **Type**: `string`
+- **Description**: Name of the underlying I/O multiplexer implementation (e.g. `"epoll"`, `"kqueue"`, `"iocp"`)
+
+### silly.timerresolution
+- **Type**: `integer`
+- **Description**: Timer tick resolution in milliseconds (default 10ms, set at build time)
+
 ## Core Functions
 
 ### silly.genid()

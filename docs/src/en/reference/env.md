@@ -25,7 +25,7 @@ local env = require "silly.env"
 Get the value of an environment variable.
 
 - **Parameters**:
-  - `key`: `string` - Environment variable name, supports dot-separated nested access (e.g., `"server.port"`)
+  - `key`: `string` - Environment variable name. Keys are looked up **as literal strings**: `env.get("server.port")` returns the entry stored under exactly `"server.port"`. Dot-separated keys work at runtime because `env.load` flattens nested tables in the config file into dotted flat keys (see [Configuration File Format](#configuration-file-format) below).
 - **Returns**: `any | nil` - Value of the environment variable, or `nil` if not found
 - **Example**:
 ```lua validate
@@ -44,7 +44,7 @@ print("Workers:", workers)
 Set the value of an environment variable.
 
 - **Parameters**:
-  - `key`: `string` - Environment variable name, supports dot-separated nested keys (e.g., `"server.port"`)
+  - `key`: `string` - Environment variable name. As with `env.get`, the key is used **literally** — `env.set("server.port", 8080)` stores under the exact key `"server.port"`, not as a nested table.
   - `value`: `any` - Value to set (can be any type)
 - **Example**:
 ```lua validate
@@ -54,7 +54,7 @@ local env = require "silly.env"
 env.set("debug", true)
 env.set("timeout", 30)
 
--- Set nested key
+-- Set nested key (literal string key — does not create a nested table)
 env.set("server.port", 8080)
 env.set("database.host", "127.0.0.1")
 
@@ -72,9 +72,9 @@ Load environment variables from a configuration file.
   - Error message on failure
 - **Description**:
   - Configuration file is a Lua file containing variable assignment statements
-  - Supports nested table structures
-  - Supports `include(filename)` function to include other configuration files
-  - Loaded configuration is merged into existing environment variables
+  - Supports nested table structures; nested tables are **flattened** into dotted keys (`server = { port = 8080 }` becomes `env.get("server.port")`)
+  - Inside a config file, `include(filename)` loads another config file into the same shared environment, and `ENV(name)` is shorthand for `os.getenv(name)`
+  - **First-writer-wins**: if a key was already set (by command-line args or an earlier `env.set` / `env.load`), the file does **not** overwrite it — this is what makes `--key=value` overrides on the command line work without further coding
 - **Example**:
 
 Configuration file `config.lua`:
@@ -184,18 +184,20 @@ print("Port (can be overridden by command line):", port)
 
 ### Example 3: Using include() to Import Multiple Config Files
 
+`include(name)` runs another config file in the same shared environment — the assignments inside that file land in the same key namespace, so split files compose by writing to top-level names.
+
 Main configuration file `main.config.lua`:
 ```lua
 -- main.config.lua
-server = include("server.config.lua")
-database = include("database.config.lua")
+include("server.config.lua")
+include("database.config.lua")
 debug = true
 ```
 
 Server configuration `server.config.lua`:
 ```lua
 -- server.config.lua
-return {
+server = {
     host = "0.0.0.0",
     port = 8080,
     workers = 4,
@@ -205,7 +207,7 @@ return {
 Database configuration `database.config.lua`:
 ```lua
 -- database.config.lua
-return {
+database = {
     host = "127.0.0.1",
     port = 3306,
     user = "root",
@@ -220,7 +222,7 @@ local env = require "silly.env"
 
 env.load("main.config.lua")
 
--- Access nested configuration
+-- Access flattened keys
 local server_port = env.get("server.port")     -- 8080
 local db_host = env.get("database.host")       -- "127.0.0.1"
 local db_name = env.get("database.database")   -- "myapp"
@@ -317,12 +319,20 @@ env.get("server.tls.enabled")  -- true
 env.get("server.tls.cert")     -- "/path/to/cert.pem"
 ```
 
-### 2. Using the include() Function
+### 2. Using the include() and ENV() Helpers
+
+Inside a config file the loader injects two helpers:
+
+- `include(name)` — load another config file into the same shared environment. Assignments inside the included file land in the same flat key namespace; the call itself returns nothing, so write `include("server.config.lua")` (not `server = include(...)`).
+- `ENV(name)` — short alias for `os.getenv(name)`, useful for pulling secrets/overrides from process environment variables.
 
 ```lua
-server = include("server.config.lua")
-database = include("database.config.lua")
--- Can also nest directly
+include("server.config.lua")
+include("database.config.lua")
+
+-- Read from process environment
+secret = ENV("APP_SECRET") or "dev-default"
+
 cache = {
     enabled = true,
     ttl = 3600,
@@ -331,10 +341,10 @@ cache = {
 
 ### 3. Lua Expressions
 
-Configuration files support arbitrary Lua expressions:
+Configuration files support arbitrary Lua expressions. Use the loader-injected `ENV(name)` helper to pull values from the OS environment:
 
 ```lua
-workers = os.getenv("NUM_WORKERS") or 4
+workers = ENV("NUM_WORKERS") or 4
 timeout = 30 * 1000  -- 30 seconds, in milliseconds
 allowed_ips = {
     "127.0.0.1",
@@ -343,20 +353,30 @@ allowed_ips = {
 features = {
     cache = true,
     metrics = true,
-    debug = os.getenv("DEBUG") == "1",
+    debug = ENV("DEBUG") == "1",
 }
 ```
 
 ## Notes
 
-::: tip Nested Access
-Both `env.get()` and `env.set()` support dot-separated nested key access:
+::: tip Dot-Separated Keys
+Both `env.get()` and `env.set()` use the **literal string** as the key. Dotted keys read like nested access only because `env.load` flattens nested tables into dotted flat keys when it loads the config:
+
 ```lua
-env.get("server.port")        -- ✅ Supported
-env.get("server.tls.enabled") -- ✅ Supported
-env.set("server.port", 8080)  -- ✅ Supported
-env.set("server.tls.enabled", true) -- ✅ Supported
+-- In config.lua:
+server = { tls = { enabled = true, cert = "/path/to/cert.pem" } }
+
+-- After env.load("config.lua"):
+env.get("server.tls.enabled") -- ✅ true
+env.get("server.tls.cert")    -- ✅ "/path/to/cert.pem"
+
+-- env.set goes by literal string key too — no nested table is created:
+env.set("server.tls.enabled", false)  -- updates the flat key "server.tls.enabled"
 ```
+:::
+
+::: warning First-Writer-Wins
+`env.load` **does not overwrite** keys that already exist. Command-line `--key=value` arguments are populated before any `env.load` call, so they always win. The same rule applies between successive `env.load` calls — the first file to set a key keeps that value.
 :::
 
 ::: warning Command-Line Argument Types

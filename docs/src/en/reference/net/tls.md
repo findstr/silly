@@ -436,6 +436,28 @@ task.fork(function()
 end)
 ```
 
+### conn:read(n [, timeout])
+
+Reads exactly `n` bytes, or reads until a delimiter is found (asynchronous). Transparently handles TLS decryption.
+
+- **Parameters**:
+  - `n`: `integer|string` - byte count to read, or a delimiter string to read until (including the delimiter)
+  - `timeout`: `integer|nil` (optional) - per-call timeout in milliseconds
+- **Returns**:
+  - Success: `string` - the data read
+  - Failure: `nil, silly.errno` - a transport-layer error (e.g. `errno.EOF`, `errno.TIMEDOUT`, `errno.CLOSED`, or `errno.TLS` for handshake/record errors). See [silly.errno](../errno.md).
+- **Async**: suspends the coroutine until data is ready, the timeout fires, or the connection closes.
+
+### conn:write(data)
+
+Writes data through the TLS encryption layer to the peer. Buffered by the framework and flushed asynchronously; the call itself does not yield.
+
+- **Parameters**:
+  - `data`: `string|string[]` - a string or an array of string fragments (zero-copy)
+- **Returns**:
+  - Success: `true`
+  - Failure: `false, silly.errno` - typically `errno.CLOSED` or `errno.TLS`
+
 ### conn:isalive()
 
 Check if the TLS connection is still active.
@@ -567,23 +589,21 @@ print("Remote address:", conn.remoteaddr)
 
 ### Common Errors
 
-**Error**: `errno.TLS` (TLS protocol error — specific OpenSSL detail is written to the server log), `errno.CLOSED`, or another transport-layer `silly.errno` value
-- **Cause**: Certificate configuration error, client doesn't trust certificate, cipher suite mismatch
-- **Solution**: Check certificate format, use correct CA certificates, configure compatible cipher suites. For specific OpenSSL reasons, inspect the server log lines prefixed with `[tls] openssl fd:...`.
+Errors returned from `conn:read`/`conn:write` and `tls.connect`/`tls.listen` are [`silly.errno`](../errno.md) values. In addition to the standard transport errors (`errno.EOF`, `errno.CLOSED`, `errno.TIMEDOUT`, …), TLS-specific failures (certificate mismatch, handshake protocol error, cipher negotiation failure, etc.) are reported as `errno.TLS`. For the specific OpenSSL reason, inspect the server log lines prefixed with `[tls] openssl fd:...`.
 
-**Error**: "certificate verify failed"
-- **Cause**: Client cannot verify server certificate
-- **Solution**: Use trusted CA certificates, or use `--insecure` option in test environments
+- **Cause**: certificate configuration error, untrusted certificate, cipher-suite mismatch
+- **Solution**: verify PEM format, use a trusted CA, configure compatible cipher suites
 
 ### Build Requirements
 
-The TLS module requires OpenSSL support. OpenSSL must be enabled during compilation:
+The TLS module requires OpenSSL. OpenSSL support is **enabled by default** — no extra flag is needed:
 
 ```bash
-make OPENSSL=ON
+make           # default: OpenSSL enabled
+make OPENSSL=off   # disable TLS support
 ```
 
-If OpenSSL is not enabled, `require "silly.net.tls"` will fail.
+If you built with `OPENSSL=off`, `require "silly.net.tls"` will fail.
 
 ## See Also
 

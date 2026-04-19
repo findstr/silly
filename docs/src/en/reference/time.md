@@ -75,6 +75,7 @@ Execute callback function after specified milliseconds.
 - **Callback Parameters**:
   - If `userdata` is provided, callback receives `userdata`
   - If `userdata` is not provided, callback receives timer's `session` ID
+- **Execution context**: When the timer fires, `func` runs in a **new coroutine** — it does not resume the coroutine that called `time.after`. Treat it like `task.fork`: the timer registration call itself does not yield, and the callback may freely call yielding APIs (`time.sleep`, `conn:read`, `task.wait`, …).
 - **Example**:
 
 ```lua validate
@@ -104,7 +105,8 @@ Cancel a timer.
 - **Note**:
   - Can only cancel timers created with `time.after`
   - Cannot cancel timers created with `time.sleep`
-  - If timer has triggered but callback hasn't executed, cancel will prevent callback execution
+  - **No-op for unknown sessions**: if `session` was already cancelled, never registered, or already fired, the call returns silently — there is no error and no return value to inspect.
+  - **Race-free with the EXPIRE event**: even if the kernel has already queued the EXPIRE for `session`, calling `cancel` from another coroutine before the worker processes the next message guarantees the callback will not run. This is because the worker drains all wakeups after every message — see the *Event Loop Ordering* note in CLAUDE.md.
 - **Example**:
 ```lua validate
 local time = require "silly.time"

@@ -64,32 +64,17 @@ perf.stop("process_data")
   - 如果 `start` 和 `stop` 不配对，将抛出错误
 
 ### perf.yield()
-在协程 yield 前调用，暂停当前协程的计时。
+暂停当前协程的 profiling 时钟 —— 在 `coroutine.yield` **之前** 调用。
 
-- **用途**: 确保协程挂起期间不计入执行时间
-- **示例**:
-```lua validate
-local perf = require "silly.perf"
-local silly = require "silly"
-
--- 在自定义调度器中使用
-perf.yield()
-silly.yield()
-```
+- **用途**: 不调用的话，协程挂起期间的时间会被计入当前还在 `start` 的代码段。这个 API 是给自己实现调度循环的代码用的（例如自定义 dispatch 循环、框架自己的 `task._yield` 等）。
+- **注意**: 业务代码用的 `time.sleep` / `task.wait` / `conn:read` **不需要** 自己调用 `perf.yield` —— 这些 API 走的都是框架的调度器，调度器已经成对地配对了 `perf.yield` 和 `perf.resume`。
 
 ### perf.resume(co)
-在协程 resume 后调用，恢复目标协程的计时。
+恢复 `co` 的 profiling 时钟 —— 在调度器 resume 该协程 **之后** 调用。
 
 - **参数**:
-  - `co`: `thread` - 被恢复的协程
-- **示例**:
-```lua validate
-local perf = require "silly.perf"
-
--- 在自定义调度器中使用
-coroutine.resume(co)
-perf.resume(co)
-```
+  - `co`: `thread` - 刚刚被 resume 的协程
+- **注意**: 同上，只有自己写调度器才需要这个。普通协程（`task.fork` / `task.wait` 驱动）由框架自动维护。
 
 ### perf.dump([name])
 导出性能统计数据。

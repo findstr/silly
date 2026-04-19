@@ -512,6 +512,10 @@ local http = require "silly.net.http"
 
 local REQUEST_TIMEOUT = 30000 -- 30 seconds
 
+-- Sentinel table so the timeout reason can be identified reliably
+-- (plain strings get a `file:line:` prefix when thrown via error()).
+local TIMEOUT = {}
+
 local function with_timeout(timeout_ms, func)
     local channel = require("silly.sync.channel").new(1)
     local timer_id
@@ -524,7 +528,7 @@ local function with_timeout(timeout_ms, func)
 
     -- Start timeout timer
     timer_id = time.after(timeout_ms, function()
-        channel:push({success = false, result = "timeout", completed = false})
+        channel:push({success = false, result = TIMEOUT, completed = false})
     end)
 
     -- Wait for result
@@ -535,7 +539,7 @@ local function with_timeout(timeout_ms, func)
     end
 
     if not result.success then
-        error(result.result)
+        error(result.result, 0)  -- level 0: suppress file:line prefix for our sentinel
     end
 
     return result.result
@@ -558,7 +562,7 @@ http.listen {
         end)
 
         if not ok then
-            if err == "timeout" then
+            if err == TIMEOUT then
                 stream:respond(408, {}) -- 408 Request Timeout
                 stream:closewrite("Request Timeout")
             else

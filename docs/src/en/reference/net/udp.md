@@ -23,21 +23,24 @@ local udp = require "silly.net.udp"
 
 ## Core Concepts
 
-Unlike TCP, UDP does not establish persistent connections. Each packet is sent independently. The main read function `udp.recvfrom` is asynchronous—it suspends the current coroutine until a datagram is received and returns both the data and the sender's address.
+Unlike TCP, UDP does not establish persistent connections. Each datagram is sent independently. `conn:recvfrom` is asynchronous: it suspends the current coroutine until a datagram is received and returns the data along with the sender's address.
 
-There are two main ways to create UDP sockets:
-1.  **`udp.bind(address)`**: Creates a "server" socket that listens on a specific address and can receive packets from any source. When sending responses, you must specify the destination address in `udp.sendto`.
-2.  **`udp.connect(address)`**: Creates a "client" socket that has a default destination address. You can send packets using `udp.sendto` without specifying the address each time.
+There are two ways to create UDP sockets:
+
+1. **`udp.bind(address)`**: creates a "server" socket that listens on a specific address and can receive packets from any peer. When sending, the destination address must be passed to `conn:sendto`.
+2. **`udp.connect(address)`**: creates a "client" socket with a default destination address. Packets can be sent via `conn:sendto` without specifying an address each time.
+
+Both return a `silly.net.udp.conn` object; all send/receive/close operations are methods on that object.
 
 ---
 
 ## UDP vs TCP
 
 **UDP Features:**
-- **Connectionless**: No handshake, packets sent directly
-- **Unreliable**: Packets may be lost, duplicated, or arrive out of order
-- **Lightweight**: Low protocol overhead, low latency
-- **Message-oriented**: Preserves message boundaries
+- **Connectionless**: no handshake, packets sent directly
+- **Unreliable**: packets may be lost, duplicated, or arrive out of order
+- **Lightweight**: low protocol overhead, low latency
+- **Message-oriented**: preserves message boundaries
 
 **Use Cases:**
 - Real-time games (position sync, state updates)
@@ -55,8 +58,6 @@ There are two main ways to create UDP sockets:
 
 ## Complete Example: Echo Server
 
-This example demonstrates a simple UDP echo server and a client that sends messages and receives echoes. It showcases both socket types.
-
 ```lua validate
 local silly = require "silly"
 local udp = require "silly.net.udp"
@@ -65,274 +66,254 @@ local waitgroup = require "silly.sync.waitgroup"
 
 local wg = waitgroup.new()
 
--- 1. Create a server socket bound to an address.
-local server_fd, err = udp.bind("127.0.0.1:9989")
-assert(server_fd, err)
+-- Create a server socket bound to an address.
+local server, err = udp.bind("127.0.0.1:9989")
+assert(server, err)
 
--- 2. Fork a coroutine to handle incoming packets.
+-- Handle incoming packets.
 wg:fork(function()
-    -- 5. Wait for a packet from any source.
-    local data, addr = udp.recvfrom(server_fd)
+    local data, addr = server:recvfrom()
     if not data then
-        print("Server recv error:", addr)
+        print("Server recv error:", addr)  -- on error, second return is silly.errno
         return
     end
     print("Server received '"..data.."' from", addr)
 
-    -- 6. Echo the data back to the original sender.
-    udp.sendto(server_fd, data, addr)
+    -- Echo back to the original sender.
+    server:sendto(data, addr)
 end)
 
--- Fork client coroutine
+-- Fork a client coroutine
 wg:fork(function()
-    -- Give the server a moment to start up.
     time.sleep(100)
 
-    -- 3. Create a client socket connected to the server.
-    local client_fd, cerr = udp.connect("127.0.0.1:9989")
-    assert(client_fd, cerr)
+    -- Create a client socket with a default destination.
+    local client, cerr = udp.connect("127.0.0.1:9989")
+    assert(client, cerr)
 
-    -- 4. Send a message. Because the socket is "connected", sendto doesn't need an address.
+    -- No explicit addr needed for a connected socket.
     local msg = "Hello, UDP!"
-    print("Client sending '"..msg.."'")
-    udp.sendto(client_fd, msg)
+    client:sendto(msg)
 
-    -- 7. Wait for the echo.
-    local data, addr = udp.recvfrom(client_fd)
+    local data, addr = client:recvfrom()
     if data then
         print("Client received '"..data.."' from", addr)
         assert(data == msg)
     end
 
-    -- 8. Clean up client.
-    udp.close(client_fd)
+    client:close()
 end)
 
-wg:wait() -- Wait for both server and client coroutines to complete
-udp.close(server_fd) -- Clean up server
+wg:wait()
+server:close()
 ```
 
 ---
 
 ## API Reference
 
-### Socket Creation
+### Socket creation
 
 #### `udp.bind(address)`
-Creates a UDP socket and binds it to a local address. Typically used for servers.
+
+Creates a UDP socket bound to a local address. Typically used for servers.
 
 - **Parameters**:
-  - `address` (`string`): Address to bind to, format: `"IP:PORT"`
-    - IPv4: `"127.0.0.1:8080"` or `":8080"` (listen on all interfaces)
-    - IPv6: `"[::1]:8080"` or `"[::]:8080"` (listen on all interfaces)
-- **Returns**: File descriptor (`fd`) on success, `nil, error` on failure
-- **Example**:
+  - `address` (`string`): address to bind, format `"IP:PORT"`
+    - IPv4: `"127.0.0.1:8080"` or `":8080"` (all interfaces)
+    - IPv6: `"[::1]:8080"` or `"[::]:8080"` (all interfaces)
+- **Returns**:
+  - Success: `silly.net.udp.conn`
+  - Failure: `nil, silly.errno` - see [silly.errno](../errno.md)
+
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd, err = udp.bind("127.0.0.1:8989")
-if not fd then
+local sock, err = udp.bind("127.0.0.1:8989")
+if not sock then
     print("Bind failed:", err)
 else
-    print("Bound to port 8989, fd:", fd)
+    print("Bound to port 8989")
 end
 ```
 
-#### `udp.connect(address, [bind_address])`
+#### `udp.connect(address [, opts])`
+
 Creates a UDP socket and sets a default destination address for outbound packets. Typically used for clients.
 
 - **Parameters**:
-  - `address` (`string`): Default destination address, e.g. `"127.0.0.1:8080"`
-  - `bind_address` (`string`, optional): Local address to bind the client socket to
-- **Returns**: File descriptor (`fd`) on success, `nil, error` on failure
-- **Note**: A "connected" UDP socket is still connectionless, it just sets a default destination address
-- **Example**:
+  - `address` (`string`): default destination, e.g. `"127.0.0.1:8080"`
+  - `opts` (`table|nil`, optional):
+    - `bindaddr` (`string|nil`): local address to bind the client socket to
+- **Returns**:
+  - Success: `silly.net.udp.conn`
+  - Failure: `nil, silly.errno`
+- **Note**: a "connected" UDP socket is still connectionless — `connect` simply records a default destination.
+
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd, err = udp.connect("127.0.0.1:8989")
-if not fd then
+local sock, err = udp.connect("127.0.0.1:8989")
+if not sock then
     print("Connect failed:", err)
 else
-    print("Connected to server, fd:", fd)
+    print("Connected to server")
 end
 ```
 
-### Sending and Receiving
+### Sending and receiving
 
-#### `udp.sendto(fd, data, [address])`
+#### `conn:sendto(data [, address])`
+
 Sends a datagram.
 
 - **Parameters**:
-  - `fd` (`integer`): File descriptor of the UDP socket
-  - `data` (`string | table`): Packet content to send
-    - `string`: Send string directly
-    - `table`: Array of string fragments, automatically concatenated
-  - `address` (`string`, optional): Destination address
-    - For sockets created with `bind`: **Required**
-    - For sockets created with `connect`: Optional (uses default address if omitted)
-- **Returns**: `true` on success, `false, error` on failure
-- **Example**:
+  - `data` (`string | string[]`): payload to send; an array of strings is concatenated (zero-copy)
+  - `address` (`string|nil`): destination
+    - For sockets created with `udp.bind`: **required**
+    - For sockets created with `udp.connect`: optional (default address is used if omitted)
+- **Returns**:
+  - Success: `true`
+  - Failure: `false, silly.errno`
+- **Does NOT yield.**
+
 ```lua validate
 local udp = require "silly.net.udp"
 
--- bind socket needs to specify address
-local server_fd = udp.bind(":9001")
-udp.sendto(server_fd, "Hello", "127.0.0.1:8080")
+-- bound socket: address is required
+local server = udp.bind(":9001")
+server:sendto("Hello", "127.0.0.1:8080")
 
--- connect socket can omit address
-local client_fd = udp.connect("127.0.0.1:9001")
-udp.sendto(client_fd, "Hi there")
+-- connected socket: address is optional
+local client = udp.connect("127.0.0.1:9001")
+client:sendto("Hi there")
 
--- Send multiple fragments
-udp.sendto(client_fd, {"Header: ", "Value\n", "Body"})
+-- batched send
+client:sendto({"Header: ", "Value\n", "Body"})
 ```
 
-#### `udp.recvfrom(fd)`
+#### `conn:recvfrom([timeout])`
+
 Asynchronously waits for and receives a single datagram.
 
 - **Parameters**:
-  - `fd` (`integer`): File descriptor
+  - `timeout` (`integer|nil`): per-call timeout in milliseconds
 - **Returns**:
   - Success: `data, address`
-    - `data` (`string`): Packet content
-    - `address` (`string`): Sender's address (format: `"IP:PORT"`)
-  - Failure: `nil, error`
-- **Note**: This is an asynchronous function, suspends the current coroutine until data arrives
-- **Example**:
+    - `data` (`string`): payload
+    - `address` (`string`): sender's address, format `"IP:PORT"`
+  - Failure: `nil, silly.errno` - e.g. `errno.TIMEDOUT` when `timeout` fires, `errno.CLOSED` on a closed socket
+- **Async**: suspends the coroutine until a datagram arrives, the timeout fires, or the socket closes.
+
 ```lua validate
 local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
 
-local fd = udp.bind(":9002")
+local sock = udp.bind(":9002")
 
 task.fork(function()
     while true do
-        local data, addr = udp.recvfrom(fd)
+        local data, addr = sock:recvfrom()
         if not data then
-            print("Recv error:", addr)
+            print("Recv error:", addr)  -- the second return holds the errno on error
             break
         end
         print("Received", #data, "bytes from", addr)
-        -- Echo the data
-        udp.sendto(fd, data, addr)
+        sock:sendto(data, addr)
     end
 end)
 ```
 
 ### Management
 
-#### `udp.close(fd)`
+#### `conn:close()`
+
 Closes a UDP socket.
 
-- **Parameters**:
-  - `fd` (`integer`): File descriptor of the socket to close
-- **Returns**: `true` on success, `false, error` if socket already closed
-- **Note**: Closing a socket wakes all coroutines waiting on `recvfrom` with an error
-- **Example**:
-```lua validate
-local udp = require "silly.net.udp"
+- **Returns**: `true` on success, `false, silly.errno` if already closed.
+- **Note**: closing wakes all coroutines currently blocked in `recvfrom` with an error.
 
-local fd = udp.bind(":9003")
-local ok, err = udp.close(fd)
-if not ok then
-    print("Close failed:", err)
-end
-```
+#### `conn:isalive()`
 
-#### `udp.sendsize(fd)`
-Gets the amount of data currently held in the send buffer.
+Returns `true` while the socket is open and has not recorded an error.
 
-- **Parameters**:
-  - `fd` (`integer`): File descriptor
-- **Returns**: `integer` - Number of bytes in send buffer
-- **Usage**: Monitor network congestion, implement flow control
-- **Example**:
-```lua validate
-local udp = require "silly.net.udp"
+#### `conn:unsentbytes()`
 
-local fd = udp.connect("127.0.0.1:9004")
-udp.sendto(fd, "data")
-local pending = udp.sendsize(fd)
-print("Pending bytes:", pending)
-```
+Returns the number of bytes held in the kernel send buffer that have not yet been transmitted. Useful for monitoring backpressure.
 
-#### `udp.isalive(fd)`
-Checks if a socket is still considered alive.
+#### `conn:unreadbytes()`
 
-- **Parameters**:
-  - `fd` (`integer`): File descriptor
-- **Returns**: `boolean` - `true` if socket is open and hasn't encountered errors, `false` otherwise
-- **Example**:
-```lua validate
-local udp = require "silly.net.udp"
+Returns the total bytes of datagrams queued locally that have not yet been consumed via `recvfrom`.
 
-local fd = udp.bind(":9005")
-print("Socket alive:", udp.isalive(fd))
-udp.close(fd)
-print("Socket alive:", udp.isalive(fd))
-```
+#### `conn.fd`
+
+Read-only integer file descriptor. Set to `nil` after `close`.
 
 ---
 
 ## Usage Examples
 
-### Example 1: Simple UDP Server
+### Example 1: Simple UDP server
 
 ```lua validate
 local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
 
-local fd = udp.bind(":8989")
+local sock = udp.bind(":8989")
 print("UDP server listening on port 8989")
 
 task.fork(function()
     while true do
-        local data, addr = udp.recvfrom(fd)
+        local data, addr = sock:recvfrom()
         if not data then
             print("Server error:", addr)
             break
         end
         print("From", addr, ":", data)
-        udp.sendto(fd, "ACK: " .. data, addr)
+        sock:sendto("ACK: " .. data, addr)
     end
-    udp.close(fd)
+    sock:close()
 end)
 ```
 
-### Example 2: UDP Client
+### Example 2: UDP client with timeout
 
 ```lua validate
 local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
-local time = require "silly.time"
+local errno = require "silly.errno"
 
-local fd, err = udp.connect("127.0.0.1:8989")
-if not fd then
+local sock, err = udp.connect("127.0.0.1:8989")
+if not sock then
     print("Connect error:", err)
     return
 end
 
 task.fork(function()
-    -- Send multiple messages
     for i = 1, 5 do
         local msg = "Message " .. i
-        udp.sendto(fd, msg)
-        print("Sent:", msg)
-        local data, addr = udp.recvfrom(fd)
+        sock:sendto(msg)
+
+        local data, e = sock:recvfrom(500)  -- 500 ms timeout
         if not data then
-            print("No response for message", i)
+            if e == errno.TIMEDOUT then
+                print("No response for message", i, "(timeout)")
+            else
+                print("Recv error:", e)
+                break
+            end
+        else
+            print("Received:", data)
         end
-        time.sleep(500) -- Message interval
     end
-    udp.close(fd)
+    sock:close()
 end)
 ```
 
-### Example 3: Broadcast Messages
+### Example 3: Broadcast
 
 ```lua validate
 local silly = require "silly"
@@ -343,75 +324,30 @@ local wg = waitgroup.new()
 
 -- Receiver 1
 wg:fork(function()
-    local fd = udp.bind("127.0.0.1:9001")
-    local data, addr = udp.recvfrom(fd)
+    local sock = udp.bind("127.0.0.1:9001")
+    local data, addr = sock:recvfrom()
     print("Receiver 1 got:", data, "from", addr)
-    udp.close(fd)
+    sock:close()
 end)
 
 -- Receiver 2
 wg:fork(function()
-    local fd = udp.bind("127.0.0.1:9002")
-    local data, addr = udp.recvfrom(fd)
+    local sock = udp.bind("127.0.0.1:9002")
+    local data, addr = sock:recvfrom()
     print("Receiver 2 got:", data, "from", addr)
-    udp.close(fd)
+    sock:close()
 end)
 
 -- Sender (broadcast to multiple receivers)
 wg:fork(function()
-    local fd = udp.bind(":0") -- Bind to any port
+    local sock = udp.bind(":0")  -- bind to an ephemeral port
     local msg = "Broadcast message"
 
-    udp.sendto(fd, msg, "127.0.0.1:9001")
-    udp.sendto(fd, msg, "127.0.0.1:9002")
+    sock:sendto(msg, "127.0.0.1:9001")
+    sock:sendto(msg, "127.0.0.1:9002")
 
     print("Broadcast sent to 2 receivers")
-    udp.close(fd)
-end)
-
-wg:wait()
-```
-
-### Example 4: Heartbeat Detection
-
-```lua validate
-local silly = require "silly"
-local udp = require "silly.net.udp"
-local time = require "silly.time"
-local waitgroup = require "silly.sync.waitgroup"
-
-local wg = waitgroup.new()
-
--- Heartbeat server
-wg:fork(function()
-    local fd = udp.bind(":9010")
-    for i = 1, 3 do
-        local data, addr = udp.recvfrom(fd)
-        if data then
-            print("Heartbeat received from", addr)
-            udp.sendto(fd, "PONG", addr)
-        end
-    end
-    udp.close(fd)
-end)
-
--- Heartbeat client
-wg:fork(function()
-    time.sleep(50) -- Wait for server to start
-
-    local fd = udp.connect("127.0.0.1:9010")
-    for i = 1, 3 do
-        udp.sendto(fd, "PING")
-        print("Sent PING", i)
-
-        local data, addr = udp.recvfrom(fd)
-        if data then
-            print("Got", data, "from", addr)
-        end
-
-        time.sleep(200)
-    end
-    udp.close(fd)
+    sock:close()
 end)
 
 wg:wait()
@@ -421,173 +357,40 @@ wg:wait()
 
 ## Considerations
 
-### 1. Packet Size Limits
+### 1. Packet size limits
 
-UDP packets are subject to MTU (Maximum Transmission Unit) limits:
-- **Ethernet MTU**: Typically 1500 bytes
-- **Safe size**: Recommended not to exceed 1472 bytes (1500 - 20 IP header - 8 UDP header)
-- **Exceeding MTU**: Causes IP fragmentation, increases packet loss risk
+UDP payloads are subject to the network path's MTU (typically 1500 bytes over Ethernet). A safe upper bound is 1472 bytes (1500 − 20 IP − 8 UDP). Larger datagrams trigger IP fragmentation and increase loss probability.
 
-```lua validate
-local udp = require "silly.net.udp"
+### 2. Loss and reordering
 
-local fd = udp.bind(":9020")
+UDP does not guarantee ordering or arrival. If your protocol cares, add sequence numbers, retransmit, and apply the reliability logic in user space.
 
--- Good practice: small packets
-udp.sendto(fd, string.rep("x", 1000), "127.0.0.1:9020")
+### 3. Address format
 
--- Not recommended: large packets (may fragment)
-udp.sendto(fd, string.rep("x", 10000), "127.0.0.1:9020")
-```
-
-### 2. Out-of-Order and Packet Loss
-
-UDP does not guarantee packet ordering or arrival, application layer must handle:
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-
-local fd = udp.bind(":9021")
-
-task.fork(function()
-    local sequence = {}
-    for i = 1, 10 do
-        local data, addr = udp.recvfrom(fd)
-        if data then
-            local seq = tonumber(data:match("SEQ:(%d+)"))
-            sequence[#sequence + 1] = seq
-        end
-    end
-    -- Check if arrived in order
-    print("Received sequence:", table.concat(sequence, ","))
-end)
-```
-
-### 3. Buffer Overflow
-
-Rapid sending can lead to buffer full:
+Always use `"IP:PORT"` with an explicit IP:
 
 ```lua validate
 local udp = require "silly.net.udp"
 
-local fd = udp.connect("127.0.0.1:9022")
+local ok1 = udp.bind("127.0.0.1:8080")  -- IPv4
+local ok2 = udp.bind("[::1]:8081")      -- IPv6
+local ok3 = udp.bind(":8082")           -- all interfaces (IPv4)
 
-for i = 1, 1000 do
-    local ok, err = udp.sendto(fd, "data " .. i)
-    if not ok then
-        print("Send failed at", i, ":", err)
-        print("Buffer size:", udp.sendsize(fd))
-        break
-    end
-end
+-- These will fail:
+-- udp.bind("localhost:8080")  -- needs IP literal
+-- udp.bind("8080")            -- missing colon
 ```
 
-### 4. Address Format
+### 4. Resource cleanup
 
-Ensure correct address format:
-
-```lua validate
-local udp = require "silly.net.udp"
-
--- Correct formats
-local fd1 = udp.bind("127.0.0.1:8080")  -- IPv4
-local fd2 = udp.bind("[::1]:8081")      -- IPv6
-local fd3 = udp.bind(":8082")           -- All interfaces (IPv4)
-
--- Wrong formats (will fail)
--- local fd4 = udp.bind("localhost:8080")  -- Needs IP address
--- local fd5 = udp.bind("8080")            -- Missing colon
-```
-
-### 5. Resource Cleanup
-
-Always remember to close sockets:
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-
-task.fork(function()
-    local fd = udp.bind(":9030")
-    -- ... use socket ...
-    udp.close(fd)  -- Ensure cleanup
-end)
-```
-
----
-
-## Performance Suggestions
-
-### 1. Batch Sending
-
-Reduce number of system calls:
-
-```lua validate
-local udp = require "silly.net.udp"
-
-local fd = udp.connect("127.0.0.1:9040")
-
--- Send in batches using a table
-udp.sendto(fd, {
-    "header1\n",
-    "header2\n",
-    "body content"
-})
-```
-
-### 2. Monitor Buffer
-
-Avoid send buffer overflow:
-
-```lua validate
-local udp = require "silly.net.udp"
-
-local fd = udp.connect("127.0.0.1:9041")
-
-local function safe_send(data)
-    local buffer_size = udp.sendsize(fd)
-    if buffer_size > 1024 * 1024 then  -- 1MB threshold
-        print("Warning: send buffer is", buffer_size, "bytes")
-        return false
-    end
-    return udp.sendto(fd, data)
-end
-```
-
-### 3. Reasonable Timeouts
-
-Implement application-layer timeout mechanisms:
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-local time = require "silly.time"
-
-local function recv_with_timeout(fd, timeout_ms)
-    local result = nil
-    local task = task.fork(function()
-        result = {udp.recvfrom(fd)}
-    end)
-
-    time.sleep(timeout_ms)
-
-    if result then
-        return table.unpack(result)
-    else
-        return nil, "timeout"
-    end
-end
-```
+Always close sockets when done. The conn object also has a GC finalizer as a safety net, but relying on it delays release.
 
 ---
 
 ## See Also
 
-- [silly.net.tcp](./tcp.md) - TCP network protocol
+- [silly.net.tcp](./tcp.md) - TCP protocol
 - [silly.net.websocket](./websocket.md) - WebSocket protocol
 - [silly.net.dns](./dns.md) - DNS resolution
+- [silly.errno](../errno.md) - Transport-layer error codes
 - [silly.sync.waitgroup](../sync/waitgroup.md) - Coroutine wait group

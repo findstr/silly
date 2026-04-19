@@ -20,6 +20,7 @@ Core functionality of the framework, including coroutine scheduling, timers, sig
 - [silly.signal](./signal.md) - Unix signal handling
 - [silly.logger](./logger.md) - Logging system
 - [silly.hive](./hive.md) - Worker thread pool
+- [silly.errno](./errno.md) - Transport-layer error codes
 
 ## Utility Modules
 
@@ -38,6 +39,7 @@ Efficient data structure implementations for handling network data streams and q
 
 - [silly.adt.buffer](./adt/buffer.md) - Byte buffer
 - [silly.adt.queue](./adt/queue.md) - FIFO queue
+- [silly.adt.list](./adt/list.md) - Doubly-linked list (value-keyed, O(1) remove)
 
 ## Cryptographic Modules
 
@@ -62,6 +64,7 @@ Coroutine synchronization primitives for coordination and communication between 
 - [silly.sync.mutex](./sync/mutex.md) - Mutex lock
 - [silly.sync.channel](./sync/channel.md) - Channel (inter-coroutine communication)
 - [silly.sync.waitgroup](./sync/waitgroup.md) - Wait group
+- [silly.sync.singleflight](./sync/singleflight.md) - Deduplicate concurrent calls by key
 
 ## Network Modules
 

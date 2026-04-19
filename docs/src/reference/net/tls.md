@@ -436,6 +436,28 @@ task.fork(function()
 end)
 ```
 
+### conn:read(n [, timeout])
+
+精确读取 `n` 字节，或读取直到分隔符（异步）。底层自动处理 TLS 解密。
+
+- **参数**:
+  - `n`: `integer|string` - 要读取的字节数，或分隔符字符串（返回值包含分隔符本身）
+  - `timeout`: `integer|nil` (可选) - 本次读取的超时（毫秒）
+- **返回值**:
+  - 成功: `string` - 读到的数据
+  - 失败: `nil, silly.errno` - 传输层错误（例如 `errno.EOF`、`errno.TIMEDOUT`、`errno.CLOSED`，握手/记录错误统一记为 `errno.TLS`）。详见 [silly.errno](../errno.md)。
+- **异步**: 数据未就绪时挂起协程，直到有数据、超时触发或连接关闭。
+
+### conn:write(data)
+
+经由 TLS 加密层向对端写数据。由框架缓冲、异步发送；本调用本身不会 yield。
+
+- **参数**:
+  - `data`: `string|string[]` - 单个字符串，或字符串数组（零拷贝）
+- **返回值**:
+  - 成功: `true`
+  - 失败: `false, silly.errno` - 通常为 `errno.CLOSED` 或 `errno.TLS`
+
 ### conn:isalive()
 
 检查 TLS 连接是否仍然活动。
@@ -567,23 +589,21 @@ print("Remote address:", conn.remoteaddr)
 
 ### 常见错误
 
-**错误**: `errno.TLS`（TLS 协议错误——具体的 OpenSSL 原因写入服务器日志）、`errno.CLOSED`，或其他传输层 `silly.errno` 值
-- **原因**: 证书配置错误、客户端不信任证书、加密套件不匹配
-- **解决**: 检查证书格式、使用正确的 CA 证书、配置兼容的加密套件。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
+`conn:read`/`conn:write`、`tls.connect`/`tls.listen` 返回的错误都是 [`silly.errno`](../errno.md) 值。除了标准传输错误（`errno.EOF`、`errno.CLOSED`、`errno.TIMEDOUT` 等）之外，TLS 特有失败（证书不匹配、握手协议错误、加密套件协商失败等）统一记为 `errno.TLS`。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
 
-**错误**: "certificate verify failed"
-- **原因**: 客户端无法验证服务器证书
-- **解决**: 使用受信任的 CA 证书，或在测试环境使用 `--insecure` 选项
+- **原因**: 证书配置错误、对端不信任证书、加密套件不匹配
+- **解决**: 检查 PEM 格式、使用受信任 CA、配置兼容的加密套件
 
 ### 编译要求
 
-TLS 模块需要 OpenSSL 支持。编译时需要启用 OpenSSL：
+TLS 模块依赖 OpenSSL。OpenSSL 支持**默认启用**，不需要额外选项：
 
 ```bash
-make OPENSSL=ON
+make           # 默认启用 OpenSSL
+make OPENSSL=off   # 禁用 TLS 支持
 ```
 
-如果未启用 OpenSSL，`require "silly.net.tls"` 会失败。
+如果构建时使用了 `OPENSSL=off`，`require "silly.net.tls"` 会失败。
 
 ## 参见
 

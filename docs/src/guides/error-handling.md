@@ -47,35 +47,49 @@ Silly 采用 Lua 的错误处理机制：
 - WebSocket 连接断开
 - DNS 解析失败
 
-**示例**：
+**错误码** —— 传输层（`silly.net.tcp`、`silly.net.tls`、`silly.net.udp`，外加底层 `silly.net`）返回 [`silly.errno`](../reference/errno.md) 里的常量。**只有这 4 个模块** 允许用 `err == errno.X` 做业务分支。请按身份比较，不要依赖平台相关的 `errno` 数字或具体错误串：
 
 ```lua
 local silly = require "silly"
 local task = require "silly.task"
 local tcp = require "silly.net.tcp"
+local errno = require "silly.errno"
 
 task.fork(function()
-    -- 连接可能失败
-    local conn, err = tcp.connect("127.0.0.1:8080")
+    local conn, err = tcp.connect("127.0.0.1:8080", {timeout = 2000})
     if not conn then
-        print("连接失败:", err)
-        -- 处理错误：记录日志、重试、返回错误响应等
+        if err == errno.TIMEDOUT then
+            print("对端慢或不可达")
+        elseif err == errno.CONNREFUSED then
+            print("127.0.0.1:8080 没有监听")
+        elseif err == errno.RESOLVE then
+            print("DNS 解析失败")
+        else
+            print("Connect 失败:", err)   -- 其它错误直接打印
+        end
         return
     end
 
-    -- 读取数据可能失败
-    local data, err = conn:read(1024)
+    -- 读取可能失败 —— 包括对端正常关闭（errno.EOF）
+    local data, err = conn:read(1024, 5000)  -- 5s 读超时
     if err then
-        print("读取失败:", err)
+        if err == errno.EOF then
+            -- 对端有序关闭，通常不是错误
+        elseif err == errno.TIMEDOUT then
+            print("读超时，是否重试？")
+        else
+            print("读取失败:", err)
+        end
         conn:close()
         return
     end
 
-    -- 成功处理
     print("接收数据:", data)
     conn:close()
 end)
 ```
+
+**作用域规则：** 只有当错误**直接**来自你持有的 `silly.net.tcp` / `silly.net.tls` / `silly.net.udp`（或底层 `silly.net`）句柄的传输调用时，才可以和 `silly.errno` 常量比较。任何其他模块（DNS 查询结果、cluster RPC 应答、HTTP 流错误、gRPC status、channel 关闭原因、store 调用）返回的错误，请当作不透明字符串或使用该 API 自己定义的错误常量 —— 哪怕它今天看起来就是一个 errno。
 
 ### 2. 数据库错误
 

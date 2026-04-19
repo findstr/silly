@@ -95,12 +95,10 @@ Get the current status of a coroutine.
 - **Parameters**:
   - `task`: `thread` - Target coroutine
 - **Returns**: `string|nil` - Status string, possible values:
-  - `"RUN"` - Running
-  - `"WAIT"` - Waiting
-  - `"READY"` - In ready queue
-  - `"SLEEP"` - Sleeping
-  - `"EXIT"` - Exited
-  - `nil` - Coroutine destroyed
+  - `"RUN"` - Currently running
+  - `"WAIT"` - Suspended waiting for wakeup (via `task.wait`)
+  - `"READY"` - Queued to run; will resume at the next dispatch
+  - `nil` - Coroutine is not tracked (unknown, finished, or never forked by `task.fork`)
 
 ## Task Statistics
 

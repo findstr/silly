@@ -63,23 +63,32 @@ logger.info("This will print")
 
 ## Log Output Functions
 
+All non-formatted log functions (`debug`, `info`, `warn`, `error`) accept any number of arguments and serialize each value natively:
+
+- **Strings** are printed as-is (no quoting).
+- **Numbers** keep their integer/float representation (no `tostring()` required).
+- **Booleans** print as `true` / `false`.
+- **Nil** prints as `nil`.
+- **Tables** are serialized as `{key=value, [1]=value, ...}` up to depth 5; deeper nesting is truncated with `{...}`.
+
+Consecutive arguments are separated by a space; a newline is appended automatically.
+
 ### logger.debug(...)
 Output DEBUG level log (level 0).
 
-- **Parameters**: `...` - Any number of arguments, will be converted to strings and concatenated
+- **Parameters**: `...` - any number of values (strings, numbers, booleans, nil, tables)
 - **Example**:
 ```lua validate
 local logger = require "silly.logger"
 
 local x, y = 10, 20
 logger.debug("Variable x =", x, "y =", y)
+logger.debug("user profile:", {id = 42, name = "alice", roles = {"admin", "owner"}})
 ```
 
 ### logger.info(...)
 Output INFO level log (level 1).
 
-- **Parameters**: `...` - Any number of arguments
-- **Example**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -89,8 +98,6 @@ logger.info("Server started on port", 8080)
 ### logger.warn(...)
 Output WARN level log (level 2).
 
-- **Parameters**: `...` - Any number of arguments
-- **Example**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -100,8 +107,6 @@ logger.warn("Connection timeout, retrying...")
 ### logger.error(...)
 Output ERROR level log (level 3).
 
-- **Parameters**: `...` - Any number of arguments
-- **Example**:
 ```lua validate
 local logger = require "silly.logger"
 
@@ -111,16 +116,16 @@ logger.error("Database connection failed:", err)
 
 ## Formatted Log Functions
 
+The `*f` variants (`debugf`, `infof`, `warnf`, `errorf`) take a format string whose **only supported placeholder is `%s`**. Use `%%` to emit a literal `%`. Any other conversion raises an error like `invalid option '%d' to 'format', only support '%s'`.
+
+Despite the `%s` name, the placeholder uses the same native serializer as the non-formatted logs — **you do not need to `tostring()` numbers or tables yourself**.
+
 ### logger.debugf(format, ...)
 Output formatted DEBUG log.
 
 - **Parameters**:
-  - `format`: `string` - Format string (**only supports `%s` placeholder**)
-  - `...` - Format arguments
-- **Description**:
-  - **Important**: Only supports `%s` placeholder, does not support `%d`, `%f`, `%x`, etc.
-  - All arguments will be converted to strings using `%s`
-  - Unlike `string.format`, need to convert numbers to strings first
+  - `format`: `string` - format string; placeholder is `%s`, `%%` for a literal `%`
+  - `...` - values for each placeholder (any loggable type)
 - **Example**:
 ```lua validate
 local logger = require "silly.logger"
@@ -129,11 +134,17 @@ local username = "alice"
 local user_id = 12345
 local timestamp = 1234567890
 
--- Correct: All arguments use %s
-logger.debugf("User %s (ID: %s) logged in at %s", username, tostring(user_id), tostring(timestamp))
+-- Numbers are serialized directly — no tostring() needed.
+logger.debugf("User %s (ID: %s) logged in at %s", username, user_id, timestamp)
 
--- Wrong: Does not support %d, %f formats
--- logger.debugf("User ID: %d, time: %f", user_id, timestamp)  -- Will not work correctly
+-- Tables work too.
+logger.debugf("Request headers: %s", {["content-type"] = "application/json"})
+
+-- Literal % via %%.
+logger.debugf("progress: %s%%", 42)
+
+-- NOT supported — will raise an error:
+-- logger.debugf("id=%d count=%f", user_id, timestamp)
 ```
 
 ### logger.infof(format, ...)
@@ -169,9 +180,11 @@ local user_id = 12345
 local action = "login"
 local timestamp = os.time()
 
--- Note: Only supports %s, need to manually convert numbers to strings
-logger.infof("User [%s] performed action '%s' at %s",
-    tostring(user_id), action, tostring(timestamp))
+-- Native types (numbers, strings, tables) serialize directly — no tostring().
+logger.infof("User [%s] performed action '%s' at %s", user_id, action, timestamp)
+
+-- Tables are structured:
+logger.infof("context: %s", {user = user_id, action = action})
 ```
 
 ### Example 3: Dynamic Log Level Adjustment
@@ -290,17 +303,17 @@ Log formatting functions (`*f` series) **only support `%s` placeholder**:
 local count = 42
 local ratio = 0.75
 
--- ❌ Wrong: Does not support %d, %f, %x formats
+-- ❌ Wrong: %d, %f, %x raise an error at call time
 -- logger.infof("Count: %d, Ratio: %.2f", count, ratio)
 
--- ✅ Correct: Use %s and manually convert
-logger.infof("Count: %s, Ratio: %s", tostring(count), tostring(ratio))
+-- ✅ Correct: use %s — numbers, booleans, tables serialize natively
+logger.infof("Count: %s, Ratio: %s", count, ratio)
 
--- ✅ Or use non-formatted function
+-- ✅ Or use the non-formatted function
 logger.info("Count:", count, "Ratio:", ratio)
 ```
 
-This design is to maintain consistency with `string.format`, where all fields can be handled with `%s`.
+Unlike `string.format`, the `%s` placeholder here does not call `tostring()` — the underlying C serializer prints native Lua values directly, so you never need to convert numbers or tables yourself.
 :::
 
 ## See Also

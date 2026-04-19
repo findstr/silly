@@ -20,6 +20,7 @@ category:
 - [silly.signal](./signal.md) - Unix信号处理
 - [silly.logger](./logger.md) - 日志系统
 - [silly.hive](./hive.md) - 工作线程池
+- [silly.errno](./errno.md) - 传输层错误码
 
 ## 工具模块
 
@@ -38,6 +39,7 @@ category:
 
 - [silly.adt.buffer](./adt/buffer.md) - 字节缓冲区
 - [silly.adt.queue](./adt/queue.md) - FIFO队列
+- [silly.adt.list](./adt/list.md) - 双向链表（按值寻址，O(1) 删除）
 
 ## 加密模块
 
@@ -62,6 +64,7 @@ category:
 - [silly.sync.mutex](./sync/mutex.md) - 互斥锁
 - [silly.sync.channel](./sync/channel.md) - 通道（协程间通信）
 - [silly.sync.waitgroup](./sync/waitgroup.md) - 等待组
+- [silly.sync.singleflight](./sync/singleflight.md) - 按 key 合并并发调用
 
 ## 网络模块
 

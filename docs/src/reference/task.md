@@ -96,11 +96,9 @@ end)
   - `task`: `thread` - 目标协程
 - **返回值**: `string|nil` - 状态字符串，可能的值：
   - `"RUN"` - 正在运行
-  - `"WAIT"` - 等待中
-  - `"READY"` - 就绪队列中
-  - `"SLEEP"` - 睡眠中
-  - `"EXIT"` - 已退出
-  - `nil` - 协程已销毁
+  - `"WAIT"` - 已挂起，等待 `task.wakeup` 唤醒（通常由 `task.wait` 触发）
+  - `"READY"` - 已就绪，等待下一次调度恢复
+  - `nil` - 协程未被追踪（未知、已结束，或从未通过 `task.fork` 创建）
 
 ## 任务统计
 
@@ -117,7 +115,7 @@ end)
 {
     [thread] = {
         traceback = "stack trace string",
-        status = "RUN|WAIT|READY|..."
+        status = "RUN|WAIT|READY"
     }
 }
 ```

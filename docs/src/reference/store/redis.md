@@ -166,17 +166,18 @@ task.fork(function()
 end)
 ```
 
-### db:pipeline(requests, results)
+### db:pipeline(requests)
 
-批量执行 Redis 命令，所有命令在一次网络往返中完成。
+一次 TCP 往返发送一批 Redis 命令，并等待所有响应。
 
 - **参数**:
-  - `requests`: `table` - 命令数组，每个元素是一个命令参数数组
-  - `results`: `table` (可选) - 结果数组，如果提供则填充所有命令的返回值
+  - `requests`: `table[]` - 命令数组；每个命令也是一个数组，首元素是命令名，其余是参数（如 `{"SET", "key", "value"}`）
 - **返回值**:
-  - 不提供 results: `boolean, result` - 返回最后一个命令的结果
-  - 提供 results: `true, count` - 返回 true 和结果数量
-- **异步**: 是（会挂起协程）
+  - 成功: `table, nil` - 扁平数组 `{ok1, res1, ok2, res2, ...}`，每个输入命令对应**两个**条目：
+    - `okN` (`boolean`): 第 N 个命令服务端是否回了成功（`-` 错误回复为 `false`）
+    - `resN`: 命令的值（`okN == false` 时是错误字符串）
+  - 失败: `nil, string` - I/O 或协议错误时丢弃所有未完成命令；`err` 为传输层错误
+- **异步**: 是（挂起协程直到所有响应读完）
 - **示例**:
 
 ```lua validate
@@ -190,25 +191,28 @@ local db = redis.new {
 local task = require "silly.task"
 
 task.fork(function()
-    -- 不获取结果的 pipeline
-    local ok, res = db:pipeline({
+    -- 一次性排队 3 个 SET
+    local results, err = db:pipeline({
         {"SET", "p1", "v1"},
         {"SET", "p2", "v2"},
         {"SET", "p3", "v3"},
     })
-    assert(ok)
+    assert(results, err)
+    -- results 为 {ok1, res1, ok2, res2, ok3, res3}
+    for i = 1, #results, 2 do
+        assert(results[i], tostring(results[i + 1]))
+    end
 
-    -- 获取所有结果
-    local results = {}
-    local ok, count = db:pipeline({
+    -- 一次性排队 3 个 GET
+    local results2, err = db:pipeline({
         {"GET", "p1"},
         {"GET", "p2"},
         {"GET", "p3"},
-    }, results)
-    assert(ok and count == 6)  -- 3个命令，每个2个返回值 (ok, value)
-    assert(results[2] == "v1")
-    assert(results[4] == "v2")
-    assert(results[6] == "v3")
+    })
+    assert(results2, err)
+    assert(results2[2] == "v1")
+    assert(results2[4] == "v2")
+    assert(results2[6] == "v3")
 
     db:close()
 end)

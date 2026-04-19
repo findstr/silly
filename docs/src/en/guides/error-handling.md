@@ -47,35 +47,49 @@ Network operations may fail due to connection failures, timeouts, disconnections
 - WebSocket disconnections
 - DNS resolution failures
 
-**Example**:
+**Error codes** — the transport layer (`silly.net.tcp`, `silly.net.tls`, `silly.net.udp` — plus the low-level `silly.net`) returns errors from the [`silly.errno`](../reference/errno.md) table. **Only these four modules** are allowed to be branched on with `err == errno.X`. Compare by identity so you do not depend on platform-specific `errno` numbers or exact error strings:
 
 ```lua
 local silly = require "silly"
 local task = require "silly.task"
 local tcp = require "silly.net.tcp"
+local errno = require "silly.errno"
 
 task.fork(function()
-    -- Connection may fail
-    local conn, err = tcp.connect("127.0.0.1:8080")
+    local conn, err = tcp.connect("127.0.0.1:8080", {timeout = 2000})
     if not conn then
-        print("Connection failed:", err)
-        -- Handle error: log, retry, return error response, etc.
+        if err == errno.TIMEDOUT then
+            print("Server is slow or unreachable")
+        elseif err == errno.CONNREFUSED then
+            print("Nothing is listening on 127.0.0.1:8080")
+        elseif err == errno.RESOLVE then
+            print("DNS lookup failed")
+        else
+            print("Connect failed:", err)   -- log the raw errno otherwise
+        end
         return
     end
 
-    -- Reading data may fail
-    local data, err = conn:read(1024)
+    -- Reading may fail — including a clean peer close (errno.EOF).
+    local data, err = conn:read(1024, 5000)  -- 5s read timeout
     if err then
-        print("Read failed:", err)
+        if err == errno.EOF then
+            -- Peer closed cleanly; often not an error
+        elseif err == errno.TIMEDOUT then
+            print("Read timeout, retrying?")
+        else
+            print("Read failed:", err)
+        end
         conn:close()
         return
     end
 
-    -- Success handling
     print("Received data:", data)
     conn:close()
 end)
 ```
+
+**Scope rule:** only compare to `silly.errno` constants when the error came **directly** from a transport call on a `silly.net.tcp` / `silly.net.tls` / `silly.net.udp` (or low-level `silly.net`) handle you hold. When an error surfaces through any other module (DNS lookup result, cluster RPC reply, HTTP stream error, gRPC status, channel close reason, store call), treat it as an opaque string or use that API's own error constants — even if the value happens to be an errno today.
 
 ### 2. Database Errors
 

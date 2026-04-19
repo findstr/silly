@@ -213,29 +213,32 @@ local debugger = require "silly.debugger"
 local tcp = require "silly.net.tcp"
 
 -- Start debug server
-tcp.listen("127.0.0.1:9999", function(fd, addr)
-    print("Debugger connected:", addr)
+tcp.listen {
+    addr = "127.0.0.1:9999",
+    accept = function(conn)
+        print("Debugger connected:", conn.remoteaddr)
 
-    -- Define read/write functions
-    local read = function()
-        return tcp.readline(fd)
+        -- Define read/write functions
+        local read = function()
+            return conn:read("\n")
+        end
+
+        local write = function(data)
+            conn:write(data)
+        end
+
+        -- Start debug session
+        local result = debugger.start(read, write)
+
+        if result then
+            print("Debug session ended:", result)
+        else
+            print("Debug session error")
+        end
+
+        conn:close()
     end
-
-    local write = function(data)
-        tcp.write(fd, data)
-    end
-
-    -- Start debug session
-    local result = debugger.start(read, write)
-
-    if result then
-        print("Debug session ended:", result)
-    else
-        print("Debug session error")
-    end
-
-    tcp.close(fd)
-end)
+}
 
 print("Debugger listening on 127.0.0.1:9999")
 ```
@@ -303,13 +306,16 @@ Upvalue $1 config = {
 ```lua
 local tcp = require "silly.net.tcp"
 
-tcp.listen("0.0.0.0:8080", function(fd, addr)
-    local data = tcp.read(fd, 1024)
-    -- Set breakpoint here to check received data
-    local response = process_request(data)
-    tcp.write(fd, response)
-    tcp.close(fd)
-end)
+tcp.listen {
+    addr = "0.0.0.0:8080",
+    accept = function(conn)
+        local data = conn:read(1024)
+        -- Set breakpoint here to check received data
+        local response = process_request(data)
+        conn:write(response)
+        conn:close()
+    end
+}
 ```
 
 Debug:
@@ -398,7 +404,7 @@ Breakpoint filename supports suffix matching, so `b main.lua 10` can match `/pat
 ```lua
 function console.debug(fd)
     local read = function()
-        return tcp.readline(fd)
+        return tcp.read(fd, "\n")
     end
     local write = function(dat)
         return tcp.write(fd, dat)
@@ -406,6 +412,8 @@ function console.debug(fd)
     return debugger.start(read, write)
 end
 ```
+
+(`fd` here is actually the `silly.net.tcp.conn` object the console accepted; the deprecated `tcp.read`/`tcp.write` helpers forward to `conn:read`/`conn:write`.)
 
 This makes entering debugger through console very convenient.
 

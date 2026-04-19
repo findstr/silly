@@ -96,7 +96,7 @@ local server = http.listen {
             ["content-type"] = "text/plain",
             ["content-length"] = 2,
         })
-        stream:write("ok")
+        stream:closewrite("ok")
     end
 }
 ```
@@ -170,7 +170,7 @@ end
 ```lua validate
 local trace = require "silly.trace"
 local http = require "silly.net.http"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 -- Set node ID at service startup
 trace.setnode(1)
@@ -191,7 +191,7 @@ local server = http.listen {
             ["content-type"] = "application/json",
             ["content-length"] = #result,
         })
-        stream:write(result)
+        stream:closewrite(result)
     end
 }
 ```
@@ -201,7 +201,7 @@ local server = http.listen {
 ```lua validate
 local trace = require "silly.trace"
 local http = require "silly.net.http"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 -- Set node ID at service startup (different from upstream)
 trace.setnode(2)
@@ -259,7 +259,7 @@ All logs output through `silly.logger` automatically include the current corouti
 
 ```lua validate
 local trace = require "silly.trace"
-local logger = require "silly.logger.c"
+local logger = require "silly.logger"
 
 trace.setnode(1)
 trace.spawn()  -- Assume generated trace ID is 0x1234567890ab0001

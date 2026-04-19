@@ -248,23 +248,21 @@ print("Listening on ports: 8888, 8889")
 
 ### cluster.connect(addr)
 
-Generate a peer handle for the specified address, attempting to connect once on first call. This is an **asynchronous operation** and must be called in a coroutine.
+Create a peer handle for the given address. The handle records the address for use by later `cluster.call()` / `cluster.send()`; the actual TCP connect (and DNS lookup) is deferred to the first RPC call. This is a **synchronous** operation.
 
 **Parameters:**
 
-- `addr` (string) - Server address in format "ip:port" or "domain:port"
+- `addr` (string) - Server address in format `"ip:port"` or `"domain:port"`
 
 **Returns:**
 
-- `peer` (handle) - Peer handle (opaque structure)
+- `peer` (handle) - Peer handle (opaque table)
 
 **Notes:**
 
-- Must be called in a coroutine created by `task.fork()`
-- Supports domain name resolution (automatic DNS queries)
-- Always returns a peer handle, even if the first connection fails
-- The peer handle saves address information, `cluster.call()` will automatically reconnect when needed
-- No need to check connection status, directly use `cluster.call()` or `cluster.send()`
+- Can be called from any context — it does not yield.
+- Always returns a peer handle immediately; the first `cluster.call()` / `cluster.send()` performs the DNS lookup and TCP connect, and surfaces any error from there.
+- When a `cluster.connect`-created peer's connection drops (remote close), the next `call` / `send` transparently reconnects to the recorded address. Peers handed to the `accept` callback do **not** have that address and therefore cannot reconnect.
 
 **Example:**
 
@@ -337,14 +335,13 @@ Send an RPC request and wait for a response. This is an **asynchronous operation
 **Returns:**
 
 - `response` (any|nil) - On success, returns response data (decoded via unmarshal)
-- `err` (string|nil) - On failure, returns error message ("closed", "timeout", etc.)
+- `err` (silly.errno|string|nil) - On failure: a [`silly.errno`](../errno.md) value (e.g. `errno.TIMEDOUT`, `errno.CONNREFUSED`) for transport-level issues, or a string from the marshal/unmarshal path.
 
 **Notes:**
 
 - Must be called in a coroutine created by `task.fork()`
-- On timeout, returns `nil, "timeout"`
-- If connection is closed but peer has addr, will automatically reconnect
-- If peer has no addr (from accept), returns `nil, "peer closed"` after disconnection
+- On timeout, returns `nil, errno.TIMEDOUT`
+- If the peer has no addr (came from the `accept` callback), a `call` after disconnect returns `nil, "peer closed"`
 - Automatically handles session matching and timeout control
 
 **Example:**
@@ -1055,7 +1052,7 @@ end)
 ### Timeout Control
 
 - Default timeout 5000 milliseconds (5 seconds)
-- On timeout, returns `nil, "timeout"`
+- On timeout, returns `nil, errno.TIMEDOUT`
 - Timed-out requests are cleaned up, delayed responses are ignored
 
 ### Serialization Notes
@@ -1096,9 +1093,13 @@ end
 
 ### Error Handling
 
+`cluster.call` / `cluster.send` errors are **opaque strings** from the caller's perspective — do not `err == errno.X` against them, even if you see `errno.TIMEDOUT` today. Log or propagate the value; put retry / fallback decisions elsewhere.
+
 ```lua
+local logger = require "silly.logger"
+
 task.fork(function()
-    -- cluster.connect always returns peer handle
+    -- cluster.connect always returns a peer handle
     local peer = cluster.connect(addr)
 
     -- cluster.call's error return is declared as `string?`, so treat
@@ -1106,7 +1107,7 @@ task.fork(function()
     -- on its content.
     local resp, err = cluster.call(peer, cmd, data)
     if not resp then
-        print("Call error:", err)
+        logger.error("cluster call failed:", err)
         return
     end
 

@@ -248,23 +248,21 @@ print("监听端口: 8888, 8889")
 
 ### cluster.connect(addr)
 
-生成指定地址的对端 handle，首次调用时会尝试连接一次。这是一个**异步操作**，必须在协程中调用。
+为指定地址创建一个 peer handle。handle 只记录地址供后续 `cluster.call()` / `cluster.send()` 使用；真正的 DNS 解析和 TCP connect 延迟到第一次 RPC 调用时才发生。这是一个**同步操作**。
 
 **参数：**
 
-- `addr` (string) - 服务器地址，格式为 "ip:port" 或 "domain:port"
+- `addr` (string) - 服务器地址，格式为 `"ip:port"` 或 `"domain:port"`
 
 **返回值：**
 
-- `peer` (handle) - 对端 handle（不透明结构）
+- `peer` (handle) - 对端 handle（不透明 table）
 
 **注意：**
 
-- 必须在 `task.fork()` 创建的协程中调用
-- 支持域名解析（自动调用 DNS 查询）
-- 总是返回 peer handle，即使首次连接失败
-- peer handle 保存了地址信息，`cluster.call()` 会在需要时自动重连
-- 无需检查连接状态，直接使用 `cluster.call()` 或 `cluster.send()` 即可
+- 可以在任何上下文调用——不会 yield。
+- 无论目标是否可达都会立即返回 peer handle；实际的连接建立/解析在第一次 `call` / `send` 时进行，错误也在那里返回。
+- `cluster.connect` 创建的 peer 在连接断开（远端关闭）后，下次 `call` / `send` 会使用记录的地址透明重连。而 `accept` 回调里拿到的 peer 没有 addr 字段，**无法**重连。
 
 **示例：**
 
@@ -337,12 +335,12 @@ end)
 **返回值：**
 
 - `response` (any|nil) - 成功返回响应数据（通过 unmarshal 解码）
-- `err` (string|nil) - 失败返回错误信息（"closed"、"timeout" 等）
+- `err` (silly.errno|string|nil) - 失败时返回错误：传输层问题为 [`silly.errno`](../errno.md) 值（例如 `errno.TIMEDOUT`、`errno.CONNREFUSED`）；marshal/unmarshal 路径上的错误为字符串。
 
 **注意：**
 
 - 必须在 `task.fork()` 创建的协程中调用
-- 如果超时，返回 `nil, "timeout"`
+- 如果超时，返回 `nil, errno.TIMEDOUT`
 - 如果连接已关闭但 peer 有 addr，会自动重连
 - 如果 peer 无 addr（accept 产生的），连接断开后返回 `nil, "peer closed"`
 - 自动处理 session 匹配和超时控制
@@ -1055,7 +1053,7 @@ end)
 ### 超时控制
 
 - 默认超时 5000 毫秒（5 秒）
-- 超时后返回 `nil, "timeout"`
+- 超时后返回 `nil, errno.TIMEDOUT`
 - 超时的请求会被清理，延迟到达的响应会被忽略
 
 ### 序列化注意事项
@@ -1096,7 +1094,11 @@ end
 
 ### 错误处理
 
+从调用方看，`cluster.call` / `cluster.send` 的错误是**不透明字符串**——即便今天看到的是 `errno.TIMEDOUT`，也不要 `err == errno.X`。把值记日志、原样透传给调用方；重试/降级决策放在别处。
+
 ```lua
+local logger = require "silly.logger"
+
 task.fork(function()
     -- cluster.connect 总是返回 peer handle
     local peer = cluster.connect(addr)
@@ -1106,7 +1108,7 @@ task.fork(function()
     -- 做分支判断。
     local resp, err = cluster.call(peer, cmd, data)
     if not resp then
-        print("调用错误:", err)
+        logger.error("cluster call failed:", err)
         return
     end
 

@@ -65,8 +65,8 @@ Display all server information.
 - **Syntax**: `INFO`
 - **Returns**: Information including:
   - Build info: version, Git SHA1, multiplexing API, memory allocator, timer resolution
-  - Process info: process ID
-  - Metrics info: all Prometheus collector metrics
+  - Process info: process ID, CPU usage (sys/user), RSS and heap memory (raw bytes plus human-friendly MB)
+  - Jemalloc stats (resident/active/allocated/retained), only when the build links against jemalloc
 
 ### SOCKET
 Display detailed information about specified socket.
@@ -174,15 +174,25 @@ version:1.0.0
 git_sha1:abc1234
 multiplexing_api:epoll
 memory_allocator:jemalloc
-timer_resolution:10 ms
+timer_resolution:10ms
 
 #Process
 process_id:12345
+used_cpu_sys:0.42
+used_cpu_user:1.18
+used_memory_rss:18874368
+used_memory_rss_human:18.00M
+used_memory_heap:6291456
+used_memory_heap_human:6.00M
 
-#Memory
-lua_memory_used:1234.56 KiB
-...
+#Jemalloc
+jemalloc_resident:20971520
+jemalloc_active:18874368
+jemalloc_allocated:6291456
+jemalloc_retained:1048576
 ```
+
+(The `#Jemalloc` section appears only when the binary is built with jemalloc.)
 
 ### Example 4: View All Coroutine Tasks
 
@@ -275,7 +285,7 @@ function(fd, ...) -> string | table | nil
 ```
 
 - **Parameters**:
-  - `fd`: `integer` - Client socket file descriptor
+  - `fd`: the `silly.net.tcp.conn` object the console accepted (legacy variable name; pass it back unchanged to other `silly.net.tcp` helpers)
   - `...`: Command line arguments (space-separated)
 - **Returns**:
   - `string`: Returned directly to client
@@ -318,17 +328,21 @@ console({
 
 ### Integration with metrics
 
-Console's `INFO` command automatically displays all registered Prometheus metrics:
+Prometheus metrics registered via `silly.metrics.prometheus` are **not** automatically rendered by the `INFO` command. Expose them yourself by mounting the prometheus registry on an HTTP endpoint, or by registering a custom console command that calls `prometheus.gather()`:
 
 ```lua
 local console = require "silly.console"
 local prometheus = require "silly.metrics.prometheus"
 
--- Register custom metric
 local counter = prometheus.counter("my_requests", "Total requests")
 
 console({
-    addr = "127.0.0.1:8888"
+    addr = "127.0.0.1:8888",
+    cmd = {
+        metrics = function(fd)
+            return prometheus.gather()  -- Prometheus exposition text
+        end,
+    }
 })
 ```
 

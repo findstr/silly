@@ -11,7 +11,7 @@ tag:
 
 # udp (`silly.net.udp`)
 
-`silly.net.udp` 模块为 UDP (用户数据报协议) 网络提供了一个高级异步 API。UDP 是一种无连接的、面向消息的协议，这意味着您发送和接收的是离散的数据包（数据报）。
+`silly.net.udp` 模块为 UDP（用户数据报协议）提供高层异步 API。UDP 无连接、面向报文，收发都以独立数据报为单位。
 
 ## 模块导入
 
@@ -23,39 +23,40 @@ local udp = require "silly.net.udp"
 
 ## 核心概念
 
-与 TCP 不同，UDP 不建立持久连接。每个数据包都是独立发送的。主要的读取函数 `udp.recvfrom` 是异步的，它会暂停当前协程直到接收到一个数据报，并返回数据和发送方的地址。
+与 TCP 不同，UDP 不建立长连接，每个数据报独立发送。`conn:recvfrom` 是异步的：数据报未到时挂起当前协程，到达后恢复并返回数据与发送方地址。
 
-创建 UDP 套接字主要有两种方式：
-1.  **`udp.bind(address)`**: 创建一个"服务器"套接字，在特定地址上监听，并可以从任何来源接收数据包。在发送响应时，您必须在 `udp.sendto` 中指定目标地址。
-2.  **`udp.connect(address)`**: 创建一个"客户端"套接字，它有一个默认的目标地址。您可以使用 `udp.sendto` 发送数据包，而无需每次都指定地址。
+有两种方式创建 UDP socket：
+
+1. **`udp.bind(address)`**：创建「服务端」socket，绑定到指定地址，可接收来自任意对端的包；发送时需通过 `conn:sendto` 传入目标地址。
+2. **`udp.connect(address)`**：创建「客户端」socket，记录默认目标地址，发送时可省略地址。
+
+两者都返回 `silly.net.udp.conn` 对象，后续收发/关闭全部作为对象方法调用。
 
 ---
 
 ## UDP vs TCP
 
-**UDP 特性：**
-- **无连接**: 不需要握手，直接发送数据包
-- **不可靠**: 数据包可能丢失、重复或乱序到达
-- **轻量**: 协议开销小，延迟低
-- **面向消息**: 保持消息边界
+**UDP 特性:**
+- **无连接**: 无握手，包直接发送
+- **不可靠**: 可能丢失、重复或乱序
+- **轻量**: 协议开销低、延迟低
+- **面向报文**: 保留消息边界
 
-**适用场景：**
+**适用场景:**
 - 实时游戏（位置同步、状态更新）
 - DNS 查询
-- 音视频流（允许少量丢包）
+- 音视频流（容忍丢包）
 - 局域网服务发现
-- 日志收集（允许丢失）
+- 日志上报（容忍丢包）
 
-**不适用场景：**
+**不适合:**
 - 文件传输（需要可靠性）
-- HTTP/HTTPS（需要顺序保证）
-- 数据库连接（需要事务性）
+- HTTP/HTTPS（需要有序）
+- 数据库连接（需要事务）
 
 ---
 
-## 完整示例：回显服务器
-
-此示例演示了一个简单的 UDP 回显服务器和一个发送消息并接收回显的客户端。这展示了两种套接字类型。
+## 完整示例: 回显服务器
 
 ```lua validate
 local silly = require "silly"
@@ -65,239 +66,251 @@ local waitgroup = require "silly.sync.waitgroup"
 
 local wg = waitgroup.new()
 
--- 1. 创建一个绑定到地址的服务器套接字。
-local server_fd, err = udp.bind("127.0.0.1:9989")
-assert(server_fd, err)
+-- 创建绑定了本地地址的服务端 socket
+local server, err = udp.bind("127.0.0.1:9989")
+assert(server, err)
 
--- 2. 派生一个协程来处理传入的数据包。
+-- 处理到来的数据报
 wg:fork(function()
-    -- 5. 等待来自任何来源的数据包。
-    local data, addr = udp.recvfrom(server_fd)
+    local data, addr = server:recvfrom()
     if not data then
-        print("Server recv error:", addr)
+        print("Server recv error:", addr)  -- 出错时第二个返回值是 silly.errno
         return
     end
     print("Server received '"..data.."' from", addr)
 
-    -- 6. 将数据回显给原始发送方。
-    udp.sendto(server_fd, data, addr)
+    server:sendto(data, addr)
 end)
 
--- 派生客户端协程
+-- 客户端协程
 wg:fork(function()
-    -- 给服务器一点启动时间。
     time.sleep(100)
 
-    -- 3. 创建一个连接到服务器的客户端套接字。
-    local client_fd, cerr = udp.connect("127.0.0.1:9989")
-    assert(client_fd, cerr)
+    local client, cerr = udp.connect("127.0.0.1:9989")
+    assert(client, cerr)
 
-    -- 4. 发送一条消息。因为套接字是"连接的"，所以 sendto 不需要地址。
     local msg = "Hello, UDP!"
-    print("Client sending '"..msg.."'")
-    udp.sendto(client_fd, msg)
+    client:sendto(msg)
 
-    -- 7. 等待回显。
-    local data, addr = udp.recvfrom(client_fd)
+    local data, addr = client:recvfrom()
     if data then
         print("Client received '"..data.."' from", addr)
         assert(data == msg)
     end
 
-    -- 8. 清理客户端。
-    udp.close(client_fd)
+    client:close()
 end)
 
-wg:wait() -- 等待服务器和客户端协程完成
-udp.close(server_fd) -- 清理服务器
+wg:wait()
+server:close()
 ```
 
 ---
 
 ## API 参考
 
-### 套接字创建
+### Socket 创建
 
 #### `udp.bind(address)`
-创建一个 UDP 套接字并将其绑定到本地地址。这通常用于服务器。
+
+创建绑定了本地地址的 UDP socket，通常用于服务端。
 
 - **参数**:
-  - `address` (`string`): 要绑定的地址，格式：`"IP:PORT"`
-    - IPv4: `"127.0.0.1:8080"` 或 `":8080"` (监听所有接口)
-    - IPv6: `"[::1]:8080"` 或 `"[::]:8080"` (监听所有接口)
-- **返回值**: 成功时返回 UDP 连接对象 (`conn`)，失败时返回 `nil, error`
-- **示例**:
+  - `address` (`string`): 待绑定地址，格式 `"IP:PORT"`
+    - IPv4: `"127.0.0.1:8080"` 或 `":8080"`（所有接口）
+    - IPv6: `"[::1]:8080"` 或 `"[::]:8080"`（所有接口）
+- **返回值**:
+  - 成功: `silly.net.udp.conn`
+  - 失败: `nil, silly.errno` - 见 [silly.errno](../errno.md)
+
 ```lua validate
 local udp = require "silly.net.udp"
 
-local conn, err = udp.bind("127.0.0.1:8989")
-if not conn then
+local sock, err = udp.bind("127.0.0.1:8989")
+if not sock then
     print("Bind failed:", err)
 else
-    print("Bound to port 8989")
+    print("绑定到 8989")
 end
 ```
 
-#### `udp.connect(address, [opts])`
-创建一个 UDP 套接字并为出站数据包设置默认目标地址。这通常用于客户端。
+#### `udp.connect(address [, opts])`
+
+创建 UDP socket 并记录默认目标地址，通常用于客户端。
 
 - **参数**:
   - `address` (`string`): 默认目标地址，例如 `"127.0.0.1:8080"`
-  - `opts` (`table`, 可选): 配置选项
-    - `bindaddr` (`string`): 用于绑定客户端套接字的本地地址
-- **返回值**: 成功时返回 UDP 连接对象 (`conn`)，失败时返回 `nil, error`
-- **注意**: "连接"的 UDP 套接字仍然是无连接的，只是设置了默认目标地址
-- **示例**:
+  - `opts` (`table|nil`, 可选):
+    - `bindaddr` (`string|nil`): 客户端本地绑定地址
+- **返回值**:
+  - 成功: `silly.net.udp.conn`
+  - 失败: `nil, silly.errno`
+- **说明**: 「connected」UDP socket 仍是无连接的，`connect` 只是记录默认目标。
+
 ```lua validate
 local udp = require "silly.net.udp"
 
-local conn, err = udp.connect("127.0.0.1:8989", {
-    bindaddr = "127.0.0.1:9000" -- 可选：绑定本地端口
-})
-if not conn then
+local sock, err = udp.connect("127.0.0.1:8989")
+if not sock then
     print("Connect failed:", err)
 else
-    print("Connected to server")
-    conn:close()
+    print("已连接")
 end
 ```
 
-### 发送和接收
+### 收发
 
-#### `conn:sendto(data, [address])`
+#### `conn:sendto(data [, address])`
+
 发送一个数据报。
 
 - **参数**:
-  - `data` (`string`): 要发送的数据包内容
-  - `address` (`string`, 可选): 目标地址
-    - 对于 `bind` 创建的套接字：**必需**
-    - 对于 `connect` 创建的套接字：可选（省略则使用默认地址）
-- **返回值**: 成功时返回 `true`，失败时返回 `false, error`
-- **示例**:
+  - `data` (`string | string[]`): 要发送的内容；若传数组，各片段零拷贝拼接
+  - `address` (`string|nil`): 目标地址
+    - `udp.bind` 创建的 socket: **必填**
+    - `udp.connect` 创建的 socket: 可选（省略则使用默认地址）
+- **返回值**:
+  - 成功: `true`
+  - 失败: `false, silly.errno`
+- **不会 yield。**
+
 ```lua validate
 local udp = require "silly.net.udp"
 
--- bind 套接字需要指定地址
-local server_conn = udp.bind(":9001")
-server_conn:sendto("Hello", "127.0.0.1:8080")
+-- 绑定的 socket：必须传目标
+local server = udp.bind(":9001")
+server:sendto("Hello", "127.0.0.1:8080")
 
--- connect 套接字可以省略地址
-local client_conn = udp.connect("127.0.0.1:9001")
-client_conn:sendto("Hi there")
+-- connect 的 socket：可省略目标
+local client = udp.connect("127.0.0.1:9001")
+client:sendto("Hi there")
 
-server_conn:close()
-client_conn:close()
+-- 批量发送
+client:sendto({"Header: ", "Value\n", "Body"})
 ```
 
 #### `conn:recvfrom([timeout])`
-异步等待并接收单个数据报。
+
+异步等待并接收一个数据报。
 
 - **参数**:
-  - `timeout` (`integer`, 可选): 超时时间（毫秒）
+  - `timeout` (`integer|nil`): 单次调用超时（毫秒）
 - **返回值**:
   - 成功: `data, address`
-    - `data` (`string`): 接收到的数据内容
-    - `address` (`string`): 发送方的地址
-  - 失败: `nil, error`
-- **示例**:
+    - `data` (`string`): 载荷
+    - `address` (`string`): 发送方地址，格式 `"IP:PORT"`
+  - 失败: `nil, silly.errno` - 例如 `timeout` 触发时为 `errno.TIMEDOUT`，套接字已关闭时为 `errno.CLOSED`
+- **异步**: 数据未就绪时挂起协程，直到数据到达、超时触发或 socket 关闭。
+
 ```lua validate
+local silly = require "silly"
+local task = require "silly.task"
 local udp = require "silly.net.udp"
-local conn = udp.bind(":0") -- 绑定到任意端口
-local data, addr = conn:recvfrom(100) -- 等待100毫秒
-if data then
-    print("Received from", addr, ":", data)
-else
-    print("No data received or error:", addr)
-end
-conn:close()
+
+local sock = udp.bind(":9002")
+
+task.fork(function()
+    while true do
+        local data, addr = sock:recvfrom()
+        if not data then
+            print("Recv error:", addr)  -- 出错时第二个返回值是 errno
+            break
+        end
+        print("收到", #data, "bytes 来自", addr)
+        sock:sendto(data, addr)
+    end
+end)
 ```
 
-#### `conn:unreadbytes()`
-获取接收缓冲区中当前可用但尚未读取的数据量。
-
-- **返回值**: `integer` - 接收缓冲区中的字节数
+### 管理
 
 #### `conn:close()`
-关闭 UDP 套接字。
 
-- **返回值**: 成功时返回 `true`，失败时返回 `false, error`
-- **示例**:
-```lua validate
-local udp = require "silly.net.udp"
-local conn = udp.bind(":0")
-conn:close()
-```
+关闭 UDP socket。
+
+- **返回值**: 成功 `true`；若已关闭则 `false, silly.errno`。
+- **说明**: 关闭时，所有正在 `recvfrom` 阻塞的协程会被唤醒并返回错误。
 
 #### `conn:isalive()`
-检查套接字是否有效。
 
-- **返回值**: `boolean`
-- **示例**:
-```lua validate
-local udp = require "silly.net.udp"
-local conn = udp.bind(":0")
-print("Socket alive:", conn:isalive())
-conn:close()
-print("Socket alive:", conn:isalive())
-```
+socket 仍然打开且未记录错误时返回 `true`。
+
+#### `conn:unsentbytes()`
+
+返回内核发送缓冲区中尚未发出的字节数，用于监控背压。
+
+#### `conn:unreadbytes()`
+
+返回本地已排队但尚未通过 `recvfrom` 消费的字节总数。
+
+#### `conn.fd`
+
+只读整数 fd。调用 `close` 之后被置为 `nil`。
 
 ---
 
 ## 使用示例
 
-### 示例1：简单的 UDP 服务器
+### 示例 1: 简单 UDP 服务器
 
 ```lua validate
 local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
 
-local fd = udp.bind(":8989")
+local sock = udp.bind(":8989")
 print("UDP server listening on port 8989")
 
 task.fork(function()
     while true do
-        local data, addr = fd:recvfrom()
+        local data, addr = sock:recvfrom()
         if not data then
             print("Server error:", addr)
             break
         end
         print("From", addr, ":", data)
-    udp.close(fd)
+        sock:sendto("ACK: " .. data, addr)
+    end
+    sock:close()
 end)
 ```
 
-### 示例2：UDP 客户端
+### 示例 2: 带超时的 UDP 客户端
 
 ```lua validate
 local silly = require "silly"
 local task = require "silly.task"
 local udp = require "silly.net.udp"
-local time = require "silly.time"
+local errno = require "silly.errno"
 
-local fd, err = udp.connect("127.0.0.1:8989")
-if not fd then
+local sock, err = udp.connect("127.0.0.1:8989")
+if not sock then
     print("Connect error:", err)
     return
 end
 
 task.fork(function()
-    -- 发送多条消息
     for i = 1, 5 do
         local msg = "Message " .. i
-        udp.sendto(fd, msg)
-        print("Sent:", msg)
-        local data, addr = udp.recvfrom(fd)
+        sock:sendto(msg)
+
+        local data, e = sock:recvfrom(500)  -- 500 ms 超时
         if not data then
-            print("No response for message", i)
+            if e == errno.TIMEDOUT then
+                print("第", i, "条消息无响应（超时）")
+            else
+                print("Recv error:", e)
+                break
+            end
+        else
+            print("Received:", data)
         end
-        time.sleep(500) -- 消息间隔
     end
-    udp.close(fd)
+    sock:close()
 end)
 ```
 
-### 示例3：广播消息
+### 示例 3: 广播
 
 ```lua validate
 local silly = require "silly"
@@ -306,77 +319,32 @@ local waitgroup = require "silly.sync.waitgroup"
 
 local wg = waitgroup.new()
 
--- 接收方1
+-- 接收端 1
 wg:fork(function()
-    local fd = udp.bind("127.0.0.1:9001")
-    local data, addr = udp.recvfrom(fd)
+    local sock = udp.bind("127.0.0.1:9001")
+    local data, addr = sock:recvfrom()
     print("Receiver 1 got:", data, "from", addr)
-    udp.close(fd)
+    sock:close()
 end)
 
--- 接收方2
+-- 接收端 2
 wg:fork(function()
-    local fd = udp.bind("127.0.0.1:9002")
-    local data, addr = udp.recvfrom(fd)
+    local sock = udp.bind("127.0.0.1:9002")
+    local data, addr = sock:recvfrom()
     print("Receiver 2 got:", data, "from", addr)
-    udp.close(fd)
+    sock:close()
 end)
 
--- 发送方（广播到多个接收方）
+-- 发送端（向多个接收端广播）
 wg:fork(function()
-    local fd = udp.bind(":0") -- 绑定到任意端口
+    local sock = udp.bind(":0")  -- 绑定任意端口
     local msg = "Broadcast message"
 
-    udp.sendto(fd, msg, "127.0.0.1:9001")
-    udp.sendto(fd, msg, "127.0.0.1:9002")
+    sock:sendto(msg, "127.0.0.1:9001")
+    sock:sendto(msg, "127.0.0.1:9002")
 
-    print("Broadcast sent to 2 receivers")
-    udp.close(fd)
-end)
-
-wg:wait()
-```
-
-### 示例4：心跳检测
-
-```lua validate
-local silly = require "silly"
-local udp = require "silly.net.udp"
-local time = require "silly.time"
-local waitgroup = require "silly.sync.waitgroup"
-
-local wg = waitgroup.new()
-
--- 心跳服务器
-wg:fork(function()
-    local fd = udp.bind(":9010")
-    for i = 1, 3 do
-        local data, addr = udp.recvfrom(fd)
-        if data then
-            print("Heartbeat received from", addr)
-            udp.sendto(fd, "PONG", addr)
-        end
-    end
-    udp.close(fd)
-end)
-
--- 心跳客户端
-wg:fork(function()
-    time.sleep(50) -- 等待服务器启动
-
-    local fd = udp.connect("127.0.0.1:9010")
-    for i = 1, 3 do
-        udp.sendto(fd, "PING")
-        print("Sent PING", i)
-
-        local data, addr = udp.recvfrom(fd)
-        if data then
-            print("Got", data, "from", addr)
-        end
-
-        time.sleep(200)
-    end
-    udp.close(fd)
+    print("已广播给 2 个接收端")
+    sock:close()
 end)
 
 wg:wait()
@@ -386,158 +354,40 @@ wg:wait()
 
 ## 注意事项
 
-### 1. 数据包大小限制
+### 1. 报文大小上限
 
-UDP 数据包受 MTU（最大传输单元）限制：
-- **以太网 MTU**: 通常为 1500 字节
-- **安全大小**: 建议不超过 1472 字节（1500 - 20 IP 头 - 8 UDP 头）
-- **超过 MTU**: 会导致 IP 分片，增加丢包风险
+UDP 载荷受路径 MTU 限制（以太网常见 1500 字节）。安全上限约 1472 字节（1500 − 20 IP − 8 UDP）。超过会触发 IP 分片，提升丢包概率。
 
-```lua validate
-local udp = require "silly.net.udp"
+### 2. 丢包与乱序
 
-local conn = udp.bind(":9020")
+UDP 不保证顺序与到达。若协议需要，请在用户态加序号、重传、可靠性逻辑。
 
--- 好的做法：小数据包
-conn:sendto(string.rep("x", 1000), "127.0.0.1:9020")
+### 3. 地址格式
 
--- 不推荐：大数据包（可能分片）
-conn:sendto(string.rep("x", 10000), "127.0.0.1:9020")
-```
-
-### 2. 无序和丢包
-
-UDP 不保证数据包顺序和到达，需要应用层处理：
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-
-local conn = udp.bind(":9021")
-
-task.fork(function()
-    local sequence = {}
-    for i = 1, 10 do
-        local data, addr = conn:recvfrom()
-        if data then
-            local seq = tonumber(data:match("SEQ:(%d+)"))
-            sequence[#sequence + 1] = seq
-        end
-    end
-    -- 检查是否按序到达
-    print("Received sequence:", table.concat(sequence, ","))
-end)
-```
-
-### 3. 缓冲区溢出
-
-快速发送可能导致缓冲区满：
+必须使用 `"IP:PORT"`：
 
 ```lua validate
 local udp = require "silly.net.udp"
 
-local conn = udp.connect("127.0.0.1:9022")
+local ok1 = udp.bind("127.0.0.1:8080")  -- IPv4
+local ok2 = udp.bind("[::1]:8081")      -- IPv6
+local ok3 = udp.bind(":8082")           -- 所有接口（IPv4）
 
-for i = 1, 1000 do
-    local ok, err = conn:sendto("data " .. i)
-    if not ok then
-        print("Send failed at", i, ":", err)
-        print("Buffer size:", conn:unsentbytes())
-        break
-    end
-end
+-- 以下会失败：
+-- udp.bind("localhost:8080")  -- 必须是 IP 字面量
+-- udp.bind("8080")            -- 缺 :
 ```
 
-### 4. 地址格式
+### 4. 资源清理
 
-确保地址格式正确：
-
-```lua validate
-local udp = require "silly.net.udp"
-
--- 正确的格式
-local fd1 = udp.bind("127.0.0.1:8080")  -- IPv4
-local fd2 = udp.bind("[::1]:8081")      -- IPv6
-local fd3 = udp.bind(":8082")           -- 所有接口 (IPv4)
-
--- 错误的格式（会失败）
--- local fd4 = udp.bind("localhost:8080")  -- 需要IP地址
--- local fd5 = udp.bind("8080")            -- 缺少冒号
-```
-
-### 5. 资源清理
-
-总是记得关闭套接字：
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-
-task.fork(function()
-    local conn = udp.bind(":9030")
-    -- ... 使用套接字 ...
-    conn:close()  -- 确保清理
-end)
-```
-
----
-
-## 性能建议
-
-
-
-### 1. 监控缓冲区
-
-避免发送缓冲区溢出：
-
-```lua validate
-local udp = require "silly.net.udp"
-
-local conn = udp.connect("127.0.0.1:9041")
-
-local function safe_send(data)
-    local buffer_size = conn:unsentbytes()
-    if buffer_size > 1024 * 1024 then  -- 1MB 阈值
-        print("Warning: send buffer is", buffer_size, "bytes")
-        return false
-    end
-    return conn:sendto(data)
-end
-```
-
-### 2. 合理的超时
-
-实现应用层超时机制：
-
-```lua validate
-local silly = require "silly"
-local task = require "silly.task"
-local udp = require "silly.net.udp"
-local time = require "silly.time"
-
-local function recv_with_timeout(conn, timeout_ms)
-    local result = nil
-    local task = task.fork(function()
-        result = {conn:recvfrom()}
-    end)
-
-    time.sleep(timeout_ms)
-
-    if result then
-        return table.unpack(result)
-    else
-        return nil, "timeout"
-    end
-end
-```
+记得关闭 socket。对象也有 GC 终结器兜底，但依赖它会延迟释放。
 
 ---
 
 ## 参见
 
-- [silly.net.tcp](./tcp.md) - TCP 网络协议
+- [silly.net.tcp](./tcp.md) - TCP 协议
 - [silly.net.websocket](./websocket.md) - WebSocket 协议
 - [silly.net.dns](./dns.md) - DNS 解析
+- [silly.errno](../errno.md) - 传输层错误码
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
