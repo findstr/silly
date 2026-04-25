@@ -63,7 +63,11 @@
 #endif
 
 #ifndef LOG_BUF_SIZE
+#ifdef SILLY_TEST
+#define LOG_BUF_SIZE (16 * 1024) //16KB in test mode for easier wrap-around testing
+#else
 #define LOG_BUF_SIZE (1024 * 1024) //1MB
+#endif
 #endif
 
 #ifndef LOG_DISABLE_FILE_LINE
