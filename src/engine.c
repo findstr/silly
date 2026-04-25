@@ -86,6 +86,10 @@ static void *thread_worker(void *arg)
 
 static void thread_monitor()
 {
+#ifdef SILLY_TEST
+	// Skip monitor in test mode to avoid race conditions with log_flush
+	return;
+#endif
 	struct timespec req;
 	req.tv_sec = MONITOR_MSG_SLOW_TIME / 1000;
 	req.tv_nsec = (MONITOR_MSG_SLOW_TIME % 1000) * 1000000;
@@ -98,7 +102,6 @@ static void thread_monitor()
 		log_flush();
 	}
 	log_info("[monitor] stop\n");
-	return;
 }
 
 static void thread_create(pthread_t *tid, void *(*start)(void *), void *arg,

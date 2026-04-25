@@ -2065,9 +2065,11 @@ void socket_stat(silly_socket_id_t sid, struct silly_socketstat *info)
 }
 
 #ifdef SILLY_TEST
-void socket_debug_ctrl(const char *cmd, const char *key, int val)
+void socket_debug_ctrl(const char *cmd, va_list ap)
 {
-	if (strcmp(cmd, "socket.conf") == 0) {
+	if (strcmp(cmd, "conf") == 0) {
+		const char *key = va_arg(ap, const char *);
+		int val = va_arg(ap, int);
 		unsigned ai = atomic_load_explicit(&DBG.active,
 						   memory_order_acquire);
 		unsigned inactive = 1 - ai;
@@ -2078,14 +2080,16 @@ void socket_debug_ctrl(const char *cmd, const char *key, int val)
 			cfg->eagain_every = val;
 		else if (strcmp(key, "defer_trigger") == 0)
 			DBG.defer_trigger = val;
-	} else if (strcmp(cmd, "socket.apply") == 0) {
+	} else if (strcmp(cmd, "apply") == 0) {
+		(void)ap;
 		unsigned ai = atomic_load_explicit(&DBG.active,
 						   memory_order_acquire);
 		unsigned inactive = 1 - ai;
 		atomic_store_explicit(&DBG.active, inactive,
 				      memory_order_release);
 		memset(&DBG.cfg[ai], 0, sizeof(DBG.cfg[ai]));
-	} else if (strcmp(cmd, "socket.reset") == 0) {
+	} else if (strcmp(cmd, "reset") == 0) {
+		(void)ap;
 		unsigned ai = atomic_load_explicit(&DBG.active,
 						   memory_order_acquire);
 		unsigned inactive = 1 - ai;
@@ -2095,7 +2099,8 @@ void socket_debug_ctrl(const char *cmd, const char *key, int val)
 		memset(&DBG.cfg[ai], 0, sizeof(DBG.cfg[ai]));
 		DBG.eagain_counter = 0;
 		DBG.defer_trigger = 0;
-	} else if (strcmp(cmd, "socket.kick") == 0) {
+	} else if (strcmp(cmd, "kick") == 0) {
+		(void)ap;
 		trigger_fire(&SM->ctrl);
 	}
 }
