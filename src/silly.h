@@ -170,7 +170,8 @@ SILLY_API int silly_push_resolvconf(lua_State *L);
 SILLY_API int silly_push_hosts(lua_State *L);
 
 #ifdef SILLY_TEST
-SILLY_API void silly_debug_ctrl(const char *cmd, const char *key, int val);
+#include <stdarg.h>
+SILLY_API void silly_debug_ctrl(const char *cmd, ...);
 #endif
 
 #endif

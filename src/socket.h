@@ -37,7 +37,8 @@ void socket_netstat(struct silly_netstat *stat);
 void socket_stat(silly_socket_id_t sid, struct silly_socketstat *info);
 
 #ifdef SILLY_TEST
-void socket_debug_ctrl(const char *cmd, const char *key, int val);
+#include <stdarg.h>
+void socket_debug_ctrl(const char *cmd, va_list ap);
 #endif
 
 #endif

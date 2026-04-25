@@ -5,6 +5,7 @@
 #include "mem.h"
 #include "socket.h"
 #include "log.h"
+#include "monitor.h"
 #include "worker.h"
 #include "timer.h"
 #include "trace.h"
@@ -235,8 +236,24 @@ SILLY_API int silly_push_hosts(lua_State *L)
 }
 
 #ifdef SILLY_TEST
-SILLY_API void silly_debug_ctrl(const char *cmd, const char *key, int val)
+#include <stdarg.h>
+
+SILLY_API void silly_debug_ctrl(const char *cmd, ...)
 {
-	socket_debug_ctrl(cmd, key, val);
+	va_list ap;
+	va_start(ap, cmd);
+
+	if (strncmp(cmd, "socket.", 7) == 0) {
+		socket_debug_ctrl(cmd + 7, ap);
+	} else if (strncmp(cmd, "log.", 4) == 0) {
+		log_debug_ctrl(cmd + 4, ap);
+	} else if (strncmp(cmd, "monitor.", 8) == 0) {
+		monitor_debug_ctrl(cmd + 8, ap);
+	} else {
+		// Fallback for legacy direct calls
+		socket_debug_ctrl(cmd, ap);
+	}
+
+	va_end(ap);
 }
 #endif

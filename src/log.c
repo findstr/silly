@@ -18,6 +18,26 @@
 #include "trace.h"
 #include "log.h"
 
+#ifdef SILLY_TEST
+#include <sys/uio.h>
+
+static ssize_t (*hook_writev)(int fd, const struct iovec *iov, int iovcnt) = NULL;
+
+static ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
+	if (hook_writev)
+		return hook_writev(fd, iov, iovcnt);
+	return writev(fd, iov, iovcnt);
+}
+
+static ssize_t sys_write(int fd, const void *buf, size_t count) {
+	struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
+	return sys_writev(fd, &iov, 1);
+}
+#else
+#define sys_write  write
+#define sys_writev writev
+#endif
+
 static int is_daemon = 0;
 static enum silly_log_level log_level = SILLY_LOG_INFO;
 
@@ -124,7 +144,7 @@ static size_t block_write(int fd, const char *buf, size_t len)
 {
 	size_t total = 0;
 	while (len > 0) {
-		ssize_t n = write(fd, buf, len);
+		ssize_t n = sys_write(fd, buf, len);
 		if (n > 0) {
 			buf += n;
 			len -= n;
@@ -155,7 +175,7 @@ static size_t block_writev(int fd, const char *buf1, size_t len1,
 	iov[1].iov_base = (void *)buf2;
 	iov[1].iov_len  = len2;
 	while (written < total) {
-		ssize_t n = writev(fd, iov, 2);
+		ssize_t n = sys_writev(fd, iov, 2);
 		if (n > 0) {
 			written += n;
 			size_t consume = min((size_t)n, iov[0].iov_len);
@@ -190,12 +210,10 @@ static void ring_flush(void)
 		return;
 	fflush(stdout);
 	if (end > start) {
-		/* Simple case: data is contiguous */
 		n = block_write(STDOUT_FILENO, LB->buf + start, end - start);
 		atomic_store_explicit(&LB->read_pos, start + n,
 				      memory_order_relaxed);
 	} else {
-		/* Wrapped case: write both segments atomically */
 		n = block_writev(STDOUT_FILENO,
 			LB->buf + start, LB->size - start,
 			LB->buf, end);
@@ -386,3 +404,23 @@ void log_directf_(uint64_t now, enum silly_log_level level, const char *fmt, ...
 	va_end(ap);
 	fflush(stdout);
 }
+
+#ifdef SILLY_TEST
+void log_debug_ctrl(const char *cmd, va_list ap) {
+	if (strcmp(cmd, "hook") == 0) {
+		hook_writev = va_arg(ap, ssize_t (*)(int, const struct iovec *, int));
+	} else if (strcmp(cmd, "unhook") == 0) {
+		(void)ap;
+		hook_writev = NULL;
+	} else if (strcmp(cmd, "flush") == 0) {
+		(void)ap;
+		log_flush();
+	} else if (strcmp(cmd, "reset") == 0) {
+		(void)ap;
+		if (LB) {
+			atomic_store_explicit(&LB->read_pos, 0, memory_order_relaxed);
+			atomic_store_explicit(&LB->write_pos, 0, memory_order_relaxed);
+		}
+	}
+}
+#endif

@@ -236,6 +236,73 @@ static int lpointer(lua_State *L)
 }
 
 #ifdef SILLY_TEST
+static int writev_lua_ref = LUA_NOREF;
+static lua_State *hook_lua_state = NULL;
+
+static struct {
+	int error_nth;
+	int error_errno;
+	int partial_bytes;
+	int hook_disabled;
+} log_test_state = {0};
+
+static ssize_t hook_writev_impl(int fd, const struct iovec *iov, int iovcnt) {
+	if (log_test_state.hook_disabled)
+		return writev(fd, iov, iovcnt);
+
+	if (!iov || iovcnt < 0)
+		return writev(fd, iov, iovcnt);
+
+	if (log_test_state.error_nth > 0) {
+		if (--log_test_state.error_nth == 0) {
+			errno = log_test_state.error_errno;
+			return -1;
+		}
+	}
+
+	if (writev_lua_ref == LUA_NOREF || !hook_lua_state)
+		return writev(fd, iov, iovcnt);
+
+	if (!lua_checkstack(hook_lua_state, 4))
+		return writev(fd, iov, iovcnt);
+
+	size_t total = 0;
+	for (int i = 0; i < iovcnt; i++) {
+		if (iov[i].iov_len > SIZE_MAX - total) {
+			errno = EINVAL;
+			return -1;
+		}
+		total += iov[i].iov_len;
+	}
+
+	char *merged = silly_malloc(total);
+	size_t pos = 0;
+	for (int i = 0; i < iovcnt; i++) {
+		memcpy(merged + pos, iov[i].iov_base, iov[i].iov_len);
+		pos += iov[i].iov_len;
+	}
+
+	ssize_t write_bytes = (log_test_state.partial_bytes > 0) ?
+	                      log_test_state.partial_bytes : (ssize_t)total;
+
+	lua_rawgeti(hook_lua_state, LUA_REGISTRYINDEX, writev_lua_ref);
+	lua_pushinteger(hook_lua_state, fd);
+	lua_pushlstring(hook_lua_state, merged, total);
+	lua_pushinteger(hook_lua_state, write_bytes);
+
+	if (lua_pcall(hook_lua_state, 3, 1, 0) == LUA_OK) {
+		int result = lua_tointeger(hook_lua_state, -1);
+		lua_pop(hook_lua_state, 1);
+		silly_free(merged);
+		return result;
+	}
+	lua_pop(hook_lua_state, 1);
+	silly_free(merged);
+	log_test_state.hook_disabled = 1;
+
+	return writev(fd, iov, iovcnt);
+}
+
 static int ldebugctrl(lua_State *L)
 {
 	const char *cmd = luaL_checkstring(L, 1);
@@ -252,11 +319,49 @@ static int ldebugctrl(lua_State *L)
 			silly_debug_ctrl("socket.conf", key, val);
 			lua_pop(L, 1);
 		}
-		silly_debug_ctrl("socket.apply", NULL, 0);
+		silly_debug_ctrl("socket.apply");
 	} else if (strcmp(cmd, "socket.reset") == 0) {
-		silly_debug_ctrl("socket.reset", NULL, 0);
+		silly_debug_ctrl("socket.reset");
 	} else if (strcmp(cmd, "socket.kick") == 0) {
-		silly_debug_ctrl("socket.kick", NULL, 0);
+		silly_debug_ctrl("socket.kick");
+	} else if (strcmp(cmd, "log.capture") == 0) {
+		luaL_checktype(L, 2, LUA_TFUNCTION);
+		if (!hook_lua_state)
+			hook_lua_state = L;
+		if (writev_lua_ref != LUA_NOREF)
+			luaL_unref(L, LUA_REGISTRYINDEX, writev_lua_ref);
+		writev_lua_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+		silly_debug_ctrl("monitor.pause");
+		silly_debug_ctrl("log.hook", hook_writev_impl);
+	} else if (strcmp(cmd, "log.unhook") == 0) {
+		silly_debug_ctrl("log.unhook");
+		silly_debug_ctrl("monitor.resume");
+		if (writev_lua_ref != LUA_NOREF) {
+			luaL_unref(L, LUA_REGISTRYINDEX, writev_lua_ref);
+			writev_lua_ref = LUA_NOREF;
+		}
+	} else if (strcmp(cmd, "log.exception") == 0) {
+		int nth = (int)luaL_checkinteger(L, 2);
+		int error = (int)luaL_optinteger(L, 3, 5);
+		log_test_state.error_nth = nth;
+		log_test_state.error_errno = error;
+	} else if (strcmp(cmd, "log.partial") == 0) {
+		log_test_state.partial_bytes = (int)luaL_checkinteger(L, 2);
+	} else if (strcmp(cmd, "log.reset") == 0) {
+		log_test_state.error_nth = 0;
+		log_test_state.error_errno = 0;
+		log_test_state.partial_bytes = 0;
+		silly_debug_ctrl("log.reset");
+	} else if (strcmp(cmd, "log.flush") == 0) {
+		silly_debug_ctrl("log.flush");
+	} else if (strcmp(cmd, "log.disable") == 0) {
+		log_test_state.hook_disabled = 1;
+	} else if (strcmp(cmd, "log.enable") == 0) {
+		log_test_state.hook_disabled = 0;
+	} else if (strcmp(cmd, "monitor.pause") == 0) {
+		silly_debug_ctrl("monitor.pause");
+	} else if (strcmp(cmd, "monitor.resume") == 0) {
+		silly_debug_ctrl("monitor.resume");
 	} else {
 		return luaL_error(L, "unknown debugctrl command: %s", cmd);
 	}
@@ -279,9 +384,9 @@ SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 		{ "recv",        lrecv        },
 		{ "close",       lclose       },
 		{ "pointer",     lpointer     },
-#ifdef SILLY_TEST
+	#ifdef SILLY_TEST
 		{ "debugctrl",   ldebugctrl   },
-#endif
+	#endif
 		{ NULL,          NULL         },
 	};
 

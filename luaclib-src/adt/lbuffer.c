@@ -434,7 +434,7 @@ static int lappend(lua_State *L)
 			if (len > 0) {
 				bytes = push_data(L, ptr, len, 0);
 			} else {
-				silly_free(ptr);
+				silly_free((void *)ptr);
 			}
 			vstk+=2;
 			break;

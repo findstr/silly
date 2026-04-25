@@ -93,6 +93,12 @@ static void thread_monitor()
 	for (;;) {
 		if (R.running == 0)
 			break;
+#ifdef SILLY_TEST
+		if (monitor_is_paused()) {
+			usleep(10000);
+			continue;
+		}
+#endif
 		nanosleep(&req, NULL);
 		monitor_check();
 		log_flush();

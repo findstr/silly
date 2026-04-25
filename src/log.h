@@ -45,4 +45,9 @@ void log_directf_(uint64_t now, enum silly_log_level level, const char *fmt, ...
 #define log_warn(...) log_(SILLY_LOG_WARN, __VA_ARGS__)
 #define log_error(...) log_(SILLY_LOG_ERROR, __VA_ARGS__)
 
+#ifdef SILLY_TEST
+#include <stdarg.h>
+void log_debug_ctrl(const char *cmd, va_list ap);
+#endif
+
 #endif
