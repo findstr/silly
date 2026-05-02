@@ -367,6 +367,10 @@ static int ldebugctrl(lua_State *L)
 		silly_debug_ctrl("log.reset");
 	} else if (strcmp(cmd, "log.flush") == 0) {
 		silly_debug_ctrl("log.flush");
+	} else if (strcmp(cmd, "log.flushoff") == 0) {
+		silly_debug_ctrl("log.flushoff");
+	} else if (strcmp(cmd, "log.flushon") == 0) {
+		silly_debug_ctrl("log.flushon");
 	} else {
 		return luaL_error(L, "unknown debugctrl command: %s", cmd);
 	}

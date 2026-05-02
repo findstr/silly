@@ -19,7 +19,7 @@
 #include "log.h"
 
 #ifdef SILLY_TEST
-
+static int flush_disabled = 0;
 typedef ssize_t (*hook_func_t)(int fd, const struct iovec *iov, int iovcnt);
 static hook_func_t hook_writev = NULL;
 
@@ -378,6 +378,12 @@ enum silly_log_level log_get_level()
 void log_flush()
 {
 	pthread_mutex_lock(&LB->lock);
+#ifdef SILLY_TEST
+	if (flush_disabled) {
+		pthread_mutex_unlock(&LB->lock);
+		return;
+	}
+#endif
 	ring_flush();
 	pthread_mutex_unlock(&LB->lock);
 }
@@ -419,7 +425,20 @@ void log_debug_ctrl(const char *cmd, va_list ap) {
 		pthread_mutex_unlock(&LB->lock);
 	} else if (strcmp(cmd, "flush") == 0) {
 		(void)ap;
-		log_flush();
+		/* bypass flush_disabled — explicit flush always works */
+		pthread_mutex_lock(&LB->lock);
+		ring_flush();
+		pthread_mutex_unlock(&LB->lock);
+	} else if (strcmp(cmd, "flushoff") == 0) {
+		(void)ap;
+		pthread_mutex_lock(&LB->lock);
+		flush_disabled = 1;
+		pthread_mutex_unlock(&LB->lock);
+	} else if (strcmp(cmd, "flushon") == 0) {
+		(void)ap;
+		pthread_mutex_lock(&LB->lock);
+		flush_disabled = 0;
+		pthread_mutex_unlock(&LB->lock);
 	} else if (strcmp(cmd, "reset") == 0) {
 		(void)ap;
 		if (LB) {

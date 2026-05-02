@@ -15,6 +15,7 @@ c.debugctrl("log.capture", function(fd, data, bytes)
     table.insert(captured, data)
     return bytes
 end)
+c.debugctrl("log.flushoff")
 
 -- Test cases
 
@@ -334,4 +335,5 @@ testaux.case("Test 25: Invalid log level", function()
 end)
 
 c.debugctrl("log.unhook")
+c.debugctrl("log.flushon")
 silly.exit(0)
