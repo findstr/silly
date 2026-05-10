@@ -55,11 +55,20 @@ local function wait_done()
 	end
 end
 
-testaux.case("Test 1: Basic HTTP/2 Server Setup", function()
+local function case(name, fn)
+	testaux.case(name, function()
+		local ok, err = pcall(fn)
+		server_handler = nil
+		set_nil = true
+		if not ok then error(err) end
+	end)
+end
+
+case("Test 1: Basic HTTP/2 Server Setup", function()
 	testaux.asserteq(not not server, true, "Server should start successfully")
 end)
 
-testaux.case("Test 2: HTTP/2 Chunked Transfer", function()
+case("Test 2: HTTP/2 Chunked Transfer", function()
 	server_handler = function(stream)
 		print("Test 2")
 		testaux.asserteq(stream.version, "HTTP/2", "Test 2.1: Should be HTTP/2")
@@ -76,7 +85,7 @@ testaux.case("Test 2: HTTP/2 Chunked Transfer", function()
 	wait_done()
 end)
 
-testaux.case("Test 3: HTTP/2 Content-Length and Request Body", function()
+case("Test 3: HTTP/2 Content-Length and Request Body", function()
 	server_handler = function(stream)
 		local body, err = stream:readall()
 		testaux.asserteq(body, "Hello Server", "Test 3.1: Server should receive request body")
@@ -94,7 +103,7 @@ testaux.case("Test 3: HTTP/2 Content-Length and Request Body", function()
 	wait_done()
 end)
 
-testaux.case("Test 4: HTTP/2 Query Parameters", function()
+case("Test 4: HTTP/2 Query Parameters", function()
 	server_handler = function(stream)
 		local query = stream.query
 		testaux.asserteq(query["name"], "test", "Test 4.1: Server should receive query parameters")
@@ -111,7 +120,7 @@ testaux.case("Test 4: HTTP/2 Query Parameters", function()
 	wait_done()
 end)
 
-testaux.case("Test 5: HTTP/2 Status Codes", function()
+case("Test 5: HTTP/2 Status Codes", function()
 	local status_codes = {
 		[200] = "OK",
 		[201] = "Created",
@@ -148,7 +157,7 @@ testaux.case("Test 5: HTTP/2 Status Codes", function()
 	end
 end)
 
-testaux.case("Test 6: HTTP/2 Headers Processing", function()
+case("Test 6: HTTP/2 Headers Processing", function()
 	server_handler = function(stream)
 		local user_agent = stream.header["user-agent"] or ""
 		local accept = stream.header["accept"] or ""
@@ -190,7 +199,7 @@ testaux.case("Test 6: HTTP/2 Headers Processing", function()
 	wait_done()
 end)
 
-testaux.case("Test 7: Content-Type and Accept Headers", function()
+case("Test 7: Content-Type and Accept Headers", function()
 	local function x(stream)
 		local accept = stream.header["accept"] or "*/*"
 		if accept:find("application/json", 1, true) then
@@ -229,7 +238,7 @@ testaux.case("Test 7: Content-Type and Accept Headers", function()
 	wait_done()
 end)
 
-testaux.case("Test 8: client.request API - Basic GET", function()
+case("Test 8: client.request API - Basic GET", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "GET", "Test 8.1: Method should be GET")
 		testaux.asserteq(stream.path, "/api/test", "Test 8.2: Path should be /api/test")
@@ -252,7 +261,7 @@ testaux.case("Test 8: client.request API - Basic GET", function()
 	wait_done()
 end)
 
-testaux.case("Test 9: client.request API - POST with body", function()
+case("Test 9: client.request API - POST with body", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "POST", "Test 9.1: Method should be POST")
 		local body, err = stream:readall()
@@ -278,7 +287,7 @@ testaux.case("Test 9: client.request API - POST with body", function()
 	wait_done()
 end)
 
-testaux.case("Test 10: client.request API - Multiple writes", function()
+case("Test 10: client.request API - Multiple writes", function()
 	server_handler = function(stream)
 		local body, err = stream:readall()
 		testaux.asserteq(body, "part1part2part3", "Test 10.1: body should be concatenated")
@@ -299,7 +308,7 @@ testaux.case("Test 10: client.request API - Multiple writes", function()
 	wait_done()
 end)
 
-testaux.case("Test 11: client.request API - HEAD request", function()
+case("Test 11: client.request API - HEAD request", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "HEAD", "Test 11.1: Method should be HEAD")
 		stream:respond(200, {
@@ -320,7 +329,7 @@ testaux.case("Test 11: client.request API - HEAD request", function()
 	wait_done()
 end)
 
-testaux.case("Test 12: Trailer headers with chunked", function()
+case("Test 12: Trailer headers with chunked", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -346,7 +355,7 @@ testaux.case("Test 12: Trailer headers with chunked", function()
 	wait_done()
 end)
 
-testaux.case("Test 13: stream:read(n) - partial reads with small data", function()
+case("Test 13: stream:read(n) - partial reads with small data", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -380,7 +389,7 @@ testaux.case("Test 13: stream:read(n) - partial reads with small data", function
 	wait_done()
 end)
 
-testaux.case("Test 14: stream:read(n) - partial reads with multiple writes", function()
+case("Test 14: stream:read(n) - partial reads with multiple writes", function()
 	server_handler = function(stream)
 		stream:respond(200, {})
 		stream:write("AAAAA")  -- 5 bytes
@@ -424,7 +433,7 @@ testaux.case("Test 14: stream:read(n) - partial reads with multiple writes", fun
 	wait_done()
 end)
 
-testaux.case("Test 15: stream:read(n) - read more than available", function()
+case("Test 15: stream:read(n) - read more than available", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -449,7 +458,7 @@ testaux.case("Test 15: stream:read(n) - read more than available", function()
 	wait_done()
 end)
 
-testaux.case("Test 16: Flow control - Stream window 63KB single stream", function()
+case("Test 16: Flow control - Stream window 63KB single stream", function()
 	local ch = channel.new()
 	local data = crypto.randomkey(63 * 1024)
 	server_handler = function(stream)
@@ -482,7 +491,7 @@ testaux.case("Test 16: Flow control - Stream window 63KB single stream", functio
 	wait_done()
 end)
 
-testaux.case("Test 17: Flow control - Connection window with concurrent streams", function()
+case("Test 17: Flow control - Connection window with concurrent streams", function()
 	-- Test that connection window is shared between streams
 	-- Stream 1 sends 1M-1KB, then Stream 2 sends 1M-1KB
 	-- This should exhaust connection window and require flow control
@@ -566,7 +575,7 @@ testaux.case("Test 17: Flow control - Connection window with concurrent streams"
 	wait_done()
 end)
 
-testaux.case("Test 18: Flow control - Window recovery after read", function()
+case("Test 18: Flow control - Window recovery after read", function()
 	-- Test that reading data sends WINDOW_UPDATE and recovers window
 	local data = crypto.randomkey(66 * 1024)
 
@@ -596,7 +605,7 @@ testaux.case("Test 18: Flow control - Window recovery after read", function()
 	wait_done()
 end)
 
-testaux.case("Test 19: Connection reuse - Multiple requests on same channel", function()
+case("Test 19: Connection reuse - Multiple requests on same channel", function()
 	-- Test that multiple requests reuse the same HTTP/2 connection
 
 	for i = 1, 5 do
@@ -620,7 +629,7 @@ testaux.case("Test 19: Connection reuse - Multiple requests on same channel", fu
 	testaux.asserteq(h2_count, 1, "Test 19.6: Should have exactly 1 HTTP/2 connection")
 end)
 
-testaux.case("Test 20: Connection broken during read", function()
+case("Test 20: Connection broken during read", function()
 	server_handler = function(stream)
 		stream:respond(200, {})
 		stream:write("partial")
@@ -641,7 +650,7 @@ testaux.case("Test 20: Connection broken during read", function()
 	server_handler = nil
 end)
 
-testaux.case("Test 21: HTTP/2 GET with gzip compression", function()
+case("Test 21: HTTP/2 GET with gzip compression", function()
 	local original_data = "Hello HTTP/2 World! This is a test data that should be compressed with gzip. " ..
 		"The more data we have, the better compression ratio we get. " ..
 		"HTTP/2 supports gzip compression transparently."
@@ -668,7 +677,7 @@ testaux.case("Test 21: HTTP/2 GET with gzip compression", function()
 	wait_done()
 end)
 
-testaux.case("Test 22: HTTP/2 POST with gzip compression response", function()
+case("Test 22: HTTP/2 POST with gzip compression response", function()
 	local request_data = "Request from HTTP/2 client"
 	local response_data = "This is a compressed HTTP/2 response from server. " ..
 		"Adding more text to make compression more effective with HTTP/2."
@@ -698,7 +707,7 @@ testaux.case("Test 22: HTTP/2 POST with gzip compression response", function()
 	wait_done()
 end)
 
-testaux.case("Test 23: HTTP/2 GET without gzip (no Content-Encoding)", function()
+case("Test 23: HTTP/2 GET without gzip (no Content-Encoding)", function()
 	local original_data = "Uncompressed HTTP/2 data"
 
 	server_handler = function(stream)
@@ -715,7 +724,7 @@ testaux.case("Test 23: HTTP/2 GET without gzip (no Content-Encoding)", function(
 	wait_done()
 end)
 
-testaux.case("Test 24: HTTP/2 GET with Accept-Encoding header check", function()
+case("Test 24: HTTP/2 GET with Accept-Encoding header check", function()
 	server_handler = function(stream)
 		local accept_encoding = stream.header["accept-encoding"]
 		testaux.asserteq(accept_encoding, "gzip", "Test 24.1: Client should send Accept-Encoding: gzip")
@@ -731,7 +740,7 @@ testaux.case("Test 24: HTTP/2 GET with Accept-Encoding header check", function()
 	wait_done()
 end)
 
-testaux.case("Test 25: HTTP/2 cocurrent stream stream", function()
+case("Test 25: HTTP/2 cocurrent stream stream", function()
 	local x = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -785,7 +794,7 @@ testaux.case("Test 25: HTTP/2 cocurrent stream stream", function()
 	s:close()
 end)
 
-testaux.case("Test 26: HTTP/2 opensream on a closed channel", function()
+case("Test 26: HTTP/2 opensream on a closed channel", function()
 	local x = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -812,7 +821,7 @@ testaux.case("Test 26: HTTP/2 opensream on a closed channel", function()
 	testaux.asserteq(err, "Channel goaway", "Test 26.5: Openstream should fail")
 end)
 
-testaux.case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function()
+case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function()
 	local x = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -945,7 +954,7 @@ end)
 -- Bug: When stream1 calls request() (hpack_pack adds headers to dynamic table),
 -- then stream2 uses IDENTICAL headers (HPACK encodes as indexed reference),
 -- if stream2 sends first, the server's decoder fails (dynamic table entry doesn't exist)
-testaux.case("Test 28: HPACK encoder state corruption", function()
+case("Test 28: HPACK encoder state corruption", function()
 	set_nil = false
 	server_handler = function(stream)
 		-- Return received headers as JSON in body for verification
@@ -1036,7 +1045,7 @@ end)
 -- Bug: If stream.request() sets localstate=STATE_HEADER, then close() would send RST_STREAM
 -- even though no HEADERS frame was sent yet (stream is still IDLE).
 -- According to HTTP/2 spec, sending RST_STREAM in IDLE state causes PROTOCOL_ERROR.
-testaux.case("Test 29: Stream close in IDLE state (no data sent)", function()
+case("Test 29: Stream close in IDLE state (no data sent)", function()
 	set_nil = false
 	local sync_ch = channel.new()
 	local call_count = 0
@@ -1097,6 +1106,158 @@ testaux.case("Test 29: Stream close in IDLE state (no data sent)", function()
 
 	ch:close()
 	set_nil = true
+end)
+
+case("Test 30: Host header not duplicated and user header preserved", function()
+	local received_host
+	server_handler = function(stream)
+		received_host = stream.header["host"]
+		stream:respond(200, { ["content-length"] = 2 })
+		stream:write("OK")
+	end
+
+	local hdr = { ["host"] = "my-custom-host", ["x-test"] = "value" }
+	local stream<close>, err = httpc:request("GET", "https://127.0.0.1:8082/host-test", hdr)
+	testaux.assertneq(stream, nil, "Test 30.1: request should succeed")
+	stream:closewrite()
+	local body = stream:readall()
+	testaux.asserteq(body, "OK", "Test 30.2: body should be OK")
+
+	-- user header table must not be modified
+	testaux.asserteq(hdr["host"], "my-custom-host", "Test 30.3: user header[\"host\"] should be preserved")
+	testaux.asserteq(hdr["x-test"], "value", "Test 30.4: user header[\"x-test\"] should be preserved")
+
+	-- server should NOT see host (h2 uses :authority pseudo-header)
+	testaux.asserteq(received_host, nil, "Test 30.5: server should not receive host header in h2")
+
+	wait_done()
+end)
+
+-- Redirect tests for HTTP/2
+
+case("Test 31: h2 301 redirect changes POST to GET and drops body", function()
+	set_nil = false
+	local methods = {}
+	server_handler = function(stream)
+		methods[#methods + 1] = stream.method
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(301, { ["location"] = "/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+			})
+			stream:closewrite("OK")
+		end
+	end
+	local response = httpc:post("https://127.0.0.1:8082/redirect", {
+		["content-type"] = "text/plain"
+	}, "request-body")
+	testaux.assertneq(response, nil, "Test 31.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 31.2: final status should be 200")
+	testaux.asserteq(response.body, "OK", "Test 31.3: body should be OK")
+	testaux.asserteq(methods[1], "POST", "Test 31.4: first request should be POST")
+	testaux.asserteq(methods[2], "GET", "Test 31.5: redirect should change method to GET")
+end)
+
+case("Test 32: h2 307 redirect preserves POST method and body", function()
+	set_nil = false
+	local target_method
+	local target_body
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(307, { ["location"] = "/target" })
+		else
+			target_method = stream.method
+			target_body = stream:readall()
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+			})
+			stream:closewrite("OK")
+		end
+	end
+	local response = httpc:post("https://127.0.0.1:8082/redirect", {
+		["content-type"] = "text/plain"
+	}, "preserved-body")
+	testaux.assertneq(response, nil, "Test 32.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 32.2: final status should be 200")
+	testaux.asserteq(target_method, "POST", "Test 32.3: method should be preserved as POST")
+	testaux.asserteq(target_body, "preserved-body", "Test 32.4: body should be preserved")
+end)
+
+case("Test 33: h2 redirect loop detection", function()
+	set_nil = false
+	server_handler = function(stream)
+		stream:respond(301, { ["location"] = "/loop" })
+	end
+	local response, err = httpc:get("https://127.0.0.1:8082/loop")
+	testaux.asserteq(response, nil, "Test 33.1: loop should fail")
+	testaux.assertneq(err, nil, "Test 33.2: should return error")
+	testaux.assertneq(err:find("redirect loop"), nil, "Test 33.3: error should mention redirect loop")
+end)
+
+case("Test 34: h2 redirect with gzip response", function()
+	local original_data = "Compressed h2 redirect data that should be long enough for gzip. " ..
+		"Adding more text to improve compression ratio for this test."
+	local compressed = gzip.compress(original_data)
+	testaux.assertneq(compressed, nil, "Test 34.1: gzip.compress should succeed")
+	set_nil = false
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(301, { ["location"] = "/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-encoding"] = "gzip",
+			})
+			stream:closewrite(compressed)
+		end
+	end
+	local response = httpc:get("https://127.0.0.1:8082/redirect")
+	testaux.assertneq(response, nil, "Test 34.2: redirect with gzip should succeed")
+	testaux.asserteq(response.status, 200, "Test 34.3: final status should be 200")
+	testaux.asserteq(response.body, original_data, "Test 34.4: body should be decompressed")
+end)
+
+case("Test 35: h2 cross-host redirect resolves new authority", function()
+	set_nil = false
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(301, { ["location"] = "https://localhost:8082/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+			})
+			stream:closewrite("host")
+		end
+	end
+	local response = httpc:get("https://127.0.0.1:8082/redirect")
+	testaux.assertneq(response, nil, "Test 35.1: cross-host redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 35.2: final status should be 200")
+	testaux.asserteq(response.body, "host", "Test 35.3: body should be host")
+end)
+
+case("Test 36: h2 redirect preserves query string in Location", function()
+	set_nil = false
+	local received_query
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(302, { ["location"] = "/target?foo=bar&baz=1" })
+		else
+			received_query = stream.query
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+			})
+			stream:closewrite("OK")
+		end
+	end
+	local response = httpc:get("https://127.0.0.1:8082/redirect?original=1")
+	testaux.assertneq(response, nil, "Test 36.1: query redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 36.2: final status should be 200")
+	testaux.asserteq(received_query["foo"], "bar", "Test 36.3: target query foo should be present")
+	testaux.asserteq(received_query["baz"], "1", "Test 36.4: target query baz should be present")
+	testaux.asserteq(received_query["original"], nil, "Test 36.5: original query should not leak")
 end)
 
 time.sleep(2000)

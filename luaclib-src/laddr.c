@@ -98,26 +98,23 @@ static int ljoin(lua_State *L)
 	size_t hostlen = 0;
 	size_t portlen = 0;
 	const char *host = luaL_optlstring(L, 1, NULL, &hostlen);
-	const char *port = luaL_checklstring(L, 2, &portlen);
+	const char *port = luaL_optlstring(L, 2, NULL, &portlen);
 
 	luaL_buffinit(L, &b);
-	if (host == NULL || hostlen == 0) {
+	if (hostlen > 0) {
+		if (host[0] != '[' && memchr(host, ':', hostlen) != NULL) {
+			luaL_addchar(&b, '[');
+			luaL_addlstring(&b, host, hostlen);
+			luaL_addchar(&b, ']');
+		} else {
+			luaL_addlstring(&b, host, hostlen);
+
+		}
+	}
+	if (portlen > 0) {
 		luaL_addchar(&b, ':');
 		luaL_addlstring(&b, port, portlen);
-		luaL_pushresult(&b);
-		return 1;
 	}
-	if (host[0] != '[' && memchr(host, ':', hostlen) != NULL) {
-		luaL_addchar(&b, '[');
-		luaL_addlstring(&b, host, hostlen);
-		luaL_addlstring(&b, "]:", 2);
-		luaL_addlstring(&b, port, portlen);
-		luaL_pushresult(&b);
-		return 1;
-	}
-	luaL_addlstring(&b, host, hostlen);
-	luaL_addchar(&b, ':');
-	luaL_addlstring(&b, port, portlen);
 	luaL_pushresult(&b);
 	return 1;
 }

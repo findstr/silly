@@ -24,9 +24,10 @@ local http = require "silly.net.http"
 ### Protocol Support
 
 - **HTTP/1.1**: Supports persistent connections, chunked transfer, pipelining
-  - Note: HTTP/1.1 currently does not support client connection pooling; each request creates a new connection
 - **HTTP/2**: Supports multiplexing, server push, header compression
 - **Automatic Protocol Negotiation**: Automatically selects protocol version via ALPN
+- **Client Connection Pooling**: Both HTTP/1.1 and HTTP/2 connections are pooled and reused automatically
+- **Redirect Support**: `http.get` and `http.post` follow redirects (301/302/303/307/308) automatically with loop detection
 
 ### Stream Object
 
@@ -259,7 +260,7 @@ end)
 
 ### http.get(url [, headers])
 
-Sends an HTTP GET request (asynchronous).
+Sends an HTTP GET request with automatic redirect following (asynchronous).
 
 - **Parameters**:
   - `url`: `string` - Request URL (complete URL including protocol and host)
@@ -292,7 +293,7 @@ end)
 
 ### http.post(url [, headers [, body]])
 
-Sends an HTTP POST request (asynchronous).
+Sends an HTTP POST request with automatic redirect following (asynchronous).
 
 - **Parameters**:
   - `url`: `string` - Request URL
@@ -333,20 +334,18 @@ task.fork(function()
 end)
 ```
 
-### http.request(method, url [, headers [, close [, alpn_protos]]])
+### http.request(method, url [, headers])
 
-Sends a custom HTTP request (asynchronous).
+Sends a custom HTTP request and returns a raw stream (no redirect handling).
 
 - **Parameters**:
   - `method`: `string` - HTTP method (GET, POST, PUT, DELETE, etc.)
   - `url`: `string` - Request URL
   - `headers`: `table|nil` (optional) - Request headers table
-  - `close`: `boolean|nil` (optional) - Whether to immediately close the connection
-  - `alpn_protos`: `string[]|nil` (optional) - ALPN protocol list
 - **Returns**:
   - Success: `stream` - HTTP stream object
   - Failure: `nil, string` - nil and error message
-- **Note**: The returned stream needs to be manually closed by calling `close()`
+- **Note**: The returned stream needs to be manually closed by calling `close()`. Unlike `http.get`/`http.post`, this function does **not** follow redirects.
 - **Example**:
 
 ```lua validate
@@ -361,9 +360,7 @@ task.fork(function()
         {
             ["content-type"] = "text/plain",
             ["content-length"] = #"Updated data",
-        },
-        false,
-        {"http/1.1", "h2"}
+        }
     )
 
     if not stream then
@@ -371,18 +368,87 @@ task.fork(function()
         return
     end
 
-    if stream.version == "HTTP/2" then
-        stream:closewrite("Updated data")
-    else
-        stream:write("Updated data")
-    end
-
-    local status, header = stream:readheader()
-    if status then
-        print("Status:", status)
+    stream:closewrite("Updated data")
+    local ok, wait_err = stream:waitresponse()
+    if ok then
+        print("Status:", stream.status)
     end
 end)
 ```
+
+---
+
+## Connection Pool Client API
+
+The `http.newclient` function creates a dedicated HTTP client with connection pooling. This is useful for making multiple requests to the same host.
+
+### http.newclient([opts])
+
+Creates a new HTTP client with connection pooling.
+
+- **Parameters**:
+  - `opts`: `table|nil` (optional) - Client configuration
+    - `max_idle_per_host`: `integer?` - Maximum idle connections per host (default: 10)
+    - `idle_timeout`: `integer?` - Idle connection timeout in ms (default: 30000)
+    - `alpnprotos`: `string[]?` - ALPN protocols (default: `{"http/1.1", "h2"}`)
+- **Returns**: `client` - HTTP client object
+- **Example**:
+
+```lua validate
+local http = require "silly.net.http"
+
+local client = http.newclient({
+    max_idle_per_host = 5,
+    idle_timeout = 10000,
+})
+```
+
+### client:get(url [, headers])
+
+Sends a GET request with automatic redirect following (301/302/303/307/308).
+
+- **Parameters**:
+  - `url`: `string` - Request URL
+  - `headers`: `table|nil` (optional) - Request headers table
+- **Returns**:
+  - Success: `table` - Response object with `status`, `header`, `body`
+  - Failure: `nil, string` - nil and error message
+- **Redirect behavior**:
+  - 301/302/303: Method changes to GET, body is dropped
+  - 307/308: Method and body are preserved
+  - Maximum 10 redirects; loops are detected and reported as errors
+  - Gzip responses are automatically decompressed
+
+### client:post(url [, headers [, body]])
+
+Sends a POST request with automatic redirect following (301/302/303/307/308).
+
+- **Parameters**:
+  - `url`: `string` - Request URL
+  - `headers`: `table|nil` (optional) - Request headers table
+  - `body`: `string|nil` (optional) - Request body content
+- **Returns**: Same as `client:get`
+- **Redirect behavior**: Same as `client:get`
+- **Note**: If `body` is provided, the `content-length` header is automatically set
+
+### client:request(method, url [, headers])
+
+Sends a request without redirect handling. Returns a raw stream for full control.
+
+- **Parameters**:
+  - `method`: `string` - HTTP method
+  - `url`: `string` - Request URL
+  - `headers`: `table|nil` (optional) - Request headers table
+- **Returns**:
+  - Success: `stream` - HTTP stream object
+  - Failure: `nil, string` - nil and error message
+
+### client:close()
+
+Gracefully closes all pooled connections.
+
+- **Parameters**: None
+- **Returns**: None
 
 ---
 

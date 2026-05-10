@@ -20,13 +20,16 @@ local errno = require "silly.errno"
 local EEOF<const> = errno.EOF
 local ETIMEDOUT<const> = errno.TIMEDOUT
 
+local set_nil = true
 local server_handler
 
 local server = http.listen {
 	addr = "127.0.0.1:8080",
 	handler = function(stream)
 		server_handler(stream)
-		server_handler = nil
+		if set_nil then
+			server_handler = nil
+		end
 	end
 }
 
@@ -43,11 +46,20 @@ local function wait_done()
 	end
 end
 
-testaux.case("Test 1: Basic HTTP Server Setup", function()
+local function case(name, fn)
+	testaux.case(name, function()
+		local ok, err = pcall(fn)
+		server_handler = nil
+		set_nil = true
+		if not ok then error(err) end
+	end)
+end
+
+case("Test 1: Basic HTTP Server Setup", function()
 	testaux.asserteq(not not server, true, "Server should start successfully")
 end)
 
-testaux.case("Test 2: Malformed HTTP Request Headers", function()
+case("Test 2: Malformed HTTP Request Headers", function()
 	-- Send invalid HTTP method
 	local fd = tcp.connect("127.0.0.1:8080")
 	testaux.assertneq(fd, nil, "Test 2.1: Client connection should succeed")
@@ -71,7 +83,7 @@ testaux.case("Test 2: Malformed HTTP Request Headers", function()
 	tcp.close(fd)
 end)
 
-testaux.case("Test 3: HTTP/1.1 Chunked Transfer", function()
+case("Test 3: HTTP/1.1 Chunked Transfer", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -85,7 +97,7 @@ testaux.case("Test 3: HTTP/1.1 Chunked Transfer", function()
 	wait_done()
 end)
 
-testaux.case("Test 4: HTTP Header Size Limits", function()
+case("Test 4: HTTP Header Size Limits", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -114,7 +126,7 @@ testaux.case("Test 4: HTTP Header Size Limits", function()
 	wait_done()
 end)
 
-testaux.case("Test 5: Connection Keep-Alive", function()
+case("Test 5: Connection Keep-Alive", function()
 	local function x(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -156,7 +168,7 @@ testaux.case("Test 5: Connection Keep-Alive", function()
 	wait_done()
 end)
 
-testaux.case("Test 6: Test connection broken", function()
+case("Test 6: Test connection broken", function()
 	-- test server connection broken
 	server_handler = function(stream)
 		testaux.assertneq(stream.remoteaddr, nil, "Test 6.2: Server stream contains remoteaddr")
@@ -175,7 +187,7 @@ testaux.case("Test 6: Test connection broken", function()
 	wait_done()
 end)
 
-testaux.case("Test 7: HTTP Content-Length and Request Body", function()
+case("Test 7: HTTP Content-Length and Request Body", function()
 	server_handler = function(stream)
 		local body, err = stream:readall()
 		testaux.asserteq(body, "Hello Server", "Test 7.1: Server should receive request body")
@@ -195,7 +207,7 @@ testaux.case("Test 7: HTTP Content-Length and Request Body", function()
 	wait_done()
 end)
 
-testaux.case("Test 8: HTTP Query Parameters", function()
+case("Test 8: HTTP Query Parameters", function()
 	server_handler = function(stream)
 		local query = stream.query
 		testaux.asserteq(query["name"], "test", "Test 8.1: Server should receive query parameters")
@@ -214,7 +226,7 @@ testaux.case("Test 8: HTTP Query Parameters", function()
 	wait_done()
 end)
 
-testaux.case("Test 9: HTTP Status Codes", function()
+case("Test 9: HTTP Status Codes", function()
 	local status_codes = {
 		[200] = "OK",
 		[201] = "Created",
@@ -253,7 +265,7 @@ testaux.case("Test 9: HTTP Status Codes", function()
 	end
 end)
 
-testaux.case("Test 10: HTTP Headers Processing", function()
+case("Test 10: HTTP Headers Processing", function()
 	server_handler = function(stream)
 		local user_agent = stream.header["user-agent"] or ""
 		local accept = stream.header["accept"] or ""
@@ -296,7 +308,7 @@ testaux.case("Test 10: HTTP Headers Processing", function()
 	wait_done()
 end)
 
-testaux.case("Test 11: Content-Type and Accept Headers", function()
+case("Test 11: Content-Type and Accept Headers", function()
 	local function x(stream)
 		local accept = stream.header["accept"] or "*/*"
 		if accept:find("application/json", 1, true) then
@@ -341,7 +353,7 @@ testaux.case("Test 11: Content-Type and Accept Headers", function()
 	wait_done()
 end)
 
-testaux.case("Test 12: client.request API - Basic GET", function()
+case("Test 12: client.request API - Basic GET", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "GET", "Test 12.1: Method should be GET")
 		testaux.asserteq(stream.path, "/api/test", "Test 12.2: Path should be /api/test")
@@ -365,7 +377,7 @@ testaux.case("Test 12: client.request API - Basic GET", function()
 	wait_done()
 end)
 
-testaux.case("Test 13: client.request API - POST with body", function()
+case("Test 13: client.request API - POST with body", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "POST", "Test 13.1: Method should be POST")
 		local body, err = stream:readall()
@@ -392,7 +404,7 @@ testaux.case("Test 13: client.request API - POST with body", function()
 	wait_done()
 end)
 
-testaux.case("Test 14: client.request API - Chunked request", function()
+case("Test 14: client.request API - Chunked request", function()
 	server_handler = function(stream)
 		local body, err = stream:readall()
 		testaux.asserteq(body, "part1part2part3", "Test 14.1: body should be concatenated")
@@ -417,7 +429,7 @@ testaux.case("Test 14: client.request API - Chunked request", function()
 	wait_done()
 end)
 
-testaux.case("Test 15: client.request API - HEAD request", function()
+case("Test 15: client.request API - HEAD request", function()
 	server_handler = function(stream)
 		testaux.asserteq(stream.method, "HEAD", "Test 15.1: Method should be HEAD")
 		stream:respond(200, {
@@ -439,7 +451,7 @@ testaux.case("Test 15: client.request API - HEAD request", function()
 	wait_done()
 end)
 
-testaux.case("Test 16: client.request API - Incremental read from chunked", function()
+case("Test 16: client.request API - Incremental read from chunked", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -469,7 +481,7 @@ testaux.case("Test 16: client.request API - Incremental read from chunked", func
 	wait_done()
 end)
 
-testaux.case("Test 17: client.request API - closewrite with data", function()
+case("Test 17: client.request API - closewrite with data", function()
 	server_handler = function(stream)
 		local body, err = stream:readall()
 		testaux.asserteq(body, "Final", "Test 17.1: body should be 'Final'")
@@ -494,7 +506,7 @@ testaux.case("Test 17: client.request API - closewrite with data", function()
 	wait_done()
 end)
 
-testaux.case("Test 18: Chunked with trailer headers", function()
+case("Test 18: Chunked with trailer headers", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -521,7 +533,7 @@ testaux.case("Test 18: Chunked with trailer headers", function()
 	wait_done()
 end)
 
-testaux.case("Test 19: Connection pool - H1 reuse", function()
+case("Test 19: Connection pool - H1 reuse", function()
 	local c = http.newclient({
 		max_idle_per_host = 2,
 		idle_timeout = 2000,
@@ -560,7 +572,7 @@ testaux.case("Test 19: Connection pool - H1 reuse", function()
 	wait_done()
 end)
 
-testaux.case("Test 20: Connection pool - max_idle_per_host limit", function()
+case("Test 20: Connection pool - max_idle_per_host limit", function()
 	local c = http.newclient({
 		max_idle_per_host = 2,
 		idle_timeout = 2000,
@@ -595,7 +607,7 @@ testaux.case("Test 20: Connection pool - max_idle_per_host limit", function()
 	-- Third connection should be closed when released
 end)
 
-testaux.case("Test 21: Connection pool - chunked response reuse", function()
+case("Test 21: Connection pool - chunked response reuse", function()
 	local c = http.newclient({
 		max_idle_per_host = 2,
 		idle_timeout = 2000,
@@ -634,7 +646,7 @@ testaux.case("Test 21: Connection pool - chunked response reuse", function()
 	wait_done()
 end)
 
-testaux.case("Test 22: stream:read(n) - content-length partial reads", function()
+case("Test 22: stream:read(n) - content-length partial reads", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -673,7 +685,7 @@ testaux.case("Test 22: stream:read(n) - content-length partial reads", function(
 	wait_done()
 end)
 
-testaux.case("Test 23: stream:read(n) - chunked partial reads", function()
+case("Test 23: stream:read(n) - chunked partial reads", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -727,7 +739,7 @@ testaux.case("Test 23: stream:read(n) - chunked partial reads", function()
 	wait_done()
 end)
 
-testaux.case("Test 24: stream:read(n) - read more than available with content-length", function()
+case("Test 24: stream:read(n) - read more than available with content-length", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -759,7 +771,7 @@ testaux.case("Test 24: stream:read(n) - read more than available with content-le
 	wait_done()
 end)
 
-testaux.case("Test 25: stream:read(n) - read more than available with chunked", function()
+case("Test 25: stream:read(n) - read more than available with chunked", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -785,7 +797,7 @@ testaux.case("Test 25: stream:read(n) - read more than available with chunked", 
 	wait_done()
 end)
 
-testaux.case("Test 26: Timeout marks stream as broken", function()
+case("Test 26: Timeout marks stream as broken", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-length"] = 20,
@@ -821,7 +833,7 @@ testaux.case("Test 26: Timeout marks stream as broken", function()
 	wait_done()
 end)
 
-testaux.case("Test 27: read() exceeding Content-Length", function()
+case("Test 27: read() exceeding Content-Length", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-length"] = 10,
@@ -846,7 +858,7 @@ testaux.case("Test 27: read() exceeding Content-Length", function()
 	wait_done()
 end)
 
-testaux.case("Test 28: read() after chunked ends", function()
+case("Test 28: read() after chunked ends", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -873,7 +885,7 @@ testaux.case("Test 28: read() after chunked ends", function()
 	wait_done()
 end)
 
-testaux.case("Test 29: read() partial, then readall() rest - Content-Length", function()
+case("Test 29: read() partial, then readall() rest - Content-Length", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-length"] = 20,
@@ -898,7 +910,7 @@ testaux.case("Test 29: read() partial, then readall() rest - Content-Length", fu
 	wait_done()
 end)
 
-testaux.case("Test 30: read() partial, then readall() rest - Chunked", function()
+case("Test 30: read() partial, then readall() rest - Chunked", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -928,7 +940,7 @@ testaux.case("Test 30: read() partial, then readall() rest - Chunked", function(
 	wait_done()
 end)
 
-testaux.case("Test 31: Connection broken - Content-Length incomplete", function()
+case("Test 31: Connection broken - Content-Length incomplete", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-length"] = 100,
@@ -955,7 +967,7 @@ testaux.case("Test 31: Connection broken - Content-Length incomplete", function(
 	testaux.asserteq(err2, stream.err, "Test 31.6: Should return cached error")
 end)
 
-testaux.case("Test 32: Connection broken - Chunked incomplete", function()
+case("Test 32: Connection broken - Chunked incomplete", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["transfer-encoding"] = "chunked",
@@ -978,7 +990,7 @@ testaux.case("Test 32: Connection broken - Chunked incomplete", function()
 end)
 
 
-testaux.case("Test 33: read() returns buffered data before network read", function()
+case("Test 33: read() returns buffered data before network read", function()
 	server_handler = function(stream)
 		stream:respond(200, {
 			["content-length"] = 20,
@@ -1004,7 +1016,7 @@ testaux.case("Test 33: read() returns buffered data before network read", functi
 	wait_done()
 end)
 
-testaux.case("Test 34: GET with gzip compression", function()
+case("Test 34: GET with gzip compression", function()
 	local original_data = "Hello World! This is a test data that should be compressed with gzip. " ..
 		"The more data we have, the better compression ratio we get. " ..
 		"So let's add some more text here to make it longer and more compressible."
@@ -1032,7 +1044,7 @@ testaux.case("Test 34: GET with gzip compression", function()
 	wait_done()
 end)
 
-testaux.case("Test 35: POST with gzip compression response", function()
+case("Test 35: POST with gzip compression response", function()
 	local request_data = "Request from client"
 	local response_data = "This is a compressed response from server. " ..
 		"Adding more text to make compression more effective."
@@ -1063,7 +1075,7 @@ testaux.case("Test 35: POST with gzip compression response", function()
 	wait_done()
 end)
 
-testaux.case("Test 36: GET without gzip (no Content-Encoding)", function()
+case("Test 36: GET without gzip (no Content-Encoding)", function()
 	local original_data = "Uncompressed data"
 
 	server_handler = function(stream)
@@ -1081,7 +1093,7 @@ testaux.case("Test 36: GET without gzip (no Content-Encoding)", function()
 	wait_done()
 end)
 
-testaux.case("Test 37: GET with Accept-Encoding header check", function()
+case("Test 37: GET with Accept-Encoding header check", function()
 	server_handler = function(stream)
 		local accept_encoding = stream.header["accept-encoding"]
 		testaux.asserteq(accept_encoding, "gzip", "Test 37.1: Client should send Accept-Encoding: gzip")
@@ -1098,7 +1110,7 @@ testaux.case("Test 37: GET with Accept-Encoding header check", function()
 	wait_done()
 end)
 
-testaux.case("Test 38: Query parameters with percent-encoding", function()
+case("Test 38: Query parameters with percent-encoding", function()
 	server_handler = function(stream)
 		local query = stream.query
 		testaux.asserteq(query["name"], "你好", "Test 38.1: Percent-encoded value should be decoded")
@@ -1117,7 +1129,7 @@ testaux.case("Test 38: Query parameters with percent-encoding", function()
 	wait_done()
 end)
 
-testaux.case("Test 39: Invalid URL error handling", function()
+case("Test 39: Invalid URL error handling", function()
 	local response, err = httpc:get("not-a-url")
 	testaux.asserteq(response, nil, "Test 39.1: Invalid URL should return nil")
 	testaux.assertneq(err, nil, "Test 39.2: Invalid URL should return error")
@@ -1128,103 +1140,114 @@ testaux.case("Test 39: Invalid URL error handling", function()
 end)
 
 local helper = require "silly.net.http.helper"
+local url = require "silly.net.http.url"
 
-testaux.case("Test 40: urlencode encodes both keys and values", function()
-	local result = helper.urlencode({["a b"] = "c&d"})
-	testaux.assertneq(result, nil, "Test 40.1: urlencode should return result")
-	-- In Lua string literals, % has no special meaning, so "a%20b" is literal a%20b
-	local found_key = result:find("a%20b", 1, true)
-	testaux.assertneq(found_key, nil, "Test 40.2: Key should be percent-encoded")
+case("Test 40: queryescape encodes both keys and values", function()
+	local result = url.queryescape({["a b"] = "c&d"})
+	testaux.assertneq(result, nil, "Test 40.1: queryescape should return result")
+	local found_key = result:find("a+b", 1, true)
+	testaux.assertneq(found_key, nil, "Test 40.2: Key should be encoded")
 	local found_val = result:find("c%26d", 1, true)
 	testaux.assertneq(found_val, nil, "Test 40.3: Value should be percent-encoded")
 end)
 
-testaux.case("Test 41: parseurl comprehensive", function()
+case("Test 41: parseurl comprehensive", function()
 	-- Normal HTTP URL with path
-	local scheme, host, port, path, default = helper.parseurl("http://example.com/path")
-	testaux.asserteq(scheme, "http", "Test 41.1: scheme")
-	testaux.asserteq(host, "example.com", "Test 41.2: host")
-	testaux.asserteq(port, "80", "Test 41.3: default port 80")
-	testaux.asserteq(path, "/path", "Test 41.4: path")
-	testaux.asserteq(default, true, "Test 41.5: default flag true")
+	local u = url.parse("http://example.com/path")
+	testaux.asserteq(u.scheme, "http", "Test 41.1: scheme")
+	testaux.asserteq(u.host, "example.com", "Test 41.2: host")
+	testaux.asserteq(u.port, "80", "Test 41.3: default port 80")
+	testaux.asserteq(u.path, "/path", "Test 41.4: path")
+	testaux.asserteq(u.authority, "example.com", "Test 41.5: authority omits default port")
 
 	-- URL with explicit port
-	scheme, host, port, path, default = helper.parseurl("http://example.com:8080/api/v1")
-	testaux.asserteq(host, "example.com", "Test 41.6: host with port")
-	testaux.asserteq(port, "8080", "Test 41.7: explicit port")
-	testaux.asserteq(path, "/api/v1", "Test 41.8: multi-segment path")
-	testaux.asserteq(default, false, "Test 41.9: default flag false")
+	u = url.parse("http://example.com:8080/api/v1")
+	testaux.asserteq(u.host, "example.com", "Test 41.6: host with port")
+	testaux.asserteq(u.port, "8080", "Test 41.7: explicit port")
+	testaux.asserteq(u.path, "/api/v1", "Test 41.8: multi-segment path")
+	testaux.asserteq(u.authority, "example.com:8080", "Test 41.9: authority includes explicit port")
 
 	-- HTTPS URL without path (empty path becomes "/")
-	scheme, host, port, path = helper.parseurl("https://secure.example.com")
-	testaux.asserteq(scheme, "https", "Test 41.10: https scheme")
-	testaux.asserteq(port, "443", "Test 41.11: default https port")
-	testaux.asserteq(path, "/", "Test 41.12: empty path becomes /")
+	u = url.parse("https://secure.example.com")
+	testaux.asserteq(u.scheme, "https", "Test 41.10: https scheme")
+	testaux.asserteq(u.port, "443", "Test 41.11: default https port")
+	testaux.asserteq(u.path, "/", "Test 41.12: empty path becomes /")
 
 	-- URL with query only (no path before ?)
-	scheme, host, port, path = helper.parseurl("http://example.com?key=value")
-	testaux.asserteq(host, "example.com", "Test 41.13: host before query")
-	testaux.asserteq(path, "/?key=value", "Test 41.14: query-only path gets / prefix")
+	u = url.parse("http://example.com?key=value")
+	testaux.asserteq(u.host, "example.com", "Test 41.13: host before query")
+	testaux.asserteq(u.path, "/?key=value", "Test 41.14: query-only path gets / prefix")
 
 	-- WSS URL
-	scheme, host, port, path = helper.parseurl("wss://ws.example.com/ws")
-	testaux.asserteq(scheme, "wss", "Test 41.15: wss scheme")
-	testaux.asserteq(port, "443", "Test 41.16: wss default port 443")
-	testaux.asserteq(path, "/ws", "Test 41.17: wss path")
+	u = url.parse("wss://ws.example.com/ws")
+	testaux.asserteq(u.scheme, "wss", "Test 41.15: wss scheme")
+	testaux.asserteq(u.port, "443", "Test 41.16: wss default port 443")
+	testaux.asserteq(u.path, "/ws", "Test 41.17: wss path")
 
 	-- WS URL
-	scheme, host, port, path = helper.parseurl("ws://ws.example.com/chat")
-	testaux.asserteq(scheme, "ws", "Test 41.18: ws scheme")
-	testaux.asserteq(port, "80", "Test 41.19: ws default port 80")
+	u = url.parse("ws://ws.example.com/chat")
+	testaux.asserteq(u.scheme, "ws", "Test 41.18: ws scheme")
+	testaux.asserteq(u.port, "80", "Test 41.19: ws default port 80")
 
 	-- IPv6 URL with port
-	scheme, host, port, path = helper.parseurl("http://[::1]:8080/path")
-	testaux.asserteq(host, "::1", "Test 41.20: IPv6 host brackets stripped")
-	testaux.asserteq(port, "8080", "Test 41.21: IPv6 explicit port")
-	testaux.asserteq(path, "/path", "Test 41.22: IPv6 path")
+	u = url.parse("http://[::1]:8080/path")
+	testaux.asserteq(u.host, "::1", "Test 41.20: IPv6 host brackets stripped")
+	testaux.asserteq(u.port, "8080", "Test 41.21: IPv6 explicit port")
+	testaux.asserteq(u.path, "/path", "Test 41.22: IPv6 path")
+	testaux.asserteq(u.authority, "[::1]:8080", "Test 41.39: IPv6 authority with port")
 
 	-- IPv6 URL without port
-	scheme, host, port, path = helper.parseurl("http://[::1]/path")
-	testaux.asserteq(host, "::1", "Test 41.23: IPv6 host without port")
-	testaux.asserteq(port, "80", "Test 41.24: IPv6 default port")
+	u = url.parse("http://[::1]/path")
+	testaux.asserteq(u.host, "::1", "Test 41.23: IPv6 host without port")
+	testaux.asserteq(u.port, "80", "Test 41.24: IPv6 default port")
+	testaux.asserteq(u.authority, "[::1]", "Test 41.40: IPv6 authority default port")
 
 	-- IPv6 URL with query (no path)
-	scheme, host, port, path = helper.parseurl("http://[::1]:9090?q=1")
-	testaux.asserteq(host, "::1", "Test 41.25: IPv6 host before query")
-	testaux.asserteq(port, "9090", "Test 41.26: IPv6 port before query")
-	testaux.asserteq(path, "/?q=1", "Test 41.27: IPv6 query-only gets / prefix")
+	u = url.parse("http://[::1]:9090?q=1")
+	testaux.asserteq(u.host, "::1", "Test 41.25: IPv6 host before query")
+	testaux.asserteq(u.port, "9090", "Test 41.26: IPv6 port before query")
+	testaux.asserteq(u.path, "/?q=1", "Test 41.27: IPv6 query-only gets / prefix")
+	testaux.asserteq(u.authority, "[::1]:9090", "Test 41.41: IPv6 authority with port and query")
 
 	-- Invalid URL - no scheme
-	local r, err = helper.parseurl("example.com/path")
+	local r, err = url.parse("example.com/path")
 	testaux.asserteq(r, nil, "Test 41.28: no scheme returns nil")
 	testaux.assertneq(err, nil, "Test 41.29: no scheme returns error")
 
 	-- Invalid URL - just a string
-	r, err = helper.parseurl("not-a-url")
+	r, err = url.parse("not-a-url")
 	testaux.asserteq(r, nil, "Test 41.30: plain string returns nil")
 
 	-- Unsupported scheme
-	r, err = helper.parseurl("ftp://example.com/file")
+	r, err = url.parse("ftp://example.com/file")
 	testaux.asserteq(r, nil, "Test 41.31: unsupported scheme returns nil")
 	testaux.assertneq(err, nil, "Test 41.32: unsupported scheme returns error")
 
 	-- URL with path, query and fragment
-	scheme, host, port, path = helper.parseurl("http://example.com/path?a=1&b=2#frag")
-	testaux.asserteq(path, "/path?a=1&b=2#frag", "Test 41.33: path includes query and fragment")
+	u = url.parse("http://example.com/path?a=1&b=2#frag")
+	testaux.asserteq(u.path, "/path?a=1&b=2#frag", "Test 41.33: path includes query and fragment")
 
 	-- URL with port and query
-	scheme, host, port, path = helper.parseurl("http://example.com:3000/api?token=abc")
-	testaux.asserteq(host, "example.com", "Test 41.34: host with port and query")
-	testaux.asserteq(port, "3000", "Test 41.35: port with query")
-	testaux.asserteq(path, "/api?token=abc", "Test 41.36: path with query")
+	u = url.parse("http://example.com:3000/api?token=abc")
+	testaux.asserteq(u.host, "example.com", "Test 41.34: host with port and query")
+	testaux.asserteq(u.port, "3000", "Test 41.35: port with query")
+	testaux.asserteq(u.path, "/api?token=abc", "Test 41.36: path with query")
 
-	-- HTTPS with explicit 443 (not default since explicitly specified)
-	scheme, host, port, path, default = helper.parseurl("https://example.com:443/path")
-	testaux.asserteq(port, "443", "Test 41.37: explicit 443")
-	testaux.asserteq(default, false, "Test 41.38: explicit port not default")
+	-- HTTPS with explicit 443
+	u = url.parse("https://example.com:443/path")
+	testaux.asserteq(u.port, "443", "Test 41.37: explicit 443")
+	testaux.asserteq(u.authority, "example.com", "Test 41.38: default port stripped from authority")
+
+	-- IPv6 url.build round-trip
+	u = url.parse("http://[::1]:8080/p")
+	testaux.asserteq(url.build(u), "http://[::1]:8080/p", "Test 41.42: IPv6 build with port")
+	u = url.parse("http://[::1]/p")
+	testaux.asserteq(url.build(u), "http://[::1]/p", "Test 41.43: IPv6 build default port")
+	u = url.parse("https://[2001:db8::1]:443/p")
+	testaux.asserteq(url.build(u), "https://[2001:db8::1]/p", "Test 41.44: IPv6 https default port")
 end)
 
-testaux.case("Test 42: parsetarget comprehensive", function()
+case("Test 42: parsetarget comprehensive", function()
 	-- Path only
 	local path, query = helper.parsetarget("/path")
 	testaux.asserteq(path, "/path", "Test 42.1: path only")
@@ -1278,9 +1301,9 @@ testaux.case("Test 42: parsetarget comprehensive", function()
 	testaux.assertneq(query["a"], nil, "Test 42.22: duplicate key exists")
 
 	-- Space encoded as +
-	-- Note: parsetarget uses urldecode which handles %XX but not +
 	path, query = helper.parsetarget("/path?q=hello+world")
-	testaux.asserteq(query["q"], "hello+world", "Test 42.23: + not decoded as space")
+	testaux.asserteq(query["q"], "hello world", "Test 42.23: + decoded as space")
+
 
 	-- Space encoded as %20
 	path, query = helper.parsetarget("/path?q=hello%20world")
@@ -1297,156 +1320,201 @@ testaux.case("Test 42: parsetarget comprehensive", function()
 	testaux.asserteq(query["limit"], "10", "Test 42.28: limit param")
 end)
 
-testaux.case("Test 43: urlencode comprehensive", function()
+case("Test 43: urlencode comprehensive", function()
 	-- Safe chars pass through
-	local result = helper.urlencode("hello")
+	local result = url.queryescape("hello")
 	testaux.asserteq(result, "hello", "Test 43.1: safe chars unchanged")
 
 	-- Space encoded
-	result = helper.urlencode("hello world")
-	testaux.asserteq(result, "hello%20world", "Test 43.2: space encoded as %20")
+	result = url.queryescape("hello world")
+	testaux.asserteq(result, "hello+world", "Test 43.2: space encoded as +")
 
 	-- Special chars
-	result = helper.urlencode("a&b=c")
+	result = url.queryescape("a&b=c")
 	testaux.asserteq(result, "a%26b%3Dc", "Test 43.3: & and = encoded")
 
 	-- Empty string
-	result = helper.urlencode("")
+	result = url.queryescape("")
 	testaux.asserteq(result, "", "Test 43.4: empty string unchanged")
 
 	-- Safe special chars (should NOT be encoded)
-	result = helper.urlencode("a.b_c$d!e*f(g)h,i-j")
-	testaux.asserteq(result, "a.b_c$d!e*f(g)h,i-j", "Test 43.5: safe specials unchanged")
+	result = url.queryescape("a.b_c$d!e*f(g)h,i-j")
+	testaux.asserteq(result, "a.b_c%24d%21e*f%28g%29h%2Ci-j", "Test 43.5: specials encoded per x-www-form-urlencoded")
 
 	-- Slash is encoded
-	result = helper.urlencode("a/b")
+	result = url.queryescape("a/b")
 	testaux.asserteq(result, "a%2Fb", "Test 43.6: slash encoded")
 
 	-- Alphanumeric pass through
-	result = helper.urlencode("ABCDEFxyz0123456789")
+	result = url.queryescape("ABCDEFxyz0123456789")
 	testaux.asserteq(result, "ABCDEFxyz0123456789", "Test 43.7: alphanumeric unchanged")
 
 	-- Table input - simple pair
-	result = helper.urlencode({key = "value"})
+	result = url.queryescape({key = "value"})
 	testaux.asserteq(result, "key=value", "Test 43.8: simple table")
 
 	-- Table input - special chars in key and value
-	result = helper.urlencode({["a b"] = "c&d"})
-	testaux.assertneq(result:find("a%20b=c%26d", 1, true), nil, "Test 43.9: table key and value encoded")
+	result = url.queryescape({["a b"] = "c&d"})
+	testaux.assertneq(result:find("a+b=c%26d", 1, true), nil, "Test 43.9: table key and value encoded")
 
 	-- Non-ASCII chars get encoded
-	result = helper.urlencode("你")
+	result = url.queryescape("你")
 	testaux.assertneq(result, "你", "Test 43.10: non-ASCII encoded")
 
 	-- Round-trip: encode then decode restores original
 	local original = "hello world & 你好"
-	result = helper.urldecode(helper.urlencode(original))
+	result = url.queryunescape(url.queryescape(original))
 	testaux.asserteq(result, original, "Test 43.11: round-trip encode/decode")
 
 	-- @ sign is encoded
-	result = helper.urlencode("user@host")
+	result = url.queryescape("user@host")
 	testaux.asserteq(result, "user%40host", "Test 43.12: @ encoded")
 
 	-- Hash/pound is encoded
-	result = helper.urlencode("a#b")
+	result = url.queryescape("a#b")
 	testaux.asserteq(result, "a%23b", "Test 43.13: # encoded")
 
 	-- Percent itself is encoded
-	result = helper.urlencode("100%")
+	result = url.queryescape("100%")
 	testaux.asserteq(result, "100%25", "Test 43.14: % encoded as %25")
 end)
 
-testaux.case("Test 44: urldecode comprehensive", function()
+case("Test 44: urldecode comprehensive", function()
 	-- Basic decode
-	local result = helper.urldecode("hello%20world")
+	local result = url.pathunescape("hello%20world")
 	testaux.asserteq(result, "hello world", "Test 44.1: %20 decoded to space")
 
 	-- No encoding
-	result = helper.urldecode("hello")
+	result = url.pathunescape("hello")
 	testaux.asserteq(result, "hello", "Test 44.2: no encoding unchanged")
 
 	-- UTF-8 multibyte decode
-	result = helper.urldecode("%E4%BD%A0%E5%A5%BD")
+	result = url.pathunescape("%E4%BD%A0%E5%A5%BD")
 	testaux.asserteq(result, "你好", "Test 44.3: UTF-8 decoded")
 
 	-- Empty string
-	result = helper.urldecode("")
+	result = url.pathunescape("")
 	testaux.asserteq(result, "", "Test 44.4: empty string")
 
 	-- Mixed encoded and plain
-	result = helper.urldecode("a%26b%3Dc")
+	result = url.pathunescape("a%26b%3Dc")
 	testaux.asserteq(result, "a&b=c", "Test 44.5: mixed decode")
 
 	-- Lowercase hex
-	result = helper.urldecode("a%2fb")
+	result = url.pathunescape("a%2fb")
 	testaux.asserteq(result, "a/b", "Test 44.6: lowercase hex")
 
 	-- Uppercase hex
-	result = helper.urldecode("a%2Fb")
+	result = url.pathunescape("a%2Fb")
 	testaux.asserteq(result, "a/b", "Test 44.7: uppercase hex")
 
 	-- Trailing percent (not followed by hex)
-	result = helper.urldecode("100%")
+	result = url.pathunescape("100%")
 	testaux.asserteq(result, "100%", "Test 44.8: trailing % unchanged")
 
 	-- Percent followed by non-hex
-	result = helper.urldecode("100%GG")
+	result = url.pathunescape("100%GG")
 	testaux.asserteq(result, "100%GG", "Test 44.9: non-hex after % unchanged")
 
 	-- Decode %25 → %
-	result = helper.urldecode("100%25")
+	result = url.pathunescape("100%25")
 	testaux.asserteq(result, "100%", "Test 44.10: %25 decoded to %")
 
 	-- Multiple consecutive encodings
-	result = helper.urldecode("%20%20%20")
+	result = url.pathunescape("%20%20%20")
 	testaux.asserteq(result, "   ", "Test 44.11: three spaces")
 
 	-- Round-trip with urlencode
 	local original = "a/b@c&d=e f"
-	result = helper.urldecode(helper.urlencode(original))
+	result = url.queryunescape(url.queryescape(original))
 	testaux.asserteq(result, original, "Test 44.12: round-trip")
 end)
 
-testaux.case("Test 45: htmlunescape comprehensive", function()
+case("Test 45: url.resolve comprehensive", function()
+	-- Absolute URL overrides base
+	local u = url.resolve("http://example.com/path", "http://other.com/new")
+	testaux.asserteq(u.scheme, "http", "Test 45.1: absolute scheme")
+	testaux.asserteq(u.host, "other.com", "Test 45.2: absolute host")
+	testaux.asserteq(u.path, "/new", "Test 45.3: absolute path")
+
+	-- Protocol-relative
+	u = url.resolve("http://example.com/path", "//other.com/new")
+	testaux.asserteq(u.scheme, "http", "Test 45.4: proto-rel scheme")
+	testaux.asserteq(u.host, "other.com", "Test 45.5: proto-rel host")
+
+	-- Root-relative
+	u = url.resolve("http://example.com/a/b", "/c/d")
+	testaux.asserteq(u.path, "/c/d", "Test 45.6: root-relative path")
+
+	-- Path-relative
+	u = url.resolve("http://example.com/a/b", "c")
+	testaux.asserteq(u.path, "/a/c", "Test 45.7: path-relative")
+
+	-- Path-relative with directory
+	u = url.resolve("http://example.com/a/b/c", "d")
+	testaux.asserteq(u.path, "/a/b/d", "Test 45.8: path-relative with dir")
+
+	-- Query-only reference
+	u = url.resolve("http://example.com/path?q=1", "?new=2")
+	testaux.asserteq(u.path, "/path?new=2", "Test 45.15: query-only replaces query")
+
+	-- Query-only with fragment in base
+	u = url.resolve("http://example.com/path?q=1#f", "?new=2")
+	testaux.asserteq(u.path, "/path?new=2", "Test 45.16: query-only strips fragment")
+
+	-- Query-only with no query in base
+	u = url.resolve("http://example.com/path", "?new=1")
+	testaux.asserteq(u.path, "/path?new=1", "Test 45.17: query-only adds query")
+
+	-- Fragment-only reference
+	u = url.resolve("http://example.com/path?q=1#old", "#new")
+	testaux.asserteq(u.path, "/path?q=1#new", "Test 45.18: fragment-only replaces fragment")
+
+	-- Fragment-only with no fragment in base
+	u = url.resolve("http://example.com/path", "#frag")
+	testaux.asserteq(u.path, "/path#frag", "Test 45.19: fragment-only adds fragment")
+end)
+
+case("Test 46: htmlunescape comprehensive", function()
 	-- Named entities
-	testaux.asserteq(helper.htmlunescape("&amp;"), "&", "Test 45.1: &amp;")
-	testaux.asserteq(helper.htmlunescape("&lt;"), "<", "Test 45.2: &lt;")
-	testaux.asserteq(helper.htmlunescape("&gt;"), ">", "Test 45.3: &gt;")
-	testaux.asserteq(helper.htmlunescape("&quot;"), '"', "Test 45.4: &quot;")
-	testaux.asserteq(helper.htmlunescape("&nbsp;"), " ", "Test 45.5: &nbsp;")
+	testaux.asserteq(helper.htmlunescape("&amp;"), "&", "Test 46.1: &amp;")
+	testaux.asserteq(helper.htmlunescape("&lt;"), "<", "Test 46.2: &lt;")
+	testaux.asserteq(helper.htmlunescape("&gt;"), ">", "Test 46.3: &gt;")
+	testaux.asserteq(helper.htmlunescape("&quot;"), '"', "Test 46.4: &quot;")
+	testaux.asserteq(helper.htmlunescape("&nbsp;"), " ", "Test 46.5: &nbsp;")
 
 	-- Numeric entities
-	testaux.asserteq(helper.htmlunescape("&#65;"), "A", "Test 45.6: &#65; = A")
-	testaux.asserteq(helper.htmlunescape("&#20320;"), "你", "Test 45.7: &#20320; = 你")
-	testaux.asserteq(helper.htmlunescape("&#48;"), "0", "Test 45.8: &#48; = 0")
+	testaux.asserteq(helper.htmlunescape("&#65;"), "A", "Test 46.6: &#65; = A")
+	testaux.asserteq(helper.htmlunescape("&#20320;"), "你", "Test 46.7: &#20320; = 你")
+	testaux.asserteq(helper.htmlunescape("&#48;"), "0", "Test 46.8: &#48; = 0")
 
 	-- Mixed entities in HTML
 	local result = helper.htmlunescape("&lt;b&gt;Hello &amp; World&lt;/b&gt;")
-	testaux.asserteq(result, "<b>Hello & World</b>", "Test 45.9: mixed HTML")
+	testaux.asserteq(result, "<b>Hello & World</b>", "Test 46.9: mixed HTML")
 
 	-- No entities
-	testaux.asserteq(helper.htmlunescape("hello world"), "hello world", "Test 45.10: no entities")
+	testaux.asserteq(helper.htmlunescape("hello world"), "hello world", "Test 46.10: no entities")
 
 	-- Empty string
-	testaux.asserteq(helper.htmlunescape(""), "", "Test 45.11: empty string")
+	testaux.asserteq(helper.htmlunescape(""), "", "Test 46.11: empty string")
 
 	-- Numeric + named mixed
 	result = helper.htmlunescape("&#60;p&#62;text&amp;more&#60;/p&#62;")
-	testaux.asserteq(result, "<p>text&more</p>", "Test 45.12: numeric and named mixed")
+	testaux.asserteq(result, "<p>text&more</p>", "Test 46.12: numeric and named mixed")
 
 	-- Multiple same entity
 	result = helper.htmlunescape("&amp;&amp;&amp;")
-	testaux.asserteq(result, "&&&", "Test 45.13: repeated entity")
+	testaux.asserteq(result, "&&&", "Test 46.13: repeated entity")
 
 	-- Entity-like but unknown name (should remain unchanged)
 	result = helper.htmlunescape("&unknown;")
-	testaux.asserteq(result, "&unknown;", "Test 45.14: unknown named entity unchanged")
+	testaux.asserteq(result, "&unknown;", "Test 46.14: unknown named entity unchanged")
 end)
 
-testaux.case("Test 46: client.request API - empty body with Content-Length 0 and chunked", function()
+case("Test 47: client.request API - empty body with Content-Length 0 and chunked", function()
 	-- Part 1: Content-Length 0
 	server_handler = function(stream)
-		testaux.asserteq(stream.method, "GET", "Test 46.1: Method should be GET")
+		testaux.asserteq(stream.method, "GET", "Test 47.1: Method should be GET")
 		stream:respond(200, {
 			["content-type"] = "text/plain",
 			["content-length"] = 0,
@@ -1454,21 +1522,21 @@ testaux.case("Test 46: client.request API - empty body with Content-Length 0 and
 	end
 
 	local stream<close>, err = httpc:request("GET", "http://127.0.0.1:8080/empty", {})
-	testaux.assertneq(stream, nil, "Test 46.2: stream should not be nil")
-	testaux.asserteq(err, nil, "Test 46.3: err should be nil")
+	testaux.assertneq(stream, nil, "Test 47.2: stream should not be nil")
+	testaux.asserteq(err, nil, "Test 47.3: err should be nil")
 	stream:closewrite()
 	local ok, wait_err = stream:waitresponse()
-	testaux.asserteq(ok, true, "Test 46.4: waitresponse should succeed")
-	testaux.asserteq(wait_err, nil, "Test 46.5: waitresponse err should be nil")
-	testaux.asserteq(stream.status, 200, "Test 46.6: status should be 200")
+	testaux.asserteq(ok, true, "Test 47.4: waitresponse should succeed")
+	testaux.asserteq(wait_err, nil, "Test 47.5: waitresponse err should be nil")
+	testaux.asserteq(stream.status, 200, "Test 47.6: status should be 200")
 
 	local body, read_err = stream:readall()
-	testaux.asserteq(body, "", "Test 46.7: body should be empty string")
-	testaux.asserteq(read_err, nil, "Test 46.8: err should be nil for empty body")
+	testaux.asserteq(body, "", "Test 47.7: body should be empty string")
+	testaux.asserteq(read_err, nil, "Test 47.8: err should be nil for empty body")
 
 	-- Part 2: Chunked transfer encoding
 	server_handler = function(stream)
-		testaux.asserteq(stream.method, "GET", "Test 46.9: Method should be GET (chunked)")
+		testaux.asserteq(stream.method, "GET", "Test 47.9: Method should be GET (chunked)")
 		stream:respond(200, {
 			["content-type"] = "text/plain",
 			["transfer-encoding"] = "chunked",
@@ -1477,34 +1545,426 @@ testaux.case("Test 46: client.request API - empty body with Content-Length 0 and
 	end
 
 	local stream2<close>, err2 = httpc:request("GET", "http://127.0.0.1:8080/empty_chunked", {})
-	testaux.assertneq(stream2, nil, "Test 46.10: stream should not be nil (chunked)")
-	testaux.asserteq(err2, nil, "Test 46.11: err should be nil (chunked)")
+	testaux.assertneq(stream2, nil, "Test 47.10: stream should not be nil (chunked)")
+	testaux.asserteq(err2, nil, "Test 47.11: err should be nil (chunked)")
 	stream2:closewrite()
 	local ok2, wait_err2 = stream2:waitresponse()
-	testaux.asserteq(ok2, true, "Test 46.12: waitresponse should succeed (chunked)")
-	testaux.asserteq(wait_err2, nil, "Test 46.13: waitresponse err should be nil (chunked)")
-	testaux.asserteq(stream2.status, 200, "Test 46.14: status should be 200 (chunked)")
+	testaux.asserteq(ok2, true, "Test 47.12: waitresponse should succeed (chunked)")
+	testaux.asserteq(wait_err2, nil, "Test 47.13: waitresponse err should be nil (chunked)")
+	testaux.asserteq(stream2.status, 200, "Test 47.14: status should be 200 (chunked)")
 
 	local body2, read_err2 = stream2:readall()
-	testaux.asserteq(body2, "", "Test 46.15: body should be empty string (chunked)")
-	testaux.asserteq(read_err2, nil, "Test 46.16: err should be nil for empty chunked body")
+	testaux.asserteq(body2, "", "Test 47.15: body should be empty string (chunked)")
+	testaux.asserteq(read_err2, nil, "Test 47.16: err should be nil for empty chunked body")
 	wait_done()
 end)
 
-testaux.case("Test 47: HTTP DNS failure returns contextual string", function()
+case("Test 48: HTTP DNS failure returns contextual string", function()
 	testaux.with_mocked_dns(function(host, qtype)
 		return nil, "Query timed out (10001)"
 	end, {"silly.net.http.client", "silly.net.http"}, function(reloaded)
 		local mock_http = reloaded["silly.net.http"]
 		local stream, err = mock_http.request("GET", "http://dns-fail.test:8080", {})
-		testaux.asserteq(stream, nil, "Test 47.1: HTTP request should fail on DNS error")
+		testaux.asserteq(stream, nil, "Test 48.1: HTTP request should fail on DNS error")
 		testaux.assertcontains(err, "dns lookup",
-			"Test 47.2: Error should mention dns lookup")
+			"Test 48.2: Error should mention dns lookup")
 		testaux.assertcontains(err, "dns-fail.test",
-			"Test 47.3: Error should include the failing host")
+			"Test 48.3: Error should include the failing host")
 		testaux.assertcontains(err, "timed out",
-			"Test 47.4: Error should propagate underlying DNS reason")
+			"Test 48.4: Error should propagate underlying DNS reason")
 	end)
+end)
+
+case("Test 49: Host header not duplicated and user header preserved", function()
+	local received_host
+	server_handler = function(stream)
+		received_host = stream.header["host"]
+		stream:respond(200, { ["content-length"] = 2 })
+		stream:write("OK")
+	end
+
+	local hdr = { ["host"] = "my-custom-host", ["x-test"] = "value" }
+	local stream<close>, err = httpc:request("GET", "http://127.0.0.1:8080/host-test", hdr)
+	testaux.assertneq(stream, nil, "Test 49.1: request should succeed")
+	stream:closewrite()
+	local body = stream:readall()
+	testaux.asserteq(body, "OK", "Test 49.2: body should be OK")
+
+	-- user header table must not be modified
+	testaux.asserteq(hdr["host"], "my-custom-host", "Test 49.3: user header[\"host\"] should be preserved")
+	testaux.asserteq(hdr["x-test"], "value", "Test 49.4: user header[\"x-test\"] should be preserved")
+
+	-- server receives the host from the URL (authority), not from user header["host"]
+	testaux.asserteq(received_host, "127.0.0.1:8080", "Test 49.5: server host should be URL authority")
+
+	wait_done()
+end)
+
+-- Redirect tests use set_nil = false so the handler persists across
+-- multiple requests (redirect + follow). httpc:get/post are fully
+-- synchronous, so no wait_done() is needed — by the time the call
+-- returns, the server has handled all requests in the chain.
+
+case("Test 50: 301 redirect changes POST to GET and drops body", function()
+	set_nil = false
+	local methods = {}
+	server_handler = function(stream)
+		methods[#methods + 1] = stream.method
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(301, { ["location"] = "/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("OK")
+		end
+	end
+	local response = httpc:post("http://127.0.0.1:8080/redirect", {
+		["content-type"] = "text/plain"
+	}, "request-body")
+	testaux.assertneq(response, nil, "Test 50.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 50.2: final status should be 200")
+	testaux.asserteq(response.body, "OK", "Test 50.3: body should be OK")
+	testaux.asserteq(methods[1], "POST", "Test 50.4: first request should be POST")
+	testaux.asserteq(methods[2], "GET", "Test 50.5: redirect should change method to GET")
+end)
+
+case("Test 51: 307 redirect preserves POST method and body", function()
+	set_nil = false
+	local target_method
+	local target_body
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(307, { ["location"] = "/target" })
+		else
+			target_method = stream.method
+			target_body = stream:readall()
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("OK")
+		end
+	end
+	local response = httpc:post("http://127.0.0.1:8080/redirect", {
+		["content-type"] = "text/plain"
+	}, "preserved-body")
+	testaux.assertneq(response, nil, "Test 51.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 51.2: final status should be 200")
+	testaux.asserteq(target_method, "POST", "Test 51.3: method should be preserved as POST")
+	testaux.asserteq(target_body, "preserved-body", "Test 51.4: body should be preserved")
+end)
+
+case("Test 52: Redirect loop detection", function()
+	set_nil = false
+	server_handler = function(stream)
+		stream:respond(301, { ["location"] = "/loop" })
+	end
+	local response, err = httpc:get("http://127.0.0.1:8080/loop")
+	testaux.asserteq(response, nil, "Test 52.1: loop should fail")
+	testaux.assertneq(err, nil, "Test 52.2: should return error")
+	testaux.assertneq(err:find("redirect loop"), nil, "Test 52.3: error should mention redirect loop")
+end)
+
+case("Test 53: Too many redirects", function()
+	set_nil = false
+	server_handler = function(stream)
+		local n = stream.path:match("/r(%d+)")
+		n = tonumber(n) or 0
+		stream:respond(301, { ["location"] = "/r" .. (n + 1) })
+	end
+	local response, err = httpc:get("http://127.0.0.1:8080/r0")
+	testaux.asserteq(response, nil, "Test 53.1: should fail on too many redirects")
+	testaux.assertneq(err, nil, "Test 53.2: should return error")
+	testaux.asserteq(err, "too many redirects", "Test 53.3: error should be 'too many redirects'")
+end)
+
+case("Test 54: 303 redirect changes POST to GET", function()
+	set_nil = false
+	local methods = {}
+	server_handler = function(stream)
+		methods[#methods + 1] = stream.method
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(303, { ["location"] = "/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("OK")
+		end
+	end
+	local response = httpc:post("http://127.0.0.1:8080/redirect", {
+		["content-type"] = "text/plain"
+	}, "post-data")
+	testaux.assertneq(response, nil, "Test 54.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 54.2: final status should be 200")
+	testaux.asserteq(methods[1], "POST", "Test 54.3: first request should be POST")
+	testaux.asserteq(methods[2], "GET", "Test 54.4: 303 should change method to GET")
+end)
+
+case("Test 55: 308 redirect preserves POST method and body", function()
+	set_nil = false
+	local target_method
+	local target_body
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:readall()
+			stream:respond(308, { ["location"] = "/target" })
+		else
+			target_method = stream.method
+			target_body = stream:readall()
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("OK")
+		end
+	end
+	local response = httpc:post("http://127.0.0.1:8080/redirect", {
+		["content-type"] = "text/plain"
+	}, "308-body")
+	testaux.assertneq(response, nil, "Test 55.1: redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 55.2: final status should be 200")
+	testaux.asserteq(target_method, "POST", "Test 55.3: method should be preserved as POST")
+	testaux.asserteq(target_body, "308-body", "Test 55.4: body should be preserved")
+end)
+
+case("Test 56: Relative Location URL redirect", function()
+	set_nil = false
+	server_handler = function(stream)
+		if stream.path == "/dir/redirect" then
+			stream:respond(302, { ["location"] = "target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 5,
+			})
+			stream:write("Hello")
+		end
+	end
+	local response = httpc:get("http://127.0.0.1:8080/dir/redirect")
+	testaux.assertneq(response, nil, "Test 56.1: relative redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 56.2: final status should be 200")
+	testaux.asserteq(response.body, "Hello", "Test 56.3: body should be Hello")
+end)
+
+case("Test 57: GET redirect with gzip response", function()
+	local original_data = "Compressed redirect data that is long enough for gzip to work with. " ..
+		"Adding more text to improve compression ratio for the test."
+	local compressed = gzip.compress(original_data)
+	testaux.assertneq(compressed, nil, "Test 57.1: gzip.compress should succeed")
+	set_nil = false
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(301, { ["location"] = "/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-encoding"] = "gzip",
+				["content-length"] = #compressed,
+			})
+			stream:write(compressed)
+		end
+	end
+	local response = httpc:get("http://127.0.0.1:8080/redirect")
+	testaux.assertneq(response, nil, "Test 57.2: redirect with gzip should succeed")
+	testaux.asserteq(response.status, 200, "Test 57.3: final status should be 200")
+	testaux.asserteq(response.body, original_data, "Test 57.4: body should be decompressed")
+end)
+
+case("Test 58: Cross-host redirect resolves new authority", function()
+	set_nil = false
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(301, { ["location"] = "http://localhost:8080/target" })
+		else
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 4,
+			})
+			stream:write("host")
+		end
+	end
+	local response = httpc:get("http://127.0.0.1:8080/redirect")
+	testaux.assertneq(response, nil, "Test 58.1: cross-host redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 58.2: final status should be 200")
+	testaux.asserteq(response.body, "host", "Test 58.3: body should be host")
+end)
+
+case("Test 58b: Cross-host redirect strips sensitive headers", function()
+	set_nil = false
+	local received_auth
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(301, {
+				["location"] = "http://localhost:8080/target",
+				["content-length"] = 0,
+			})
+		else
+			received_auth = stream.header["authorization"]
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("ok")
+		end
+	end
+	local response = httpc:get("http://127.0.0.1:8080/redirect", {
+		["authorization"] = "Bearer secret",
+	})
+	testaux.assertneq(response, nil, "Test 58b.1: cross-host redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 58b.2: final status should be 200")
+	testaux.asserteq(received_auth, nil, "Test 58b.3: Authorization header should be stripped on cross-host redirect")
+end)
+
+case("Test 59: Redirect preserves query string in Location", function()
+	set_nil = false
+	local received_query
+	server_handler = function(stream)
+		if stream.path == "/redirect" then
+			stream:respond(302, { ["location"] = "/target?foo=bar&baz=1" })
+		else
+			received_query = stream.query
+			stream:respond(200, {
+				["content-type"] = "text/plain",
+				["content-length"] = 2,
+			})
+			stream:write("OK")
+		end
+	end
+	local response = httpc:get("http://127.0.0.1:8080/redirect?original=1")
+	testaux.assertneq(response, nil, "Test 59.1: query redirect should succeed")
+	testaux.asserteq(response.status, 200, "Test 59.2: final status should be 200")
+	testaux.asserteq(received_query["foo"], "bar", "Test 59.3: target query foo should be present")
+	testaux.asserteq(received_query["baz"], "1", "Test 59.4: target query baz should be present")
+	testaux.asserteq(received_query["original"], nil, "Test 59.5: original query should not leak")
+end)
+
+case("Test 60: parsequery last-value-wins for duplicate keys", function()
+	local url = require "silly.net.http.url"
+	local q = url.parsequery("a=1&a=2&a=3")
+	testaux.asserteq(q["a"], "3", "Test 60.1: duplicate keys should use last value")
+end)
+
+case("Test 60b: parsequery handles empty values and bare keys", function()
+	local url = require "silly.net.http.url"
+	local q = url.parsequery("a=1&b=&c")
+	testaux.asserteq(q["a"], "1", "Test 60b.1: normal key=value")
+	testaux.asserteq(q["b"], "", "Test 60b.2: empty value (key=)")
+	testaux.asserteq(q["c"], "", "Test 60b.3: bare key without =")
+end)
+
+case("Test 61: Redirect with no Location header returns response as-is", function()
+	server_handler = function(stream)
+		stream:respond(302, { ["content-length"] = 8 })
+		stream:write("no-loc!!")
+	end
+	local response = httpc:get("http://127.0.0.1:8080")
+	testaux.assertneq(response, nil, "Test 61.1: should return response")
+	testaux.asserteq(response.status, 302, "Test 61.2: status should be 302")
+	testaux.asserteq(response.body, "no-loc!!", "Test 61.3: body should be returned")
+	wait_done()
+end)
+
+case("Test 62: readall() with deadline timeout", function()
+	server_handler = function(stream)
+		stream:respond(200, {
+			["content-length"] = 20,
+		})
+		stream:write("12345")
+		stream:flush()
+		time.sleep(500)  -- delay longer than client timeout
+	end
+
+	local stream<close>, err = httpc:request("GET", "http://127.0.0.1:8080", {})
+	testaux.assertneq(stream, nil, "Test 62.1: Request should succeed")
+	stream:closewrite()
+
+	local body, err = stream:readall(50)
+	testaux.asserteq(body, nil, "Test 62.2: readall should return nil on timeout")
+	testaux.asserteq(err, ETIMEDOUT, "Test 62.3: err should be ETIMEDOUT")
+
+	-- subsequent readall should fail immediately with cached error
+	local body2, err2 = stream:readall()
+	testaux.asserteq(body2, nil, "Test 62.4: second readall should return nil")
+	testaux.asserteq(err2, ETIMEDOUT, "Test 62.5: second readall should return cached ETIMEDOUT")
+
+	wait_done()
+end)
+
+case("Test 63: timed-out connection is not reused by pool", function()
+	local c = http.newclient({
+		max_idle_per_host = 10,
+		idle_timeout = 2000,
+	})
+
+	-- First request: server writes partial response, client times out
+	server_handler = function(stream)
+		stream:respond(200, {
+			["content-length"] = 20,
+		})
+		stream:write("12345")
+		stream:flush()
+		time.sleep(500)
+	end
+
+	local stream<close>, err = c:request("GET", "http://127.0.0.1:8080", {})
+	testaux.assertneq(stream, nil, "Test 63.1: First request should succeed")
+	stream:closewrite()
+
+	local body, err = stream:readall(50)
+	testaux.asserteq(body, nil, "Test 63.2: readall should timeout")
+	testaux.asserteq(err, ETIMEDOUT, "Test 63.3: err should be ETIMEDOUT")
+
+	wait_done()
+
+	-- Second request: should succeed on a NEW connection (not the broken one)
+	server_handler = function(stream)
+		stream:respond(200, {
+			["content-type"] = "text/plain",
+			["content-length"] = 2,
+		})
+		stream:write("OK")
+	end
+
+	local stream2<close>, err2 = c:request("GET", "http://127.0.0.1:8080", {})
+	testaux.assertneq(stream2, nil, "Test 63.4: Second request should succeed")
+	stream2:closewrite()
+
+	local body2, err2 = stream2:readall()
+	testaux.asserteq(body2, "OK", "Test 63.5: Second response body should be OK")
+	testaux.asserteq(stream2.status, 200, "Test 63.6: Second status should be 200")
+
+	wait_done()
+end)
+
+case("Test 64: Expect 100-continue rejected by server", function()
+	server_handler = function(stream)
+		stream:respond(417, {
+			["content-type"] = "text/plain",
+			["content-length"] = 18,
+		})
+		stream:write("Expectation Failed")
+	end
+
+	local stream<close>, err = httpc:request("POST", "http://127.0.0.1:8080", {
+		["expect"] = "100-continue",
+		["content-length"] = 4,
+	})
+	testaux.assertneq(stream, nil, "Test 64.1: request should succeed")
+
+	stream:closewrite("body")
+	testaux.asserteq(stream.status, 417, "Test 64.2: status should be 417")
+
+	local body, err = stream:readall()
+	testaux.asserteq(body, "Expectation Failed", "Test 64.3: body should be readable")
+
+	wait_done()
 end)
 
 if server then

@@ -2,7 +2,7 @@ local http = require "silly.net.http"
 local base64 = require "silly.encoding.base64"
 local sha1 = require "silly.crypto.hash".new("sha1")
 local utils = require "silly.crypto.utils"
-local helper = require "silly.net.http.helper"
+local url = require "silly.net.http.url"
 local dns = require "silly.net.dns"
 local tcp = require "silly.net.tcp"
 local tls = require "silly.net.tls"
@@ -19,7 +19,7 @@ local unpack = string.unpack
 local format = string.format
 local xor = utils.xor
 local randomkey = utils.randomkey
-local parseurl = helper.parseurl
+local parseurl = url.parse
 local join_addr = addr.join
 
 ---@class silly.net.websocket
@@ -238,9 +238,16 @@ local function handshake(stream)
 	end
 	for k, v in pairs(checklist) do
 		local verify = header[k]
-		if verify and verify ~= v then
-			respond(stream, 400, {})
-			return false, "Header " .. k .. " mismatch"
+		if verify then
+			if k == "connection" then
+				if not verify:lower():find("upgrade", 1, true) then
+					respond(stream, 400, {})
+					return false, "Header " .. k .. " mismatch"
+				end
+			elseif verify ~= v then
+				respond(stream, 400, {})
+				return false, "Header " .. k .. " mismatch"
+			end
 		end
 	end
 	local key = header["sec-websocket-key"]
@@ -287,31 +294,30 @@ end
 ---@return silly.net.websocket.socket|nil, string|nil
 function M.connect(url, header)
 	local conn, err
-	local scheme, host, port, path = parseurl(url)
-	if not scheme then
-		return nil, host
+	local u, err = parseurl(url)
+	if not u then
+		return nil, err
 	end
-	local ip, err = dns.lookup(host, dns.A)
+	local ip, err = dns.lookup(u.host, dns.A)
 	if not ip then
-		return nil, format("dns lookup %s failed: %s", host, err)
+		return nil, format("dns lookup %s failed: %s", u.host, err)
 	end
-	local addr = join_addr(ip, port)
-	if scheme == "wss" then
-		conn, err = tls.connect(addr, {hostname = host})
+	local a = join_addr(ip, u.port)
+	if u.scheme == "wss" then
+		conn, err = tls.connect(a, {hostname = u.host})
 	else
-		conn, err = tcp.connect(addr)
+		conn, err = tcp.connect(a)
 	end
 	if not conn then
 		return nil, err
 	end
 	header = header or {}
 	header["connection"] = "Upgrade"
-	header["host"] = host
 	header["upgrade"] = "websocket"
 	header["sec-websocket-version"] = 13
 	header["sec-websocket-key"] = base64.encode(randomkey(16))
-	local stream = h1.newstream(scheme, conn)
-	local ok, err = stream:request("GET", path, header)
+	local stream = h1.newstream(u.scheme, conn, u.authority)
+	local ok, err = stream:request("GET", u.path, header)
 	if not ok then
 		stream:close()
 		return nil, err

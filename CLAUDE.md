@@ -196,6 +196,7 @@ Always prefer these over web search or training-data recall — they match the c
 | `silly.net.tls` | `docs/src/en/reference/net/tls.md` |
 | `silly.net.udp` | `docs/src/en/reference/net/udp.md` |
 | `silly.net.http` | `docs/src/en/reference/net/http.md` |
+| `silly.net.http.url` | `docs/src/en/reference/net/url.md` |
 | `silly.net.websocket` | `docs/src/en/reference/net/websocket.md` |
 | `silly.net.grpc` | `docs/src/en/reference/net/grpc.md` |
 | `silly.net.cluster` | `docs/src/en/reference/net/cluster.md` |
@@ -241,6 +242,10 @@ Nothing else. Every other module — `silly.net.http` (including `http.h1`, `htt
 **Why this matters**: the moment downstream code branches on `errno.XXX` from a non-transport module, that module loses the freedom to change its error wording — and the wide `silly.errno` table (which surfaces every libc errno on the platform) becomes load-bearing in places it was never meant to be.
 
 **Peer close**: a normal peer close reported through transport `close` callbacks is `errno.EOF`, not `nil`.
+
+## Changelog
+
+When modifying non-test code, update `CHANGELOG.md` under `## Unreleased` in the appropriate section (`Added`/`Changed`/`Fixed`). Do not edit past version entries.
 
 ## Code Patterns
 

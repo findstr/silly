@@ -9,6 +9,7 @@ local hpack = require "silly.http2.hpack"
 local builder = require "silly.http2.framebuilder"
 local errno = require "silly.errno"
 
+local type = type
 local next = next
 local error = error
 local pairs = pairs
@@ -140,10 +141,13 @@ local forbidden_headers = {
 	["upgrade"] = true,
 }
 
+global _
+
 --- @class silly.net.http.h2.channel
 --- connection
 --- @field scheme string
 --- @field conn silly.net.tcp.conn|silly.net.tls.conn
+--- @field authority string
 --- @field package writeco thread?
 --- streams
 --- @field package streamidx integer
@@ -224,11 +228,12 @@ local stream_mt = {
 ---@param scheme string
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
 ---@return silly.net.http.h2.channel
-local function newchannel(scheme, conn)
+local function newchannel(scheme, conn, host)
 	---@type silly.net.http.h2.channel
 	local ch = {
 		--- connection
 		scheme = scheme,
+		authority = host,
 		conn = conn,
 		--- streams
 		streamidx = -1,
@@ -701,6 +706,8 @@ local function stream_writeheader(s, header, endstream)
 	local ch = s.channel
 	local id = s.id
 	if s.active then --client request stream
+		-- stream ID may have advanced since openstream() if other streams
+		-- were sent first; reassign to the latest ID in that case
 		local idx = ch.streamidx
 		if id ~= idx then
 			local streams = ch.streams
@@ -710,13 +717,18 @@ local function stream_writeheader(s, header, endstream)
 			s.id = id
 			streams[id] = s
 		end
-		local host = header["host"]
+		-- :authority replaces host in HTTP/2; save/restore prevents mutating caller's table.
+		-- host must not be sent as a regular header (RFC 7540 Section 8.1.2.2).
+		-- header keys are assumed to be pre-normalized to lowercase
+		-- (by client.lua do_with_redirects or the caller of M.request).
+		local saved_host = header["host"]
 		header["host"] = nil
 		hdat = hpack_pack(ch.sendhpack, header,
-			":authority", host,
+			":authority", ch.authority,
 			":method", s.method,
 			":path", s.path,
 			":scheme", ch.scheme)
+		header["host"] = saved_host
 	else --server response stream
 		hdat = hpack_pack(ch.sendhpack, header, ":status", s.status)
 	end
@@ -1701,9 +1713,10 @@ end
 
 ---@param scheme string
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
+---@param host string
 ---@return silly.net.http.h2.channel.client?, string? error
-function M.newchannel(scheme, conn)
-	local ch = newchannel(scheme, conn)
+function M.newchannel(scheme, conn, host)
+	local ch = newchannel(scheme, conn, host)
 	--- @cast ch silly.net.http.h2.channel.client
 	ch.scheme = scheme
 	ch.openwaitq = queue.new()
@@ -1717,7 +1730,7 @@ end
 ---@param handler fun(s:silly.net.http.h2.stream)
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
 function M.httpd(handler, conn)
-	local ch = newchannel("https", conn)
+	local ch = newchannel("https", conn, "")
 	--- @cast ch silly.net.http.h2.channel.server
 	ch.handler = handler
 	local ok = handshake_as_server(ch)

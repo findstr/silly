@@ -1,9 +1,14 @@
 local silly = require "silly"
+local time = require "silly.time"
+local errno = require "silly.errno"
 local buffer = require "silly.adt.buffer"
 local helper = require "silly.net.http.helper"
 local logger = require "silly.logger"
 local statusname = require "silly.net.http.statusname"
+
 local type = type
+local pairs = pairs
+local ipairs = ipairs
 local assert = assert
 local tonumber = tonumber
 local lower = string.lower
@@ -11,8 +16,10 @@ local format = string.format
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
 
-local errno = require "silly.errno"
 local EEOF<const> = errno.EOF
+local ETIMEDOUT<const> = errno.TIMEDOUT
+
+global _
 
 local M = {}
 
@@ -45,9 +52,11 @@ local M = {}
 
 --- @class silly.net.http.h1.stream.client : silly.net.http.h1.stream
 --- @field scheme string
+--- @field authority string
 --- @field status integer?
 --- @field package hasresponse boolean
 --- @field package release fun(conn: silly.net.tcp.conn|silly.net.tls.conn, broken: boolean)?
+--- @field package timedout boolean
 local h1c = {}
 
 --- @class silly.net.http.h1.stream.server : silly.net.http.h1.stream
@@ -71,6 +80,7 @@ local valid_methods = {
 	["OPTIONS"] = true,
 	["HEAD"] = true,
 	["CONNECT"] = true,
+	["PATCH"] = true,
 }
 
 -- RFC 9112: Methods whose request never has a body
@@ -90,19 +100,24 @@ local function bodyless_response(method, status)
 end
 
 local function compose_header(buf, header)
+	-- host is already written to sendbuf, suppress it from user header.
+	-- header keys are assumed to be pre-normalized to lowercase
+	-- (by client.lua do_with_redirects or the caller of M.request).
 	for k, v in pairs(header) do
-		if type(v) == "table" then
-			for _, vv in ipairs(v) do
+		if k ~= "host" then
+			if type(v) == "table" then
+				for _, vv in ipairs(v) do
+					buf[#buf + 1] = k
+					buf[#buf + 1] = ": "
+					buf[#buf + 1] = vv
+					buf[#buf + 1] = "\r\n"
+				end
+			else
 				buf[#buf + 1] = k
 				buf[#buf + 1] = ": "
-				buf[#buf + 1] = vv
+				buf[#buf + 1] = v
 				buf[#buf + 1] = "\r\n"
 			end
-		else
-			buf[#buf + 1] = k
-			buf[#buf + 1] = ": "
-			buf[#buf + 1] = v
-			buf[#buf + 1] = "\r\n"
 		end
 	end
 end
@@ -111,12 +126,12 @@ end
 ---@param header table<string, string|string[]>
 ---@param timeout integer? -- ms
 ---@return boolean, string?
-local function readheader(conn, header, timeout)
+local function read_header(conn, header, timeout)
 	local tmp, err = conn:read("\n", timeout)
 	if not tmp then
 		return false, err
 	end
-	while tmp ~= "\r\n" do
+	while tmp ~= "\r\n" and tmp ~= "\n" do
 		local k, v = tmp:match("^(%S+):%s*(.-)%s*$")
 		if not k then
 			return false, "Invalid header"
@@ -163,14 +178,13 @@ local function read_chunk(s, conn, timeout)
 	end
 	---@cast line string
 	local hex = line:match("^([0-9A-Fa-f]+)")
-	local sz = tonumber(hex, 16)
-	if not sz then
-		local err = "invalid chunk size"
-		return nil, err
+	if not hex then
+		return nil, "invalid chunk size"
 	end
+	local sz = tonumber(hex, 16)
 	if sz == 0 then
 		-- read trailer
-		local ok, err = readheader(conn, s.trailer, timeout)
+		local ok, err = read_header(conn, s.trailer, timeout)
 		if not ok then
 			return nil, err
 		end
@@ -310,7 +324,6 @@ local function readall(s, timeout)
 	end
 	if s.eof then
 		local dat = s.recvbuf:readall()
-
 		return dat, nil
 	end
 	local conn = s.conn
@@ -487,15 +500,23 @@ end
 -------------------------------------client
 
 ---@param s silly.net.http.h1.stream.client
----@param timeout integer?
-local function waitresponse(s, timeout)
+local function read_timeout(s)
+	s.timedout = true
 	local conn = s.conn
-	local first, err = conn:read("\n", timeout)
+	if conn then
+		conn:close()
+	end
+end
+
+---@param s silly.net.http.h1.stream.client
+local function waitresponse(s)
+	local conn = s.conn
+	local first, err = conn:read("\n")
 	if err then
 		return false, err
 	end
 	---@cast first string
-	local ok, err = readheader(conn, s.header, timeout)
+	local ok, err = read_header(conn, s.header)
 	if not ok then
 		return false, err
 	end
@@ -535,13 +556,17 @@ end
 ---@param method string
 ---@param path string
 ---@param header table<string, string>
+---@param timeout integer? -- ms, timeout for Expect: 100-continue
 ---@return boolean, string?
-function h1c.request(s, method, path, header)
+function h1c.request(s, method, path, header, timeout)
 	s.method = method
 	s.path = path
 	s.keepalive = header["connection"] ~= "close"
 	local buf = s.sendbuf
 	buf[#buf + 1] = format(request_line, method, path)
+	buf[#buf + 1] = "host: "
+	buf[#buf + 1] = s.authority
+	buf[#buf + 1] = "\r\n"
 	s.writeheader = header
 	s.allowbody = not bodyless_request[method]
 	local expect = header["expect"]
@@ -549,31 +574,44 @@ function h1c.request(s, method, path, header)
 	if expect100 then
 		flush_header(s, false)
 		flushwrite(s)
+		local timer
+		if timeout then
+			timer = time.after(timeout, read_timeout, s)
+		end
 		local ok, err = waitresponse(s)
+		if s.timedout then
+			s.err = ETIMEDOUT
+			return false, ETIMEDOUT
+		end
+		if timer then
+			time.cancel(timer)
+		end
 		if not ok then
 			s.err = err
 			return false, err
 		end
 		if s.status ~= 100 then
 			s.hasresponse = true
+			s.writeclosed = true
+		else
+			s.eof = false
 		end
 	end
 	return true, nil
 end
 
 ---@param s silly.net.http.h1.stream.client
----@param timeout integer? --ms
 ---@return boolean, string? error
-local function client_waitresponse(s, timeout)
+local function client_waitresponse(s)
 	if s.hasresponse then
 		return true, nil
 	end
-	s.hasresponse = true
 	local err = s.err
 	if err then
 		return false, err
 	end
-	local ok, err = waitresponse(s, timeout)
+	s.hasresponse = true
+	local ok, err = waitresponse(s)
 	if not ok then
 		s.err = err
 	end
@@ -590,11 +628,23 @@ function h1c.read(s, size, timeout)
 	if not s.writeclosed then
 		return nil, "Should closewrite first"
 	end
-	local ok, err = client_waitresponse(s, timeout)
-	if not ok then
-		return nil, err
+	local timer
+	if timeout then
+		timer = time.after(timeout, read_timeout, s)
 	end
-	return read(s, size, timeout)
+	local ok, err = client_waitresponse(s)
+	local data
+	if ok then
+		data, err = read(s, size)
+	end
+	if s.timedout then
+		s.err = ETIMEDOUT
+		return nil, ETIMEDOUT
+	end
+	if timer then
+		time.cancel(timer)
+	end
+	return data, err
 end
 
 ---@param s silly.net.http.h1.stream.client
@@ -604,11 +654,23 @@ function h1c.readall(s, timeout)
 	if not s.writeclosed then
 		return nil, "Should closewrite first"
 	end
-	local ok, err = client_waitresponse(s, timeout)
-	if not ok then
-		return nil, err
+	local timer
+	if timeout then
+		timer = time.after(timeout, read_timeout, s)
 	end
-	return readall(s, timeout)
+	local ok, err = client_waitresponse(s)
+	local data
+	if ok then
+		data, err = readall(s)
+	end
+	if s.timedout then
+		s.err = ETIMEDOUT
+		return nil, ETIMEDOUT
+	end
+	if timer then
+		time.cancel(timer)
+	end
+	return data, err
 end
 
 ---@param s silly.net.http.h1.stream.client
@@ -668,14 +730,17 @@ local h1c_mt = {
 
 ---@param scheme string
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
+---@param authority string
 ---@param release fun(conn: silly.net.tcp.conn|silly.net.tls.conn, broken: boolean)?
 ---@return silly.net.http.h1.stream.client
-function M.newstream(scheme, conn, release)
+function M.newstream(scheme, conn, authority, release)
 	local s = newstream(scheme, conn, "HTTP/1.1", "", "", {}, 0)
 	---@cast s silly.net.http.h1.stream.client
 	s.release = release
+	s.authority = authority
 	s.status = nil
 	s.hasresponse = false
+	s.timedout = false
 	setmetatable(s, h1c_mt)
 	return s
 end
@@ -737,6 +802,7 @@ local h1s_mt = {
 
 local err_400 = response_line[400] .. "\r\n"
 local err_405 = response_line[405] .. "\r\n"
+local err_505 = response_line[505] .. "\r\n"
 
 ---@param handler fun(s: silly.net.http.h1.stream.server)
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
@@ -750,7 +816,7 @@ function M.httpd(handler, conn, scheme)
 		end
 		---@cast first string
 		local header = {}
-		local ok, err = readheader(conn, header)
+		local ok, err = read_header(conn, header)
 		if not ok then
 			-- RFC 9112: Send 400 Bad Request for malformed headers
 			conn:write(err_400)
@@ -774,7 +840,7 @@ function M.httpd(handler, conn, scheme)
 		end
 		--request line
 		local method, target, ver =
-		    first:match("(%w+)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
+		    first:match("([A-Za-z][A-Za-z0-9!#$%&'*+-.^_`|~]*)%s+(.-)%s+HTTP/([%d|.]+)\r\n")
 		if not valid_methods[method] then
 			-- RFC 9112: Send 405 Method Not Allowed for invalid method
 			conn:write(err_405)
@@ -786,7 +852,7 @@ function M.httpd(handler, conn, scheme)
 			break
 		end
 		if tonumber(ver) > 1.1 then
-			conn:write(err_405)
+			conn:write(err_505)
 			break
 		end
 		local path, query = parsetarget(target)

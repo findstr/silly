@@ -9,7 +9,7 @@ local M = {}
 function M.parse(addr) end
 
 ---@param host string?
----@param port string
+---@param port string?
 ---@return string
 function M.join(host, port) end
 
