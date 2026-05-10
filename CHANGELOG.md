@@ -1,9 +1,24 @@
 ## Unreleased
 
+### Added
+- `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
+- HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
+- `client.close()` to gracefully shut down pooled connections.
+- Tests for host header deduplication and user header preservation in both h1 and h2.
+
 ### Changed
+- URL parsing and encoding extracted from `net.http.helper` into `net.http.url`; `helper.parseurl`/`urlencode`/`urldecode` replaced by `url.parse`/`queryescape`/`pathunescape`.
+- h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
+- h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
+- h1 client `read`/`readall` use a single deadline timer instead of passing timeout to each internal `conn:read`, eliminating timeout amplification across chunked/content-length reads.
 - `cluster.connect` no longer caches peers by address; connecting to the same address now creates independent connections (for load balancing scenarios). It is now lazy (the TCP connection is established on the first `call`/`send`) and its return signature changed from `peer?, err?` to `peer` — errors are surfaced at call time instead.
 - `accept` callback signature changed from `function(peer, addr)` to `function(peer)`; client address available via `peer.remoteaddr`.
 - Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field is only set for outgoing connections.
+
+### Fixed
+- Host header no longer duplicated when both the URL and user header table contain a host value.
+- Chunk size parsing handles missing hex before `tonumber` in h1.
+- Reset eof flag after 100-continue response in h1.
 
 ## v0.7.1 (Apr 10, 2026)
 

@@ -149,6 +149,36 @@ testaux.case("Test 15: join round-trip with parse", function()
 	testaux.asserteq(result, "[::1]:5432", "Test 15.3: IPv6 round-trip")
 end)
 
+testaux.case("Test 15b: join without port", function()
+	-- IPv4 no port
+	local result = addr.join("127.0.0.1")
+	testaux.asserteq(result, "127.0.0.1", "Test 15b.1: IPv4 no port")
+
+	-- hostname no port
+	result = addr.join("example.com")
+	testaux.asserteq(result, "example.com", "Test 15b.2: hostname no port")
+
+	-- IPv6 no port (brackets added)
+	result = addr.join("::1")
+	testaux.asserteq(result, "[::1]", "Test 15b.3: IPv6 no port gets brackets")
+
+	-- IPv6 full address no port
+	result = addr.join("2001:db8::1")
+	testaux.asserteq(result, "[2001:db8::1]", "Test 15b.4: full IPv6 no port")
+
+	-- already-bracketed IPv6 no port
+	result = addr.join("[::1]")
+	testaux.asserteq(result, "[::1]", "Test 15b.5: no double brackets without port")
+
+	-- empty host, no port
+	result = addr.join(nil)
+	testaux.asserteq(result, "", "Test 15b.6: nil host no port is empty")
+
+	-- empty host string, no port
+	result = addr.join("")
+	testaux.asserteq(result, "", "Test 15b.7: empty host no port is empty")
+end)
+
 ---------- isv4 ----------
 
 testaux.case("Test 16: isv4", function()

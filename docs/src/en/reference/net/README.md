@@ -26,3 +26,4 @@ The `silly.net` module provides network-related functionality, including impleme
 
 ### Utilities
 - [addr](addr.md) - Address parsing and joining helpers
+- [url](url.md) - URL parsing, resolution, and encoding
