@@ -18,6 +18,7 @@
 ### Fixed
 - Host header no longer duplicated when both the URL and user header table contain a host value.
 - Chunk size parsing handles missing hex before `tonumber` in h1.
+- h1 client now correctly skips 1xx informational responses (100, 103, etc.) and waits for the final response.
 - Reset eof flag after 100-continue response in h1.
 
 ## v0.7.1 (Apr 10, 2026)

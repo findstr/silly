@@ -1967,6 +1967,374 @@ case("Test 64: Expect 100-continue rejected by server", function()
 	wait_done()
 end)
 
+
+-----------------------------------------------------------
+-- Raw TCP tests: protocol-level error handling
+-----------------------------------------------------------
+
+case("Test 65: Raw TCP - Invalid Content-Length", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 65.1: connect should succeed")
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: abc\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 65.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 65.3: should be 400 Bad Request")
+	conn:close()
+end)
+
+case("Test 66: Raw TCP - Invalid method", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 66.1: connect should succeed")
+	conn:write("FOOBAR / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 66.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("405"), nil, "Test 66.3: should be 405 Method Not Allowed")
+	conn:close()
+end)
+
+case("Test 67: Raw TCP - Malformed request line", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 67.1: connect should succeed")
+	conn:write("GARBAGE\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 67.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("405"), nil, "Test 67.3: should be 405 (method parse fails)")
+	conn:close()
+end)
+
+case("Test 68: Raw TCP - TE overrides CL (request smuggling)", function()
+	server_handler = function(stream)
+		testaux.asserteq(stream.header["content-length"], nil, "Test 68.1: CL should be removed")
+		testaux.asserteq(stream.header["transfer-encoding"], "chunked", "Test 68.2: TE should be kept")
+		local body, err = stream:readall()
+		testaux.asserteq(err, nil, "Test 68.3: readall should not error")
+		testaux.asserteq(body, "hello", "Test 68.4: body should be chunked content")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 68.5: connect should succeed")
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 68.6: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 68.7: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 69: Raw TCP - Absolute-form request target (RFC 7230 5.3.2)", function()
+	server_handler = function(stream)
+		testaux.asserteq(stream.method, "GET", "Test 69.1: method should be GET")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 69.2: connect should succeed")
+	assert(conn)
+	conn:write("GET http://127.0.0.1:8080/path HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 69.3: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 69.4: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 70: Raw TCP - Asterisk-form request target (RFC 7230 5.3.4)", function()
+	server_handler = function(stream)
+		testaux.asserteq(stream.method, "OPTIONS", "Test 70.1: method should be OPTIONS")
+		stream:respond(200, {["content-length"] = 0})
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 70.2: connect should succeed")
+	assert(conn)
+	conn:write("OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 70.3: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 70.4: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+--[[ TODO: implement
+case("Test 71: Raw TCP - Missing Host header (RFC 7230 5.4)", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 71.1: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 71.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 71.3: should be 400 Bad Request")
+	conn:close()
+end)
+]]
+
+case("Test 72: Raw TCP - Multiple differing Content-Length (RFC 7230 3.3.2)", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 72.1: connect should succeed")
+	assert(conn)
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\nhelloworld")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 72.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 72.3: should be 400 Bad Request")
+	conn:close()
+end)
+
+case("Test 73: Raw TCP - Chunk extensions (RFC 7230 4.1.1)", function()
+	server_handler = function(stream)
+		local body, err = stream:readall()
+		testaux.asserteq(err, nil, "Test 73.1: readall should not error")
+		testaux.asserteq(body, "HelloWorld", "Test 73.2: body should be HelloWorld")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 73.3: connect should succeed")
+	assert(conn)
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5;foo=bar\r\nHello\r\n5;baz=qux\r\nWorld\r\n0\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 73.4: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 73.5: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 74: Raw TCP - Chunk size with leading zeros", function()
+	server_handler = function(stream)
+		local body, err = stream:readall()
+		testaux.asserteq(err, nil, "Test 74.1: readall should not error")
+		testaux.asserteq(body, "Hello", "Test 74.2: body should be Hello")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 74.3: connect should succeed")
+	assert(conn)
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n0005\r\nHello\r\n0\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 74.4: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 74.5: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 75: Raw TCP - Chunk size mixed-case hex", function()
+	server_handler = function(stream)
+		local body, err = stream:readall()
+		testaux.asserteq(err, nil, "Test 75.1: readall should not error")
+		testaux.asserteq(body, "AAAAAAAAAA", "Test 75.2: body should be 10 A's")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 75.3: connect should succeed")
+	assert(conn)
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nA\r\nAAAAAAAAAA\r\n0\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 75.4: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 75.5: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 76: Raw TCP - Bare LF line endings", function()
+	server_handler = function(stream)
+		-- If the server accepts bare LF, handler fires
+		testaux.asserteq(stream.method, "GET", "Test 76.1: method should be GET")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 76.2: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\nHost: localhost\n\n")
+	local line, err = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 76.3: should get a response (no crash)")
+	assert(line)
+	-- Verify we got a valid HTTP status line
+	local status = line:match("HTTP/%d%.%d%s+(%d+)")
+	testaux.assertneq(status, nil, "Test 76.4: response should have valid HTTP status")
+	conn:close()
+
+	-- If handler was set back to nil, the request reached the handler
+	-- If handler is still our function, server rejected it before dispatching
+	if not server_handler then
+		-- Handler ran, everything is fine
+	else
+		-- Server rejected the request at protocol level, clear handler
+		server_handler = nil
+	end
+end)
+
+case("Test 77: Raw TCP - Leading/trailing OWS in header values (RFC 7230 3.2)", function()
+	server_handler = function(stream)
+		testaux.asserteq(stream.header["x-test"], "value", "Test 77.1: OWS should be stripped from header value")
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 77.2: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Test:  value  \r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 77.3: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("200"), nil, "Test 77.4: should be 200 OK")
+	conn:close()
+
+	wait_done()
+end)
+
+case("Test 78: Raw TCP - Empty header field name", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 78.1: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\r\nHost: localhost\r\n: value\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 78.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 78.3: should be 400 Bad Request")
+	conn:close()
+end)
+
+case("Test 79: Raw TCP - Obsolete line folding", function()
+	server_handler = function(stream)
+		-- If accepted, check that OWS is merged
+		local wrapped = stream.header["x-wrapped"]
+		if wrapped then
+			-- Line folding should collapse into single OWS
+			testaux.assertneq(wrapped:find("line1"), nil, "Test 79.1: should contain line1")
+			testaux.assertneq(wrapped:find("line2"), nil, "Test 79.2: should contain line2")
+		end
+		stream:respond(200, {["content-length"] = 2})
+		stream:write("OK")
+	end
+
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 79.3: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Wrapped: line1\r\n line2\r\n\r\n")
+	local line, err = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 79.4: should get a response (no crash)")
+	assert(line)
+	-- Verify we got a valid HTTP status line
+	local status = line:match("HTTP/%d%.%d%s+(%d+)")
+	testaux.assertneq(status, nil, "Test 79.5: response should have valid HTTP status")
+	conn:close()
+
+	-- If handler ran, it was cleared (set to nil). Otherwise clear it.
+	if server_handler then
+		server_handler = nil
+	end
+end)
+
+--[[TODO: implement
+case("Test 80: Raw TCP - 414 URI Too Long", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 80.1: connect should succeed")
+	assert(conn)
+	local long_path = string.rep("A", 8192)
+	conn:write("GET /" .. long_path .. " HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 80.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("414"), nil, "Test 80.3: should be 414 URI Too Long")
+	conn:close()
+end)
+
+case("Test 81: Raw TCP - 411 Length Required (RFC 7231 6.5.11)", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 81.1: connect should succeed")
+	assert(conn)
+	conn:write("POST / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 81.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("411"), nil, "Test 81.3: should be 411 Length Required")
+	conn:close()
+end)
+
+case("Test 82: Raw TCP - Header name with spaces", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 82.1: connect should succeed")
+	assert(conn)
+	conn:write("GET / HTTP/1.1\r\nHost: localhost\r\nX Bad Header: value\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 82.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 82.3: should be 400 Bad Request")
+	conn:close()
+end)
+]]
+
+case("Test 83: Raw TCP - HTTP/0.9-style request (no version)", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 83.1: connect should succeed")
+	assert(conn)
+	conn:write("GET /\r\n\r\n")
+	local line, err = conn:read("\n")
+	-- The test just verifies the server doesn't crash
+	-- Either a valid HTTP response or a connection close is acceptable
+	if line then
+		local status = line:match("HTTP/%d%.%d%s+(%d+)")
+		testaux.assertneq(status, nil, "Test 83.2: response should have valid HTTP status (no crash)")
+	end
+	conn:close()
+end)
+
+--[[TODO:
+case("Test 84: Raw TCP - Request line missing URI (RFC 7230 3.1.1)", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 84.1: connect should succeed")
+	assert(conn)
+	conn:write("GET HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 84.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 84.3: should be 400 Bad Request")
+	conn:close()
+end)
+
+case("Test 85: Raw TCP - Space at start of request line", function()
+	local conn = tcp.connect("127.0.0.1:8080")
+	testaux.assertneq(conn, nil, "Test 85.1: connect should succeed")
+	assert(conn)
+	conn:write(" GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	local line = conn:read("\n")
+	testaux.assertneq(line, nil, "Test 85.2: should get response line")
+	assert(line)
+	testaux.assertneq(line:find("400"), nil, "Test 85.3: should be 400 Bad Request")
+	conn:close()
+end)
+]]
+
+
+httpc:close()
+
 if server then
 	server:close()
 end

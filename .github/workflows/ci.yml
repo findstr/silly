@@ -20,6 +20,9 @@ jobs:
           mingw-w64-x86_64-cmake
           mingw-w64-x86_64-openssl
           mingw-w64-x86_64-gcc
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
     - uses: actions/checkout@v5
       with:
         submodules: recursive
@@ -30,6 +33,9 @@ jobs:
   build-macosx:
     runs-on: macos-latest
     steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
     - uses: actions/checkout@v5
       with:
         submodules: recursive
@@ -69,6 +75,9 @@ jobs:
           - 6379:6379
         options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
     steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
     - uses: actions/checkout@v5
       with:
         submodules: recursive

@@ -115,7 +115,7 @@ fi
 # ---- Coverage configuration ----
 # Lcov options
 LCOV_BRANCH_COVERAGE=0
-LCOV_EXCLUDE_PATTERNS="*/deps/* */test/* /usr/* */lua-5.4.4/* */pb.c */pb.h"
+LCOV_EXCLUDE_PATTERNS="*/deps/* */test/* /usr/* */lua-5.4.4/* */pb.c */pb.h */ltest.c */zproto.c */lzproto.c"
 
 # Genhtml options (HTML report styling)
 GENHTML_TITLE="Silly C Coverage"
@@ -189,6 +189,12 @@ echo "✅ Coverage data cleaned"
 TEST_DIR="test"
 TEST_SCRIPT="test/test.lua"
 
+# ---- Go conformance binary ----
+CONF_BIN="test/conformance/conformance"
+CONF_PORT=19090
+CONF_PID=""
+has_conformance_tests=0
+
 # ---- Detect test binaries ----
 BINARIES=""
 if [ -x "./silly.asan" ] && [ -x "./silly.tsan" ]; then
@@ -216,6 +222,54 @@ for b in $BINARIES; do
         exit 1
     fi
 done
+
+# ---- Go conformance process lifecycle ----
+build_conformance() {
+    if ! command -v go >/dev/null 2>&1; then
+        echo "⚠️  Go not found, skipping conformance tests"
+        CONF_BIN=""
+        return 0
+    fi
+    echo "🔨 Building Go conformance binary..."
+    (cd test/conformance/go && go build -o ../conformance .)
+}
+
+start_conformance() {
+    if [ -z "$CONF_BIN" ] || [ "$has_conformance_tests" -eq 0 ]; then
+        return 0
+    fi
+    # Kill any stale conformance process on the same port
+    local stale_pid
+    stale_pid=$(lsof -ti :"$CONF_PORT" 2>/dev/null || true)
+    if [ -n "$stale_pid" ]; then
+        kill $stale_pid 2>/dev/null
+        sleep 0.2
+    fi
+    echo "🚀 Starting Go conformance process on port $CONF_PORT"
+    "$CONF_BIN" -port "$CONF_PORT" > /dev/null 2>&1 &
+    CONF_PID=$!
+    # Wait for the Go process to start listening
+    if command -v nc >/dev/null 2>&1; then
+        for i in $(seq 1 20); do
+            nc -z 127.0.0.1 "$CONF_PORT" 2>/dev/null && break
+            sleep 0.1
+        done
+    else
+        sleep 2
+    fi
+    ARGS="$ARGS --conf_port=$CONF_PORT"
+}
+
+stop_conformance() {
+    if [ -n "$CONF_PID" ]; then
+        kill "$CONF_PID" 2>/dev/null || true
+        wait "$CONF_PID" 2>/dev/null || true
+        CONF_PID=""
+    fi
+}
+
+# ---- Build Go conformance binary (if Go is available) ----
+build_conformance
 
 # ---- Test endless loop detection ----
 # This test verifies that the monitor thread correctly detects endless loops
@@ -410,7 +464,11 @@ if [ -n "$OVERRIDE_SET" ]; then
         exit 1
     fi
 else
-    TEST_FILES=$(find "$TEST_DIR" "$TEST_DIR/adt" -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' ! -name 'testendless.lua' 2>/dev/null | sort)
+    CONF_FIND_PATHS="$TEST_DIR $TEST_DIR/adt"
+    if [ -n "$CONF_BIN" ]; then
+        CONF_FIND_PATHS="$CONF_FIND_PATHS $TEST_DIR/conformance"
+    fi
+    TEST_FILES=$(find $CONF_FIND_PATHS -maxdepth 1 -type f -name 'test*.lua' ! -name 'test.lua' ! -name 'testprometheus.lua' ! -name 'testendless.lua' 2>/dev/null | sort)
 fi
 if [ -z "$TEST_FILES" ]; then
     echo "⚠️  No test files (*.lua) found"
@@ -444,6 +502,17 @@ for file in $TEST_FILES; do
     fi
 done
 
+# ---- Check for conformance tests and start Go process ----
+for t in $FILTERED_TESTS $SERIAL_TESTS; do
+    case "$t" in
+        conformance/*)
+            has_conformance_tests=1
+            break
+            ;;
+    esac
+done
+start_conformance
+
 # ---- Run tests ----
 if [ $JOBS -eq 1 ]; then
     # Serial execution
@@ -451,7 +520,7 @@ if [ $JOBS -eq 1 ]; then
     PASSED=0
     FAILED=0
     LOGDIR=$(mktemp -d)
-    trap 'rm -rf "$LOGDIR"; rm -f "$USER_ARGS_FILE"' EXIT
+    trap 'stop_conformance; rm -rf "$LOGDIR"; rm -f "$USER_ARGS_FILE"' EXIT
     # Combine all tests (parallel-eligible and serial tests)
     all_tests="$FILTERED_TESTS $SERIAL_TESTS"
 
@@ -532,7 +601,7 @@ if [ $JOBS -eq 1 ]; then
 else
     # Parallel execution in batches
     TMPDIR=$(mktemp -d)
-    trap 'rm -rf "$TMPDIR"; rm -f "$USER_ARGS_FILE"' EXIT
+    trap 'stop_conformance; rm -rf "$TMPDIR"; rm -f "$USER_ARGS_FILE"' EXIT
 
     # Create subdirectories for test cases with paths (e.g., adt/testqueue)
     for t in $FILTERED_TESTS $SERIAL_TESTS; do

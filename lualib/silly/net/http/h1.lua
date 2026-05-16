@@ -544,6 +544,7 @@ local function waitresponse(s)
 			-- RFC 9112: No Content-Length and no chunked, read until EOF
 			s.readexpect = eof
 		end
+		s.eof = false
 	else
 		-- No body expected
 		s.readexpect = 0
@@ -611,11 +612,18 @@ local function client_waitresponse(s)
 		return false, err
 	end
 	s.hasresponse = true
-	local ok, err = waitresponse(s)
-	if not ok then
-		s.err = err
+	while true do
+		local ok, err = waitresponse(s)
+		if not ok then
+			s.err = err
+			return false, err
+		end
+		local status = s.status
+		if status >= 200 or status == 101 then
+			return true, nil
+		end
+		s.header = {}
 	end
-	return ok, err
 end
 
 h1c.waitresponse = client_waitresponse
