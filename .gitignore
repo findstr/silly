@@ -70,3 +70,9 @@ tools/luarocks*.zip
 *.gcda
 *.gcno
 coverage/
+
+# Go conformance binary
+test/conformance/conformance
+
+# Superpowers plugin cache
+docs/superpowers
