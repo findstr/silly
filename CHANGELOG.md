@@ -11,11 +11,14 @@
 - h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
 - h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
 - h1 client `read`/`readall` use a single deadline timer instead of passing timeout to each internal `conn:read`, eliminating timeout amplification across chunked/content-length reads.
-- `cluster.connect` no longer caches peers by address; connecting to the same address now creates independent connections (for load balancing scenarios). It is now lazy (the TCP connection is established on the first `call`/`send`) and its return signature changed from `peer?, err?` to `peer` — errors are surfaced at call time instead.
+- `cluster.connect` is now eager: DNS resolution and TCP connect happen immediately (yields, must be called in a coroutine). Return signature changed to `peer?, err?`. Connecting to the same address creates independent connections.
+- Auto-reconnect removed. When a connection drops, `call`/`send` returns `nil, "Peer closed"`. Call `cluster.connect()` again to obtain a new peer.
 - `accept` callback signature changed from `function(peer, addr)` to `function(peer)`; client address available via `peer.remoteaddr`.
-- Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field is only set for outgoing connections.
+- Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field removed.
+- `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
 - Host header no longer duplicated when both the URL and user header table contain a host value.
 - Chunk size parsing handles missing hex before `tonumber` in h1.
 - h1 client now correctly skips 1xx informational responses (100, 103, etc.) and waits for the final response.

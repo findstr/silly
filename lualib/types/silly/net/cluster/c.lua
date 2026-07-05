@@ -16,8 +16,7 @@ function M.create(hardlimit, softlimit) end
 ---@return integer fd
 ---@return string  dat
 ---@return integer session
----@return integer? cmd
----@return integer traceid
+---@return integer? traceid --nil for rpc responses
 function M.pop(cluster) end
 
 ---Push a message to cluster
@@ -31,12 +30,11 @@ function M.push(cluster, fd, ptr, size) end
 
 ---Send a request to cluster
 ---@param cluster silly.net.cluster.context
----@param cmd integer
 ---@param traceid integer
 ---@param data string|lightuserdata
 ---@param size? integer
 ---@return integer|false session_id, string body_or_error
-function M.request(cluster, cmd, traceid, data, size) end
+function M.request(cluster, traceid, data, size) end
 
 ---Send a response to cluster
 ---@param cluster silly.net.cluster.context

@@ -1,7 +1,6 @@
 local silly = require "silly"
 local task = require "silly.task"
 local trace = require "silly.trace"
-local lock = require "silly.sync.mutex"
 local time = require "silly.time"
 local net = require "silly.net"
 local dns = require "silly.net.dns"
@@ -29,21 +28,14 @@ local ETIMEDOUT<const> = errno.TIMEDOUT
 ---@class silly.net.cluster.peer
 ---@field fd integer?
 ---@field remoteaddr string --Remote address; set for both incoming and outgoing connections.
----@field addr string? --Set for outgoing connections; used for auto-reconnect. Incoming connections lack this field.
 
 ---@class silly.net.cluster.listener
 ---@field fd integer
 
----@alias silly.net.cluster.marshal fun(typ:"request"|"response", cmd:integer|string, obj:table):integer, string
----@alias silly.net.cluster.unmarshal fun(typ:"request"|"response", cmd:integer|string, dat:string):table?, string? error
----@alias silly.net.cluster.call fun(peer:silly.net.cluster.peer, cmd:integer, obj:table):table?
+---@alias silly.net.cluster.call fun(peer:silly.net.cluster.peer, data:string):string?
 ---@alias silly.net.cluster.accept fun(peer:silly.net.cluster.peer)
 ---@alias silly.net.cluster.close fun(peer:silly.net.cluster.peer, errno:string)
 
----@type silly.net.cluster.marshal
-local marshal
----@type silly.net.cluster.unmarshal
-local unmarshal
 ---@type silly.net.cluster.accept
 local accept
 ---@type silly.net.cluster.close
@@ -55,61 +47,52 @@ local expire
 
 local wait_pool = {}
 local fd_to_peer = {}
-local connect_lock = lock.new()
 ---@type silly.net.cluster.context
 local ctx
 
 ---@class silly.net.cluster
 local M = {}
 local function process()
-	local fd, buf, session, cmd, traceid = c.pop(ctx)
+	local fd, buf, session, traceid = c.pop(ctx)
 	if not fd then
 		return
 	end
-	local otrace = trace_attach(traceid)
 	task.fork(process)
 	while true do
-		if cmd then	--rpc request
-			local req, resp, err
-			req, err = unmarshal("request", cmd, buf)
-			if not req then
-				logger.error("[cluster] decode fail",
-					session, cmd, err)
-				break
-			end
+		if traceid then	--rpc request
 			local peer = fd_to_peer[fd]
 			if not peer then
 				logger.error("[cluster] peer not found", fd)
-				break
+			else
+				local otrace = trace_attach(traceid)
+				local ok, res = pcall(call, peer, buf)
+				if not ok then
+					logger.error("[cluster] call error", res)
+				elseif res then
+					local resp, err = c.response(ctx, session, res)
+					if not resp then
+						logger.error("[cluster] response error:", err)
+					else
+						tcp_send(fd, resp)
+					end
+				end
+				trace_attach(otrace)
 			end
-			local ok, res = pcall(call, peer, cmd, req)
-			if not ok then
-				logger.error("[cluster] call error", res)
-				break
-			end
-			local id, res_data = marshal("response", cmd, res)
-			if not id then
-				break
-			end
-			resp, err = c.response(ctx, session, res_data)
-			if not resp then
-				logger.error("[cluster] response cmd:", cmd, "error:", err)
-				break
-			end
-			tcp_send(fd, resp)
 		else	-- rpc response
 			local co = wait_pool[session]
-			wait_pool[session] = nil
-			task.wakeup(co, buf)
+			if co then
+				wait_pool[session] = nil
+				task.wakeup(co, buf)
+			else
+				logger.debug("[cluster] late response session:", session)
+			end
 		end
 		--next
-		fd, buf, session, cmd, traceid = c.pop(ctx)
+		fd, buf, session, traceid = c.pop(ctx)
 		if not fd then
 			break
 		end
-		trace_attach(traceid)
 	end
-	trace_attach(otrace)
 end
 
 local function close_fd(fd, errno)
@@ -134,7 +117,6 @@ end
 ---@param peer silly.net.cluster.peer|silly.net.cluster.listener
 local function close_peer(peer)
 	local fd = peer.fd
-	peer.addr = nil
 	if fd then
 		peer.fd = nil
 		tcp_close(fd)
@@ -176,58 +158,32 @@ data = function(fd, ptr, size)
 end
 }
 
----@param peer silly.net.cluster.peer
-local function connect(peer)
-	local addr = peer.addr
-	if not addr then
-		return nil, "Peer closed"
-	end
-	local l<close> = connect_lock:lock(peer)
-	local fd = peer.fd
-	if fd then
-		return fd, nil
-	end
+---@param addr string
+---@return silly.net.cluster.peer?, string? error
+function M.connect(addr)
 	local name, port = parse_addr(addr)
 	if not name or not port then
-		return nil, "Invalid address:" .. addr
+		return nil, "Invalid address: " .. addr
 	end
+	local resolved = addr
 	if is_host(name) then
 		local ip, err = dns.lookup(name, dns.A)
 		if not ip then
 			return nil, format("dns lookup %s failed: %s", name, err)
 		end
-		addr = join_addr(ip, port)
+		resolved = join_addr(ip, port)
 	end
-	local err
-	fd, err = tcp_connect(addr, EVENT)
+	local fd, err = tcp_connect(resolved, EVENT)
 	logger.info("[cluster] connect", addr, "fd:", fd, "err:", err)
 	if not fd then
 		return nil, err
 	end
-	-- The peer may have been closed by another coroutine while we were
-	-- yielded in dns.lookup or tcp_connect. In that case peer.addr has
-	-- been cleared; discard the just-established fd so we don't hand
-	-- the caller a live connection on a peer it considers closed.
-	if not peer.addr then
-		tcp_close(fd)
-		return nil, "Peer closed"
-	end
-	peer.fd = fd
-	fd_to_peer[fd] = peer
-	return fd, nil
-end
-
----@param addr string
----@return silly.net.cluster.peer
-function M.connect(addr)
-	---@type silly.net.cluster.peer
 	local peer = {
-		fd = nil,
-		addr = addr,
+		fd = fd,
 		remoteaddr = addr,
 	}
-	logger.info("[cluster] connect peer", addr)
-	return peer
+	fd_to_peer[fd] = peer
+	return peer, nil
 end
 
 M.close = close_peer
@@ -258,39 +214,29 @@ local timer_func = function(session)
 	task.wakeup(co, nil)
 end
 
-local waitfor = function(session, cmd)
+local waitfor = function(session)
 	local co = task.running()
 	local timer_id = after(expire, timer_func, session)
 	wait_pool[session] = co
 	local body = task.wait()
 	if body then
 		cancel(timer_id)
-		local obj, err = unmarshal("response", cmd, body)
-		return obj, err
+		return body, nil
 	end
 	return nil, ETIMEDOUT
 end
 
 local function callx(is_send)
 	---@param peer silly.net.cluster.peer
-	---@param cmd string
-	---@param obj table
-	---@return table|boolean|nil result, string? error
-	return function(peer, cmd, obj)
+	---@param data string
+	---@return string|boolean|nil result, string? error
+	return function(peer, data)
 		local fd = peer.fd
 		if not fd then
-			local err
-			fd, err = connect(peer)
-			if not fd then
-				return nil, err
-			end
-		end
-		local cmdn, dat = marshal("request", cmd, obj)
-		if not cmdn then
-			return nil, dat
+			return nil, "Peer closed"
 		end
 		local traceid = trace_propagate()
-		local session, body = c.request(ctx, cmdn, traceid, dat)
+		local session, body = c.request(ctx, traceid, data)
 		if not session then
 			return nil, body
 		end
@@ -301,7 +247,7 @@ local function callx(is_send)
 		if is_send then
 			return true, nil
 		end
-		return waitfor(session, cmd)
+		return waitfor(session)
 	end
 end
 
@@ -309,19 +255,15 @@ M.call = callx(false)
 M.send = callx(true)
 
 ---@param conf {
----	timeout: integer, -- default 5000 ms
+---	timeout: integer?, -- default 5000 ms
 ---	hardlimit: integer?, -- max body size before error (default 128MB)
 ---	softlimit: integer?, -- max body size before warning (default 65535)
----	marshal: silly.net.cluster.marshal,
----	unmarshal: silly.net.cluster.unmarshal,
 ---	call: silly.net.cluster.call,
 ---	accept: silly.net.cluster.accept?,
 ---	close:  silly.net.cluster.close?,
 ---}
 function M.serve(conf)
 	expire = conf.timeout or 5000
-	marshal = assert(conf.marshal)
-	unmarshal = assert(conf.unmarshal)
 	call = assert(conf.call)
 	accept = conf.accept
 	close = conf.close

@@ -8,29 +8,24 @@
 
 #include "silly.h"
 
-#define ACK_BIT (1UL << 31)
+#define ACK_BIT (UINT64_C(1) << 63)
 #define DEFAULT_QUEUE_SIZE 2048
 #define DEFAULT_HARDLIMIT (128u * 1024 * 1024)
 #define HASH_SIZE 2048
 #define HASH(a) (a % HASH_SIZE)
 
-typedef uint32_t cmd_t;
-typedef uint32_t session_t;
+typedef uint64_t session_t;
 
 #define HEADER_SIZE 4
-
-struct request_header {
-	session_t session;
-	cmd_t cmd;
-	silly_traceid_t traceid;
-};
-static_assert(sizeof(struct request_header) == 16,
-	"request_header layout mismatch");
+/* Wire request body header: [session(8)][traceid(8)]. */
+#define REQUEST_HEADER_SIZE 16
+static_assert(REQUEST_HEADER_SIZE == sizeof(session_t) + sizeof(silly_traceid_t),
+	"REQUEST_HEADER_SIZE must be session(8) + traceid(8)");
 
 struct response_header {
 	session_t session;
 };
-static_assert(sizeof(struct response_header) == 4,
+static_assert(sizeof(struct response_header) == 8,
 	"response_header layout mismatch");
 struct packet {
 	silly_socket_id_t fd;
@@ -207,7 +202,7 @@ static inline int validate_payload(struct incomplete *ic)
 	memcpy(&resp_hdr, ic->buff, sizeof(resp_hdr));
 	if ((resp_hdr.session & ACK_BIT) == ACK_BIT)
 		return 0;
-	if (unlikely(ic->header.psize < sizeof(struct request_header))) {
+	if (unlikely(ic->header.psize < REQUEST_HEADER_SIZE)) {
 		silly_log_error("[cluster] request size %u too small from fd %" PRIu64 "\n",
 			ic->header.psize, (uint64_t)ic->fd);
 		return ERR_PSIZE;
@@ -350,6 +345,7 @@ static int lpop(lua_State *L)
 	char *buf;
 	int size;
 	session_t session;
+	silly_traceid_t traceid;
 	struct response_header rsp_hdr;
 	struct packet *pk = pop_packet(L);
 	if (pk == NULL)
@@ -370,46 +366,41 @@ static int lpop(lua_State *L)
 				extstr_free, buf);
 		}
 		lua_pushinteger(L, (lua_Integer)(session & ~ACK_BIT));
-		lua_pushnil(L);        //cmd
-		lua_pushinteger(L, 0); //traceid
+		lua_pushnil(L);               //responses carry no traceid
 	} else {
-		struct request_header req_hdr;
-		memcpy(&req_hdr, buf, sizeof(req_hdr));
-		size = pk->size - sizeof(struct request_header);
+		memcpy(&traceid, buf + sizeof(session), sizeof(traceid));
+		size = pk->size - REQUEST_HEADER_SIZE;
 		lua_pushinteger(L, pk->fd);
 		if (size == 0) {
 			silly_free(buf);
 			lua_pushliteral(L, "");
 		} else {
 			lua_pushexternalstring(L,
-				buf + sizeof(struct request_header), size,
+				buf + REQUEST_HEADER_SIZE, size,
 				extstr_free, buf);
 		}
-		lua_pushinteger(L, req_hdr.session);
-		lua_pushinteger(L, req_hdr.cmd);
-		lua_pushinteger(L, (lua_Integer)req_hdr.traceid);
+		lua_pushinteger(L, session);
+		lua_pushinteger(L, (lua_Integer)traceid);
 	}
-	return 5;
+	return 4;
 }
 
-static inline int validate_pack_size(struct netpacket *np, cmd_t cmd,
-				     uint64_t size)
+static inline int validate_pack_size(struct netpacket *np, uint64_t size)
 {
 	if (unlikely(size > np->hardlimit)) {
-		silly_log_error("[cluster] %d size %" PRIu64 " exceeds hardlimit %u\n",
-				cmd, size, np->hardlimit);
+		silly_log_error("[cluster] size %" PRIu64 " exceeds hardlimit %u\n",
+				size, np->hardlimit);
 		return ERR_HARDLIMIT;
 	}
 	if (unlikely(size > np->softlimit)) {
-		silly_log_warn("[cluster] %d size %" PRIu64 " exceeds softlimit %u\n",
-			       cmd, size, np->softlimit);
+		silly_log_warn("[cluster] size %" PRIu64 " exceeds softlimit %u\n",
+			       size, np->softlimit);
 	}
 	return 0;
 }
 
 static int lrequest(lua_State *L)
 {
-	cmd_t cmd;
 	uint8_t *p;
 	const char *str;
 	size_t size;
@@ -417,18 +408,16 @@ static int lrequest(lua_State *L)
 	uint32_t total;
 	session_t session;
 	silly_traceid_t traceid;
-	struct request_header req_hdr;
 	struct netpacket *np = get_netpacket(L);
-	cmd = luaL_checkinteger(L, 2);
-	traceid = luaL_checkinteger(L, 3);
-	str = getbuffer(L, 4, &size);
+	traceid = luaL_checkinteger(L, 2);
+	str = getbuffer(L, 3, &size);
 	session = session_idx++;
 	if (session >= ACK_BIT) {
 		session_idx = 0;
 		session = 0;
 	}
-	body = sizeof(struct request_header) + size;
-	int err = validate_pack_size(np, cmd, body);
+	body = REQUEST_HEADER_SIZE + size;
+	int err = validate_pack_size(np, body);
 	if (unlikely(err < 0)) {
 		lua_pushboolean(L, 0);
 		lua_pushstring(L, error_str(err));
@@ -437,11 +426,9 @@ static int lrequest(lua_State *L)
 	total = HEADER_SIZE + body;
 	p = silly_malloc(total + 1);
 	memcpy(p, &body, HEADER_SIZE);
-	req_hdr.session = session;
-	req_hdr.cmd = cmd;
-	req_hdr.traceid = traceid;
-	memcpy(p + HEADER_SIZE, &req_hdr, sizeof(req_hdr));
-	memcpy(p + HEADER_SIZE + sizeof(struct request_header), str, size);
+	memcpy(p + HEADER_SIZE, &session, sizeof(session));
+	memcpy(p + HEADER_SIZE + sizeof(session), &traceid, sizeof(traceid));
+	memcpy(p + HEADER_SIZE + REQUEST_HEADER_SIZE, str, size);
 	p[total] = '\0';
 	lua_pushinteger(L, session);
 	lua_pushexternalstring(L, (char *)p, total, extstr_free, p);
@@ -458,10 +445,10 @@ static int lresponse(lua_State *L)
 	session_t session;
 	struct response_header rsp_hdr;
 	struct netpacket *np = get_netpacket(L);
-	session = luaL_checkinteger(L, 2) | ACK_BIT;
+	session = (session_t)luaL_checkinteger(L, 2) | ACK_BIT;
 	str = getbuffer(L, 3, &size);
 	body = sizeof(struct response_header) + size;
-	int err = validate_pack_size(np, 0, body);
+	int err = validate_pack_size(np, body);
 	if (unlikely(err < 0)) {
 		lua_pushboolean(L, 0);
 		lua_pushstring(L, error_str(err));
