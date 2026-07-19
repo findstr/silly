@@ -114,7 +114,6 @@ fi
 
 # ---- Coverage configuration ----
 # Lcov options
-LCOV_BRANCH_COVERAGE=0
 LCOV_EXCLUDE_PATTERNS="*/deps/* */test/* /usr/* */lua-5.4.4/* */pb.c */pb.h */ltest.c */zproto.c */lzproto.c"
 
 # Genhtml options (HTML report styling)
@@ -161,11 +160,9 @@ lcov_capture() {
     if [ -n "$gcov_tool" ]; then
         lcov --capture --directory . --output-file "$COV_DIR/coverage.info" \
              --gcov-tool "$gcov_tool" \
-             --rc lcov_branch_coverage=$LCOV_BRANCH_COVERAGE \
              --ignore-errors source,path,gcov >"$LCOV_LOG" 2>&1
     else
         lcov --capture --directory . --output-file "$COV_DIR/coverage.info" \
-             --rc lcov_branch_coverage=$LCOV_BRANCH_COVERAGE \
              --ignore-errors source,path,gcov >"$LCOV_LOG" 2>&1
     fi
     return $?
