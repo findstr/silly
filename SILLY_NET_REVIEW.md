@@ -327,6 +327,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：op size统一为`size_t`或明确的checked无符号宽度，并在所有入口先拒绝0、负值、超过`SSIZE_MAX`/实现单次发送与queue上限的长度；lightuserdata必须携带不可伪造的owned-buffer对象及真实capacity，不能接受裸pointer+任意length。`wlbytes/sendsize`升级到能表示queue上限的类型并做checked add。
 - 回归测试：修复阶段不分配巨量内存地用测试专用owned buffer/length注入覆盖-1、INT_MAX、INT_MAX+1、UINT32_MAX、SIZE_MAX；断言超限在入队前失败并只释放一次，socket线程从不收到截断值，ASan/UBSan下无越界，正常边界发送与背压计数正确。
 
+### SOCK-007 — P2 — stale send 可把 `wlbytes` 记入复用后的新 socket
+
+- 状态：已确认；确定性并发交错与slot初始化路径推导，无独立动态复现。按用户要求不为命中窄窗口新增barrier代码。
+- 位置：pool生命周期在 `src/socket.c:458-538,755-786`；worker send入口在`:1614-1639,1663-1686`；socket-thread stale op丢弃在`:1740-1767`。
+- 触发：worker在old sid仍有效时执行`pool_get`并取得slot指针，随后socket线程close/free该slot；worker在free的`socket_default`清零之后才执行`atomic_add(&s->wlbytes, sz)`，且slot之后被new sid复用。TCP与UDP send入口都有同一窗口。
+- 影响：旧send op稍后按old sid查找失败，只释放payload，不递减任何计数；先前加值因此永久留在free/new slot。新socket的`sendsize`无中生有地偏大，可让上层持续背压、等待不存在的发送数据或误判close drain状态；多次命中还会按32-bit模数累计。
+- 证据：文件顶部契约明确`pool_get`返回的`struct socket *`不加锁。send入口验证sid后到`wlbytes`原子加之间没有generation重验或pin；`pool_free`先`socket_default`清零再加入free list，而`pool_alloc`设置fd/type/sid时不再次清零wlbytes，所以free后late add会被下一代继承。op只携带old sid，`op_process`失配分支不知道late add落在哪一代且只调用payload finalizer。
+- 根因：将“请求已排队”的accounting提前放到worker并绑定可复用slot地址，而op的generation有效性只能由socket线程稍后判定；atomic只避免数据竞争，不能提供跨generation事务性。
+- 建议解法：把wlbytes增加移到socket线程，在old sid验证成功并决定接纳op后执行；若worker必须立即看到backpressure，使用独立generation-tagged pending accounting并在入队/消费时校验同一tag，不能直接修改slot计数。close/reuse与send acceptance必须有单一线性化点。
+- 回归测试：修复阶段用测试barrier停在pool_get后，依次执行close→free→可选reuse→恢复send；覆盖late add发生于free slot和new socket两种时序、TCP/UDP、stale op处理前后，断言new sendsize始终0且payload只释放一次。当前无独立动态复现。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1140,6 +1151,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认 Huffman EOS=256 被 `uint8_t` 截断为 0，decoder 无 EOS guard并输出 NUL，记录为 `HPACK-003`。
 - 2026-08-06：完成gRPC over HTTP/2首轮静态矩阵，确认`GRPC-001`至`GRPC-018`；按用户要求未新增畸形输入/独立peer复现。基础length-prefix重组、正常response trailer和“不自动重放”路径符合；custom metadata/user-agent等保留为可选能力/API缺口。
 - 2026-08-06：确认public send length经`size_t→int→size_t`截断，裸pointer+claimed length可形成巨大TCP iovec，记录为`SOCK-006`；按要求未构造越界发送。
+- 2026-08-06：通过确定性generation交错确认late send accounting可污染复用slot，记录为`SOCK-007`；没有为窄窗口新增barrier复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
