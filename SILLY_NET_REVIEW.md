@@ -155,6 +155,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
 | RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,880-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission 非事务：部分拒绝不记录已用 id、允许复用；invalid Content-Length 则泄漏 streamcount | 现有 malformed header tests 未检查 id reuse/长期 quota | H2-023 |
 | RFC9113-5.1/5.4.2-CLOSED-HPACK | MUST | `lualib/silly/net/http/h2.lua:1038-1080,1446-1499`; `luaclib-src/lhttp.c:692-780` | client recipient | 偏离 | local RST tombstone 固定只留 100 个；淘汰后 late HEADERS 在 HPACK 前直接 GOAWAY，未 minimally process compression state | 现有测试没有 >100 cancel 后 delayed response headers | H2-024 |
+| RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -757,6 +758,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：将 frame-level minimal processing与 application stream lookup分离：完整收集/decode field block以更新 `recvhpack` 后，再按 closed-state决定丢弃。closed history回收应由能证明 peer 已观察 reset 的 signal驱动；即使不保留完整 stream object，也需保留轻量 state/parity/id 信息并始终维护 HPACK/connection flow control。
 - 后续回归条件：修复阶段 cancel 101+ streams，延迟最旧 id 的 indexed/incremental HEADERS，再在 active stream发送引用其 dynamic entry 的 HEADERS；断言 late block被解压后丢弃、后续 block成功、无 GOAWAY。另覆盖 tombstone未淘汰、DATA/CONTINUATION和可靠 closing signal后行为。本轮不新增测试代码。
 
+### H2-025 — P1 — handshake/frame/header-block 读取没有 progress deadline
+
+- 状态：已确认；RFC 9113 denial-of-service guidance 与确定性配置/read call graph 推导。本阶段只做静态 review，不新增慢速连接复现。
+- 规范：RFC 9113 §10.5 指出 HTTP/2 比 HTTP/1.1 承诺更多 connection state，small frames、SETTINGS 与 field compression均可被滥用；不监控这些 feature usage 会暴露 DoS 风险，实现 SHOULD 跟踪并设置限制。SETTINGS ACK timeout本身是 MAY，本条不是把它误作强制；结论来自整个 connection/frame progress 无任何部署上限。
+- 位置：`read_frame/read_header` 在 `lualib/silly/net/http/h2.lua:268-365`，client handshake/dispatch在 `:1420-1547`，server handshake/dispatch在 `:1668-1738`；listener options在 `lualib/silly/net/http.lua:10-45`，client options在 `lualib/silly/net/http/client.lua:206-274`。
+- 触发：peer 建连后慢速发送 24-byte client preface、只发部分 9-byte frame header/body、发送首 SETTINGS 后永不完成 ACK exchange，或以多个 CONTINUATION 每次慢速补少量 field-block bytes但不结束。client 方向可由 server 对称拖住 channel creation。
+- 影响：每个连接长期保留 socket、Lua task/channel、两个 HPACK contexts、queues 与 TLS state；攻击者可用大量低带宽连接耗尽 fd/task/memory。已建立 connection上的半帧还会阻塞唯一 dispatch loop，使该 connection 的所有其他 multiplexed streams同时停顿。`idle_timeout` 只清连接池空闲项，不能终止正在等待 protocol bytes 的 read。
+- 证据：所有上述路径调用 `conn:read(n)` 而不传其可选 timeout；`read_header` 循环的每个 `read_frame` 也没有累计时间/速率预算。server listen config只有 addr/TLS/certs/ALPN；client config只有 pool count、idle timeout和 ALPN。底层 TCP/TLS `read` 仅在显式 timeout参数存在时创建 timer，因此这里可以无限等待。
+- 根因：把 transport 可选 timeout只暴露给 stream body read API，没有为 connection establishment、frame progress与 header assembly建立分层 deadlines/budgets。
+- 建议解法：提供 server/client 可配置的 preface、SETTINGS/ACK、frame-progress、header-block-total 和 connection-idle deadlines；每个 deadline按整体阶段累计而非每次 byte重置，超时后关闭/GOAWAY并释放全部 state。再加每连接 small-frame/SETTINGS/PING rate budgets；默认值需兼顾高延迟网络并可关闭/调整。
+- 后续回归条件：修复阶段用可控时钟覆盖 preface 23/24 bytes、frame header 8/9、partial body、无 ACK、无限 CONTINUATION、持续 small frames和正常高延迟完成；断言超时释放 fd/task/channel并唤醒所有 waiters，合法活动不会被 pool idle timer误杀。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -874,3 +887,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 Content-Length 与 DATA 总量不一致时被升级为 connection GOAWAY，而非对应 stream PROTOCOL_ERROR，记录为 `H2-022`。
 - 2026-08-06：确认 initial HEADERS admission 顺序使部分 rejected id 可复用、invalid Content-Length 又永久泄漏 streamcount，合并记录为 `H2-023`。
 - 2026-08-06：确认 client 的 local-RST tombstone 超过 100 被淘汰后，late HEADERS 在 HPACK 解码前直接 GOAWAY，记录为 `H2-024`。
+- 2026-08-06：确认 HTTP/2 preface/SETTINGS/ACK/frame/header-block reads 全部无 progress deadline且配置无入口，记录为 `H2-025`。
