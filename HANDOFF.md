@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（27 条）
+## 5. 已确认问题（28 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -150,8 +150,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | WS-008 | P1 | client masking key 与 handshake nonce 使用 time-seeded、小空间弱随机源。 |
 | H2-001 | P2 | HTTP/2 client 接受 server 非法发送的 `SETTINGS_ENABLE_PUSH=1`，未触发 `PROTOCOL_ERROR`。 |
 | H2-002 | P2 | 通用 frame reader 把非 padding frame 的 unused 0x08 当成 PADDED，改写 payload 或错误断连。 |
+| H2-003 | P1 | HTTP/2 接收方不维护 connection/stream receive window，超额 DATA 仍被缓存。 |
 
-统计口径为 27 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 2 个 HTTP/2；以主报告中的编号和证据为准。
+统计口径为 28 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 3 个 HTTP/2；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -205,7 +206,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`。WebSocket 首轮已确认 `WS-001` 至 `WS-008`；mask 方向、合法 control 穿插、文档化的应用 ping/pong 响应契约和单帧写入原子边界符合。HTTP/2 已确认 `H2-001` 至 `H2-002`；下一项继续检查 padding flow-control accounting、SETTINGS 方向性、stream-id 与连接级错误。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`。WebSocket 首轮已确认 `WS-001` 至 `WS-008`；mask 方向、合法 control 穿插、文档化的应用 ping/pong 响应契约和单帧写入原子边界符合。HTTP/2 已确认 `H2-001` 至 `H2-003`；下一项继续检查 padding flow-control accounting、SETTINGS 方向性、stream-id 与连接级错误。每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 

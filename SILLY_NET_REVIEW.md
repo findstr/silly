@@ -132,6 +132,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC6455-FRAME-WRITE-ATOMICITY | safety | `lualib/silly/net/websocket.lua:104-127,179-213`; `lualib/silly/net/tcp.lua:307-315`; `src/flipbuf.h:30-51`; `src/socket.c:1614-1659` | client/server | 符合 | 单次 frame 先组装为完整 string，再以一个 TCP send op 入带锁队列；Lua 路径不 yield，未发现并发调用导致帧内交错 | 现有 50-client stress 不是同 socket 并发，但静态原子边界成立 | — |
 | RFC9113-6.5.2-ENABLE-PUSH-ROLE | MUST | `lualib/silly/net/http/h2.lua:1211-1278,1500-1537,1651-1710` | client recipient | 偏离 | client/server 共用 `frame_settings`；收到值 1 时只设 `ch.enablepush=true`，没有识别发送方是 server 并发送 `PROTOCOL_ERROR`。server 发送值 0 符合 RFC，不属于偏离 | 现有测试只覆盖双方发送值 0，没有 server→client 值 1 | H2-001 |
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
+| RFC9113-5.2/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-263,479-482,502-542,1177-1204` | client/server recipient | 偏离 | channel/stream 没有剩余 receive-window 状态；DATA 无条件 append，仅累计将来回补的 debt，超过已广告 credit 也不会报 `FLOW_CONTROL_ERROR` | 现有测试只覆盖守规发送方和正常 1 MiB 消息，没有超 window DATA | H2-003 |
 
 ## 3. 基线结果
 
@@ -456,6 +457,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：通用 reader 只解析 9-byte header 和原始 payload；在 DATA、HEADERS、PUSH_PROMISE 的各自 parser 中解析/校验 padding，其他类型保持原 payload 并忽略未定义 flag。若保留 helper，也必须以允许集合 `(DATA|HEADERS|PUSH_PROMISE)` 作为前置条件。
 - 后续回归条件：修复阶段对每个已知非 padding frame 和一个未知 frame 设置 0x08/其他 unused bits，断言按未设置时相同地处理；同时覆盖三种合法 padding frame 的 0、最大合法、过长 padding，确认错误作用域不变。本轮不新增测试代码。
 
+### H2-003 — P1 — 接收方向不维护 flow-control window，超额 DATA 仍被缓存
+
+- 状态：已确认；RFC 9113 与确定性状态/数据路径推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §5.2 将 flow control 定义为 receiver 广告、sender 必须遵守的 connection/stream 双层 credit；初始值均为 65,535 octets。§6.1/§6.9 要求完整 DATA payload 计入两层 window，receiver 必须持续记账，才能识别 peer 超出可用 credit 的 `FLOW_CONTROL_ERROR`；流控正是限制未消费资源承诺的协议边界。
+- 位置：channel/stream 字段与初始化在 `lualib/silly/net/http/h2.lua:151-207,239-263,479-482`；credit 回补在 `:502-542,760-771`；DATA 接收在 `:1177-1204`。
+- 触发：peer 在没有收到足够 stream WINDOW_UPDATE 时，向同一 open stream 发送累计超过已广告 65,535 octets 的 DATA；connection 方向同样可发送超过当时有效 credit 的连续 DATA。应用尚未读取该 stream 时最清晰，因为实现不会发送 stream-level 回补。
+- 影响：Silly 不会以 stream/connection `FLOW_CONTROL_ERROR` 拒绝超额数据，而会继续把 payload append 到 `s.recvbuf`。不守规或恶意 peer 因而能绕过 HTTP/2 为慢消费者提供的每流内存上限；结合多个 stream 和没有消息体上限，可持续消耗服务端或 client 内存。connection-level 自动回补也不能替代对已用 credit 的校验。
+- 证据：channel 只有发送窗口 `sendwindow` 和名为 `recvwindebt` 的待回补累计值；stream 同样只有 `sendwindow` 与待回补 `recvwindebt`，没有 receive-window remaining。`frame_data` 只调用 `channel_windebt(ch, #dat)`，随后无条件 `s.recvbuf:append(dat)`；两者都不减窗口、不检查负值、不调用 `FLOW_CONTROL_ERROR`。stream debt 只有应用消费/等待读取时才由 `stream_flush` 生成 WINDOW_UPDATE，因此超出 65,535 的未读 DATA 路径确定成立。
+- 根因：实现了 outbound sender window 和 inbound WINDOW_UPDATE 回补机制，但把 receiver accounting 简化成“收到多少以后就回多少”，遗漏了独立的已广告 credit/remaining window 状态与违规检测。
+- 建议解法：为 connection 和每个 stream 分别维护 receive-window remaining。读取 DATA header 后按原始完整 payload 长度先扣 connection window，再按合法 stream 状态扣 stream window；connection 负值触发 connection `FLOW_CONTROL_ERROR`，stream 负值触发 stream `FLOW_CONTROL_ERROR`。应用消费后生成 WINDOW_UPDATE 时再增加本地 remaining，并保证 31-bit 边界；错误/关闭 stream 的 DATA 仍须按 RFC 更新 connection accounting。
+- 后续回归条件：修复阶段在不读取 body 的单 stream 上覆盖恰好 65,535、65,536、多 frame 超限；覆盖多 stream 共享 connection window、消费后恢复 credit、closed/error stream DATA、padding 计入和 SETTINGS 初始窗口变化，分别断言正确的 stream/connection 错误作用域。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -524,3 +537,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client mask 与握手 nonce 使用 time-seeded、小写字母弱随机源，mask 仅 26^4 且可预测，记录为 `WS-008`；单帧并发写的发送边界静态核对符合。
 - 2026-08-06：进入 HTTP/2 RFC 9113 静态 review；确认 server 显式发送 ENABLE_PUSH=0 合法，但 client 会接受规范禁止的 server 值 1 并继续连接，记录为 `H2-001`。
 - 2026-08-06：确认通用 frame reader 会把所有类型的 0x08 都解释为 PADDED，未按 RFC 忽略 frame-type 未使用 flag，记录为 `H2-002`。
+- 2026-08-06：确认 HTTP/2 接收方向没有剩余 connection/stream window，超出已广告 credit 的 DATA 仍会无条件进入 recvbuf，记录为 `H2-003`。
