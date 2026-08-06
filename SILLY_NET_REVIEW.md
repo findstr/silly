@@ -525,6 +525,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client/request提供安全默认的`max_body_bytes`、`max_decoded_bytes`与可选ratio/CPU budget，并在stream读取过程中增量执行，超限立即RST/close且不归还H1连接。gzip使用streaming decoder、总output checked counter及deadline；只有client自动添加Accept-Encoding时才自动解码，并同步移除/更新Content-Encoding与Content-Length。
 - 回归测试：修复阶段覆盖固定/分块/close-delimited/H2 DATA超限、gzip高ratio/多member/truncated及redirect累计预算；断言在cap附近准确成功/失败、内存有界、连接不被错误复用。当前不生成大响应。
 
+### HTTPC-002 — P1 — HTTP client 无端到端 request deadline 或 cancellation
+
+- 状态：已确认；公开options与DNS→connect→handshake→response调用链推导。本阶段不运行slow peer。
+- 位置：client options在`lualib/silly/net/http/client.lua:67-73,191-226`；connect未传timeout在`:230-277`；request/readall/redirect loop在`:278-401`；HTTP/1 read默认timeout nil，HTTP/2 progress问题另见`H2-025`；TLS client虽支持timeout但此处未传。
+- 触发：DNS之后的target或中间redirect endpoint在TCP connect、TLS handshake、response headers、body framing任一阶段停滞，或持续低速发送；调用`get/post/request`没有可传deadline/cancel token。
+- 影响：coroutine可无限WAIT并持有连接、pool entry、stream、request body/header及已收响应buffer；多个慢peer可耗尽task/fd/memory。`idle_timeout`不会触及using H1连接，H2 timer还把non-idle channel的`lastfree`持续刷新，因此也不会中止在途stream。
+- 证据：opts仅有`max_idle_per_host/idle_timeout/alpnprotos`。`tcp.connect(a)`无timeout，`tls.connect`opts只含hostname/ALPN；`stream:readall()`无timeout参数，redirect每跳重新走同一路径且没有absolute deadline。`M.close(client)`是全client破坏性关闭，不是单request cancellation，也不能由同步阻塞调用自身按deadline触发。
+- 根因：pool lifecycle timeout被误当成足够的网络生命周期管理，没有为一次logical request建立跨DNS/connect/TLS/redirect/protocol reads传播的absolute monotonic deadline。
+- 建议解法：提供request context/deadline并从入口计算一次absolute deadline，向DNS、TCP、TLS、H1/H2每次等待传播remaining time；redirect共享原deadline与预算。到期时H1关闭连接、H2发送RST_STREAM(CANCEL)并清pending，所有timer/stream恰好释放一次；另提供显式cancel handle且与timeout/response竞态安全。
+- 回归测试：修复阶段在DNS、connect、ClientHello、header、chunk、H2 frame/body和redirect各阶段停滞，断言同一absolute deadline内返回、资源清零且其他H2 streams不受影响。当前不运行slow peer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1497,6 +1508,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认URL scheme只在缺省port时校验，显式port可让任意scheme通过且HTTP/WS consumer回落明文TCP，记录为`URL-002`；未对非HTTP服务发请求。
 - 2026-08-06：确认URL relative resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect可生成错误target，记录为`URL-003`；未新增redirect server复现。
 - 2026-08-06：确认HTTP convenience client自动readall与gzip解压均无wire/decoded大小或ratio预算，恶意响应可耗尽内存，记录为`HTTPC-001`；未生成gzip bomb/大响应。
+- 2026-08-06：确认HTTP client没有端到端deadline/cancel，pool idle timeout不覆盖DNS/connect/TLS或在途H1/H2 reads，记录为`HTTPC-002`；未运行slow peer。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
