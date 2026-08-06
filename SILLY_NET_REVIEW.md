@@ -285,6 +285,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：ACCEPT handler发现listener已关闭/代际不匹配时必须直接调用底层`socket_close(fd)`并返回，不能assert；正常路径应先建立accepted fd的最小close ownership，再调用用户callback。更完整地让C accept event携带listener generation并在close时定义drain/reject边界，所有late accept都走显式拒绝清理。
 - 回归测试：修复阶段用barrier让C层完成accept/report后关闭listener、再dispatch消息；断言无Lua异常，accepted fd立即关闭，callback表、pool slot、连接计数和open-fd恢复基线。TCP与TLS listener都覆盖。当前不新增并发复现。
 
+### NET-002 — P2 — raw data callback 异常会永久泄漏已转移的接收 payload
+
+- 状态：已确认；C message unpack、Lua callback异常处理与free ownership的确定性推导。本阶段不新增故意抛错复现。
+- 位置：C消息解包/释放在`src/socket.c:373-394,602-635,697-728`；Lua dispatch在`lualib/silly/net.lua:211-237`；task异常路径在`lualib/silly/task.lua:47-64`；公开消费函数在`luaclib-src/lnet.c:323-339`和`luaclib-src/adt/lbuffer.c:411-446`；所有权文档在`docs/src/reference/net.md:375-445`。
+- 触发：使用公开低层`silly.net` API时，TCP/UDP `event.data`在调用`net.tostring(ptr,size)`、`c.free(ptr)`或把pointer成功交给buffer之前抛出Lua错误；例如业务parser、assert或参数检查先失败。连接无需关闭，后续每个data callback都可重复触发。
+- 影响：每条消息的网络payload永久泄漏；若异常由特定远端输入触发，peer可在连接存活期间重复发送并持续增加进程内存。task框架会记录异常并关闭callback coroutine，但既不知道pointer存在，也不关闭对应socket，因此不会阻止重复泄漏。
+- 证据：`tcpdata_unpack/udpdata_unpack`在把lightuserdata压入Lua栈后立即将`md->ptr=NULL`，所以worker随后调用message free时只释放message envelope。`net.lua`仅在callback不存在时显式`c.free(ptr)`；存在callback时直接`task_resume`且忽略其false/error返回。真正释放只发生在用户调用`tostring/free`或buffer最终销毁其已接管node后，callback提前异常时没有任何owner。
+- 根因：裸lightuserdata采用隐式、一次性的ownership transfer，却没有RAII/finalizer或异常边界；dispatcher无法判断callback是尚未接管、已经接管还是已经释放payload。
+- 建议解法：把接收payload包装为full userdata/opaque buffer handle并附`__gc/__close`，消费或转移时原子清空其owner；Lua callback异常退出后未消费payload由finalizer释放。若保留裸pointer API，则dispatcher必须以受保护调用配合显式take/consume协议，并在异常时关闭socket，不能盲目finally-free造成已转移后的double-free。
+- 回归测试：修复阶段让TCP/UDP callback分别在消费前、消费后、buffer接管后抛错；断言payload各释放恰好一次、无泄漏/double-free，异常策略会阻止同连接无限重复。ASan/LSan与Silly allocator计数均回基线。当前不新增异常触发。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1236,6 +1247,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TCP/TLS默认buffer及UDP packet stash均无资源上限，慢消费/不读取时远端输入可持续占用内存，记录为`SOCK-012`；未新增流量压力复现。
 - 2026-08-06：确认timer把64位毫秒delta窄化为int，大于约24.8天的暂停/时钟跳变可触发assert、无符号巨大跳变或长期错时，记录为`CORE-006`；未新增长期暂停复现。`queue_push`返回int只在超过INT_MAX条消息时影响过载诊断，降为构建卫生，不单列缺陷。
 - 2026-08-06：确认listener close同步删除Lua callback而已排队ACCEPT已拥有独立C socket，late event只assert且不close accepted fd，记录为`NET-001`；未新增accept/close barrier复现。
+- 2026-08-06：确认TCP/UDP message在Lua callback前清空C owner，而callback异常路径既不释放payload也不关闭socket，记录为`NET-002`；未新增故意抛错复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
