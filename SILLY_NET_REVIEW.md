@@ -141,6 +141,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-6.8-GOAWAY-LAST-STREAM | MUST/reliability | `lualib/silly/net/http/h2.lua:1357-1367,1425-1448`; `lualib/silly/net/http/client.lua:318-390` | client recipient | 偏离 | 合法 GOAWAY 只置 bool，不解析 Last-Stream-ID/error；高编号未处理 streams 不结束/不标 retryable，高层默认 readall 可无限等待 | 现有 Test 20/26 是本端主动 close，不覆盖 peer graceful GOAWAY 与在途 streams | H2-008 |
 | RFC9113-8.1.1/8.2/8.3-RESPONSE-FIELDS | MUST | `lualib/silly/net/http/h2.lua:367-384,1441-1500` | client recipient | 偏离 | response/trailer 未验证 pseudo 集合/顺序、lowercase、field syntax 或 connection-specific fields；`:status` 仅 `tonumber`，接受非三位语法 | 现有测试只覆盖本库 server 生成的规范 headers | H2-009 |
 | RFC9113-8.1-INTERIM-RESPONSES | MUST | `lualib/silly/net/http/h2.lua:1441-1500,1075-1123` | client recipient | 偏离 | 第一个 HEADERS 无论 1xx/最终都进入 HEADER 并唤醒 waiter；后续 final response 被当 trailer，未实现零到多个 interim→一个 final 的状态 | 现有测试没有 100/103 response | H2-010 |
+| RFC9113-8.1-TRAILER-END-STREAM | MUST | `lualib/silly/net/http/h2.lua:1177-1204,1441-1500` | client recipient | 偏离 | final 后的 HEADERS 无论 END_STREAM 都被当 trailer；不终止时后续 DATA 仍被接受并把 TRAILER 状态倒退为 DATA | 现有 trailer 测试只覆盖本库 server 生成的 END_STREAM trailer | H2-011 |
 
 ## 3. 基线结果
 
@@ -573,6 +574,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：在严格 field validation 后解析 status：对合法 1xx（排除 101）保持等待 final，可通过独立回调/列表暴露 interim metadata，但不得覆盖 final header/status；拒绝 informational END_STREAM。收到首个非 1xx 才进入 final HEADER、设置公开 status/header 并唤醒 `waitresponse`，之后只允许 terminating trailer。
 - 后续回归条件：修复阶段覆盖无 interim、单个 100/103、多个 1xx、101、1xx+END_STREAM、1xx 后连接关闭、1xx→204/200+body/final trailer；断言 `waitresponse` 只在 final 时完成，最终 status/header 不被 interim 污染。本轮不新增测试代码。
 
+### H2-011 — P2 — client 接受不终止 stream 的 trailer 并允许其后 DATA
+
+- 状态：已确认；RFC 9113 与确定性 response/stream state 推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §8.1 要求 trailer field section 由带 END_STREAM 的 HEADERS 开始，并因此终止 message/stream；收到 final response 后，任何不带 END_STREAM 的额外 HEADERS 都必须把 response 视为 malformed。trailer 之后不可能再有 DATA 或第二个 trailer section。
+- 位置：client HEADERS handler 在 `lualib/silly/net/http/h2.lua:1441-1500`；DATA state check/transition在 `:1177-1204`。server request trailer 路径 `:1632-1648` 已显式要求 END_STREAM，不属于本条。
+- 触发：server 先发送 final response HEADERS，随后发送第二个不带 END_STREAM 的 HEADERS，再发送 DATA、更多 HEADERS或最终 END_STREAM。
+- 影响：client 接受规范定义的 malformed response，提前把额外字段公开为 trailer，却继续把后续 bytes 当 message body。应用看到的 body/trailer 边界与严格 HTTP/2 endpoint 不同；如果上层在见到 trailer 后认为校验/签名/status 已最终确定，后续 DATA 会破坏完整性假设。重复 trailer 也会继续合并。
+- 证据：当 `remotestate ~= STATE_NONE` 时，`frame_header_client` 无条件执行 `s.remotestate=STATE_TRAILER` 和 `map_header`，只在 flag 恰有 END_STREAM 时调用 `stream_remoteend`，没有缺 flag 的 error 分支。随后 `frame_data` 仅拒绝 `remotestate >= STATE_CLOSE`；STATE_TRAILER=3 小于 STATE_CLOSE=0x10，所以接受 payload 并无条件改写为 STATE_DATA。
+- 根因：自定义线性 state 常量没有强制单调转换，且 client trailer 分支遗漏 server 侧已有的 END_STREAM guard。
+- 建议解法：final response 后第二个 HEADERS 必须同时满足 trailer field 规则与 END_STREAM，否则对该 stream 报 `PROTOCOL_ERROR`；成功 trailer 直接进入 END。DATA handler 只允许合法 open/half-closed local 且 message phase 为 pre-trailer body，禁止 TRAILER→DATA 回退；第三个 HEADERS 永远拒绝。
+- 后续回归条件：修复阶段覆盖 final→trailer(END_STREAM)、final→trailer(no END_STREAM)、trailer 后 DATA/HEADERS、空 trailer、分片 CONTINUATION trailer，以及与 informational response 的组合；断言 malformed 只 reset 对应 stream，合法并发 stream不受影响。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -650,3 +663,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认合法 GOAWAY 的 Last-Stream-ID/error 被丢弃，高编号未处理请求无法结束或标记 retryable，高层默认可无限等待，记录为 `H2-008`。
 - 2026-08-06：确认 client 没有 response/trailer field validator，非法 pseudo/uppercase/connection fields 和非三位 status 可被接受，记录为 `H2-009`。
 - 2026-08-06：确认 client 把首个合法 1xx informational response 当 final，真正 final HEADERS 被误分类为 trailer，记录为 `H2-010`。
+- 2026-08-06：确认 client 接受不带 END_STREAM 的 trailer HEADERS，之后仍允许 DATA 并发生 TRAILER→DATA 状态回退，记录为 `H2-011`。
