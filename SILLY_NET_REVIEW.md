@@ -136,6 +136,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-6.5.2-HEADER-TABLE-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-170,239-263,1211-1278` | client/server | 偏离 | 收到 peer 的 HEADER_TABLE_SIZE 后错误地 hard-limit `recvhpack` decoder；该 setting 描述 peer decoder 的上限，应约束本端 `sendhpack` encoder | HPACK 单测只同时修改 encoder/decoder；HTTP/2 测试没有非默认 peer setting | H2-004 |
 | RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
 | RFC9113-5.1.2/6.5.2-MAX-CONCURRENT-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-160,239-263,618-659,1211-1278,1555-1648` | server recipient | 偏离 | server 收到 client setting 后覆盖用于限制 inbound request 的 `ch.streammax`；client setting 只限制 server 发起的 streams | 现有双方恰好都发送 100，没有非对称/运行时变更覆盖 | H2-005 |
+| RFC9113-6.3-PRIORITY-SIZE-SCOPE | MUST | `lualib/silly/net/http/h2.lua:1281-1310` | client/server recipient | 偏离 | PRIORITY payload 非 5 bytes 时调用 connection `GOAWAY(FRAME_SIZE_ERROR)`；规范要求 stream error | 现有测试没有 malformed PRIORITY 或错误作用域断言 | H2-006 |
 
 ## 3. 基线结果
 
@@ -508,6 +509,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：拆成 `peer_max_concurrent`（限制本端发起 stream）与 `local_max_concurrent`（本端已广告、校验 peer 发起 stream）。client 收到 server setting 更新前者；server 收到 client setting 只影响 push/outbound server streams。server request admission 始终使用本端已广告 limit，若配置变化则按 RFC 处理既有 streams。
 - 后续回归条件：修复阶段使用非对称 limit：server=3/client=0，断言 client 仍可开 3 个 request、server 不发 push；server=1/client=100，第二个并发 request 被正确拒绝。再覆盖运行时增减、0 的短期行为、已打开 stream 计数和 client open wait queue 唤醒。本轮不新增测试代码。
 
+### H2-006 — P2 — malformed PRIORITY 被升级为 connection error
+
+- 状态：已确认；RFC 9113 与确定性错误分支推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §6.3 要求长度不是 5 octets 的 PRIORITY frame 作为 `FRAME_SIZE_ERROR` stream error 处理。PRIORITY 的 stream-id 0 仍是 `PROTOCOL_ERROR` connection error；两种条件的错误作用域不能混同。
+- 位置：`lualib/silly/net/http/h2.lua:1281-1310`，connection/stream error helper 在 `:548-617,882-894`。
+- 触发：peer 在任意非零 stream id（包括 PRIORITY 允许出现的 idle/closed id）发送 payload 长度不等于 5 的 PRIORITY frame。
+- 影响：实现发送 GOAWAY 并清除整条 HTTP/2 connection 上的所有 active streams，而规范只要求隔离所标识 stream。一个单流 malformed/deprecated priority signal 因而会中断其他无关并发请求，扩大可用性影响并破坏严格错误恢复语义。
+- 证据：函数先正确拒绝 stream-id 0；随后 `if #dat ~= 5 then channel_goaway(ch, FRAME_SIZE_ERROR)`，明确走 connection error。项目已有 `stream_reset(id, ch, errorcode)` 可生成 RST_STREAM，但该长度分支未使用。PING/RST_STREAM/SETTINGS 等影响 connection state 的固定长度错误使用 GOAWAY 是不同规范规则，不并入本问题。
+- 根因：将固定长度 frame 的 `FRAME_SIZE_ERROR` 统一理解为 connection error，遗漏 RFC 9113 对 PRIORITY 的显式 stream-error 例外。
+- 建议解法：将非零 stream 的 PRIORITY 长度错误改为 `stream_reset(streamid, ch, FRAME_SIZE_ERROR)`，并确保该错误不会清除其他 streams；stream-id 0 的优先 `PROTOCOL_ERROR` connection 分支保持不变。还需按 stream state 验证 idle/closed PRIORITY 的允许规则。
+- 后续回归条件：修复阶段覆盖长度 0/4/6、stream-id 0 与非零、idle/open/closed stream；断言只有 id 0 终止 connection，非零只产生对应 RST_STREAM，其他并发 stream 可继续。合法 5-byte PRIORITY 仍被忽略且不改变 stream state。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -580,3 +593,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 peer 的 HEADER_TABLE_SIZE 被错误应用到 `recvhpack` 而非 `sendhpack`，双向独立 HPACK context 发生颠倒，记录为 `H2-004`。
 - 2026-08-06：确认 HPACK encoder 的 `hardlimit` 仅本地改表，下一 header block 不会发送强制 dynamic table size update，记录为 `HPACK-001`。
 - 2026-08-06：确认 server 把 client 的 MAX_CONCURRENT_STREAMS 反向用于限制该 client 的 request streams，记录为 `H2-005`。
+- 2026-08-06：确认非 5-byte PRIORITY 被错误升级为 connection GOAWAY，而 RFC 9113 要求 stream `FRAME_SIZE_ERROR`，记录为 `H2-006`。
