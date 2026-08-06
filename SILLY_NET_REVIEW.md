@@ -140,6 +140,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-4.2/6.8-GOAWAY-MIN-SIZE | MUST | `lualib/silly/net/http/h2.lua:1357-1367` | client/server recipient | 偏离 | GOAWAY handler 只检查 stream-id，完全忽略 payload；少于强制 8 bytes 的 frame 也被接受，而非 `FRAME_SIZE_ERROR` | 现有测试没有 malformed GOAWAY 长度 | H2-007 |
 | RFC9113-6.8-GOAWAY-LAST-STREAM | MUST/reliability | `lualib/silly/net/http/h2.lua:1357-1367,1425-1448`; `lualib/silly/net/http/client.lua:318-390` | client recipient | 偏离 | 合法 GOAWAY 只置 bool，不解析 Last-Stream-ID/error；高编号未处理 streams 不结束/不标 retryable，高层默认 readall 可无限等待 | 现有 Test 20/26 是本端主动 close，不覆盖 peer graceful GOAWAY 与在途 streams | H2-008 |
 | RFC9113-8.1.1/8.2/8.3-RESPONSE-FIELDS | MUST | `lualib/silly/net/http/h2.lua:367-384,1441-1500` | client recipient | 偏离 | response/trailer 未验证 pseudo 集合/顺序、lowercase、field syntax 或 connection-specific fields；`:status` 仅 `tonumber`，接受非三位语法 | 现有测试只覆盖本库 server 生成的规范 headers | H2-009 |
+| RFC9113-8.1-INTERIM-RESPONSES | MUST | `lualib/silly/net/http/h2.lua:1441-1500,1075-1123` | client recipient | 偏离 | 第一个 HEADERS 无论 1xx/最终都进入 HEADER 并唤醒 waiter；后续 final response 被当 trailer，未实现零到多个 interim→一个 final 的状态 | 现有测试没有 100/103 response | H2-010 |
 
 ## 3. 基线结果
 
@@ -560,6 +561,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：在 `map_header` 前验证 ordered hlist：严格 name/value 通用语法与 lowercase；initial response 只允许一个、位于最前部 pseudo 区的 `:status`，值匹配三位 status-code 且排除 HTTP/2 禁止的 101；trailer 禁止所有 pseudo；所有 section 拒绝 connection-specific fields。malformed response 按 §8.1.1 作为 stream error 处理，不应默认杀死无关 streams。
 - 后续回归条件：修复阶段覆盖 request pseudo 出现在 response、unknown/duplicate/late `:status`、0/2/4 位与指数/小数 status、uppercase/非法 name/value、五种 connection-specific fields，以及 trailer pseudo；断言对应 stream 失败且并发 stream 保持可用。合法重复普通 fields 与 set-cookie 仍保序。本轮不新增测试代码。
 
+### H2-010 — P2 — client 将 informational response 当成 final response
+
+- 状态：已确认；RFC 9113 与确定性 response state 推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §8.1 允许 server 在 final response 前发送任意数量的 informational 1xx responses；response sequence 必须是零个或多个 interim HEADERS，随后恰好一个 non-informational final HEADERS。带 END_STREAM 的 informational HEADERS 是 malformed，101 在 HTTP/2 中禁止。client 只有收到 final response 才能进入最终 response/body/trailer 状态。
+- 位置：client HEADERS handler 在 `lualib/silly/net/http/h2.lua:1441-1500`；`waitresponse/readall` 在 `:1075-1123`；高层读取路径在 `lualib/silly/net/http/client.lua:354-390`。
+- 触发：server 对请求先发送合法 `:status=100`、`102` 或 `103` HEADERS（不带 END_STREAM），再发送正常 2xx/其他 final HEADERS 和可选 body。
+- 影响：client 把第一个 1xx 写入 `s.status`、设置 `STATE_HEADER` 并唤醒 `waitresponse`；真正 final field section 被误分类为 trailer，`:status`/final headers 不会成为公开 response header。高层最终返回 1xx status 与错误 headers/body 组合，可能绕过按 final status 执行的重定向、成功/错误处理或 gRPC HTTP 状态判断。
+- 证据：`frame_header_client` 仅以 `remotestate == STATE_NONE` 判断 initial response；解析出 `nstatus` 后不分 `nstatus // 100 == 1`，无条件 `s.status=nstatus`、`s.remotestate=STATE_HEADER` 并唤醒 header waiter。下一 HEADERS 因 state 非 NONE 直接进入 `else`，设置 `STATE_TRAILER` 并 `map_header(..., s.trailer)`。文件没有 interim response collection/state。
+- 根因：response state machine 只有 NONE→HEADER→TRAILER，没有 INTERIM 循环与 FINAL 边界；把“第一个 field section”错误等同于“final response”。
+- 建议解法：在严格 field validation 后解析 status：对合法 1xx（排除 101）保持等待 final，可通过独立回调/列表暴露 interim metadata，但不得覆盖 final header/status；拒绝 informational END_STREAM。收到首个非 1xx 才进入 final HEADER、设置公开 status/header 并唤醒 `waitresponse`，之后只允许 terminating trailer。
+- 后续回归条件：修复阶段覆盖无 interim、单个 100/103、多个 1xx、101、1xx+END_STREAM、1xx 后连接关闭、1xx→204/200+body/final trailer；断言 `waitresponse` 只在 final 时完成，最终 status/header 不被 interim 污染。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -636,3 +649,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 GOAWAY handler 完全忽略 payload，0..7-byte frame 未触发强制 connection `FRAME_SIZE_ERROR`，记录为 `H2-007`。
 - 2026-08-06：确认合法 GOAWAY 的 Last-Stream-ID/error 被丢弃，高编号未处理请求无法结束或标记 retryable，高层默认可无限等待，记录为 `H2-008`。
 - 2026-08-06：确认 client 没有 response/trailer field validator，非法 pseudo/uppercase/connection fields 和非三位 status 可被接受，记录为 `H2-009`。
+- 2026-08-06：确认 client 把首个合法 1xx informational response 当 final，真正 final HEADERS 被误分类为 trailer，记录为 `H2-010`。
