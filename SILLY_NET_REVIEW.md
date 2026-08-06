@@ -163,6 +163,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
 | GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
 | GRPC-MESSAGE-COMPRESSION | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81` | client/server recipient | 偏离 | 任意非零 compressed flag 被统一当 unsupported，未校验 0/1 domain 或 `grpc-encoding`；server 固定回 UNIMPLEMENTED，client 不能稳定映射 INTERNAL | 无 compression、非法 flag、encoding/flag 组合测试 | GRPC-004 |
+| GRPC-MESSAGE-SIZE-LIMIT | security | `lualib/silly/net/grpc/helper.lua:6-50`; `lualib/silly/net/http/h2.lua:779-799,1084-1105,1177-1204` | client recipient | 偏离 | 4 MiB cap 仅用于 request；response 按 peer 的 32-bit length 无上限等待并缓存，且持续 WINDOW_UPDATE | 无 oversized response；server-only request cap 不覆盖 client | GRPC-005 |
 
 ## 3. 基线结果
 
@@ -858,6 +859,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：wire bit 被当作实现 feature toggle，而不是由 per-direction metadata 决定语义的协议字段；压缩协商与 envelope decoding 没有共享 call state。
 - 建议解法：在 call admission 保存双方 encoding/accept-encoding 状态；先严格拒绝 flag 不在 {0,1}，再按 flag、declared encoding 与支持集合三者决定解压或标准 status。unsupported request algorithm 返回 UNIMPLEMENTED及接受集合；invalid flag/identity mismatch 和 unsupported response algorithm映射 INTERNAL。
 - 后续回归条件：修复阶段对 client/server 双向覆盖 flag 0/1/2、缺失/identity/supported/unsupported encoding，断言 payload 是否解压、status code 和 `grpc-accept-encoding`；每条 message 独立建立压缩 context。本轮不新增测试代码。
+
+### GRPC-005 — P1 — client response message 没有大小上限
+
+- 状态：已确认；gRPC 32-bit message length、远端资源控制要求与确定性 read/buffer/window 路径推导。本阶段只做静态 review，不发送大 payload。
+- 规范：gRPC message length 是 4-byte unsigned integer，因此 wire format 本身允许接近 4 GiB；实现必须在分配/缓存前应用本地最大接收消息配置，否则不可信 peer 可用合法 framing耗尽资源。gRPC status 定义也明确把超过配置最大值归为 `RESOURCE_EXHAUSTED`；常见默认值不是 wire protocol 的隐含保护。
+- 位置：唯一的 `REQ_MAX_LEN=4*1024*1024` 与 envelope reader 在 `lualib/silly/net/grpc/helper.lua:6-50`；HTTP/2 exact-size read 与 DATA buffering/window update 在 `lualib/silly/net/http/h2.lua:779-799,1084-1105,1177-1204`；client 四种 response 路径在 `lualib/silly/net/grpc/client/service.lua:38-81,134-257`。
+- 触发：恶意或配置不匹配的 server 发送 flag byte 后声明超大 32-bit message length，再持续发送 DATA；所有 unary/streaming response reader均以 `isreq=false` 调用共用 helper。
+- 影响：client 在 protobuf decode 前把整个声明长度积入 stream buffer。DATA handler 在 exact-size read 尚未满足时逐帧发送 WINDOW_UPDATE，使 peer 可以持续灌入，接近 4 GiB 的单消息可导致巨额内存占用、OOM或进程不可用；只声明长度不完成还可结合缺省无 deadline长期占用 call。
+- 证据：大小检查条件明确是 `if isreq and frame_size > REQ_MAX_LEN`，client 路径因此全部绕过。随后无条件调用 `h2stream:read(frame_size)`；底层不足时设置 `readneed=frame_size`，每个 DATA fragment 在 total 仍小于 readneed 时 append 后立即回补 stream credit，直到累计完整长度才唤醒 reader。仓库没有 client max-receive-message 配置或第二层限制。
+- 根因：request 防护被硬编码在共享 decoder 中并以角色布尔值开关，而不是每个 channel/call 都有明确的 send/receive limit；transport exact-read 自动 flow-control 又放大了无界应用长度。
+- 建议解法：为 client/server channel 和可选 per-call 设置 max receive message size，在读完 5-byte envelope 后、读取 payload 前检查；超限立即终止该 RPC并映射 RESOURCE_EXHAUSTED，且不要继续为未消费 payload回补窗口。用 chunked/limited reader避免一次性复制，压缩后还需独立限制解压后大小。
+- 后续回归条件：修复阶段覆盖刚好 limit、limit+1、0xffffffff、只发 header、慢速 DATA，以及 unary/三种 streaming；断言超限在 payload缓存前失败、连接上其他 streams 仍可用、内存有界。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
