@@ -274,6 +274,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用`uint64_t`计算delta/ticks/tickstep，只在最终sleep已证明为`0..TIMER_RESOLUTION`时转int；显式处理rewind。为大delta实现有界fast-forward/cascade策略，在保持32位jiffies wrap语义下直接定位并触发到期节点，或每轮设catch-up预算且保证过期timer最终及时交付，不能用signed溢出截断时间。
 - 回归测试：修复阶段注入可控clock，覆盖resolution边界、`INT_MAX`前后、`UINT32_MAX`前后、49.7天倍数、rewind和jiffies wrap；assert/NDEBUG均不崩溃、不出现数十亿循环，已到期timer恰好触发一次，未来timer保持正确相对顺序。当前不新增长暂停复现。
 
+### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
+
+- 状态：已确认；worker消息顺序、callback table生命周期与socket ownership的确定性推导。本阶段不新增accept/close barrier复现。
+- 位置：accept/listen callback表与close在`lualib/silly/net.lua:37-81,149-179`；TCP/TLS listener包装在`lualib/silly/net/tcp.lua:155-187`、`lualib/silly/net/tls.lua:338-386`；C accept创建、注册并上报在`src/socket.c:805-849,664-679`。
+- 触发：socket线程成功accept并已将ACCEPT消息排入worker queue，但在该消息被Lua dispatch前，另一条已就绪task关闭listener；`net.close`立即清空`accept_callback[listenid]`，稍后ACCEPT handler读取到nil。
+- 影响：handler执行`assert(cb, listenid)`后异常退出；accepted socket已经在C pool与poller中注册，却没有继承data/close callback、没有创建TCP/TLS对象，也没有执行`socket_close(fd)`。连接可继续占用OS fd、socket slot及接收资源，客户端输入随后只会被底层读取再由缺失callback路径释放；关闭服务时的一批并发accept可形成持续到进程退出的资源泄漏。
+- 证据：`exec_accept`先`pool_alloc/add_to_sp`，再把accepted sid和listener sid写入消息；listener关闭不会遍历或拥有子连接。Lua `M.close`在异步C close完成前同步清空三个callback table；ACCEPT callback对缺失listener callback只有assert，没有关闭消息携带的accepted fd。worker中的Lua异常会被记录并关闭该callback coroutine，但没有通用socket回滚。
+- 根因：listener callback registration被同时当作“是否仍应交付accept”和accepted socket的唯一初始化依据；事件snapshot与listener生命周期之间没有late-event处理策略。
+- 建议解法：ACCEPT handler发现listener已关闭/代际不匹配时必须直接调用底层`socket_close(fd)`并返回，不能assert；正常路径应先建立accepted fd的最小close ownership，再调用用户callback。更完整地让C accept event携带listener generation并在close时定义drain/reject边界，所有late accept都走显式拒绝清理。
+- 回归测试：修复阶段用barrier让C层完成accept/report后关闭listener、再dispatch消息；断言无Lua异常，accepted fd立即关闭，callback表、pool slot、连接计数和open-fd恢复基线。TCP与TLS listener都覆盖。当前不新增并发复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1224,6 +1235,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认公开UDP/ntop把任意Lua string当trusted sockaddr，assert/NDEBUG分别可abort/stack overflow或OOB，记录为`SOCK-011`；未新增破坏性blob测试。
 - 2026-08-06：确认TCP/TLS默认buffer及UDP packet stash均无资源上限，慢消费/不读取时远端输入可持续占用内存，记录为`SOCK-012`；未新增流量压力复现。
 - 2026-08-06：确认timer把64位毫秒delta窄化为int，大于约24.8天的暂停/时钟跳变可触发assert、无符号巨大跳变或长期错时，记录为`CORE-006`；未新增长期暂停复现。`queue_push`返回int只在超过INT_MAX条消息时影响过载诊断，降为构建卫生，不单列缺陷。
+- 2026-08-06：确认listener close同步删除Lua callback而已排队ACCEPT已拥有独立C socket，late event只assert且不close accepted fd，记录为`NET-001`；未新增accept/close barrier复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
