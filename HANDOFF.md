@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（68 条）
+## 5. 已确认问题（69 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -191,8 +191,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-012 | P1 | streaming timeout 实际无效，deadline 不写 grpc-timeout、不由 server执行或暴露给 handler。 |
 | GRPC-013 | P1 | RST_STREAM/连接失败只保留文本，client不按标准映射 CANCELLED/INTERNAL/UNAVAILABLE等 status。 |
 | GRPC-014 | P1 | 无 package proto的 method path 被拼成 `/nil.Service/Method`，无法与独立 gRPC peer互操作。 |
+| GRPC-015 | P1 | client response protobuf/envelope解析错误可被 peer的 OK trailer覆盖，stream最终错误地报告成功。 |
 
-统计口径为 68 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 14 个 gRPC；以主报告中的编号和证据为准。
+统计口径为 69 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 15 个 gRPC；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -246,7 +247,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 gRPC protocol review
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`；HTTP/2 已确认 `H2-001` 至 `H2-026`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。gRPC 已确认 `GRPC-001` 至 `GRPC-014`；custom metadata 目前记为未公开支持而非 mandatory 偏离。下一项检查 status sender、write failures 与 descriptor edge cases。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`；HTTP/2 已确认 `H2-001` 至 `H2-026`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。gRPC 已确认 `GRPC-001` 至 `GRPC-015`；custom metadata 目前记为未公开支持而非 mandatory 偏离。下一项检查 status sender、write failures 与 remaining call lifecycle。每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 

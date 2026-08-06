@@ -173,6 +173,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-DEADLINE | API/protocol | `lualib/silly/net/grpc/client/service.lua:12-32,134-257`; `lualib/silly/net/grpc/server.lua`; `lualib/silly/net/grpc/registrar.lua`; `docs/src/en/reference/net/grpc.md:343-397,521-530` | client/server | 偏离 | 仅 unary 有本地 timer；server-stream timer建立后立即取消，另两种无参数，stream read忽略 timeout；不发/收 grpc-timeout且 handler不可观察 deadline | Test 6 只覆盖 unary 本地超时 | GRPC-012 |
 | GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
 | GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
+| GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
 
 ## 3. 基线结果
 
@@ -988,6 +989,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：path builder假定所有 proto都有非空 package，并在 client/server各复制一次同样逻辑。
 - 建议解法：集中构造 fully-qualified service name：package非空时 `package .. "." .. service`，否则仅 service；method segment按 descriptor原名追加。注册与调用复用同一 helper，但仍必须以独立peer测试，避免镜像bug再次互相掩盖。
 - 后续回归条件：修复阶段覆盖无 package、单段/多段 package、service/method大小写，并分别做 Silly↔独立 client/server双向调用；捕获 `:path`精确等于规范值。本轮不新增测试代码。
+
+### GRPC-015 — P1 — client response parse error 可被 peer 的 OK status 覆盖
+
+- 状态：已确认；gRPC runtime status mapping与确定性 decoder/finalizer dataflow推导。本阶段只做静态 review，不新增畸形 response。
+- 规范：response protobuf解析失败应由 client runtime产生 INTERNAL；截断或损坏的 length-prefixed message同样不能因 peer随后宣称 grpc-status OK而成为成功。runtime已观察到的本地解析错误必须优先于不可信 peer的 OK trailer。
+- 位置：envelope/protobuf decoder在 `lualib/silly/net/grpc/helper.lua:16-50`；streaming read/finalizer在 `lualib/silly/net/grpc/client/service.lua:38-81`；unary在 `:134-176`。
+- 触发：server发送完整 envelope但 payload不是声明的 protobuf type，或5-byte header/payload在END_STREAM前截断，然后发送/已发送 `grpc-status: 0`（普通 trailer；部分场景也可由Trailers-Only状态路径组合）。
+- 影响：server-streaming、client-streaming和bidi对象最终记录 `status=OK`，调用方把损坏响应当成正常流结束；unary只返回无结构的 decode/EOF字符串而不是 INTERNAL。数据损坏、版本不匹配与恶意peer行为因此无法按标准 code监控/处置。
+- 证据：`readbody`正确返回 `"Decode error"`或底层EOF，但 `check_trailer`只要看到grpc-status就无条件以该数值覆盖本地err，err仅在status缺失时才用作message。streaming两条路径随后返回nil且暴露OK；unary在n==OK时直接`return resp, err`，没有构造INTERNAL status。
+- 根因：finalizer把peer status当成唯一权威，没有维护不可被成功status覆盖的local runtime error；API又没有统一的结构化status对象。
+- 建议解法：call state保存首个本地 protocol/decode/runtime failure；最终peer non-OK可提供额外上下文，但peer OK不得覆盖本地失败。invalid response proto统一映射INTERNAL，截断按transport/protocol性质映射，并让四种API返回同一status模型。
+- 后续回归条件：修复阶段覆盖invalid protobuf、0..4-byte header、短payload、第二条streaming message损坏，分别配OK/non-OK/missing status；本地损坏永不产生OK，invalid proto稳定为INTERNAL。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
