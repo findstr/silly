@@ -371,6 +371,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先计算desired flags并调用backend，成功后再commit state；失败时保持旧state并按errno选择bounded retry或将socket以明确错误关闭。若多线程需要先发布intent，增加separate desired/applied state与socket-thread reconciliation，不能用一个bit同时表示两者。
 - 回归测试：修复阶段分别让每次enable/disable read/write的sp_ctrl返回ENOMEM/ENOENT/EBADF，覆盖TCP/UDP、queue EAGAIN/empty、EOF/closewait；断言无永久stall或busy loop、状态可重试/关闭、错误只报告一次。当前无独立动态复现。
 
+### SOCK-011 — P1 — 未校验的 sockaddr blob 可触发栈溢出或越界读取
+
+- 状态：已确认；公开Lua/C API与确定性assert/NDEBUG路径推导。本阶段不传入破坏性address blob。
+- 位置：UDP Lua入口在 `lualib/silly/net/udp.lua:194-204`、`luaclib-src/lnet.c:239-278`；stack op复制在`src/socket.c:1663-1686`；ntop Lua/C入口在`luaclib-src/lnet.c:280-288`、`src/api.c:84-87`、`src/socket.c:540-565,1060-1070`；sockaddr length helper在`src/sockaddr.h`。
+- 触发：调用公开`udp_conn:sendto(data, addr)`或`silly.net.c.udp_send`并传入长度大于`union sockaddr_full`的任意string；或直接调用公开C module的`ntop`并传入少于sockaddr长度、family非法或内容截断的string。
+- 影响：UDP send仅以assert保护fixed-size stack field；assert build直接终止进程，NDEBUG build继续`memcpy`并覆盖`op_udpsend`栈对象后的字段/栈内存。ntop没有长度参数，短blob会读取Lua string边界外；非法family在assert build终止，NDEBUG下进入IPv6分支、忽略`inet_ntop`失败并对未初始化buffer执行strlen，可能继续越界读取/写错误长度。
+- 证据：`ludp_send`取得addrlen后不做任何格式/长度检查即调用`silly_udp_send`。`socket_udp_send`执行`assert(addrlen<=sizeof(op.addr)); memcpy(&op.addr,addr,addrlen)`，assert不是release安全边界。`lntop`用`luaL_checkstring`却不取得string length；`ntop`只有AF_INET/else+assert(AF_INET6)，同时忽略两次inet_ntop返回值。`sockaddr_len`也把任何非AF_INET family都当IPv6长度。
+- 根因：内部OS生成的trusted sockaddr二进制表示被直接暴露成普通Lua string API，却没有携带variant/length验证；开发期assert被当作不可信输入校验。
+- 建议解法：集中`parse_sockaddr_blob(ptr,len)`，只接受长度恰好匹配AF_INET/AF_INET6且family一致的值；所有public入口返回EINVAL而非assert。更优是使用opaque userdata保存validated sockaddr，sendto/ntop不接受任意string。始终检查inet_ntop返回并以已初始化buffer/显式error收尾。
+- 回归测试：修复阶段覆盖长度0..sizeof(v6)+1、AF_UNSPEC/随机family、v4 family+v6 length及反向、截断/超长、inet_ntop失败；assert/NDEBUG两种build都只返回错误，无stack overwrite/OOB，合法recvfrom addr仍可round-trip。当前不新增动态触发。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1188,6 +1199,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认`worker_exit`释放W后`socket_exit` final flush仍可经report_close调用worker_push，记录为`SOCK-008`；没有新增退出send-error复现。
 - 2026-08-06：确认poll batch先snapshot、后处理close/reuse op，裸slot userdata缺generation校验，记录为`SOCK-009`；没有新增跨平台动态复现。
 - 2026-08-06：确认`rw_enable`在backend MOD前提交state且忽略失败，导致永久stall/busy-loop，记录为`SOCK-010`；没有新增multiplexer fault injection。
+- 2026-08-06：确认公开UDP/ntop把任意Lua string当trusted sockaddr，assert/NDEBUG分别可abort/stack overflow或OOB，记录为`SOCK-011`；未新增破坏性blob测试。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
