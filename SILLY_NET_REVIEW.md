@@ -172,6 +172,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-STATUS-MESSAGE-CODEC | MUST | `lualib/silly/net/grpc/server.lua:8-27`; `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/grpc/client/service.lua:38-53,164-173` | client/server | 偏离 | server 原样发送 message，不做 UTF-8 percent encoding；client原样返回且 unary Trailers-Only 不从 initial header 取 message | 自测错误文本仅简单 ASCII，未覆盖 `%`/Unicode/control/Trailers-Only message | GRPC-011 |
 | GRPC-DEADLINE | API/protocol | `lualib/silly/net/grpc/client/service.lua:12-32,134-257`; `lualib/silly/net/grpc/server.lua`; `lualib/silly/net/grpc/registrar.lua`; `docs/src/en/reference/net/grpc.md:343-397,521-530` | client/server | 偏离 | 仅 unary 有本地 timer；server-stream timer建立后立即取消，另两种无参数，stream read忽略 timeout；不发/收 grpc-timeout且 handler不可观察 deadline | Test 6 只覆盖 unary 本地超时 | GRPC-012 |
 | GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
+| GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
 
 ## 3. 基线结果
 
@@ -975,6 +976,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：HTTP/2 API只暴露人类可读 error text，过早丢弃机器可判定的 transport error类型；gRPC层因此无法实现协议要求的单向映射。
 - 建议解法：让 H2 stream终局错误携带结构化 kind/code/retry boundary；gRPC统一 finalizer在缺显式 grpc-status时按官方表映射。连接失败和GOAWAY Last-Stream-ID还应标识 call是否可能未被处理，不能仅靠字符串猜测或无条件重放。
 - 后续回归条件：修复阶段逐个注入全部标准 RST code、未知 code、TCP EOF/TLS error/GOAWAY，断言映射、retryable信息及四种 RPC一致；已有显式 grpc-status时不得被 transport fallback覆盖。本轮不新增测试代码。
+
+### GRPC-014 — P1 — 无 package 的 protobuf service 生成错误 method path
+
+- 状态：已确认；gRPC for Protobuf service-name mapping、protoc默认值与确定性 string conversion 推导。本阶段只做静态 review，不新增 proto。
+- 规范：protobuf method path 是 `/(package ".")?Service/Method`；package segment及其点只在 proto实际声明 package时出现。无 package的合法 service必须使用 `/Service/Method`。
+- 位置：client lazy method path在 `lualib/silly/net/grpc/client/service.lua:259-279`；server registrar path在 `lualib/silly/net/grpc/registrar.lua:264-290`；parser只在遇到 package声明时设置字段，见 `lualib/protoc.lua:498-505,827`；本项目 Lua `%s`转换在 `deps/lua/lstrlib.c:1353-1368`。
+- 触发：加载不含 `package ...;` 的合法 proto3/proto2 service，向独立 gRPC实现调用或让独立 client调用 Silly server。
+- 影响：Silly client请求不存在的 `/nil.Service/Method`，独立 server返回 UNIMPLEMENTED；Silly server只注册同一错误路径，独立 client的规范 `/Service/Method`找不到。只有两端都使用Silly时错误路径恰好自洽，掩盖互操作失败。
+- 证据：parser创建 file info时没有默认 package，缺声明即 `proto.package=nil`。两端无条件执行 `format("/%s.%s/%s", package, ...)`；内置 Lua `%s`使用 `luaL_tolstring`，nil成为字面量 `"nil"`，最终 wire/registration path为 `/nil.Service/Method`。
+- 根因：path builder假定所有 proto都有非空 package，并在 client/server各复制一次同样逻辑。
+- 建议解法：集中构造 fully-qualified service name：package非空时 `package .. "." .. service`，否则仅 service；method segment按 descriptor原名追加。注册与调用复用同一 helper，但仍必须以独立peer测试，避免镜像bug再次互相掩盖。
+- 后续回归条件：修复阶段覆盖无 package、单段/多段 package、service/method大小写，并分别做 Silly↔独立 client/server双向调用；捕获 `:path`精确等于规范值。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
