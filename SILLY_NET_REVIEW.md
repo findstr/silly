@@ -135,6 +135,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-5.2/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-263,479-482,502-542,1177-1204` | client/server recipient | 偏离 | channel/stream 没有剩余 receive-window 状态；DATA 无条件 append，仅累计将来回补的 debt，超过已广告 credit 也不会报 `FLOW_CONTROL_ERROR` | 现有测试只覆盖守规发送方和正常 1 MiB 消息，没有超 window DATA | H2-003 |
 | RFC9113-6.5.2-HEADER-TABLE-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-170,239-263,1211-1278` | client/server | 偏离 | 收到 peer 的 HEADER_TABLE_SIZE 后错误地 hard-limit `recvhpack` decoder；该 setting 描述 peer decoder 的上限，应约束本端 `sendhpack` encoder | HPACK 单测只同时修改 encoder/decoder；HTTP/2 测试没有非默认 peer setting | H2-004 |
 | RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
+| RFC9113-5.1.2/6.5.2-MAX-CONCURRENT-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-160,239-263,618-659,1211-1278,1555-1648` | server recipient | 偏离 | server 收到 client setting 后覆盖用于限制 inbound request 的 `ch.streammax`；client setting 只限制 server 发起的 streams | 现有双方恰好都发送 100，没有非对称/运行时变更覆盖 | H2-005 |
 
 ## 3. 基线结果
 
@@ -495,6 +496,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：区分 encoder maximum update 与 decoder hard limit API。encoder 记录 last-emitted、pending-final 和 interval-minimum；下一次 `pack` 在任何 field 前按 RFC 最多发送两个 size updates，再更新 emitted state。decoder hard limit 仍只约束接收的 size update。处理多次变化、0→恢复以及无字段 header block。
 - 后续回归条件：修复阶段直接断言 header block 首字节/varint；覆盖单次减小、增大、连续减小→增大、连续增大→减小、0→恢复、empty headers，以及 update 出现在 field 后必须解码失败。使用独立 decoder，只通过 wire update 同步，禁止测试直接替 decoder 调 `hardlimit`。本轮不新增测试代码。
 
+### H2-005 — P2 — server 用 client 的并发上限限制 client 自己的 request streams
+
+- 状态：已确认；RFC 9113 与确定性 SETTINGS/stream-open 路径推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §5.1.2/§6.5.2 规定 `SETTINGS_MAX_CONCURRENT_STREAMS` 是有方向的：发送者声明自己允许接收者创建多少 concurrent streams。server 发送的值限制 client request streams；client 发送的值只限制 server-initiated streams（即 push），不能反向减少该 client 被 server 允许创建的 request streams。
+- 位置：共享 channel limit 在 `lualib/silly/net/http/h2.lua:151-160,239-263`；client open 使用在 `:618-659`；SETTINGS 覆盖在 `:1211-1278`；server request 接收限制在 `:1555-1648`。
+- 触发：client 在连接前言或后续 SETTINGS 中发送 `SETTINGS_MAX_CONCURRENT_STREAMS=0` 或任意小于 server 已广告额度的值，然后在合法 server limit 内创建新的奇数 request stream。
+- 影响：server 错误地以 `REFUSED_STREAM` 拒绝规范允许的 client 请求；一个 client 能改变“server 允许该 client 创建”的额度方向，造成连接无请求可用、重试循环或显著互操作失败。当前 server 不实现 push，所以 client 的该 setting 对 server 实际应当没有可执行的 outbound stream 限制。
+- 证据：client/server 共用 `frame_settings`，id 3 无条件执行 `ch.streammax = val`。同一字段在 client 的 `openstream/isfull` 中用于正确限制本端新请求，也在 server `frame_header_server` 中以 `stream_count >= stream_max` 限制收到的新请求；channel 没有分开的 local-advertised inbound limit 与 peer-advertised outbound limit。双方正常握手都发 100，数值相同掩盖了方向错误。
+- 根因：用一个 `streammax` 表示两套独立的 directional limits，并让共享 SETTINGS handler 与 server inbound admission 共用它。
+- 建议解法：拆成 `peer_max_concurrent`（限制本端发起 stream）与 `local_max_concurrent`（本端已广告、校验 peer 发起 stream）。client 收到 server setting 更新前者；server 收到 client setting 只影响 push/outbound server streams。server request admission 始终使用本端已广告 limit，若配置变化则按 RFC 处理既有 streams。
+- 后续回归条件：修复阶段使用非对称 limit：server=3/client=0，断言 client 仍可开 3 个 request、server 不发 push；server=1/client=100，第二个并发 request 被正确拒绝。再覆盖运行时增减、0 的短期行为、已打开 stream 计数和 client open wait queue 唤醒。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -566,3 +579,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 HTTP/2 接收方向没有剩余 connection/stream window，超出已广告 credit 的 DATA 仍会无条件进入 recvbuf，记录为 `H2-003`。
 - 2026-08-06：确认 peer 的 HEADER_TABLE_SIZE 被错误应用到 `recvhpack` 而非 `sendhpack`，双向独立 HPACK context 发生颠倒，记录为 `H2-004`。
 - 2026-08-06：确认 HPACK encoder 的 `hardlimit` 仅本地改表，下一 header block 不会发送强制 dynamic table size update，记录为 `HPACK-001`。
+- 2026-08-06：确认 server 把 client 的 MAX_CONCURRENT_STREAMS 反向用于限制该 client 的 request streams，记录为 `H2-005`。
