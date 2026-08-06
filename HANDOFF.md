@@ -182,7 +182,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-003 | P2 | server 只按 path 路由，不校验 POST、gRPC Content-Type 或 TE，非 gRPC请求也不返回 HTTP 415。 |
 | GRPC-004 | P2 | compressed flag 未按 0/1 与 `grpc-encoding` 组合校验，server/client 的标准 status 映射错误。 |
 | GRPC-005 | P1 | client response message 无大小上限；可按 32-bit length 持续回补窗口并缓存接近 4 GiB。 |
-| GRPC-006 | P2 | unary 的单 request/response 基数未验证，多余 envelope 被忽略且仍可报告 OK。 |
+| GRPC-006 | P2 | unary 的单 request/response 基数未验证，零/多余 envelope 均可被忽略或仍报告 OK。 |
 | GRPC-007 | P1 | server parse/stream-read error 会缺失 grpc-status、被覆盖为 OK，或把截断 envelope 当 clean EOF。 |
 | GRPC-008 | P1 | 三种 streaming client 不读取 Trailers-Only initial header，丢失真实 grpc-status并改报 UNKNOWN。 |
 | GRPC-009 | P1 | client 忽略 HTTP status/Content-Type，缺 grpc-status 时不执行标准 HTTP→gRPC status mapping。 |
