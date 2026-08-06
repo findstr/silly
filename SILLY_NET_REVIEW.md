@@ -147,6 +147,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-5.1-HALF-CLOSED-REMOTE | MUST | `lualib/silly/net/http/h2.lua:64-70,845-877,1177-1205` | client/server recipient | 偏离 | 已收到 END_STREAM 后再收 DATA 应为该 stream 的 STREAM_CLOSED；当前升级为整连接 GOAWAY(PROTOCOL_ERROR) | 现有测试没有 END_STREAM 后 DATA 与并发 stream 隔离 | H2-014 |
 | RFC9113-5.1/6.9-CLOSED-WINDOW-UPDATE | MUST NOT | `lualib/silly/net/http/h2.lua:238-241,1038-1080,1366-1407,1562-1648` | client recipient | 偏离 | client 不记录本端已用 stream-id；完成 stream 移除后，合法 late WINDOW_UPDATE 被误判为 idle 并触发 GOAWAY | 现有测试只覆盖 active stream flow-control，没有 close 后在途 update | H2-015 |
 | RFC9113-4.1/6.8-GOAWAY-LAST-ID | MUST | `lualib/silly/net/http/h2.lua:238-241,596-608,1562-1648`; `luaclib-src/lhttp.c:1049-1072` | client/server sender | 偏离 | 无 peer stream 时 last id=-1 被转成 0xffffffff；reserved bit 非零且错误声明最大 Last-Stream-ID，而非 0 | 现有测试未检查 outbound GOAWAY bytes/processed boundary | H2-016 |
+| RFC9113-8.1-RST-NO-ERROR-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1088-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的 RST_STREAM(NO_ERROR) 覆盖 END 为 RST；尚未读取的空响应会被丢弃为错误 | 现有测试没有 response END 后 RST(NO_ERROR) | H2-017 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -653,6 +654,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：协议状态从 0 初始化（无 peer-initiated stream 即 last=0），按角色只在真正把 peer stream 交给上层时更新；GOAWAY builder 接受前验证范围并强制保留位为 0。若实现两阶段 graceful shutdown，2^31-1 必须是显式策略值，不能由 -1 偶然产生。
 - 后续回归条件：修复阶段逐字节检查 client close、server pre-request error、server 处理 id1 后 error 和 graceful two-stage GOAWAY；断言 reserved bit 恒 0、无处理时 last=0、处理后为正确 peer id、多次 GOAWAY 不增加边界。本轮不新增测试代码。
 
+### H2-017 — P2 — 完整响应后的 RST_STREAM(NO_ERROR) 会覆盖并丢弃响应
+
+- 状态：已确认；RFC 9113 明确规则与确定性 response/RST/read path 推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §8.1 允许 server 在发送带 END_STREAM 的完整响应后，以 `RST_STREAM(NO_ERROR)` 请求 client 无错终止尚未完成的 request transmission；client MUST NOT 因收到该 RST_STREAM 而丢弃已经完成的响应。
+- 位置：terminal state 写入在 `lualib/silly/net/http/h2.lua:845-877`，`readall` terminal 分支在 `:1088-1123`，RST handler 在 `:1336-1351`，client response END transition 在 `:1446-1499`。
+- 触发：server 发送完整 response HEADERS（可直接 END_STREAM，空 body）或 response DATA+END_STREAM，随后在同一 stream 发送合法 4-byte error code 0 的 RST_STREAM；应用在两个 frames 都已处理后调用 `stream:readall()`。
+- 影响：已经成功完成的 response 被重新标记为 reset。空 body 没有 buffered bytes 可兜底，`readall` 返回 nil 与 “Graceful shutdown”；使用 waitresponse 后再读取、事件驱动消费或调度较慢的调用方会把合法响应当失败。该标准序列常用于 server 提前响应并停止大 request body，故会造成真实互操作故障和不必要重试。
+- 证据：response END 调用 `stream_remoteend(s, STATE_END, EEOF)`；紧随的 `frame_rst` 不检查既有 terminal state或 errorcode，直接再次调用 `stream_remoteend(s, STATE_RST, err_str[0])`，覆盖 `remotestate` 和 `errstr`。之后 `readall` 在 buffer 为空时只有 state 恰为 END 才返回 `""`，RST 则返回 nil/error。实现没有保存“response already complete”事实。
+- 根因：RST handler 将所有 error codes 和到达阶段统一建模为远端失败，terminal state 可逆；遗漏 `NO_ERROR after complete response` 的 HTTP message-level 例外。
+- 建议解法：terminal response completion 必须单调且独立保存；client 若已收到完整 response，再收到 RST_STREAM(NO_ERROR) 只能终止本端 request write/wake writer，不能覆盖 response END、status/header/body/trailer。其他 code 或响应完成前的 RST 仍按 reset 处理，并正确停止双向 stream。
+- 后续回归条件：修复阶段覆盖空 response HEADERS+END_STREAM→RST(NO_ERROR)、带 body END→RST(NO_ERROR)、RST 在 final/END 前、非零 error code、client 仍在上传 body，以及 waitresponse→延迟 readall；断言完成响应保持可读，pending writer被停止，其他 stream 不受影响。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -762,3 +775,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
+- 2026-08-06：确认完整响应后的 RST_STREAM(NO_ERROR) 会把 client END 覆盖为 RST，使尚未读取的空响应被丢弃，记录为 `H2-017`。
