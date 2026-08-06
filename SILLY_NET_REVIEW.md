@@ -366,6 +366,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client/server默认明确设置minimum TLS 1.2并检查API返回值；可选`min_version/max_version`只接受受支持、安全的枚举，任何legacy override需显式风险开关和告警。分别配置TLS≤1.2 cipher list与TLS1.3 ciphersuites，并在启动时记录最终policy。
 - 回归测试：修复阶段用TLS 1.0/1.1-only peer断言client/server均拒绝，TLS 1.2/1.3成功；覆盖不同OpenSSL major与系统security-level，显式配置错误必须启动失败而非静默回退。当前不启用legacy互操作。
 
+### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
+
+- 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
+- 规范：RFC 1035 §4.1.3定义`RDLENGTH`为其后RDATA字段的精确octet长度；A/AAAA有固定长度，CNAME/SRV/SOA内部字段必须完整落在该RDATA内。参见 [RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html)。
+- 位置：RR header记录boundary在`luaclib-src/ldns.c:318-347`；A/AAAA在`:349-372`；CNAME/SRV/SOA在`:374-456`；外层按声明长度推进在`:486-513`。
+- 触发：匹配当前query的DNS response包含A/AAAA RDLENGTH大于规定长度，或CNAME/SRV/SOA声明过短RDLENGTH、但后续RR/message字节恰好能让domain-name/fixed fields解码成功。
+- 影响：parser可把下一RR或message尾部的字节借作当前RDATA，构造并缓存wire中并不存在于该RR边界内的CNAME/SRV/SOA值；A/AAAA则静默忽略多余字节。随后外层仍按伪造的短`rdlen`从中间位置继续解析，形成错误记录集、错误CNAME跳转或negative cache，而不是拒绝整条malformed response。
+- 证据：`parse_rr_begin`正确保存`rdpos/rdlen`，但CNAME/SRV/SOA为`read_name`构造的input都使用`size=ctx->size`（完整message）而非`rdpos+rdlen`，SOA fixed-field检查也对`ctx->size`。它们不验证decoder最终位置等于RDATA end。A/AAAA只检查`rdlen < 4/16`，接受大于固定长度。`push_rrs`遇到有效返回后立即把记录交给Lua cache。
+- 根因：通用name decoder只知道message级压缩指针目标边界，调用方没有同时约束“编码本体必须在RDATA内、compression pointer可引用message其他位置”这两个不同范围。
+- 建议解法：decoder接收`field_end`与`message_size`两个边界：读取label/pointer encoding octet不得越过RDATA end，pointer解引用目标仍按完整message验证；返回consumed position必须恰好等于RDATA end。A/AAAA要求rdlen分别严格等于4/16，SRV先保证6字节后再限定target编码，SOA两name及20-byte tail全部在RDATA内。任一RR malformed应拒绝整个响应，不能缓存partial prefix。
+- 回归测试：修复阶段逐项覆盖fixed length±1、CNAME/SRV/SOA在每个label/pointer/fixed-field字节截断、借用下一RR、合法compression pointer指向RDATA外的既有name，以及trailing垃圾；只有编码本体完整且消费恰好到RDATA end才成功。当前不新增畸形packet。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1324,6 +1336,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TLS close只断开TCP且native模块完全没有SSL_shutdown，peer永远收不到authenticated close_notify，记录为`TLS-004`；未新增strict-peer互操作。
 - 2026-08-06：确认TLS server在应用accept前以nil timeout等待ClientHello，listener无握手deadline配置，空连接可永久占用fd/SSL/task，记录为`TLS-005`；未新增slow-handshake压力复现。
 - 2026-08-06：确认TLS server显式minimum为TLS1.1、client不设置minimum，安全基线依赖环境且可偏离RFC8996，记录为`TLS-006`；未启用legacy cipher互操作。
+- 2026-08-06：确认DNS CNAME/SRV/SOA name decoder使用整条message边界且A/AAAA只校验最小长度，typed RDATA可跨越声明RDLENGTH，记录为`DNS-001`；未新增畸形packet。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
