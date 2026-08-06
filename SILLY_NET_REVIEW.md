@@ -166,6 +166,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-MESSAGE-SIZE-LIMIT | security | `lualib/silly/net/grpc/helper.lua:6-50`; `lualib/silly/net/http/h2.lua:779-799,1084-1105,1177-1204` | client recipient | 偏离 | 4 MiB cap 仅用于 request；response 按 peer 的 32-bit length 无上限等待并缓存，且持续 WINDOW_UPDATE | 无 oversized response；server-only request cap 不覆盖 client | GRPC-005 |
 | GRPC-METHOD-CARDINALITY | MUST | `lualib/silly/net/grpc/registrar.lua:80-154`; `lualib/silly/net/grpc/client/service.lua:56-63,134-176` | client/server recipient | 偏离 | 单 request 方法读第一条即调用 handler；单 response 方法读第一条后 raw drain 其余 bytes，均未验证恰好一条 message 与 EOS | 自测只由守规 peer 各发一条 | GRPC-006 |
 | GRPC-SERVER-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/registrar.lua:17-31,80-228`; `lualib/silly/net/http/h2.lua:1549-1559` | server | 偏离 | unary parse errors end without grpc-status；client/bidi stream read status is ignored and wrapper emits OK；truncated envelope at EOS is mistaken for clean EOF | 无 malformed/truncated protobuf envelope 与 final status 覆盖 | GRPC-007 |
+| GRPC-TRAILERS-ONLY-CLIENT | MUST | `lualib/silly/net/grpc/client/service.lua:38-81,164-173`; `lualib/silly/net/http/h2.lua:1441-1500` | streaming client recipient | 偏离 | streaming status helper只查 trailer map；Trailers-Only 的 status 位于 END_STREAM initial header，故真实错误一律变 UNKNOWN；只有 unary 特判 header fallback | 无 streaming immediate-error/Trailers-Only 测试 | GRPC-008 |
 
 ## 3. 基线结果
 
@@ -897,6 +898,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：message reader 只返回松散字符串错误，没有区分 clean message-boundary EOS 与 mid-envelope EOF；stream object status 也没有成为 wrapper 终局状态机的权威输入。
 - 建议解法：让 decoder 返回结构化结果 `message/clean_eos/protocol_error/transport_error` 并跟踪当前 envelope offset；所有 wrappers通过一个唯一 finalize 函数选择最终 status，已有 runtime error不可被用户函数正常 return覆盖。能够发送 trailer时用 INTERNAL等非 OK，无法继续 framing 时按 gRPC transport mapping reset stream。
 - 后续回归条件：修复阶段覆盖 0..4-byte header截断、payload 少 1 byte、invalid protobuf、错误发生于第 1/第 N 条 streaming message；断言始终只有一个非 OK final status、handler副作用边界明确、永不缺 status或回 OK。本轮不新增测试代码。
+
+### GRPC-008 — P1 — streaming client 丢失 Trailers-Only 的真实 status
+
+- 状态：已确认；gRPC response grammar 与确定性 HTTP/2 header mapping/status helper 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：gRPC response 可以是 `Response-Headers *Message Trailers`，也可以对立即失败使用 `Trailers-Only`；后者在一个带 END_STREAM 的 initial HEADERS field section 中同时携带 HTTP status、Content-Type 和必需的 grpc-status。所有四种 method cardinality 都必须等价消费它。
+- 位置：streaming 共用 `check_trailer`、read/final-read 在 `lualib/silly/net/grpc/client/service.lua:38-81`；unary 的独立 fallback 在 `:164-173`；HTTP/2 client 首个 HEADERS mapping 在 `lualib/silly/net/http/h2.lua:1441-1500`。
+- 触发：server 在任何 server-streaming、client-streaming 或 bidi call 上不发送 DATA，直接以 initial HEADERS+END_STREAM 返回 UNIMPLEMENTED、UNAUTHENTICATED、RESOURCE_EXHAUSTED 等 Trailers-Only response。Silly 自己的 unknown-method路径正会生成这种响应。
+- 影响：streaming API 把 peer 的具体标准错误全部改写成 UNKNOWN/`No status in trailer`，上层无法进行正确鉴权提示、重试、限流或故障统计；同一 status 在 unary 与 streaming API 上得到不同结果。
+- 证据：底层把首个 HEADERS字段写入 `h2stream.header`，即使它同时 END_STREAM；只有后续 HEADERS才进入 `h2stream.trailer`。unary 明确使用 `trailer['grpc-status'] or h2stream.header['grpc-status']`，证明实现已意识到该布局；streaming 的唯一 helper却只读取 `h2stream.trailer`，缺失时无条件合成 UNKNOWN。
+- 根因：unary 与 streaming 各自实现终局 status 解析，Trailers-Only fallback 没有抽成共享逻辑。
+- 建议解法：建立单一 response finalizer，识别 initial headers 是否 END_STREAM/是否含 grpc-status，并从正确 field section读取 Trailers-Only；普通 response仍要求最终 trailer status。四种 RPC API复用相同的 status/message/HTTP fallback 规则。
+- 后续回归条件：修复阶段对三种 streaming 分别返回每个代表性非 OK Trailers-Only status及 OK/非法组合，断言 status/message 与 unary 完全一致；覆盖同库 unknown method和独立 gRPC server。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
