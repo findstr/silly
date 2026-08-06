@@ -665,6 +665,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用overflow-safe计算null_bytes，在保存slice前验证`null_bytes <= chk.len - chk.pos`；最好新增`binary_read_slice`统一返回受界限约束的pointer/length。拒绝非`0x00`row header，解析所有非null值后还应按协议决定是否要求完整消费packet；任何codec error使连接fatal。
 - 回归测试：修复阶段按column_count 1/6/7/8/9等bitmap边界截断每一个byte，并覆盖空values、全部null和尾随数据；在ASan/UBSan下断言只返回protocol error且无越界。当前不新增packet样本。
 
+### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
+
+- 状态：已确认；pool counter状态机静态推导。不需要并发复现。
+- 位置：取连接时淘汰expired idle在`lualib/silly/store/mysql.lua:1018-1037`；max-open判断/等待在`:1038-1047`；周期清理在`:1082-1115`；只有普通物理close递减在`:1008-1013`。
+- 触发：配置`max_open_conns > 0`并同时配置`max_lifetime`或`max_idle_time`，让曾返回pool的连接被`conn_new`或`pool_clear`判定过期关闭；之后请求新连接。
+- 影响：每淘汰一个fd，`open_count`仍保留幽灵连接。计数达到max后，新调用会进入`task.wait()`，但不存在相应checked-out连接可归还并唤醒它；请求永久挂起。重复过期还能让统计与真实资源长期分叉，形成确定性pool不可用。
+- 证据：`:1035`和`:1104`调用`tcp_close`并置`conn.fd=nil`，均无`pool.open_count = ... - 1`；max-open分支只依据该计数。`conn_close`物理关闭路径才递减，淘汰路径未复用它。
+- 根因：连接物理销毁散落在多个分支，计数更新不是统一的原子/invariant操作；pool没有assert `open_count == idle + checked_out + connecting`。
+- 建议解法：集中`destroy_conn(pool, conn)`并幂等更新fd、open_count、statement state及waiter调度；所有过期、broken、login失败、pool close路径复用。更稳妥地显式跟踪idle/in-use/connecting集合，并在每次状态转换校验计数；销毁释放capacity后应立即唤醒/授权最早waiter创建连接。
+- 回归测试：修复阶段用max_open=1/2覆盖checkout时过期与timer清理、idle/lifetime同时命中及连续多轮；每轮断言真实fd数、open_count与队列一致，清理后新query不会等待。当前仅静态验证。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1649,6 +1660,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis close看不到局部in-flight socket且connect/handshake完成后不复查closed，关闭对象可被复活，记录为`REDIS-005`；并发问题仅作时序说明。
 - 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
+- 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
