@@ -491,6 +491,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按RFC 3986解析为scheme/authority/path/query/fragment；`build`可按需要包含fragment，但HTTP dereference必须构造只含path+可选query的request target。redirect resolution先完整处理fragment继承/替换，再在发送边界剥离；日志和sensitive-data policy也应避免默认记录fragment。
 - 回归测试：修复阶段覆盖absolute、query+fragment、fragment-only、redirect Location相对/绝对及percent-encoded `%23`；wire捕获断言literal fragment永不出现，而合法path中的`%23`保留。当前不发送敏感fragment。
 
+### URL-002 — P2 — 显式 port 绕过 supported-scheme 校验并回落到明文 TCP
+
+- 状态：已确认；URL构造条件与HTTP/WebSocket transport选择推导。本阶段不对非HTTP服务发请求。
+- 位置：scheme/default-port校验在`lualib/silly/net/http/url.lua:27-70`；HTTP transport选择在`lualib/silly/net/http/client.lua:230-277`；WebSocket选择在`lualib/silly/net/websocket.lua:290-321`；现有测试只覆盖无port ftp在`test/testhttp.lua:1133-1140,1221-1225`。
+- 触发：解析/请求任意未知scheme但显式给port，例如`ftp://host:21/file`或`custom://127.0.0.1:80/`。`makeurl`仅在`port==nil`时查`default_port`并拒绝unsupported scheme，有port则直接成功。
+- 影响：URL API声称unsupported scheme会返回错误，但显式port绕过；HTTP client将所有非`https` scheme当普通TCP并发送HTTP framing，WebSocket将所有非`wss` scheme当普通TCP并发送Upgrade。若上层用`url.parse`作scheme allowlist/SSRF边界，攻击者可让进程连接任意port；scheme拼写错误也可能静默选择明文transport而非fail closed。
+- 证据：`if not port then ... if not default_port[scheme] then error end end`使校验与port presence错误耦合。`connect`端只有二分`scheme==https`/else，WebSocket只有`scheme==wss`/else，没有第二道精确allowlist。现有ftp测试没有显式port，故未覆盖绕过。
+- 根因：scheme合法性检查被实现为default-port lookup的副作用，transport层又以“secure special case，否则plaintext”选择协议。
+- 建议解法：parse或各consumer首先对精确scheme集合做allowlist，与port是否显式完全分离；HTTP client只接受http/https，WebSocket只接受ws/wss，其他一律在DNS/connect前报错。transport使用显式switch并让default分支失败，禁止fallback-to-plaintext。
+- 回归测试：修复阶段对每个合法scheme覆盖默认/显式/非默认port；对ftp/custom/大小写/近似拼写均覆盖有无port，断言不做DNS或connect。当前不对非HTTP服务发请求。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1460,6 +1471,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster把native整数/struct直接memcpy上wire且文档长度/顺序也与实现不符，跨端序节点无法互操作，记录为`CLUSTER-006`；未运行big-endian peer。
 - 2026-08-06：确认addr IP分类把Lua string按首个NUL截断，而中间层仍保留/返回完整值、socket再次截断，形成验证与实际endpoint混淆，记录为`ADDR-001`；未新增NUL连接复现。
 - 2026-08-06：确认HTTP URL model把fragment留在u.path并直接用于HTTP/1 request-target/HTTP/2 :path，客户端私有fragment会上wire，记录为`URL-001`；未发送敏感fragment。
+- 2026-08-06：确认URL scheme只在缺省port时校验，显式port可让任意scheme通过且HTTP/WS consumer回落明文TCP，记录为`URL-002`；未对非HTTP服务发请求。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
