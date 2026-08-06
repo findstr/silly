@@ -176,6 +176,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
 | GRPC-HANDLER-EXCEPTION-STATUS | MUST/interoperability | `lualib/silly/net/grpc/registrar.lua:80-228` | server | 偏离 | 四种 wrapper将 application handler抛出异常统一映射 INTERNAL；gRPC library-generated mapping要求 UNKNOWN | 无 handler throw status-code assertion | GRPC-016 |
 | GRPC-STATUS-SENDER | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `luaclib-src/lhttp.c:489-548` | server sender | 偏离 | application `err.code` 无类型/range/canonical校验，truthy值直接经通用字符串化写 grpc-status；可发送非法文本或error+OK | 自测仅覆盖0与合法常量 | GRPC-017 |
+| GRPC-REQUEST-EOS-DATA | MUST | `lualib/silly/net/grpc/client/service.lua:65-70,215-257`; `lualib/silly/net/http/h2.lua:992-1025` | streaming client sender | 偏离 | client/bidi零消息closewrite时pending request header直接带END_STREAM；未发送gRPC要求的空DATA+END_STREAM | tests的client/bidi均先write至少一条 | GRPC-018 |
 
 ## 3. 基线结果
 
@@ -1027,6 +1028,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：把application error table当作已验证的wire representation，且底层通用header sender采取宽松字符串化。
 - 建议解法：在gRPC层构造不可伪造/集中校验的Status：code必须为定义的integer non-OK值（success走独立分支），否则转UNKNOWN并记录server-side诊断；wire encoder只从validated integer生成canonical decimal，拒绝字符串/其他类型。
 - 后续回归条件：修复阶段覆盖所有定义code、0 error、负数、17+、float、numeric/non-numeric string、boolean/table/nil，断言wire永远canonical且error绝不变OK；独立client得到一致status。本轮不新增测试代码。
+
+### GRPC-018 — P2 — 零消息 streaming request 用 HEADERS 而非空 DATA 表示 EOS
+
+- 状态：已确认；gRPC request EOS mapping与确定性 pending-header/closewrite路径推导。本阶段只做静态 review，不新增抓包。
+- 规范：gRPC request side的EOS由最后一个DATA frame上的END_STREAM表示；当需要关闭request stream且没有data可发送时，implementation仍必须发送一个空DATA frame并设置END_STREAM。不能只在initial request HEADERS上结束。
+- 位置：client/bidi stream构造与closewrite在 `lualib/silly/net/grpc/client/service.lua:65-70,215-257`；HTTP/2 pending header收尾在 `lualib/silly/net/http/h2.lua:992-1025`。
+- 触发：创建client-streaming或bidi call后不调用`stream:write`，直接调用`stream:closewrite()`，即合法的零request-message streaming call。
+- 影响：wire sequence不符合gRPC transport mapping；严格实现、proxy或协议一致性测试可拒绝/误分类该call。Silly server基于通用HTTP/2 END_STREAM仍会接受，所以同库测试（且现有测试总先写消息）掩盖偏离。
+- 证据：constructor只调用`h2stream:request`设置`writeheader`，不立即flush。零消息closewrite进入S.closewrite时`header`存在且`nopayload=true`，函数调用`stream_writeheader(..., true)`后直接return；只有header已flush的路径才把nil data改为空string并通过`stream_writewait(..., true)`生成空DATA。
+- 根因：gRPC层直接复用通用HTTP/2 closewrite最短收尾优化，没有表达gRPC对request EOS frame type的额外约束。
+- 建议解法：streaming call建立时先发送不带END_STREAM的request HEADERS，或提供gRPC-specific close-request API，确保即使零messages也发送empty DATA+END_STREAM；不要改变普通HTTP/2 API对HEADERS END_STREAM的合法优化。
+- 后续回归条件：修复阶段抓取client-stream/bidi的0/1/N消息frame序列：initial HEADERS永不END_STREAM，最后必为DATA+END_STREAM（零消息时length 0）；独立server正常完成零消息call。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
