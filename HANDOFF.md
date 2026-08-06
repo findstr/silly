@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（19 条）
+## 5. 已确认问题（20 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -142,8 +142,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-007 | P1 | HTTP/1 行和字段集合没有上限或解析 deadline，未认证连接可耗尽内存。 |
 | WS-001 | P1 | server 接受缺失/无效的 WebSocket opening handshake，并切换到 frame parser。 |
 | WS-002 | P1 | client 仅凭 101 status 接受握手，不验证 Accept 或 Upgrade/Connection。 |
+| WS-003 | P2 | frame parser 缺少 RSV/长度/control 校验，writer 的 125/65535 边界非规范。 |
 
-统计口径为 19 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 2 个 WebSocket；以主报告中的编号和证据为准。
+统计口径为 20 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 3 个 WebSocket；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -197,7 +198,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`。WebSocket opening handshake 已确认 `WS-001`（server）和 `WS-002`（client）。下一项检查 frame parser 的 RSV/opcode、最短长度编码、64-bit 长度最高位、mask 和控制帧规则；每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`。WebSocket 已确认 `WS-001` 至 `WS-003`；mask 方向校验符合。下一项检查 fragmentation/continuation 状态机和控制帧穿插，再检查消息大小上限、UTF-8 与 close handshake；每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
