@@ -174,6 +174,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
 | GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
 | GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
+| GRPC-HANDLER-EXCEPTION-STATUS | MUST/interoperability | `lualib/silly/net/grpc/registrar.lua:80-228` | server | 偏离 | 四种 wrapper将 application handler抛出异常统一映射 INTERNAL；gRPC library-generated mapping要求 UNKNOWN | 无 handler throw status-code assertion | GRPC-016 |
 
 ## 3. 基线结果
 
@@ -1001,6 +1002,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：finalizer把peer status当成唯一权威，没有维护不可被成功status覆盖的local runtime error；API又没有统一的结构化status对象。
 - 建议解法：call state保存首个本地 protocol/decode/runtime failure；最终peer non-OK可提供额外上下文，但peer OK不得覆盖本地失败。invalid response proto统一映射INTERNAL，截断按transport/protocol性质映射，并让四种API返回同一status模型。
 - 后续回归条件：修复阶段覆盖invalid protobuf、0..4-byte header、短payload、第二条streaming message损坏，分别配OK/non-OK/missing status；本地损坏永不产生OK，invalid proto稳定为INTERNAL。本轮不新增测试代码。
+
+### GRPC-016 — P2 — application handler 异常被错误映射为 INTERNAL
+
+- 状态：已确认；gRPC library-generated status mapping与确定性 `pcall` error branches推导。本阶段只做静态 review，不新增抛错 handler。
+- 规范：gRPC status code guide明确把“server side application throws an exception，或以未返回 Status的方式终止RPC”映射为 UNKNOWN；INTERNAL用于runtime自身不变量破坏、protobuf解析/解压等内部错误。框架必须区分应用异常与runtime protocol failure。
+- 位置：unary、server-streaming、client-streaming、bidi四个 `pcall` failure branch在 `lualib/silly/net/grpc/registrar.lua:80-228`。
+- 触发：任一注册的业务 handler直接 `error(...)`，或执行中产生未捕获Lua异常。
+- 影响：client收到 INTERNAL而非UNKNOWN，监控与告警会把应用代码异常误归因于gRPC runtime/协议内部故障；依赖status分类的故障处置、SLO统计与调试方向错误。
+- 证据：四个wrapper都以`local ok,...=pcall(fn,...)`调用handler，`if not ok`分支完全相同地写`['grpc-status']=code.INTERNAL`。没有异常类别判断，也没有UNKNOWN分支；这与同文件code table中UNKNOWN的定义及官方runtime mapping相反。
+- 根因：实现把“未捕获异常”按一般编程语言术语视为internal error，没有采用gRPC对application space与library space的特定划分。
+- 建议解法：普通application exception统一返回UNKNOWN并用安全编码的message/日志保留诊断；只有wrapper/decoder/transport自身的invariant failure使用INTERNAL。若要让应用选择其他code，必须通过校验后的显式status返回对象，而不是抛异常。
+- 后续回归条件：修复阶段让四种handler分别抛string/table error，断言wire status均UNKNOWN且message codec合法；另用protobuf parse/runtime invariant测试确认仍为INTERNAL。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
