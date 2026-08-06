@@ -618,6 +618,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：配置合理的connect/handshake默认timeout，并允许每次call/pipeline传absolute deadline/cancel token；所有阶段使用同一剩余预算。owner超时/取消后必须按connection generation关闭连接并失败该连接上所有已发送pending请求，因为RESP2无法安全跳过迟到响应；尚未发送的排队请求可单独取消。阻塞命令允许调用者显式覆盖。
 - 回归测试：修复阶段分别让connect、AUTH、SELECT、response line、bulk body和pipeline第N项停住，覆盖排队前/后取消；断言在预算内全部相关waiter结束、socket不复用且无timer/queue残留。当前不运行slow peer。
 
+### REDIS-004 — P1 — RESP line/bulk/aggregate 无大小、元素数或递归深度上限
+
+- 状态：已确认；parser资源路径静态推导。本阶段不生成大RESP或深嵌套array。
+- 规范：[Redis RESP specification](https://redis.io/docs/latest/develop/reference/protocol-spec/)说明bulk string默认server上限可达512MiB，aggregate可嵌套；client仍需按自身内存/栈预算验证长度、count和nesting，不能无条件信任peer声明。
+- 位置：line读取与type dispatch在`lualib/silly/store/redis.lua:33-64`；bulk直接定长读取在`:44-54`；递归array分配/解析在`:66-82`；新连接没有调用TCP buffer limit的路径在`:180-213`。
+- 触发：peer持续发送不含LF的prefix line，声明超大bulk后慢速/完整发送body，声明巨大array count，或返回深层nested arrays。
+- 影响：line和bulk可使单连接持续增长内存；巨大count使CPU长循环并扩展Lua table；深嵌套通过`read_response`递归耗尽C/Lua stack并崩溃。攻击发生在命令响应与AUTH/SELECT阶段，且在共享client上会连带阻塞全部调用者。
+- 证据：所有line使用`sock:read("\n")`且conn未配置limit；bulk对`tonumber(res)`仅判负后直接`read(nr+2)`；array按peer count创建table并逐项递归，没有max line/bulk/elements/total bytes/depth，也没有累计response budget。
+- 根因：driver完全继承server声明的资源规模，未在RESP结构层定义可配置的解析预算；通用socket backpressure不能限制已接受的单条合法长度消息或递归复杂度。
+- 建议解法：client配置并默认启用max line、bulk bytes、aggregate elements、nesting depth及每response/pipeline累计decoded bytes；在分配/定长read前做整数overflow和budget检查，并给socket设置略高于parser工作集的buffer limit。超限视为connection-fatal protocol/resource error并失败同连接pending。
+- 回归测试：修复阶段覆盖无LF长行、limit边界bulk、超大/负/overflow count、宽array、深array及pipeline累计超限；断言在有界内存/时间内关闭且无partial result。当前不生成资源消耗输入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1598,6 +1610,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis RESP未知type/非法length等会抛出未清理异常，reader token与wait queue因此永久卡死，记录为`REDIS-001`；未发送畸形RESP。
 - 2026-08-06：确认Redis command在获取reader token前的write failure会调用reader-only cleanup并assert，pipeline又遗留坏socket，记录为`REDIS-002`；未注入send failure。
 - 2026-08-06：确认Redis connect、AUTH/SELECT、command/pipeline与reader queue均无deadline/cancel，一个slow peer可挂住整个client，记录为`REDIS-003`；未运行slow peer。
+- 2026-08-06：确认Redis RESP line/bulk/array count与递归深度均无预算，peer可耗尽内存、CPU或stack，记录为`REDIS-004`；未生成大/深RESP。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
