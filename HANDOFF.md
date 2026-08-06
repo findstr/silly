@@ -1,0 +1,264 @@
+# Silly `net` 全量审计交接文档
+
+> 更新时间：2026-08-06（Asia/Shanghai）
+> 用途：让新的 Codex 会话无需重新摸索，直接从第 4 阶段继续审计。
+> 当前结论：审计尚未完成；20 个阶段中已完成 1–3，阶段 4（核心 engine/worker/queue/timer/socket）进行中。
+
+## 1. 用户目标与工作方式
+
+用户要求：进入 `silly`，先制定长计划，然后逐个 review `net` 相关模块，特别是 HTTP、WebSocket、gRPC、Redis driver、MySQL driver；除现有测试外，还要按 RFC/官方协议逐项检查 HTTP、WebSocket、gRPC 的规范符合性；全部问题和解法必须持续记录。允许读取、运行、拉取最新代码，必要时可以重新 clone。
+
+用户希望会话自主持续工作，不要在发完进度后停住。新会话应遵循：
+
+1. 先读本交接文档和主报告，但不要重做已经完成的基线。
+2. 立即执行下一项检查；进度说明之后必须紧跟实际工具调用。
+3. 持续更新 `SILLY_NET_REVIEW.md`，确认一条记一条，疑点不得冒充已确认问题。
+4. 当前任务是审计和记录，不要未经用户另行授权直接修改 Silly 源码。
+5. 每个模块至少覆盖静态调用链、状态机、所有权、失败路径、并发、资源限制、现有测试缺口和针对性动态验证。
+6. HTTP/WebSocket/gRPC 的普通测试通过不代表规范符合；必须建立逐条 MUST/MUST NOT 证据表。
+
+## 2. 路径、Git 与工作区状态
+
+- 工作区绝对路径：`/home/findstrx/Documents/Codex/2026-08-06-remote`
+- Silly 源码绝对路径：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
+- 主审计报告：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly/SILLY_NET_REVIEW.md`
+- 复现脚本目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly/review-repros`
+- 上游：`https://github.com/findstr/silly.git`
+- 分支：`master`，跟踪 `origin/master`
+- 当前 HEAD：`d1aef7ffd8439340dfd957a49fccba3fbf133055`
+- 提交时间：`2026-07-19 16:09:32 +0800`
+- 提交标题：`ci: fix lcov 2.5 coverage capture`
+- 上次执行 `git pull --ff-only` 的结果：`Already up to date`
+- Silly 仓库上次检查为干净：`## master...origin/master`
+
+新会话开始时先做只读核对，再联网拉取：
+
+```bash
+cd /home/findstrx/Documents/Codex/2026-08-06-remote/silly
+git -C silly status --short --branch
+git -C silly log -1 --format='%H%n%ci%n%s'
+git -C silly pull --ff-only
+```
+
+如果拉取后 HEAD 改变，必须在报告中记录旧/新提交，判断已确认问题是否仍存在，再继续；不要把用户已有变更覆盖掉。
+
+环境里登录 shell 找不到普通 `rg` 时可使用：
+
+```text
+/home/findstrx/.codex/packages/standalone/releases/0.146.1-x86_64-unknown-linux-musl/codex-path/rg
+```
+
+## 3. 已建立的长计划
+
+主报告第 2 节给出了 20 个阶段和各阶段完成标准。当前进度如下：
+
+| 阶段 | 范围 | 状态 |
+|---:|---|---|
+| 1 | 上游提交、仓库状态、构建参数、模块清单 | 已完成 |
+| 2 | ASan/UBSan/coverage 与 TSAN 基线 | 已完成 |
+| 3 | 全部现有网络相关基线测试 | 已完成 |
+| 4 | engine/worker/message/queue/timer/socket C 核心 | 进行中 |
+| 5 | `net.lua` 与 C/Lua 边界 | 待做 |
+| 6 | TCP | 待做 |
+| 7 | UDP | 待做 |
+| 8 | TLS | 待做 |
+| 9 | addr/DNS/cluster | 待做 |
+| 10 | HTTP 公共层 | 待做 |
+| 11 | HTTP/1 + RFC 9110/9112/3986 | 待做 |
+| 12 | HTTP/2 + HPACK + RFC 9113/7541 | 待做 |
+| 13 | HTTP client/server 聚合与 Go 互操作 | 待做 |
+| 14 | WebSocket + RFC 6455/8441 | 待做 |
+| 15 | gRPC over HTTP/2 | 待做 |
+| 16 | Redis driver | 待做 |
+| 17 | MySQL C codec | 待做 |
+| 18 | MySQL Lua driver | 待做 |
+| 19 | etcd、跨模块取消/超时、故障注入/sanitizer | 待做 |
+| 20 | 文档/API 契约与最终优先级报告 | 待做 |
+
+不要把阶段 4 标记完成，至少还需完成下面第 8 节列出的 socket 核心候选验证。
+
+## 4. 已跑测试和动态基线
+
+主工作副本使用：
+
+```bash
+make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
+```
+
+该测试构建启用了 AddressSanitizer、UndefinedBehaviorSanitizer、`float-cast-overflow` 和 coverage。已通过：
+
+- TCP `testtcp2`：30 组。
+- HTTP/1 `testhttp`：全部现有用例。
+- HTTP/2 `testhttp2`：36 组。
+- WebSocket `testwebsocket`：7 组，含 WSS、压力、DNS 失败。
+- gRPC `testgrpc --test.grpc.timeout=10000`：9 组，含 unary/client-stream/server-stream/bidi、deadline、并发和 1 MiB 消息。
+- Redis：临时 Redis 6.0.16，18 组。
+- MySQL：临时 MariaDB 10.3，41 组。
+
+这些运行均未报告 ASan/UBSan 错误，最终 `netstat=0`、`leak memory size=0`。临时 Redis/MariaDB 容器已停止并移除；不要误删环境中不属于本任务的 Docker 资源。
+
+仍需补：MySQL 8、MariaDB 10.6、Go HTTP 互操作/畸形输入、协议 fuzz/fault injection、Windows/macOS 行为。
+
+### TSAN
+
+隔离 TSAN clone 上次位于：
+
+```text
+/tmp/silly-tsan-review.HHFlk0/silly
+```
+
+它使用 `-DSILLY_TEST -O1 -fsanitize=thread -fno-omit-frame-pointer` 构建。`testtcp2` 的 30 组业务断言全部完成，但进程因 5 组 TSAN 告警以 66 退出：
+
+1. `engine.c:76` 的 `workerstatus` 写 vs `engine.c:45` 读。
+2. `queue.c:91` 的 `size` 读 vs `queue.c:67` 写。
+3. `queue.c:75` 的 `head` 读 vs `queue.c:65` 写。
+4. `worker.c:94` 的 `maxmsg` 读 vs `worker.c:193` 写。
+5. `engine.c:168` 的 `running` 写 vs `engine.c:94` 读。
+
+`/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
+
+## 5. 已确认问题（9 条）
+
+以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
+
+| 编号 | 严重度 | 结论 |
+|---|---:|---|
+| CORE-001 | P2 | worker 条件变量谓词未由同一 mutex 保护，存在真实数据竞争和丢唤醒窗口；TSAN 实证。 |
+| CORE-002 | P2 | queue 的 `head`/`size` 在锁外并发读写；TSAN 实证。 |
+| CORE-003 | P2 | `volatile running` 不是线程同步，退出状态有数据竞争；TSAN 实证。 |
+| CORE-004 | P1 | `pthread_create` 只检查 `err < 0`，漏掉 POSIX 的正错误码，失败回滚不可靠。 |
+| CORE-005 | P3 | `worker.maxmsg` 诊断阈值跨线程普通读写；TSAN 实证。 |
+| SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
+| SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
+| SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
+| SOCK-004 | P2 | TCP connect 在加入 multiplexer 前立即失败会泄漏 fd；8 次失败令 open fd 从 8 增至 16。 |
+
+统计口径为 9 条：5 个 CORE + 4 个 SOCK；以主报告中的编号和证据为准。
+
+## 6. 可直接复现的两个问题
+
+### SOCK-003：退出时待发 payload 泄漏
+
+脚本：`review-repros/socket_exit_pending_wlist.lua`
+
+从 `silly` 目录执行：
+
+```bash
+timeout 20s ./silly ../review-repros/socket_exit_pending_wlist.lua
+```
+
+关键结果：测试把 `sendv_cap` 固定为 1 字节，排入 8 个 4096-byte 节点后立即退出；Silly 报告 `leak memory size:32768`，LeakSanitizer 报告 8 个直接泄漏，共 32768 bytes，退出码 1。
+
+### SOCK-004：立即 connect 失败泄漏 fd
+
+脚本：`review-repros/tcp_immediate_connect_fd_leak.lua`
+
+```bash
+timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
+```
+
+关键结果：连续 8 次连接 `255.255.255.255:9`，均立即 errno 101 (`ENETUNREACH`)；`metrics.openfds()` 从 8 增到 16，delta=8。复现脚本以 exit 0 表示成功观察到泄漏。
+
+## 7. 已定位的重要实现位置
+
+以当前 HEAD 为基线：
+
+- `src/engine.c:45-46,60-61,73-80`：workerstatus/cond 协议。
+- `src/engine.c:103-111`：`pthread_create` 错误判断。
+- `src/engine.c:23,74,94,128,168`：`volatile running`。
+- `src/queue.c:65-67,75,84,91`：head/size 锁外访问。
+- `src/worker.c:53,90-99,193`：maxmsg 竞争。
+- `src/socket.c:26-69`：文件自己声明只有 sid 可由 worker lock-free 读取。
+- `src/socket.c:755-772`：`remove_from_sp/free_socket`；未 polling 时不会 close fd。
+- `src/socket.c:841-844`：accept 的 `sp_add` 失败也有同类 fd 泄漏风险。
+- `src/socket.c:1211-1238`：UDP queued-send 永久错误不扣 `wlbytes`。
+- `src/socket.c:1456-1477`：TCP immediate-connect-error fd 泄漏。
+- `src/socket.c:1504,1540`：UDP connect 错误日志格式类型不匹配。
+- `src/socket.c:1552-1556`：UDP connect 的 `sp_add` 失败同类 fd 风险。
+- `src/socket.c:1614-1686`：worker 侧 send op 和 `wlbytes` accounting。
+- `src/socket.c:1730-1804`：op 处理，`OP_EXIT` 在本轮 flush 前 return。
+- `src/socket.c:1977-1996`：`socket_exit` 只尝试 flush/close，不遍历释放活跃 `wlist`。
+- `src/socket.c:2019-2064`：`socket_stat` 直接跨线程读 fd/type，并忽略 name syscall 错误。
+- `src/silly_conf.h:49-50`：`TCP_READ_BUF_SIZE` 为 2 MiB。
+
+## 8. 下一步：从这里立即继续
+
+### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
+
+候选 `CAND-SOCK-003`：`socket_stat` 违反 `socket.c` 自身的并发规则。它从 worker 线程读取普通 `fd/type`，第二次 sid 校验不能形成生命周期保护；然后对可能已经关闭或复用的 fd 调用 `getsockname/getpeername`，并忽略返回值。
+
+下一动作应是用 `apply_patch` 在工作区（不要放进 Silly repo）新建：
+
+```text
+review-repros/socket_stat_close_race.lua
+```
+
+测试思路：循环创建 `127.0.0.1:0` listener；使用测试 debug control 延迟 socket op；排入 close；恢复并 kick socket thread；同时对旧 sid 高频调用 `metrics.socketstat(sid)`；快速创建新 listener 促使 slot/fd 复用。先跑主 ASan build，再跑隔离 TSAN build。若 TSAN 报告 fd/type/sid 竞争或 ASan/断言/错误地址，即升级为已确认问题并记录原始堆栈。
+
+推荐预期解法：让 socket thread 通过 command/message 生成一致 snapshot，或者实现真正的 per-slot lock/seqlock + generation protocol；所有 `getsockname/getpeername` 必须检查返回值。
+
+### 8.2 已纠正的误报
+
+原 `CAND-SOCK-004 — UDP 大报文可能被静默截断` 已在主报告改记为 `REJECT-SOCK-001`：当前固定接收 buffer 为 2 MiB，而合法 IPv4/IPv6 UDP datagram 最大尺寸小于约 64 KiB，因此不会因该 buffer 截断。除非未来缩小 buffer 或加入平台特定的非标准超大 UDP/GSO 接收接口，否则无需继续追查。
+
+### 8.3 后续 socket 核心候选（尚未确认）
+
+按顺序调查并记录：
+
+1. `CAND-SOCK-002`：worker 做 sid check 后 slot 被 close/reuse，随后 `wlbytes` 可能记到新 socket；需要 barrier 命中 check→accounting 窗口。
+2. `socket_send/socket_sendto` 的 public `size_t` 被写入 op 的 `int size`；超过 `INT_MAX` 时可能转负，socket thread 再转回 `size_t`，存在 over-read/信息泄漏或崩溃风险。先查所有上层长度上限，再做不分配超大内存的注入测试。
+3. `socket_exit` 的 worker/socket teardown 顺序：`worker_exit` 后 `socket_exit` 仍可能在 flush error 路径调用 `worker_push`，疑似 use-after-free；要构造 send error 的退出复现。
+4. stale multiplexer event 携带 slot 指针时，slot 已复用为新 socket，旧 event 是否会误作用于新 generation；Linux epoll 与 BSD/macOS kqueue 要分别分析。
+5. `rw_enable`/`sp_ctrl` 失败被忽略，可能造成永久收不到读写事件。
+6. `socket_stat`/sockaddr 边界：错误 family、getsockname/getpeername 失败后的未初始化地址、低层 API assert 契约。
+7. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler 堵塞是否可导致内存 DoS。
+8. `timer` delta 转 `int`、queue size 返回 `int` 等 conversion warnings；区分真实可达缺陷与构建卫生。
+
+阶段 4 完成前，再审阅 `src/socket_poll_*`、pool/flipbuf、所有 `free_socket` 调用点和 stop/exit ownership table，跑一次严格 warnings 静态检查并把结论入报告。
+
+## 9. RFC/协议审计基线
+
+主报告第 2.1 节已经写好完整 checklist。权威来源：
+
+- HTTP semantics：RFC 9110 — https://www.rfc-editor.org/rfc/rfc9110.html
+- HTTP/1.1 messaging：RFC 9112 — https://www.rfc-editor.org/rfc/rfc9112.html
+- HTTP/2：RFC 9113 — https://www.rfc-editor.org/rfc/rfc9113.html
+- HPACK：RFC 7541 — https://www.rfc-editor.org/rfc/rfc7541.html
+- URI：RFC 3986 — https://www.rfc-editor.org/rfc/rfc3986.html
+- WebSocket：RFC 6455 — https://www.rfc-editor.org/rfc/rfc6455.html
+- WebSocket over HTTP/2：RFC 8441 — https://www.rfc-editor.org/rfc/rfc8441.html
+- gRPC over HTTP/2 官方协议 — https://grpc.github.io/grpc/core/md_doc__p_r_o_t_o_c_o_l-_h_t_t_p2.html
+
+技术规范检索只用 RFC Editor 或协议官方文档等第一方来源。最终表格格式固定为：
+
+```text
+SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 | 证据 | 互操作测试 | 问题编号
+```
+
+重点不是只找 parser 崩溃；必须分别检查接收端拒绝规则和发送端生成规则，并覆盖 request smuggling、HTTP/2 状态/流控、HPACK 解压放大、WebSocket mask/fragment/UTF-8/close、gRPC envelope/metadata/trailers/deadline/cancel。
+
+## 10. 记录与验证纪律
+
+- 每个新问题写入主报告时必须包含严重度、状态、位置、触发、影响、证据、根因、建议解法和回归测试。
+- 动态证据要保存精简后的命令、退出码、sanitizer 栈、FD/内存计数或协议字节序列。
+- 只靠静态推导但路径确定的可以标“已确认；确定性代码推导”；存在前置假设的保留为候选。
+- 修复建议要考虑回滚、double-free/double-close、generation reuse 和关闭顺序，不能只修表面分支。
+- Silly repo 中现有或新出现的用户改动都要保留；审计用脚本和报告继续放在外层工作区。
+- 测试可能留下被 gitignore 的 `.gcda`，不要为“清理”运行破坏性命令。
+- 长时间命令用会话轮询，每 60 秒内给用户一次简短、带实际发现的更新，但不要因此中断审计。
+
+## 11. 给新会话的可复制启动指令
+
+```text
+继续 Silly net 全量审计。先完整读取工作区 HANDOFF.md 和 SILLY_NET_REVIEW.md；核对 silly 仓库状态并 git pull --ff-only。不要重跑已完成的普通基线，直接从阶段 4 的 socket_stat close/reuse 竞争复现开始。确认一项就把问题、证据、解法和回归测试追加到 SILLY_NET_REVIEW.md。阶段 4 完成后按计划依次 review net.lua、TCP、UDP、TLS、DNS/cluster、HTTP 公共层、HTTP/1、HTTP/2/HPACK、HTTP 聚合与互操作、WebSocket、gRPC、Redis、MySQL C、MySQL Lua、etcd/故障注入、文档/API。HTTP/WebSocket/gRPC 必须逐条对照 RFC/官方协议。除非真正需要用户授权或遇到无法绕过的阻塞，不要在状态回复后暂停；持续执行并持续记录。当前任务只审计和记录，不修改 Silly 源码。
+```
+
+## 12. 当前文件清单
+
+```text
+SILLY_NET_REVIEW.md
+HANDOFF.md
+review-repros/socket_exit_pending_wlist.lua
+review-repros/tcp_immediate_connect_fd_leak.lua
+silly/  # 最新审计源码工作副本
+```
