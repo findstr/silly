@@ -164,6 +164,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
 | GRPC-MESSAGE-COMPRESSION | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81` | client/server recipient | 偏离 | 任意非零 compressed flag 被统一当 unsupported，未校验 0/1 domain 或 `grpc-encoding`；server 固定回 UNIMPLEMENTED，client 不能稳定映射 INTERNAL | 无 compression、非法 flag、encoding/flag 组合测试 | GRPC-004 |
 | GRPC-MESSAGE-SIZE-LIMIT | security | `lualib/silly/net/grpc/helper.lua:6-50`; `lualib/silly/net/http/h2.lua:779-799,1084-1105,1177-1204` | client recipient | 偏离 | 4 MiB cap 仅用于 request；response 按 peer 的 32-bit length 无上限等待并缓存，且持续 WINDOW_UPDATE | 无 oversized response；server-only request cap 不覆盖 client | GRPC-005 |
+| GRPC-METHOD-CARDINALITY | MUST | `lualib/silly/net/grpc/registrar.lua:80-154`; `lualib/silly/net/grpc/client/service.lua:56-63,134-176` | client/server recipient | 偏离 | 单 request 方法读第一条即调用 handler；单 response 方法读第一条后 raw drain 其余 bytes，均未验证恰好一条 message 与 EOS | 自测只由守规 peer 各发一条 | GRPC-006 |
 
 ## 3. 基线结果
 
@@ -871,6 +872,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：request 防护被硬编码在共享 decoder 中并以角色布尔值开关，而不是每个 channel/call 都有明确的 send/receive limit；transport exact-read 自动 flow-control 又放大了无界应用长度。
 - 建议解法：为 client/server channel 和可选 per-call 设置 max receive message size，在读完 5-byte envelope 后、读取 payload 前检查；超限立即终止该 RPC并映射 RESOURCE_EXHAUSTED，且不要继续为未消费 payload回补窗口。用 chunked/limited reader避免一次性复制，压缩后还需独立限制解压后大小。
 - 后续回归条件：修复阶段覆盖刚好 limit、limit+1、0xffffffff、只发 header、慢速 DATA，以及 unary/三种 streaming；断言超限在 payload缓存前失败、连接上其他 streams 仍可用、内存有界。本轮不新增测试代码。
+
+### GRPC-006 — P2 — 单消息 RPC 不验证恰好一个 envelope
+
+- 状态：已确认；protobuf method streaming cardinality 与确定性 read/drain 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：protobuf service method 的 `client_streaming=false` 表示 request side 恰好一条 message，`server_streaming=false` 表示 response side 恰好一条 message；零条或多条是 RPC framing/cardinality error，不能静默选第一条并报告 OK。EOS/最终 trailers 才能证明不会再出现第二条。
+- 位置：server unary 与 server-streaming wrappers 在 `lualib/silly/net/grpc/registrar.lua:80-154`；client unary 与 client-streaming final response 在 `lualib/silly/net/grpc/client/service.lua:56-63,134-176`；单条 envelope decoder 在 `lualib/silly/net/grpc/helper.lua:16-50`。
+- 触发：对 unary 或 server-streaming method 发送两个完整 request envelopes，第一条后保持 request side open；或 server 对 unary/client-streaming method 返回两个 response envelopes再以 `grpc-status: 0` 结束。
+- 影响：server 会以第一条 request 调用业务逻辑并忽略额外输入，client 会以第一条 response返回成功并丢弃额外输出。两端对同一 wire call 的语义产生歧义，业务副作用可能在本应拒绝的请求上发生，也掩盖 peer 的 method descriptor/version 配置错误。
+- 证据：server 两个 wrapper 都只调用一次 `readbody`，成功后立刻进入用户函数，不读 EOS或第二条 envelope。client 两个单-response path 也只调用一次 `readbody`，随后 `h2stream:readall()` 只是把所有剩余 DATA作为 raw string排空，既不按 5-byte envelope 解析，也不验证为空；只要最终 trailer status 为 OK 就返回第一条对象。
+- 根因：共用 helper 只提供“读取下一条 message”，wrapper 没有提供“读取唯一 message 并确认 EOS”的组合操作；raw drain 被误用为完整性校验。
+- 建议解法：实现 cardinality-aware reader。单消息 request/response 在解码第一条后必须继续解析到 EOS/trailer并确认没有第二个 envelope；零条、多条、截断余字节均以 INTERNAL/适当 RPC error结束且不得返回业务成功。server 应在调用 unary handler 前完成 request-side cardinality验证。
+- 后续回归条件：修复阶段对 unary、server-streaming request side及 unary、client-streaming response side分别覆盖 0/1/2 条、第二条截断、第一条后延迟 EOS；只允许恰好一条进入/返回业务成功。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
