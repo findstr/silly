@@ -502,6 +502,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：parse或各consumer首先对精确scheme集合做allowlist，与port是否显式完全分离；HTTP client只接受http/https，WebSocket只接受ws/wss，其他一律在DNS/connect前报错。transport使用显式switch并让default分支失败，禁止fallback-to-plaintext。
 - 回归测试：修复阶段对每个合法scheme覆盖默认/显式/非默认port；对ftp/custom/大小写/近似拼写均覆盖有无port，断言不做DNS或connect。当前不对非HTTP服务发请求。
 
+### URL-003 — P2 — relative-reference resolution 未实现 RFC 3986 path/query 合并与 dot-segment 移除
+
+- 状态：已确认；RFC reference-resolution算法与确定性字符串路径推导。本阶段不新增redirect server复现。
+- 规范：RFC 3986 §5.2要求按component继承scheme/authority/path/query，并执行merge paths与remove_dot_segments；空reference继承base path和query。参见 [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986.html)。
+- 位置：`lualib/silly/net/http/url.lua:72-126`，尤其query/fragment特殊分支与`:122-125`的path-relative拼接；redirect消费在`lualib/silly/net/http/client.lua:347-382`。
+- 触发：HTTP redirect Location为`../x`、`./x`、空字符串或相对path，而base含多级path、query中含`/`或dot segments；例如base`http://h/a/b?next=/q`与ref`../c`。
+- 影响：client生成与RFC目标不同的request：query内容可能被当作目录，`../`/`./`原样留在wire，空ref错误退到父目录而非保持当前资源/query。服务器、proxy和签名组件对dot-segment规范化策略不一致时，可请求错误资源、破坏redirect loop detection/cache key，或跨越预期path prefix。
+- 证据：实现用`match(bpath,"^(.*/)")`直接在包含query/fragment的整串上贪婪找最后slash，再拼`ref`；注释明确承认不normalize dot segments。它没有RFC component tuple或empty-reference分支。`seen`使用该未规范化build结果，随后同一值直接上wire。
+- 根因：redirect helper以少量字符串特例代替URI reference state machine，并让显示/发送/循环比较共用未规范化path字符串。
+- 建议解法：实现RFC 3986 §5.2 component级resolver：先分离path/query/fragment，正确处理defined-vs-empty query，merge paths并remove dot segments；redirect loop key使用规范化、无fragment URI，HTTP target仍只发path+query。也可采用经过互操作验证的URI parser而不是继续叠加pattern特例。
+- 回归测试：修复阶段采用RFC 3986 §5.4 normal/abnormal examples作为golden vectors，并覆盖base query含slash、empty/`?`/`#`、encoded `%2e`不误归一化、IPv6 authority；redirect wire target与loop detection均核对。当前不新增redirect server复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1472,6 +1484,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认addr IP分类把Lua string按首个NUL截断，而中间层仍保留/返回完整值、socket再次截断，形成验证与实际endpoint混淆，记录为`ADDR-001`；未新增NUL连接复现。
 - 2026-08-06：确认HTTP URL model把fragment留在u.path并直接用于HTTP/1 request-target/HTTP/2 :path，客户端私有fragment会上wire，记录为`URL-001`；未发送敏感fragment。
 - 2026-08-06：确认URL scheme只在缺省port时校验，显式port可让任意scheme通过且HTTP/WS consumer回落明文TCP，记录为`URL-002`；未对非HTTP服务发请求。
+- 2026-08-06：确认URL relative resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect可生成错误target，记录为`URL-003`；未新增redirect server复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
