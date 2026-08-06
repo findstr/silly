@@ -308,6 +308,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：安全默认开启peer verification并加载系统trust store；要求从目标URI自动导出expected hostname/IP，分别调用适用的OpenSSL verification API，SNI只对DNS名设置。提供`cafile/capath/ca_pem`和可选client cert；若确需测试用insecure模式，必须显式命名、默认false并向上层传播，不能让hostname=nil静默关闭所有认证。任何verify配置失败或握手验证失败均返回明确TLS错误。
 - 回归测试：修复阶段用独立证书矩阵覆盖受信CA+正确SAN成功，自签名、未知CA、过期、错误SAN、DNS/IP类型不匹配均失败；custom CA成功，显式insecure仅在主动配置时成功。HTTPS/WSS/gRPC集成路径均验证默认安全行为。当前不新增MITM复现。
 
+### TLS-002 — P1 — reload/释放 listener context 可使在途 SNI handshake 使用失效 userdata
+
+- 状态：已确认；Lua userdata引用关系、OpenSSL callback arg与握手时序的确定性推导。本阶段不新增GC/reload握手竞态复现。
+- 位置：native ctx布局/销毁在`luaclib-src/ltls.c:41-55,138-165`；SNI callback与注册在`:353-446`；TLS object创建不保留ctx在`:167-185,458-496`；Lua accepted connection与reload在`lualib/silly/net/tls.lua:105-123,186-205,372-395`。
+- 触发：server accept TCP后，TLS handshake因尚未收到完整ClientHello而yield；此时另一task调用`listener:reload()`替换`l.ctx`，或关闭listener并丢弃最后一个Lua引用，随后GC finalize旧ctx；peer再发送带SNI的ClientHello，使旧SSL_CTX中注册的servername callback运行。
+- 影响：callback arg仍是旧`struct ctx *` userdata的裸地址，但accepted TLS userdata没有保留该Lua对象；GC后读取`entry_count/entries/cert`属于use-after-free，可崩溃或读取已复用内存。即使内存尚未复用，`ctx_destroy`已经free各entry的cert/SSL_CTX且没有清空pointer，callback的fallback仍读取`entries[0].ptr`并传给`SSL_set_SSL_CTX`，生命周期依赖偶然的OpenSSL内部ref而不是本实现所有权。公开“零停机证书热重载”正会触发该窗口。
+- 证据：`SSL_CTX_set_tlsext_servername_arg(ptr, ctx)`保存native userdata地址；`new_tls(...,0)`创建零uservalue TLS userdata，`ltls_open`调用`SSL_new`后从未把Lua ctx设为uservalue。Lua connection table只保存`ssl`，没有`ctx`字段。reload直接`l.ctx=new_server_ctx(...)`，旧accepted `s.ssl`因此不能使Lua GC看到旧ctx仍可达。
+- 根因：OpenSSL对象对内部`SSL_CTX`的native引用计数被误认为也能保活包含callback state的Lua userdata；实际上callback arg是外部裸地址，未参与OpenSSL refcount或Lua reachability。
+- 建议解法：每个TLS userdata用uservalue强引用创建它的ctx，至少保持到handshake完成；若callback在connection后续仍可能运行，则保持到SSL释放。更稳妥是把SNI routing state移到独立native refcount对象，由所有SSL_CTX/SSL共同持有，reload构造完整新generation后原子切换listener，新旧generation分别在最后一条connection释放时销毁。`ctx_destroy`清空每个指针并保证幂等。
+- 回归测试：修复阶段让连接停在ClientHello之前，循环reload/close listener、强制full GC后继续带SNI握手；覆盖默认/第二证书与多个在途连接。ASan不得出现UAF，旧连接使用旧generation、新连接使用新generation，所有ctx/cert最终只释放一次。当前不新增竞态复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1261,6 +1272,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认listener close同步删除Lua callback而已排队ACCEPT已拥有独立C socket，late event只assert且不close accepted fd，记录为`NET-001`；未新增accept/close barrier复现。
 - 2026-08-06：确认TCP/UDP message在Lua callback前清空C owner，而callback异常路径既不释放payload也不关闭socket，记录为`NET-002`；未新增故意抛错复现。
 - 2026-08-06：确认TLS client保持OpenSSL默认VERIFY_NONE且hostname只用于SNI，没有trust store、链或hostname验证，记录为`TLS-001`；未新增MITM/伪证书复现。
+- 2026-08-06：确认accepted TLS userdata未强引用SNI callback arg所属ctx，reload/close+GC后在途ClientHello可访问失效userdata，记录为`TLS-002`；未新增GC/reload竞态复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
