@@ -171,6 +171,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-STATUS-SYNTAX | MUST | `lualib/silly/net/grpc/client/service.lua:38-53,164-174` | client recipient | 偏离 | `tonumber` 接受空白/符号/hex/指数/小数/前导零；非法形式可成为 OK，parse failure 可返回 nil而非 UNKNOWN | 只覆盖本库生成的 canonical integer status | GRPC-010 |
 | GRPC-STATUS-MESSAGE-CODEC | MUST | `lualib/silly/net/grpc/server.lua:8-27`; `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/grpc/client/service.lua:38-53,164-173` | client/server | 偏离 | server 原样发送 message，不做 UTF-8 percent encoding；client原样返回且 unary Trailers-Only 不从 initial header 取 message | 自测错误文本仅简单 ASCII，未覆盖 `%`/Unicode/control/Trailers-Only message | GRPC-011 |
 | GRPC-DEADLINE | API/protocol | `lualib/silly/net/grpc/client/service.lua:12-32,134-257`; `lualib/silly/net/grpc/server.lua`; `lualib/silly/net/grpc/registrar.lua`; `docs/src/en/reference/net/grpc.md:343-397,521-530` | client/server | 偏离 | 仅 unary 有本地 timer；server-stream timer建立后立即取消，另两种无参数，stream read忽略 timeout；不发/收 grpc-timeout且 handler不可观察 deadline | Test 6 只覆盖 unary 本地超时 | GRPC-012 |
+| GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
 
 ## 3. 基线结果
 
@@ -962,6 +963,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：timeout作为围绕同步 unary调用的临时 coroutine timer实现，没有成为 call state；stream对象、wire metadata与server context之间没有deadline所有权。
 - 建议解法：创建统一 call context，在首次 HEADERS发送前把用户期限转换为 canonical grpc-timeout，并让本地 timer覆盖到最终 status；streaming对象持有/cancel同一 timer。server严格解析 timeout、计算本地 deadline、到期取消 stream并向 handler暴露可查询 cancellation；下游传播时扣除 elapsed time。
 - 后续回归条件：修复阶段覆盖所有四种 RPC、header各单位/8位边界/非法值、deadline在建连/写/首响应/中途消息/最终 trailer前到期，以及 client cancel后server停止工作；文档示例与实际签名一致。本轮不新增测试代码。
+
+### GRPC-013 — P1 — RST_STREAM 与连接失败不映射为标准 gRPC status
+
+- 状态：已确认；gRPC HTTP/2 transport mapping 与确定性 error-information loss/client finalizer 路径推导。本阶段只做静态 review，不新增故障注入。
+- 规范：收到 RST_STREAM 时 runtime必须立即结束 RPC并按 HTTP/2 code映射：NO_ERROR及大多数 protocol errors→INTERNAL，REFUSED_STREAM→UNAVAILABLE，server发送 CANCEL→CANCELLED，ENHANCE_YOUR_CALM→RESOURCE_EXHAUSTED，INADEQUATE_SECURITY→PERMISSION_DENIED；可检测连接失败时 client outstanding calls应为 UNAVAILABLE。
+- 位置：HTTP/2 error string table、RST handler与connection cleanup在 `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349,1420-1440`；gRPC finalizers在 `lualib/silly/net/grpc/client/service.lua:38-81,134-176`。
+- 触发：server/proxy以任何标准 RST_STREAM code终止 call，或 TCP/TLS/HTTP2连接在 RPC未收到 final grpc-status前断开。
+- 影响：client把可重试的 REFUSED_STREAM/连接失败丢成 UNKNOWN或 raw `"Stream not processed"`/`"Channel goaway"`，把明确 CANCELLED、RESOURCE_EXHAUSTED、PERMISSION_DENIED也丢失。上层无法安全区分 retry、取消、容量和安全错误，行为与其他 gRPC实现不一致。
+- 证据：H2 `frame_rst` 在 unpack error code后立即通过 `err_str[...]`降成普通字符串交给 stream；connection cleanup同样只写固定字符串，数值 code/原因不可再取。gRPC `check_trailer`在缺 status时固定 UNKNOWN，unary只返回该字符串；仓库没有 transport→gRPC mapping table。
+- 根因：HTTP/2 API只暴露人类可读 error text，过早丢弃机器可判定的 transport error类型；gRPC层因此无法实现协议要求的单向映射。
+- 建议解法：让 H2 stream终局错误携带结构化 kind/code/retry boundary；gRPC统一 finalizer在缺显式 grpc-status时按官方表映射。连接失败和GOAWAY Last-Stream-ID还应标识 call是否可能未被处理，不能仅靠字符串猜测或无条件重放。
+- 后续回归条件：修复阶段逐个注入全部标准 RST code、未知 code、TCP EOF/TLS error/GOAWAY，断言映射、retryable信息及四种 RPC一致；已有显式 grpc-status时不得被 transport fallback覆盖。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
