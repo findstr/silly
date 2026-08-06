@@ -161,6 +161,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 | GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
 | GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
+| GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
 
 ## 3. 基线结果
 
@@ -832,6 +833,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：gRPC 层把 HTTP/2 transport 能力视为隐式已知，没有把 gRPC 要求的代理兼容性信号写入调用模板；四条调用路径又复制了同一个不完整 header literal。
 - 建议解法：集中定义并复用 gRPC request header builder，所有 RPC 固定加入 `te = 'trailers'`，同时承载 authority、timeout、metadata 与 content subtype；继续由 HTTP/2 层拒绝其他 TE 值。
 - 后续回归条件：修复阶段捕获四种 RPC 的首个 HEADERS，逐一断言只有一个小写 `te: trailers`；再经会拒绝缺失 TE 的独立 gRPC-aware proxy 验证正常转发。本轮不新增测试代码。
+
+### GRPC-003 — P2 — server 只按 path 路由，不验证 gRPC Call-Definition
+
+- 状态：已确认；gRPC over HTTP/2 Request-Headers grammar、Content-Type handling 要求与确定性 dispatch 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：gRPC Call-Definition 要求请求使用 `:method POST`、合法 scheme/path、`te: trailers` 和以 `application/grpc` 开头的 Content-Type。协议特别建议 server 在 Content-Type 不是 `application/grpc` 前缀时返回 HTTP 415，以免普通 HTTP/2 client 把 gRPC error 当成成功响应。
+- 位置：gRPC listener/dispatch 全部位于 `lualib/silly/net/grpc/server.lua:8-55`；底层 HTTP/2 只执行通用 request validation，在 `lualib/silly/net/http/h2.lua:386-444,1555-1648`，不会替 gRPC 校验这些语义。
+- 触发：向已注册 RPC path 发送 GET、非 gRPC Content-Type、缺失/非法 TE 的 HTTP/2 request；向未知 path 发送普通 HTTP/2 request也会得到 gRPC-style 200。
+- 影响：非 gRPC 流量被错误送进 protobuf envelope parser并可能调用业务错误路径；Content-Type 不匹配仍返回 HTTP 200/application-grpc，而不是明确的 415。代理误路由、探测请求或普通 HTTP client 因此得到误导响应，也削弱了 TE 用来识别不兼容中间层的作用。
+- 证据：`dispatch` 只读取 `stream.header[':path']` 并查 `handlers[path]`；命中后立即安排 `200 application/grpc` 并调用 handler，未读取 method/content-type/te。未知 path 同样固定返回 HTTP 200 的 Trailers-Only gRPC error。仓库自测输入来自同库 client，只覆盖 POST 与 application/grpc，且该 client 自身漏发 TE。
+- 根因：gRPC listener 被实现成 path router，没有位于 router 前的 protocol admission 层；通用 HTTP/2 parser 成功被误当成 gRPC request 已合法。
+- 建议解法：dispatch 前集中校验 method、scheme/path、Content-Type prefix 与 TE token；Content-Type 不匹配返回 HTTP 415，其他 malformed gRPC call 按协议定义选择 HTTP/gRPC error且不得调用业务 handler。只有完整通过 admission 才按 path 路由。
+- 后续回归条件：修复阶段以已知 path 覆盖 GET、缺 Content-Type、`application/json`、合法 `application/grpc+proto`、缺失/错误/正确 TE；断言无效请求不调用 handler、非 gRPC Content-Type 为 415、合法 subtype 可调用。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
