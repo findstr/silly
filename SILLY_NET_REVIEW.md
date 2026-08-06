@@ -382,6 +382,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：集中`parse_sockaddr_blob(ptr,len)`，只接受长度恰好匹配AF_INET/AF_INET6且family一致的值；所有public入口返回EINVAL而非assert。更优是使用opaque userdata保存validated sockaddr，sendto/ntop不接受任意string。始终检查inet_ntop返回并以已初始化buffer/显式error收尾。
 - 回归测试：修复阶段覆盖长度0..sizeof(v6)+1、AF_UNSPEC/随机family、v4 family+v6 length及反向、截断/超长、inet_ntop失败；assert/NDEBUG两种build都只返回错误，无stack overwrite/OOB，合法recvfrom addr仍可round-trip。当前不新增动态触发。
 
+### SOCK-012 — P1 — TCP/TLS/UDP 默认接收队列无上限，可被远端耗尽内存
+
+- 状态：已确认；公开API默认值、数据事件和读取路径的确定性推导。本阶段不新增大流量/慢消费压力复现。
+- 位置：TCP socket默认值、data append与可选limit在 `lualib/silly/net/tcp.lua:68-98,127-149,213-225`；TLS对应路径在`lualib/silly/net/tls.lua:105-137,250-278,398-407`；UDP stash在`lualib/silly/net/udp.lua:48-92,135-168`；C层每次收包复制并投递worker在`src/socket.c:997-1057`。
+- 触发：建立TCP/TLS连接后持续发送而应用handler不调用/来不及调用read，或向UDP socket持续发送datagram而应用不调用/来不及调用recvfrom。TCP/TLS调用方未显式设置`conn:limit()`即可；UDP没有等价的limit、packet-count cap或drop policy API。
+- 影响：TCP每个data event无条件`bappend`，TLS把全部ciphertext/plaintext推入SSL buffer，UDP则把每个报文复制成Lua string并排入`stash_packets`；三者都可随远端输入持续增长，最终造成进程内存耗尽、GC压力和服务不可用。UDP除payload外还按报文增长table/queue元数据，小包洪泛也可放大对象数量。
+- 证据：TCP/TLS的`buflimit`初始化为nil，只有应用主动调用`limit`才会执行高水位`readenable(false)`；listener/connect配置没有安全默认值。UDP data callback在没有等待中的reader时始终`qpush`并增加`stash_bytes`，但该计数既不参与限流也不暴露为限制配置。C socket thread读取后为每个chunk/datagram分配独立payload并发送worker消息，未提供跨层全局或per-socket预算。
+- 根因：接收背压被设计成可选的调用方责任，并且只覆盖TCP/TLS字节buffer；默认构造和UDP队列没有资源预算，worker消息生产也没有与consumer backlog联动。
+- 建议解法：为listener/connect/bind提供安全且可配置的默认高/低水位与hard cap；TCP/TLS达到高水位暂停read、低水位恢复，超过hard cap明确关闭/报错。UDP同时限制stash bytes和packet count，配置drop-new/drop-old/error策略并暴露drop metrics；补充worker/per-socket在途消息预算，避免Lua层限流生效前已有大量payload排队。
+- 回归测试：修复阶段分别覆盖TCP、TLS及UDP在handler阻塞/不读取时持续输入；断言内存与packet count有界、TCP/TLS能按水位恢复、UDP按配置丢弃并计数、close会释放stash。当前按要求不新增压力触发。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1200,6 +1211,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认poll batch先snapshot、后处理close/reuse op，裸slot userdata缺generation校验，记录为`SOCK-009`；没有新增跨平台动态复现。
 - 2026-08-06：确认`rw_enable`在backend MOD前提交state且忽略失败，导致永久stall/busy-loop，记录为`SOCK-010`；没有新增multiplexer fault injection。
 - 2026-08-06：确认公开UDP/ntop把任意Lua string当trusted sockaddr，assert/NDEBUG分别可abort/stack overflow或OOB，记录为`SOCK-011`；未新增破坏性blob测试。
+- 2026-08-06：确认TCP/TLS默认buffer及UDP packet stash均无资源上限，慢消费/不读取时远端输入可持续占用内存，记录为`SOCK-012`；未新增流量压力复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。

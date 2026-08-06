@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（78 条）
+## 5. 已确认问题（79 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -139,6 +139,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-009 | P1 | poll batch中的裸slot pointer缺generation，close/reuse后old event可误作用于new socket。 |
 | SOCK-010 | P2 | rw_enable先改state再忽略sp_ctrl失败，可使发送永久stall或残留事件CPU busy-loop。 |
 | SOCK-011 | P1 | 任意sockaddr string仅靠assert进入fixed stack op/ntop，可导致abort、stack overflow或OOB read。 |
+| SOCK-012 | P1 | TCP/TLS默认buffer与UDP packet stash无资源上限，慢消费时远端输入可持续耗尽内存。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -282,10 +283,10 @@ review-repros/socket_stat_close_race.lua
 
 按顺序调查并记录：
 
-1. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler堵塞是否可导致内存DoS。
-2. `timer` delta转`int`、queue size返回`int`等conversion warnings；区分真实可达缺陷与构建卫生。
+1. `timer` delta转`int`、queue size返回`int`等conversion warnings；区分真实可达缺陷与构建卫生。
 
 原send-length与late-accounting两项已由静态完整调用链确认并记录为`SOCK-006`/`SOCK-007`；本阶段不新增大长度或并发barrier动态复现。
+默认TCP/TLS/UDP接收stash已确认无上限并记录为`SOCK-012`；本阶段不新增流量压力复现。
 
 阶段 4 完成前，再审阅 `src/socket_poll_*`、pool/flipbuf、所有 `free_socket` 调用点和 stop/exit ownership table，跑一次严格 warnings 静态检查并把结论入报告。
 
