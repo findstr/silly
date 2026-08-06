@@ -378,6 +378,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：decoder接收`field_end`与`message_size`两个边界：读取label/pointer encoding octet不得越过RDATA end，pointer解引用目标仍按完整message验证；返回consumed position必须恰好等于RDATA end。A/AAAA要求rdlen分别严格等于4/16，SRV先保证6字节后再限定target编码，SOA两name及20-byte tail全部在RDATA内。任一RR malformed应拒绝整个响应，不能缓存partial prefix。
 - 回归测试：修复阶段逐项覆盖fixed length±1、CNAME/SRV/SOA在每个label/pointer/fixed-field字节截断、借用下一RR、合法compression pointer指向RDATA外的既有name，以及trailing垃圾；只有编码本体完整且消费恰好到RDATA end才成功。当前不新增畸形packet。
 
+### DNS-002 — P1 — 合并所有 response section 并缓存无关记录，可覆盖任意名字
+
+- 状态：已确认；RFC trust ranking与确定性parser/cache路径推导。本阶段不搭建恶意authority/recursive互操作。
+- 规范：RFC 2181 §5.4.1规定DNS data按来源具有不同trustworthiness，additional section最低，低可信数据不得替换更可信的既有data；response section与bailiwick不能在cache时丢失。参见 [RFC 2181](https://www.rfc-editor.org/rfc/rfc2181.html)。
+- 位置：C parser把三个count相加并统一输出在`luaclib-src/ldns.c:475-515,552-605`，RR CLASS被忽略在`:330-347`；Lua无条件merge/cache在`lualib/silly/net/dns.lua:110-133,194-226`。
+- 触发：匹配当前ID/QNAME/QTYPE的response在authority或additional section携带A/AAAA/CNAME/SRV记录，owner name可与当前查询完全无关；也可使用非IN CLASS。该响应可能来自错误/恶意上游、被攻击者影响的authority经recursive转发，或伪造响应。
+- 影响：resolver对每个记录调用`try_create_rr`，第一次见到该owner/type就`clear_rr`，随后缓存rdata与TTL；因此最低可信additional数据能覆盖此前从answer获得的任意域名地址/CNAME/SRV。后续连接可被重定向到攻击者地址，且transaction-local `merge_records`还给这些记录设置`maxinteger`，在同次CNAME解析中立即使用。忽略CLASS进一步允许非Internet namespace数据进入同一cache。
+- 证据：`lanswer`用`total_rr=ancount+nscount+arcount`调用一次`push_rrs`，输出record没有section/class字段。`dispatch_resp`遍历全部records并按record owner直接写server cache，既不要求owner属于QNAME/CNAME chain，也不限制SRV glue target/bailiwick，更没有trust rank；已有更可信rr会被`clear_rr`覆盖。
+- 根因：wire parser为简化返回结构丢弃section与CLASS provenance，cache层因而无法执行最小相关性、bailiwick和可信度规则，并把“configured server发来的整包”误当作“包中每条记录都可全局缓存”。
+- 建议解法：parser分别返回answer/authority/additional并保留CLASS；先严格要求question与可消费RR为IN。stub解析仅接受与QNAME及受验证CNAME chain相关的answer；negative cache只使用匹配authority SOA。若为SRV等保留additional glue，限定到已接受target和相应bailiwick，赋较低trust且绝不覆盖更高trust cache；最安全的stub策略是不全局缓存additional，而按需另查。
+- 回归测试：修复阶段构造answer正常但additional含`victim.example`、authority含伪A/CNAME、非IN CLASS及同名低trust覆盖；断言只返回/缓存query相关answer，既有高trust记录不变。另覆盖合法CNAME chain、SRV target glue及negative SOA。当前不新增恶意上游互操作。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1337,6 +1349,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TLS server在应用accept前以nil timeout等待ClientHello，listener无握手deadline配置，空连接可永久占用fd/SSL/task，记录为`TLS-005`；未新增slow-handshake压力复现。
 - 2026-08-06：确认TLS server显式minimum为TLS1.1、client不设置minimum，安全基线依赖环境且可偏离RFC8996，记录为`TLS-006`；未启用legacy cipher互操作。
 - 2026-08-06：确认DNS CNAME/SRV/SOA name decoder使用整条message边界且A/AAAA只校验最小长度，typed RDATA可跨越声明RDLENGTH，记录为`DNS-001`；未新增畸形packet。
+- 2026-08-06：确认DNS parser抹平answer/authority/additional并丢弃CLASS，cache无条件按owner清除/写入，低trust无关记录可覆盖任意名字，记录为`DNS-002`；未新增恶意上游互操作。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
