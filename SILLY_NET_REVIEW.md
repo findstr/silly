@@ -596,6 +596,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：parser对每个type、数字grammar/range、null sentinel和CRLF显式验证并只返回structured protocol error；reader owner以protected/finally结构保证任意失败都关闭并清空socket、复位`readco`、唤醒全部waiters。协议错误连接绝不复用，保留原始错误给所有受影响调用。
 - 回归测试：修复阶段逐项覆盖unknown prefix、empty/nondecimal/overflow length、`-2`、LF-only、错误bulk terminator和nested malformed element；断言所有并发调用有限时间返回同一connection error，`readco=false`且下一次命令能新建连接。当前不生成畸形RESP。
 
+### REDIS-002 — P2 — command write failure 调用错误 ownership 清理路径并触发断言
+
+- 状态：已确认；write failure与reader token不变量静态推导。本阶段不注入socket send failure。
+- 位置：普通动态command发送分支在`lualib/silly/store/redis.lua:266-300`；`close_socket`的owner约束在`:215-235`；pipeline发送失败分支在`:310-348`。
+- 触发：连接已被peer关闭但Redis对象尚保留`sock`，下一条普通命令的`sock:write`返回false；并发`close()`与已捕获sock的命令也可触发。pipeline在相同send failure下进入另一条错误分支。
+- 影响：普通命令不会按API返回`false, err`，而是在`close_socket`内因`redis.readco`不是当前coroutine（单请求时通常为false）触发assert并终止task；有现存reader时还可能把它的连接状态错误地交给writer清理。pipeline则不关闭或清除失败socket，后续请求持续使用坏连接并重复失败。
+- 证据：write发生在`wait_for_read(self)`之前；失败立即调用`close_socket(self, err)`，而该函数明确assert“must be called by redis.readco”。pipeline的`if not ok then return nil, err end`完全跳过socket/reset/waiter收尾。
+- 根因：连接fatal cleanup与当前response reader ownership硬绑定，但send side同样能首先发现fatal error；普通命令与pipeline又复制出不一致的失败逻辑。
+- 建议解法：建立可由任意coroutine安全调用、幂等且按socket generation核对的`fail_connection`；原子清除当前sock、关闭它并唤醒属于该generation的reader/waiters，不能assert caller identity。普通命令与pipeline复用同一发送/失败路径；若已有reader负责最终广播，则writer只标记fatal并安全唤醒它。
+- 回归测试：修复阶段覆盖idle peer close后的首个command/pipeline、concurrent close/write以及已有reader时另一writer send failure；所有调用只返回错误、不抛异常，坏socket被清除且随后可重连。当前不做send fault injection。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1574,6 +1585,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP/1 request/status-line parser未锚定、版本字符类含`|`且status不限3位，method白名单又先于语法/能力判断，记录为`HTTP1-010`；未构造畸形start-line。
 - 2026-08-06：确认gzip inflate以output buffer是否填满代替`Z_STREAM_END`，截断、尾随或multi-member输入可被部分成功接受，记录为`COMP-001`；未生成压缩样本。
 - 2026-08-06：确认Redis RESP未知type/非法length等会抛出未清理异常，reader token与wait queue因此永久卡死，记录为`REDIS-001`；未发送畸形RESP。
+- 2026-08-06：确认Redis command在获取reader token前的write failure会调用reader-only cleanup并assert，pipeline又遗留坏socket，记录为`REDIS-002`；未注入send failure。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
