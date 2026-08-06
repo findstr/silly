@@ -148,6 +148,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-5.1/6.9-CLOSED-WINDOW-UPDATE | MUST NOT | `lualib/silly/net/http/h2.lua:238-241,1038-1080,1366-1407,1562-1648` | client recipient | 偏离 | client 不记录本端已用 stream-id；完成 stream 移除后，合法 late WINDOW_UPDATE 被误判为 idle 并触发 GOAWAY | 现有测试只覆盖 active stream flow-control，没有 close 后在途 update | H2-015 |
 | RFC9113-4.1/6.8-GOAWAY-LAST-ID | MUST | `lualib/silly/net/http/h2.lua:238-241,596-608,1562-1648`; `luaclib-src/lhttp.c:1049-1072` | client/server sender | 偏离 | 无 peer stream 时 last id=-1 被转成 0xffffffff；reserved bit 非零且错误声明最大 Last-Stream-ID，而非 0 | 现有测试未检查 outbound GOAWAY bytes/processed boundary | H2-016 |
 | RFC9113-8.1-RST-NO-ERROR-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1088-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的 RST_STREAM(NO_ERROR) 覆盖 END 为 RST；尚未读取的空响应会被丢弃为错误 | 现有测试没有 response END 后 RST(NO_ERROR) | H2-017 |
+| RFC9113-8.1.1/8.2.2/8.3-SENDER-FIELDS | MUST/MUST NOT | `lualib/silly/net/http/h2.lua:700-738,938-1025`; `lualib/silly/net/http/client.lua:318-365`; `luaclib-src/lhttp.c:357-556` | client/server sender | 偏离 | request/response/trailer 在 HPACK 前无 sender validation；可生成 connection-specific/uppercase/非法或重复 pseudo/status fields | 现有测试只验证正常 fields，未检查 outbound malformed block | H2-018 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -666,6 +667,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：terminal response completion 必须单调且独立保存；client 若已收到完整 response，再收到 RST_STREAM(NO_ERROR) 只能终止本端 request write/wake writer，不能覆盖 response END、status/header/body/trailer。其他 code 或响应完成前的 RST 仍按 reset 处理，并正确停止双向 stream。
 - 后续回归条件：修复阶段覆盖空 response HEADERS+END_STREAM→RST(NO_ERROR)、带 body END→RST(NO_ERROR)、RST 在 final/END 前、非零 error code、client 仍在上传 body，以及 waitresponse→延迟 readall；断言完成响应保持可读，pending writer被停止，其他 stream 不受影响。本轮不新增测试代码。
 
+### H2-018 — P2 — request/response/trailer sender 不校验 field section
+
+- 状态：已确认；RFC 9113 sender requirements 与确定性 API→HPACK path 推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §8.2.2 要求 endpoint MUST NOT 生成 connection-specific fields，TE 仅允许值 `trailers`；§8.3 禁止未定义、错误 context 或重复 pseudo-header，并要求 pseudo 位于普通 fields 前；§8.1.1 的 malformed message 条件也约束合法 field name/value。response 必须生成恰好一个三位 `:status`，trailer 不得含 pseudo-header。
+- 位置：统一 header 写出在 `lualib/silly/net/http/h2.lua:700-738`，公开 request/respond/closewrite API 在 `:938-1025`，高层 client 仅小写化在 `lualib/silly/net/http/client.lua:318-365`；HPACK encoder 在 `luaclib-src/lhttp.c:357-556`。
+- 触发：client header 传入 `connection`/`upgrade`/非法 `te`，或直接 stream API 传 uppercase/`:method`；server 调 `respond(200, {connection="close"})`、传 header 内 `:status`，或给 status 传非三位数；任一端 trailer table 含 pseudo/connection field。
+- 影响：Silly 主动在 wire 上生成 peer 必须判为 malformed 的 request/response，严格 endpoint 会 reset stream，导致由本地输入即可触发互操作失败。若宽松 peer 接受，则 hop-by-hop metadata、重复控制数据或非法 field syntax 可能在代理/缓存链上产生不同解释。gRPC metadata 复用同一路径，也会继承该缺口。
+- 证据：`stream_writeheader` 只临时移除 request `host`，随后把整个 caller table 与内部 pseudo 一起交给 `hpack_pack`；response 同样直接编码 caller table 和内部 `:status`。`closewrite` 对 trailer 直接 `hpack_pack(trailer)`。高层 client 只执行 `lower(k)`，没有 forbidden/TE/name/value过滤；C encoder 只把任意 Lua key/value转 string并压缩，不理解 HTTP context，因此 caller 可重复内部 pseudo 或生成非法 fields。
+- 根因：把 HPACK serialization 误当成 HTTP field validation，且 recipient 侧的部分 validator 没有抽成 sender/receiver、request/response/trailer共用的语义层。
+- 建议解法：在 HPACK 前构造并验证有序 field list：普通 API 禁止 caller 提供 pseudo；严格校验 lowercase field-name/value；剔除或拒绝 connection-specific fields并检查 TE；按 context 由库唯一生成 pseudo/status；trailer 使用独立禁止集合。不要依赖 peer 替本端验证，也不要静默发送被 lower 后仍禁止的字段。
+- 后续回归条件：修复阶段逐字节解码 outbound request/response/trailer，覆盖 uppercase、五种 connection-specific fields、TE 多值/大小写、caller pseudo、重复 status、非法 status、NUL/CR/LF 与合法重复普通 fields；断言非法输入在写 frame 前稳定失败且 connection 仍可复用。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -776,3 +789,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
 - 2026-08-06：确认完整响应后的 RST_STREAM(NO_ERROR) 会把 client END 覆盖为 RST，使尚未读取的空响应被丢弃，记录为 `H2-017`。
+- 2026-08-06：确认 request/response/trailer sender 在 HPACK 前无 HTTP/2 field validation，可生成 connection-specific/非法或重复控制 fields，记录为 `H2-018`。

@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（45 条）
+## 5. 已确认问题（46 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -166,10 +166,11 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-015 | P1 | client 将已完成 stream 的合法 late WINDOW_UPDATE 误判 idle 并触发 GOAWAY。 |
 | H2-016 | P2 | 无已处理 stream 时 GOAWAY 将 -1 写成 0xffffffff Last-Stream-ID。 |
 | H2-017 | P2 | 完整响应后的 RST_STREAM(NO_ERROR) 会覆盖 END 并丢弃空响应。 |
+| H2-018 | P2 | request/response/trailer sender 无 field validation，可主动生成 malformed message。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
 | HPACK-003 | P2 | Huffman EOS symbol 256 被截断为 0 并作为 NUL 输出，而非 decoding error。 |
 
-统计口径为 45 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 17 个 HTTP/2 + 3 个 HPACK；以主报告中的编号和证据为准。
+统计口径为 46 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 18 个 HTTP/2 + 3 个 HPACK；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -223,7 +224,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-017`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。下一项继续检查 HEADERS state 和 sender field validation。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-018`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。下一项继续检查 HEADERS state、content-length 与 handshake/dispatch lifetime。每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
