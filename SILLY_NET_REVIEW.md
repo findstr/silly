@@ -390,6 +390,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：parser分别返回answer/authority/additional并保留CLASS；先严格要求question与可消费RR为IN。stub解析仅接受与QNAME及受验证CNAME chain相关的answer；negative cache只使用匹配authority SOA。若为SRV等保留additional glue，限定到已接受target和相应bailiwick，赋较低trust且绝不覆盖更高trust cache；最安全的stub策略是不全局缓存additional，而按需另查。
 - 回归测试：修复阶段构造answer正常但additional含`victim.example`、authority含伪A/CNAME、非IN CLASS及同名低trust覆盖；断言只返回/缓存query相关answer，既有高trust记录不变。另覆盖合法CNAME chain、SRV target glue及negative SOA。当前不新增恶意上游互操作。
 
+### DNS-003 — P1 — query ID 可预测且长期复用单一 UDP source port
+
+- 状态：已确认；RFC防伪要求与transaction/socket生命周期推导。本阶段不发送伪造DNS response。
+- 规范：RFC 5452要求outgoing query使用不可预测的query ID与source port，并在接收时匹配地址、端口、ID、QNAME、QCLASS和QTYPE，以扩展伪响应所需entropy；参见 [RFC 5452](https://www.rfc-editor.org/rfc/rfc5452.html)。
+- 位置：每个rr的version初始化/递增在`lualib/silly/net/dns.lua:91-107,350-381`；每个server复用UDP connection在`:305-330`；socket只在首次创建/错误后重建在`:229-247,305-321`；response matching在`:185-202`。
+- 触发：首次查询任意新name时TXID必为1，之后只需知道该name此前的查询次数即可预测16-bit递增值；同一nameserver的所有查询长期使用同一个connected UDP socket，由OS只在首次connect选择一次ephemeral source port。能spoof nameserver源地址并猜出/侧信道获知该固定端口的off-path攻击者可竞速发送匹配question的响应。
+- 影响：预期的TXID entropy完全消失，攻击者只剩至多source-port搜索空间；一旦端口被观察或推断，单个伪响应即可被接受并写入cache。结合`DNS-002`，匹配一个攻击者可预测的查询还可能携带无关记录污染其他名字。connected UDP会校验source endpoint，但不能弥补可预测ID和固定本地端口。
+- 证据：新rr固定`version=0`，新request使用`(version+1)&0xffff`，没有任何随机源；不同name的首个并发query全部ID=1。`server.udp_conn`跨query保留且没有port rotation。matcher验证ID/name/type，但C parser跳过QCLASS，且这些匹配字段除端口外均可由触发/观察query的攻击者得知。
+- 根因：cache version counter被复用为wire transaction nonce，并为连接复用牺牲source-port entropy；transaction identity与cache generation没有分离。
+- 建议解法：每个UDP transaction用CSPRNG生成不可预测且当前socket内不冲突的16-bit ID，cache generation另设字段；采用RFC 5452建议的source-port randomization/安全socket pool与适当轮换，同时保持connected-source校验。接收端严格匹配source/destination endpoint、ID、完整QNAME、QCLASS=IN和QTYPE；必要时加入0x20 case randomization作为额外而非替代防线，优先支持加密resolver或DNSSEC验证。
+- 回归测试：修复阶段统计大量并发/顺序query，断言不同name首包不恒定、活动ID唯一且port按策略具有entropy；伪造错误ID/port/name/class/type均被丢弃且不改cache。当前不发送spoofed response。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1350,6 +1362,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TLS server显式minimum为TLS1.1、client不设置minimum，安全基线依赖环境且可偏离RFC8996，记录为`TLS-006`；未启用legacy cipher互操作。
 - 2026-08-06：确认DNS CNAME/SRV/SOA name decoder使用整条message边界且A/AAAA只校验最小长度，typed RDATA可跨越声明RDLENGTH，记录为`DNS-001`；未新增畸形packet。
 - 2026-08-06：确认DNS parser抹平answer/authority/additional并丢弃CLASS，cache无条件按owner清除/写入，低trust无关记录可覆盖任意名字，记录为`DNS-002`；未新增恶意上游互操作。
+- 2026-08-06：确认DNS新name TXID恒为1且按name独立递增，同时每个server长期复用单一UDP source port，偏离RFC5452防伪entropy要求，记录为`DNS-003`；未发送伪造response。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
