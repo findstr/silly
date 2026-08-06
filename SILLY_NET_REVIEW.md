@@ -134,6 +134,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
 | RFC9113-5.2/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-263,479-482,502-542,1177-1204` | client/server recipient | 偏离 | channel/stream 没有剩余 receive-window 状态；DATA 无条件 append，仅累计将来回补的 debt，超过已广告 credit 也不会报 `FLOW_CONTROL_ERROR` | 现有测试只覆盖守规发送方和正常 1 MiB 消息，没有超 window DATA | H2-003 |
 | RFC9113-6.5.2-HEADER-TABLE-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-170,239-263,1211-1278` | client/server | 偏离 | 收到 peer 的 HEADER_TABLE_SIZE 后错误地 hard-limit `recvhpack` decoder；该 setting 描述 peer decoder 的上限，应约束本端 `sendhpack` encoder | HPACK 单测只同时修改 encoder/decoder；HTTP/2 测试没有非默认 peer setting | H2-004 |
+| RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
 
 ## 3. 基线结果
 
@@ -482,6 +483,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：收到 setting 时更新 `ch.sendhpack` 的 encoder maximum，并让 encoder 在下一 field block 开头发出 RFC 7541 要求的 dynamic table size update；`recvhpack` hard limit 只能由本端广告值/配置决定。不要简单把当前调用换对象后忽略 size-update wire signaling。
 - 后续回归条件：修复阶段建立两个独立 HPACK context，分别改变单向 setting 为 0/小值/恢复值；断言只影响该方向 outbound encoding，本端 inbound decoder 仍接受其已广告上限内的 block。配合严格 peer 验证 table-size update、ACK 时序和 connection `COMPRESSION_ERROR`。本轮不新增测试代码。
 
+### HPACK-001 — P2 — encoder 改变 maximum table size 后不发送 wire update
+
+- 状态：已确认；RFC 7541 与确定性 encoder 输出路径推导。本阶段只做静态 review，不新增复现代码。当前 HTTP/2 integration 因 `H2-004` 误改 decoder 而遮蔽此路径；修正方向后本问题立即成为必经路径。
+- 规范：RFC 7541 §4.2 要求协议改变 encoder dynamic table maximum 后，必须在变化后的第一个 header block 开头发送 dynamic table size update；两次 header block 之间多次变化时，期间最小值和最终值都必须按规则表达。§6.3 定义 001xxxxx/5-bit prefix 的 wire representation，并要求 update 出现在任何 header field representation 之前。
+- 位置：HPACK context/init 和 pack 在 `luaclib-src/lhttp.c:246-260,489-548`，decoder 已实现 size update 解析在 `:747-771`，`lhpack_hardlimit` 在 `:782-791`；调用契约在 `lualib/types/silly/http2/hpack.lua:7-25`。
+- 触发：对 encoder context 调用 `hpack.hardlimit(ctx, new_size)` 后编码下一 header block；典型 HTTP/2 场景是收到 peer 的 `SETTINGS_HEADER_TABLE_SIZE=0`、缩小后恢复，或两个 header block 之间连续缩小/增大。
+- 影响：peer decoder 不会获知 encoder 已选择的新 maximum，双方 dynamic table capacity/state 不按规范同步。缩小时 peer 无法按要求及时驱逐旧条目，恢复/后续变更时可能出现 index context 差异或严格 decoder 拒绝；更直接地，修复 `H2-004` 后仍无法满足 peer 对 table size 的 wire-level同步要求。
+- 证据：`lhpack_hardlimit` 只覆盖 `hard_limit/soft_limit` 并立即 `try_evict`，context 没有 pending/current-advertised/min-pending 字段。`lhpack_pack` 初始化 buffer 后直接遍历 pseudo/普通 fields 并调用 `pack_field`，没有在首字段前调用 `write_varint(..., 0x01, size, 5)` 或任何等价 0x20-prefixed update。相反 decoder 端已有对 `(n & 0xe0)==0x20` 的解析，说明 wire format 只实现了一半。
+- 根因：同一个 `hardlimit` API 混合 encoder/decoder 本地上限语义，却没有 encoder 所需的延迟 wire synchronization state；现有测试通过同时修改两端 context 或保留更大 decoder 上限，绕过了同步要求。
+- 建议解法：区分 encoder maximum update 与 decoder hard limit API。encoder 记录 last-emitted、pending-final 和 interval-minimum；下一次 `pack` 在任何 field 前按 RFC 最多发送两个 size updates，再更新 emitted state。decoder hard limit 仍只约束接收的 size update。处理多次变化、0→恢复以及无字段 header block。
+- 后续回归条件：修复阶段直接断言 header block 首字节/varint；覆盖单次减小、增大、连续减小→增大、连续增大→减小、0→恢复、empty headers，以及 update 出现在 field 后必须解码失败。使用独立 decoder，只通过 wire update 同步，禁止测试直接替 decoder 调 `hardlimit`。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -552,3 +565,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认通用 frame reader 会把所有类型的 0x08 都解释为 PADDED，未按 RFC 忽略 frame-type 未使用 flag，记录为 `H2-002`。
 - 2026-08-06：确认 HTTP/2 接收方向没有剩余 connection/stream window，超出已广告 credit 的 DATA 仍会无条件进入 recvbuf，记录为 `H2-003`。
 - 2026-08-06：确认 peer 的 HEADER_TABLE_SIZE 被错误应用到 `recvhpack` 而非 `sendhpack`，双向独立 HPACK context 发生颠倒，记录为 `H2-004`。
+- 2026-08-06：确认 HPACK encoder 的 `hardlimit` 仅本地改表，下一 header block 不会发送强制 dynamic table size update，记录为 `HPACK-001`。
