@@ -457,6 +457,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义远低于`UINT32_MAX`且受`INT_MAX/SIZE_MAX`约束的绝对protocol cap；对`psize+1`、`HEADER_SIZE+body`、allocation与copy全部使用checked `size_t/uint64_t`加法，验证后才窄化wire字段。lightuserdata入口同时校验非负、实际owner范围或改opaque buffer。配置超出安全cap应立即报错。
 - 回归测试：修复阶段只做checked-arithmetic单元边界，覆盖hardlimit/psize/body在cap、`UINT32_MAX-4..UINT32_MAX`及负claimed length，断言在allocation/copy前拒绝；不分配4GiB。ASan/UBSan下合法最大安全frame round-trip。当前不构造越界包。
 
+### CLUSTER-006 — P2 — wire integers 使用 host byte order，跨端序节点无法互操作
+
+- 状态：已确认；序列化/反序列化逐字段调用链推导。本阶段不运行big-endian peer。
+- 位置：wire structs与header在`luaclib-src/lcluster.c:15-49`；length接收/发送在`:193-246,333-437`；request/response header解析在`:294-331`；协议文档在`docs/src/reference/net/cluster.md:24-37`。
+- 触发：little-endian与big-endian节点之间建立cluster TCP连接，或任一独立实现按文档/通常network byte order编码；相同问题也会出现在将录制frame跨架构重放时。
+- 影响：4-byte psize首先被按接收机host order解释，常见小frame会变成超过hardlimit的巨大值并断连；即使长度偶然对称，session ACK bit、cmd和64-bit traceid仍被反序，导致请求误路由、响应无法匹配或trace污染。cluster自称节点间RPC却只能在隐含同端序ABI内工作。
+- 证据：所有字段均以`memcpy(&native_integer,wire,...)`或把native struct直接`memcpy`到wire，没有`htonl/ntohl`、显式shift或codec；static_assert只保证struct size 16，不能定义byte order。文档反而写“2字节长度、业务数据、trace/cmd/session”，与实际“4-byte native length + native header + body”不一致。
+- 根因：进程内C布局被直接提升为网络协议，没有定义版本、字节序和逐字段wire schema，测试只覆盖同一主机/ABI。
+- 建议解法：定义版本化wire format，所有u32/u64固定network(big-endian)或明确little-endian并用逐字段codec，禁止raw struct serialization；为旧同端序部署提供显式版本协商/迁移，而非启发式猜端序。同步更正文档的长度、顺序、limit语义。
+- 回归测试：修复阶段使用固定golden byte vectors验证encode/decode，与独立实现互操作；通过字节交换模拟big-endian，覆盖length/session ACK/cmd/traceid及协议版本拒绝。当前不运行big-endian peer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1423,6 +1434,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster unknown/late/duplicate ACK取到nil waiter后仍task.wakeup，且连接保持可重复制造异常与日志，记录为`CLUSTER-003`；未发送ACK flood。
 - 2026-08-06：确认cluster主动close不调用C parser clear且net已移除close callback，partial frame allocation永久挂在全局ctx，记录为`CLUSTER-004`；未发送大partial frame。
 - 2026-08-06：确认cluster接受UINT32_MAX hardlimit，但receive的psize+1与send的4+body会32-bit回绕后小分配/大copy，记录为`CLUSTER-005`；未构造越界包。
+- 2026-08-06：确认cluster把native整数/struct直接memcpy上wire且文档长度/顺序也与实现不符，跨端序节点无法互操作，记录为`CLUSTER-006`；未运行big-endian peer。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
