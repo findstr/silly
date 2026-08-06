@@ -68,7 +68,7 @@ git -C silly pull --ff-only
 | 12 | HTTP/2 + HPACK + RFC 9113/7541 | 待做 |
 | 13 | HTTP client/server 聚合与 Go 互操作 | 待做 |
 | 14 | WebSocket + RFC 6455/8441 | 待做 |
-| 15 | gRPC over HTTP/2 | 待做 |
+| 15 | gRPC over HTTP/2 | 首轮静态协议审查完成；修复阶段待独立peer互操作 |
 | 16 | Redis driver | 待做 |
 | 17 | MySQL C codec | 待做 |
 | 18 | MySQL Lua driver | 待做 |
@@ -248,9 +248,11 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 > 2026-08-06 当前工作方式更新：用户要求暂停新增复现代码和动态故障注入，先完成 HTTP、WebSocket、gRPC 的 RFC/协议静态 review。并发候选若没有现成精确 barrier，只记录静态时序和“无独立动态复现”，不要为了复现而修改源码。
 
-### 8.0 当前第一优先：继续 gRPC protocol review
+### 8.0 已完成：gRPC protocol 首轮静态 review
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`；HTTP/2 已确认 `H2-001` 至 `H2-026`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。gRPC 已确认 `GRPC-001` 至 `GRPC-018`；custom metadata 目前记为未公开支持而非 mandatory 偏离。下一项完成gRPC矩阵收尾并转回socket core静态候选。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`；HTTP/2 已确认 `H2-001` 至 `H2-026`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`；gRPC 首轮已确认 `GRPC-001` 至 `GRPC-018`。gRPC基础length-prefix重组与正常response trailer符合；custom metadata记为可选能力/API缺口。按用户要求本阶段没有新增畸形输入或独立peer复现。
+
+当前立即转回阶段4 socket core候选，以静态所有权/并发时序为主；没有精确barrier的竞争明确标注“无独立动态复现”。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
