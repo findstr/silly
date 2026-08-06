@@ -338,6 +338,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把wlbytes增加移到socket线程，在old sid验证成功并决定接纳op后执行；若worker必须立即看到backpressure，使用独立generation-tagged pending accounting并在入队/消费时校验同一tag，不能直接修改slot计数。close/reuse与send acceptance必须有单一线性化点。
 - 回归测试：修复阶段用测试barrier停在pool_get后，依次执行close→free→可选reuse→恢复send；覆盖late add发生于free slot和new socket两种时序、TCP/UDP、stale op处理前后，断言new sendsize始终0且payload只释放一次。当前无独立动态复现。
 
+### SOCK-008 — P1 — `worker_exit` 后的 socket flush error 会使用已释放的 worker
+
+- 状态：已确认；确定性shutdown顺序与error call graph推导，无独立动态复现。按用户要求不新增退出故障注入。
+- 位置：shutdown/join/析构顺序在 `src/engine.c:125-174`；worker释放在 `src/worker.c:517-522`；socket final flush在 `src/socket.c:1190-1209,1977-1996`；close message入队在`:680-743`与`src/worker.c:90-100`。
+- 触发：shutdown时仍有TCP wlist留在dirty socket中；socket thread处理OP_EXIT后已停止，主线程先释放worker；随后`socket_exit→flush_dirty→drain_wlist_tcp`的sendv返回EPIPE/ECONNRESET等永久错误。peer在服务退出前reset/close且本端仍有待发数据即可影响该条件。
+- 影响：error路径调用`report_close`分配message并进入`worker_push`，后者解引用已经`mem_free`的全局`W`及其已释放queue，构成heap use-after-free；可能崩溃、破坏allocator/相邻内存，或在退出阶段产生不可预测行为。
+- 证据：`engine_shutdown`确实在worker仍运行时stop并join timer/socket，worker thread退出后`engine_run`依次执行`worker_exit()`再`socket_exit()`。`worker_exit`关闭Lua、`queue_free`并释放W；`socket_exit`第一句业务动作却是`flush_dirty(SM)`。该函数对任何negative drain无teardown guard地调用`report_close`，最终`queue_push(W->queue, msg)`。线程已join只消除并发，不恢复对象生命周期。
+- 根因：退出流程把“停止producer thread”误当作“后续cleanup不会再生产worker消息”；final transport flush仍复用了运行期error-reporting路径。
+- 建议解法：定义两阶段quiesce/cleanup：停止接收新发送并joinproducer后，socket abort-cleanup不得再向worker报告消息，只释放payload/关闭fd；或保持worker queue存活到socket cleanup结束并明确丢弃/释放其消息。不要仅交换两行而让无人dispatch的close message泄漏；加入teardown flag和专用no-report cleanup路径更清晰。
+- 回归测试：修复阶段在退出final flush注入EPIPE/ECONNRESET/EAGAIN/partial write，覆盖有/无closewait和多个wlist；ASan断言无UAF，所有payload/message只释放一次，worker queue/socket manager/timer最终无泄漏。当前无独立动态复现。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1152,6 +1163,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：完成gRPC over HTTP/2首轮静态矩阵，确认`GRPC-001`至`GRPC-018`；按用户要求未新增畸形输入/独立peer复现。基础length-prefix重组、正常response trailer和“不自动重放”路径符合；custom metadata/user-agent等保留为可选能力/API缺口。
 - 2026-08-06：确认public send length经`size_t→int→size_t`截断，裸pointer+claimed length可形成巨大TCP iovec，记录为`SOCK-006`；按要求未构造越界发送。
 - 2026-08-06：通过确定性generation交错确认late send accounting可污染复用slot，记录为`SOCK-007`；没有为窄窗口新增barrier复现。
+- 2026-08-06：确认`worker_exit`释放W后`socket_exit` final flush仍可经report_close调用worker_push，记录为`SOCK-008`；没有新增退出send-error复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
