@@ -149,6 +149,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-4.1/6.8-GOAWAY-LAST-ID | MUST | `lualib/silly/net/http/h2.lua:238-241,596-608,1562-1648`; `luaclib-src/lhttp.c:1049-1072` | client/server sender | 偏离 | 无 peer stream 时 last id=-1 被转成 0xffffffff；reserved bit 非零且错误声明最大 Last-Stream-ID，而非 0 | 现有测试未检查 outbound GOAWAY bytes/processed boundary | H2-016 |
 | RFC9113-8.1-RST-NO-ERROR-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1088-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的 RST_STREAM(NO_ERROR) 覆盖 END 为 RST；尚未读取的空响应会被丢弃为错误 | 现有测试没有 response END 后 RST(NO_ERROR) | H2-017 |
 | RFC9113-8.1.1/8.2.2/8.3-SENDER-FIELDS | MUST/MUST NOT | `lualib/silly/net/http/h2.lua:700-738,938-1025`; `lualib/silly/net/http/client.lua:318-365`; `luaclib-src/lhttp.c:357-556` | client/server sender | 偏离 | request/response/trailer 在 HPACK 前无 sender validation；可生成 connection-specific/uppercase/非法或重复 pseudo/status fields | 现有测试只验证正常 fields，未检查 outbound malformed block | H2-018 |
+| RFC9113-8.1.1/8.2.1-FIELD-VALIDITY | MUST/security | `lualib/silly/net/http/h2.lua:331-447,1562-1648` | server recipient | 偏离 | request validator 未拒绝非法 name bytes/冒号及 value 中 NUL/CR/LF/首尾空白；Content-Length 又用宽松 tonumber | 现有测试没有 generic invalid field octets 或非十进制 length | H2-019 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -679,6 +680,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：在 HPACK 前构造并验证有序 field list：普通 API 禁止 caller 提供 pseudo；严格校验 lowercase field-name/value；剔除或拒绝 connection-specific fields并检查 TE；按 context 由库唯一生成 pseudo/status；trailer 使用独立禁止集合。不要依赖 peer 替本端验证，也不要静默发送被 lower 后仍禁止的字段。
 - 后续回归条件：修复阶段逐字节解码 outbound request/response/trailer，覆盖 uppercase、五种 connection-specific fields、TE 多值/大小写、caller pseudo、重复 status、非法 status、NUL/CR/LF 与合法重复普通 fields；断言非法输入在写 frame 前稳定失败且 connection 仍可复用。本轮不新增测试代码。
 
+### H2-019 — P1 — server request validator 缺少最低 field name/value 语法校验
+
+- 状态：已确认；RFC 9113 明确 octet rules 与确定性 validator/application path 推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §8.2.1 要求最低限度拒绝 name 中 0x00-0x20、uppercase、0x7f-0xff，普通 name 中任何 colon，以及 value 任意位置的 NUL/LF/CR 和首尾 SP/HTAB；违规 request 必须视为 malformed。规范明确说明缺少这些检查可在转发到 HTTP/1.1 时形成 request smuggling。Content-Length 还必须按 RFC 9110 §8.6 的十进制语法和安全整数规则处理。
+- 位置：HPACK list/map 在 `lualib/silly/net/http/h2.lua:331-384`，server `check_req_header/check_content_length` 在 `:386-447`，request 创建并交 application handler 在 `:1562-1648`。
+- 触发：发送普通 field name `""`、`"a:b"`、包含 NUL/CTL/非 ASCII byte 的 name；或任意 field value 包含 NUL、CR、LF、首尾 SP/HTAB。另可令 `content-length` 为 Lua `tonumber` 接受但非 RFC decimal 的 `0x10`、`1e3`、带首尾空白等形式。
+- 影响：malformed request fields 被原样放入 `s.header` 并交给 application。若应用日志、C binding、反向代理或 H2→H1 gateway 使用 NUL-terminated/CRLF-delimited 解释，验证层与使用层可能看到不同 name/value，产生 header injection、request smuggling 或路由/鉴权差异；宽松 Content-Length 还可能把 downstream 认为无效的 framing value解释成有效长度。
+- 证据：`check_req_header` 对 name 只执行 `k:match("%u")` 和首 byte 是否 colon；普通 name 不检查空值、colon 或其他禁止范围。value 除 pseudo path empty、TE exact value 外不检查任何 byte。随后 `map_header` 保留这些 strings，`channel_newstream` 直接传给 handler。`check_content_length` 仅 `tonumber(clen)` 与非负判断，没有全串 `DIGIT+`、整数精度或上限检查。
+- 根因：validator 只实现 HTTP/2 特有 pseudo/hop-by-hop 子集，遗漏 RFC 9113 自带的通用 octet firewall，并把语言通用数值解析器误用于 protocol ABNF。
+- 建议解法：在任何 map/application access 前对 ordered field list做 byte-level validation；普通 name 要求非空且逐 byte 满足允许集合，pseudo 只允许单个 leading colon 和已知名字；value 拒绝规定 octets与边界空白。Content-Length 用 checked decimal parser，保留重复 field 顺序并按规范统一/拒绝；malformed 只 reset 对应 stream，HPACK state仍保持同步。
+- 后续回归条件：修复阶段覆盖每个禁止 byte range 边界、普通 name 内 colon/空 name、value NUL/CR/LF/leading/trailing SP/HTAB、合法 obs-text policy，以及 Content-Length decimal/hex/exponent/溢出/相同列表；验证 handler 从不被调用且并发 stream 可继续。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -790,3 +803,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
 - 2026-08-06：确认完整响应后的 RST_STREAM(NO_ERROR) 会把 client END 覆盖为 RST，使尚未读取的空响应被丢弃，记录为 `H2-017`。
 - 2026-08-06：确认 request/response/trailer sender 在 HPACK 前无 HTTP/2 field validation，可生成 connection-specific/非法或重复控制 fields，记录为 `H2-018`。
+- 2026-08-06：确认 server request validator 未执行 RFC 9113 最低 name/value octet 规则，且用宽松 `tonumber` 解析 Content-Length，记录为 `H2-019`。
