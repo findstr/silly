@@ -514,6 +514,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：实现RFC 3986 §5.2 component级resolver：先分离path/query/fragment，正确处理defined-vs-empty query，merge paths并remove dot segments；redirect loop key使用规范化、无fragment URI，HTTP target仍只发path+query。也可采用经过互操作验证的URI parser而不是继续叠加pattern特例。
 - 回归测试：修复阶段采用RFC 3986 §5.4 normal/abnormal examples作为golden vectors，并覆盖base query含slash、empty/`?`/`#`、encoded `%2e`不误归一化、IPv6 authority；redirect wire target与loop detection均核对。当前不新增redirect server复现。
 
+### HTTPC-001 — P1 — convenience client 无响应大小上限且自动 gzip 解压无 output budget
+
+- 状态：已确认；默认header、readall与native inflate路径推导。本阶段不生成gzip bomb或大响应。
+- 位置：自动gzip、readall和decompress在`lualib/silly/net/http/client.lua:329-401`；gzip inflate循环在`luaclib-src/lcompress.c:61-109`；HTTP/1、HTTP/2底层buffer/flow paths见既有`HTTP1-007`、`H2-003`与`SOCK-012`。
+- 触发：使用`http.get/post`或client同名方法访问远端；server返回任意长close/chunk/content-length body，或返回`Content-Encoding: gzip`及高压缩比payload。客户端默认主动广告gzip，即使调用方没有要求解压。
+- 影响：方法总是完整缓存response body才返回，大小不可配置；gzip C函数继续向Lua buffer追加直到结束，也没有max output或ratio，压缩体很小即可消耗大量内存/CPU。redirect的每一跳也先完整读取body，攻击者可在到达最终响应前重复消耗资源，最终进程OOM/不可用。
+- 证据：client options只有pool size/idle timeout/ALPN；`do_with_redirects`若无header就设置`accept-encoding=gzip`，随后`stream:readall()`，最后`gzip.decompress(resp_body)`。任何层都没有比较wire bytes、decoded bytes、Content-Length或累计redirect budget。native inflate每轮固定栈buffer并无条件`luaL_addlstring`。
+- 根因：高层API被设计成一次性materialize response，却没有把资源预算作为client/request配置；自动content decoding又增加第二个、可放大的内存域。
+- 建议解法：client/request提供安全默认的`max_body_bytes`、`max_decoded_bytes`与可选ratio/CPU budget，并在stream读取过程中增量执行，超限立即RST/close且不归还H1连接。gzip使用streaming decoder、总output checked counter及deadline；只有client自动添加Accept-Encoding时才自动解码，并同步移除/更新Content-Encoding与Content-Length。
+- 回归测试：修复阶段覆盖固定/分块/close-delimited/H2 DATA超限、gzip高ratio/多member/truncated及redirect累计预算；断言在cap附近准确成功/失败、内存有界、连接不被错误复用。当前不生成大响应。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1485,6 +1496,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP URL model把fragment留在u.path并直接用于HTTP/1 request-target/HTTP/2 :path，客户端私有fragment会上wire，记录为`URL-001`；未发送敏感fragment。
 - 2026-08-06：确认URL scheme只在缺省port时校验，显式port可让任意scheme通过且HTTP/WS consumer回落明文TCP，记录为`URL-002`；未对非HTTP服务发请求。
 - 2026-08-06：确认URL relative resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect可生成错误target，记录为`URL-003`；未新增redirect server复现。
+- 2026-08-06：确认HTTP convenience client自动readall与gzip解压均无wire/decoded大小或ratio预算，恶意响应可耗尽内存，记录为`HTTPC-001`；未生成gzip bomb/大响应。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
