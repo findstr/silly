@@ -159,6 +159,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-6.6/8.4-PUSH-DISABLED | MUST | `lualib/silly/net/http/h2.lua:1500-1547` | client recipient | 偏离 | client 广告 ENABLE_PUSH=0 并获 ACK 后仍静默忽略 PUSH_PROMISE；未报 PROTOCOL_ERROR且未处理 HPACK/stream state | 现有测试没有 disabled-push violation | H2-026 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
+| GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
 
 ## 3. 基线结果
 
@@ -806,6 +807,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：node representation 只为 byte alphabet 预留 8 bits，未为 HPACK 的第 257 个 sentinel symbol建模；decoder 又把所有 leaf 统一当作可输出 byte。
 - 建议解法：将 symbol 类型扩为至少 9-bit/`uint16_t`，保留 EOS=256；decoder 命中 EOS leaf 立即返回 decoding error，不输出字符。padding 继续只通过残余 bit 长度≤7且全为 EOS 前缀来接受，不能把完整 EOS 与 padding合并处理。
 - 后续回归条件：修复阶段覆盖完整 EOS 位于开头/中间/末尾、EOS 后更多 symbol、1..7-bit 合法全 1 padding、8+bit padding、非全 1 padding，以及全部 RFC Huffman examples；断言 EOS 统一导致 HTTP/2 `COMPRESSION_ERROR` 且无 NUL 输出。本轮不新增测试代码。
+
+### GRPC-001 — P1 — client 把所有请求的 `:authority` 编码为字面量 `nil`
+
+- 状态：已确认；gRPC over HTTP/2 调用定义、RFC 9113 request pseudo-header 语义与确定性参数/转换路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：gRPC Call-Definition 将 `:authority` 作为请求 pseudo-header；RFC 9113 §8.3.1 要求构造 HTTP/2 请求时在存在目标 URI authority 时生成 `:authority`，其值来自目标 URI 的 authority component。它不能被实现内部缺省值替换为另一个有效字符串。
+- 位置：endpoint target/hostname 在 `lualib/silly/net/grpc/client/conn.lua:16-35,49-73`；HTTP/2 channel authority 初始化及 request sender 在 `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`；HPACK Lua 值转换在 `luaclib-src/lhttp.c:489-548`。
+- 触发：使用任意 gRPC client target 发起 RPC。HTTPS 与明文路径相同；HTTPS 只是另外把正确 hostname 传给 TLS SNI。
+- 影响：所有 RPC 在 wire 上携带 `:authority: nil`，严格校验 Host/authority 或按 authority 选择虚拟服务的 server/proxy 会拒绝请求、误路由到默认虚拟主机，或应用错误的鉴权/策略；TLS SNI 与 HTTP authority 还会互相矛盾。
+- 证据：`newchannel` 取出 `endpoint.hostname` 并用于 `tls.connect`，随后却调用只有两个实参的 `h2.newchannel(scheme, conn)`。后者把缺失的第三参数赋给 `ch.authority`；每次 `stream_writeheader` 又无条件把该值加入 HPACK field list。C encoder 对 value 使用 `luaL_tolstring`，Lua `nil` 因而成为长度 3 的字面量 `"nil"`，不是省略字段。Silly server 的 request validator 没有要求普通请求存在 authority，所以同库自测互相掩盖该偏离。
+- 根因：连接层分别维护 network address 与 logical hostname，但创建 HTTP/2 channel 时没有把 logical authority 穿过 API 边界；底层 sender 又对 nil 做宽松字符串化，未 fail closed。
+- 建议解法：将规范化的 target authority（含非默认端口时的端口）显式传给 `h2.newchannel(scheme, conn, authority)`；HTTP/2 sender 在缺失/非法 authority 时应在写 wire 前返回错误，不应依赖 Lua 通用字符串转换。TLS SNI 仍只使用不含端口的 hostname。
+- 后续回归条件：修复阶段用捕获 peer 分别验证 DNS target、IPv4、bracketed IPv6、默认/非默认端口和 TLS SNI：`:authority` 与 target 一致且绝不为 `nil`；再以两个 virtual hosts 证明请求只路由到目标服务。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
