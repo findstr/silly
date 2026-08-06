@@ -319,6 +319,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每个TLS userdata用uservalue强引用创建它的ctx，至少保持到handshake完成；若callback在connection后续仍可能运行，则保持到SSL释放。更稳妥是把SNI routing state移到独立native refcount对象，由所有SSL_CTX/SSL共同持有，reload构造完整新generation后原子切换listener，新旧generation分别在最后一条connection释放时销毁。`ctx_destroy`清空每个指针并保证幂等。
 - 回归测试：修复阶段让连接停在ClientHello之前，循环reload/close listener、强制full GC后继续带SNI握手；覆盖默认/第二证书与多个在途连接。ASan不得出现UAF，旧连接使用旧generation、新连接使用新generation，所有ctx/cert最终只释放一次。当前不新增竞态复现。
 
+### TLS-003 — P1 — `SSL_read` 的 close/error 状态被吞掉，TLS reader 可永久挂起
+
+- 状态：已确认；OpenSSL I/O契约与确定性数据/协程路径推导。本阶段不发送alert或close_notify做动态复现。
+- 规范/权威依据：OpenSSL要求`SSL_read`返回`<=0`后调用`SSL_get_error`区分WANT_READ/WANT_WRITE、`SSL_ERROR_ZERO_RETURN`和fatal error；ZERO_RETURN表示peer发送了`close_notify`，并不表示底层TCP已关闭。参见 [SSL_read](https://docs.openssl.org/3.4/man3/SSL_read/) 与 [SSL_get_error](https://docs.openssl.org/3.0/man3/SSL_get_error/)。
+- 位置：native record input在`luaclib-src/ltls.c:617-635`，错误helper/flush仅用于handshake/write在`:58-96,531-615`；Lua data/read等待在`lualib/silly/net/tls.lua:139-180,250-278,428-447`。
+- 触发：握手后peer发送合法`close_notify`但保持TCP open等待本端shutdown；或发送fatal alert/导致decrypt、record MAC、protocol error的TLS记录；也包括`SSL_read`返回WANT_WRITE并在out BIO生成控制数据的状态。
+- 影响：`ltls_push`在`SSL_read<=0`时直接break并仅返回当前plaintext buffer size，不返回terminal/retry状态，也不flush out BIO。若Lua coroutine正等待更多字节/分隔符，EVENT.data无法唤醒它；底层TCP没有close event时可无限挂起。fatal错误同样不关闭连接或通知调用方，攻击者可稳定占用连接、task和上层HTTP/gRPC stream资源；应答alert/KeyUpdate等输出还可能滞留。
+- 证据：循环只在`n>0`时增加buffer，`n<=0`没有`ERR_clear_error`、`SSL_get_error`、`push_ssl_error`或`flushwrite`。Lua EVENT只根据新plaintext尝试满足`delim`，`tls.push`没有错误返回槽；只有原始socket CLOSE callback会设置`s.err/wakeup`，而TLS `close_notify`明确无需关闭TCP。
+- 根因：memory-BIO适配层把TLS record processor误当作永远只有“产出plaintext/需要更多TCP字节”两态，丢失OpenSSL的shutdown、fatal、WANT_WRITE和alert-output状态机。
+- 建议解法：让`tls.push`返回`plaintext_size,state,error`；每次`SSL_read<=0`立即在清空error queue的正确调用边界使用`SSL_get_error`。WANT_READ继续等待，WANT_WRITE先flush并维持重试，ZERO_RETURN标记authenticated EOF、唤醒reader并进入shutdown，fatal error flush alert后关闭并传播明确errno。所有产生out BIO数据的读/握手路径统一drain，且避免在fatal error后调用`SSL_shutdown`。
+- 回归测试：修复阶段覆盖peer close_notify但TCP保持open、fatal alert、bad record MAC、unexpected EOF、WANT_READ/WANT_WRITE与TLS 1.3 post-handshake control；断言reader及时返回EOF/错误、alert被发送、连接不泄漏且不会busy-loop。当前不新增alert输入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1273,6 +1285,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TCP/UDP message在Lua callback前清空C owner，而callback异常路径既不释放payload也不关闭socket，记录为`NET-002`；未新增故意抛错复现。
 - 2026-08-06：确认TLS client保持OpenSSL默认VERIFY_NONE且hostname只用于SNI，没有trust store、链或hostname验证，记录为`TLS-001`；未新增MITM/伪证书复现。
 - 2026-08-06：确认accepted TLS userdata未强引用SNI callback arg所属ctx，reload/close+GC后在途ClientHello可访问失效userdata，记录为`TLS-002`；未新增GC/reload竞态复现。
+- 2026-08-06：确认TLS record input丢弃所有SSL_read非正结果且不flush控制输出，close_notify/fatal error不会唤醒reader，记录为`TLS-003`；未新增alert输入。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
