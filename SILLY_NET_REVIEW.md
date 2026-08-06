@@ -139,6 +139,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-6.3-PRIORITY-SIZE-SCOPE | MUST | `lualib/silly/net/http/h2.lua:1281-1310` | client/server recipient | 偏离 | PRIORITY payload 非 5 bytes 时调用 connection `GOAWAY(FRAME_SIZE_ERROR)`；规范要求 stream error | 现有测试没有 malformed PRIORITY 或错误作用域断言 | H2-006 |
 | RFC9113-4.2/6.8-GOAWAY-MIN-SIZE | MUST | `lualib/silly/net/http/h2.lua:1357-1367` | client/server recipient | 偏离 | GOAWAY handler 只检查 stream-id，完全忽略 payload；少于强制 8 bytes 的 frame 也被接受，而非 `FRAME_SIZE_ERROR` | 现有测试没有 malformed GOAWAY 长度 | H2-007 |
 | RFC9113-6.8-GOAWAY-LAST-STREAM | MUST/reliability | `lualib/silly/net/http/h2.lua:1357-1367,1425-1448`; `lualib/silly/net/http/client.lua:318-390` | client recipient | 偏离 | 合法 GOAWAY 只置 bool，不解析 Last-Stream-ID/error；高编号未处理 streams 不结束/不标 retryable，高层默认 readall 可无限等待 | 现有 Test 20/26 是本端主动 close，不覆盖 peer graceful GOAWAY 与在途 streams | H2-008 |
+| RFC9113-8.1.1/8.2/8.3-RESPONSE-FIELDS | MUST | `lualib/silly/net/http/h2.lua:367-384,1441-1500` | client recipient | 偏离 | response/trailer 未验证 pseudo 集合/顺序、lowercase、field syntax 或 connection-specific fields；`:status` 仅 `tonumber`，接受非三位语法 | 现有测试只覆盖本库 server 生成的规范 headers | H2-009 |
 
 ## 3. 基线结果
 
@@ -547,6 +548,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：解析并单调收紧 peer Last-Stream-ID/error code；立即将本端发起且 id 大于边界的 streams 标记为明确未处理，解除 read/write wait，并向上返回结构化 retryable error。低编号 streams 保持可完成；连接池不再选该 channel 开新 stream。自动重试只能对确定未处理的 streams，且需要保留 body replayability/cancellation 规则，不能按 method 猜测后无条件重放。
 - 后续回归条件：修复阶段并发创建 id 1/3/5，收到 last=3 的 NO_ERROR GOAWAY 后断言 id5 立即以 retryable-unprocessed 结束、id1/3 可继续完成、新请求走新连接；覆盖多次 GOAWAY 边界只能下降、非 NO_ERROR、非幂等 body、不可重放 body、peer 长时间不关 TCP和 connection close race。本轮不新增测试代码。
 
+### H2-009 — P2 — client 不验证 response/trailer field section
+
+- 状态：已确认；RFC 9113 与确定性 header mapping 路径推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §8.1.1/§8.2/§8.3 要求 uppercase/非法 field name/value、connection-specific fields、无效或位置错误/重复的 pseudo-header 都使 message malformed。response 只定义且必须恰有一个 `:status`，所有 pseudo 必须位于普通 fields 之前；trailer 不得包含任何 pseudo-header。HTTP status-code 语法是恰好三位数字，不能用通用数值语法替代。
+- 位置：ordered HPACK list 到 map 的路径在 `lualib/silly/net/http/h2.lua:314-384`；client response/trailer handler 在 `:1441-1500`。server request 有独立 `check_req_header` 在 `:386-444`，不属于本条遗漏方向。
+- 触发：server 返回例如普通 field 后的 `:status`、`:method`/未知 pseudo、uppercase `Content-Type`、`connection`/`transfer-encoding`，或 trailer 中的 `:status`；也可将 status 编成 `2e2`、`200.5`、`+200` 等 Lua `tonumber` 可接受的字符串。
+- 影响：client 不把规范定义的 malformed response 限制在错误 stream，而是将无效 fields 交给应用并继续读取 body。应用、代理/转发层和缓存可能以不同规则解释这些字段，产生状态码、hop-by-hop 元数据或 trailer 语义混淆；非法 status 可被转换成 200/浮点数并驱动成功/重定向等上层分支。部分重复 `:status` 因变成 table 会偶然失败，但不能替代完整验证。
+- 证据：`frame_header_client` 解压后立即 `map_header(hlist, header)`，没有调用与 `check_req_header` 对称的 response validator；仅取 `header[":status"]` 后执行 `tonumber(status)`。后续 HEADERS 直接 `map_header(hlist, s.trailer)`，同样无 lowercase/pseudo/forbidden 检查。`map_header` 会保留所有未知 key 并把重复值合成 table，不保留供验证 pseudo ordering 的额外状态。
+- 根因：request-side field validator 没有抽象为按 context（request/response/trailer）复用的 ordered-list validator，client 依赖 map 后的弱类型检查。
+- 建议解法：在 `map_header` 前验证 ordered hlist：严格 name/value 通用语法与 lowercase；initial response 只允许一个、位于最前部 pseudo 区的 `:status`，值匹配三位 status-code 且排除 HTTP/2 禁止的 101；trailer 禁止所有 pseudo；所有 section 拒绝 connection-specific fields。malformed response 按 §8.1.1 作为 stream error 处理，不应默认杀死无关 streams。
+- 后续回归条件：修复阶段覆盖 request pseudo 出现在 response、unknown/duplicate/late `:status`、0/2/4 位与指数/小数 status、uppercase/非法 name/value、五种 connection-specific fields，以及 trailer pseudo；断言对应 stream 失败且并发 stream 保持可用。合法重复普通 fields 与 set-cookie 仍保序。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -622,3 +635,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认非 5-byte PRIORITY 被错误升级为 connection GOAWAY，而 RFC 9113 要求 stream `FRAME_SIZE_ERROR`，记录为 `H2-006`。
 - 2026-08-06：确认 GOAWAY handler 完全忽略 payload，0..7-byte frame 未触发强制 connection `FRAME_SIZE_ERROR`，记录为 `H2-007`。
 - 2026-08-06：确认合法 GOAWAY 的 Last-Stream-ID/error 被丢弃，高编号未处理请求无法结束或标记 retryable，高层默认可无限等待，记录为 `H2-008`。
+- 2026-08-06：确认 client 没有 response/trailer field validator，非法 pseudo/uppercase/connection fields 和非三位 status 可被接受，记录为 `H2-009`。
