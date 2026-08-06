@@ -435,6 +435,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在验证`(fd generation,session)`pending存在后才consume/wakeup；unknown和late ACK应有bounded metric/log并按配置丢弃，重复/明显恶意流量可关闭该peer，绝不能以Lua exception作为控制流。timeout/response/close统一finish函数保留短期tombstone可区分late与never-issued。
 - 回归测试：修复阶段覆盖随机、重复、刚timeout、错误fd及wrap-old ACK；断言无task异常/traceback、active waiter不变、日志限速，达到违规阈值时只关闭发送peer。当前不发送ACK flood。
 
+### CLUSTER-004 — P2 — 主动 close 不清理该 fd 的 incomplete frame buffer
+
+- 状态：已确认；两条close路径与C hash ownership的确定性推导。本阶段不发送大partial frame。
+- 位置：remote/error close的`c.clear`在`lualib/silly/net/cluster.lua:97-114`，主动`close_peer`在`:116-128`；C incomplete hash分配/清除在`luaclib-src/lcluster.c:67-113,193-281,283-293,464-472`；net主动close同步移除callback在`lualib/silly/net.lua:149-163`。
+- 触发：peer已发送完整4-byte length和部分body，使C parser为该fd分配最高接近hardlimit的`incomplete.buff`；随后本地业务调用`cluster.close(peer)`，而不是等待远端close/error。
+- 影响：TCP/socket与Lua peer map被清除，但incomplete node及body allocation继续挂在全局`ctx.hash`；主动close同时移除net close callback，后续C close event不会再进入`close_fd`补做clear。每个不同sid都可遗留一块，默认单块最高128MiB，直到重新`serve`使旧ctx GC或进程退出才释放。
+- 证据：`close_fd`第一句执行`c.clear(ctx,fd)`，`close_peer`没有；C `clear_incomplete`是唯一按sid摘除hash node的接口，packet GC才会全量清理。socket sid含generation，后续fd/slot复用不会命中旧key自动替换。
+- 根因：主动与被动关闭没有共享统一cluster teardown；protocol parser的per-fd ownership未纳入peer对象生命周期。
+- 建议解法：所有close入口调用同一个幂等teardown，先摘除peer generation的pending/complete/incomplete state，再清map和关闭socket；`c.clear`应同时考虑已完成但尚未pop的packet，或C ctx提供`clear_fd`统一释放该fd全部状态。明确listener与connection类型避免对listener误操作。
+- 回归测试：修复阶段发送length=hardlimit与少量body后主动close，断言allocator立即回基线、hash无该sid；覆盖header partial、body partial、complete queued、重复close及sid复用，无double-free。当前不发送大partial frame。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1399,6 +1410,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster response虽携带fd但Lua只按全局31-bit session匹配waiter，任意peer/late wrap ACK可跨连接完成其他RPC，记录为`CLUSTER-001`；未构造伪ACK。
 - 2026-08-06：确认cluster pending只存coroutine且两个close路径都没有peer反向索引/finish，断线后RPC只能保留到timeout，记录为`CLUSTER-002`；未新增断线timing复现。
 - 2026-08-06：确认cluster unknown/late/duplicate ACK取到nil waiter后仍task.wakeup，且连接保持可重复制造异常与日志，记录为`CLUSTER-003`；未发送ACK flood。
+- 2026-08-06：确认cluster主动close不调用C parser clear且net已移除close callback，partial frame allocation永久挂在全局ctx，记录为`CLUSTER-004`；未发送大partial frame。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
