@@ -154,6 +154,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
 | RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
 | RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,880-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission 非事务：部分拒绝不记录已用 id、允许复用；invalid Content-Length 则泄漏 streamcount | 现有 malformed header tests 未检查 id reuse/长期 quota | H2-023 |
+| RFC9113-5.1/5.4.2-CLOSED-HPACK | MUST | `lualib/silly/net/http/h2.lua:1038-1080,1446-1499`; `luaclib-src/lhttp.c:692-780` | client recipient | 偏离 | local RST tombstone 固定只留 100 个；淘汰后 late HEADERS 在 HPACK 前直接 GOAWAY，未 minimally process compression state | 现有测试没有 >100 cancel 后 delayed response headers | H2-024 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -744,6 +745,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：收到合法形状/方向的 initial HEADERS 时先原子记录 stream id 已使用/closed history，再做 message validation；quota只在决定建立 active stream 时增加，或预留后保证所有失败分支回滚。reset helper必须能对尚未发布 object 的 id记录 closed state而不泄漏计数；parity/history connection checks应先于 message semantic stream checks。
 - 后续回归条件：修复阶段覆盖 invalid pseudo→同 id重用、invalid Content-Length 连续超过 limit、even id 搭配 malformed fields、HPACK error、concurrency恰好 limit，以及失败后下一更高合法 id；断言同 id不能复用、quota无泄漏、正确 connection/stream error scope且 handler只调用一次。本轮不新增测试代码。
 
+### H2-024 — P1 — client 淘汰 RST tombstone 后不再 minimally process late HEADERS
+
+- 状态：已确认；RFC 9113 closed-stream race 与确定性 cancel/queue/header path 推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §5.1/§5.4.2 要求 endpoint 发送 RST_STREAM 后仍准备接收 peer 在看到 reset 前已发送/排队的 frames；这些 frame须 minimally process 后丢弃。HEADERS 必须完成 field-section decompression以更新 connection-wide HPACK state，DATA 仍须计入 connection flow control。只有获得 peer 已看到 closing signal 的可靠证据后，才可把后续 frame 当 connection error，规范不建议仅用 timer。
+- 位置：local close/reset tombstone queue 在 `lualib/silly/net/http/h2.lua:1038-1080`，client HEADERS lookup/decode 顺序在 `:1446-1499`，HPACK connection context在 `luaclib-src/lhttp.c:692-780`。
+- 触发：client 依次打开并 cancel 超过 `CLOSED_STREAM_COUNT=100` 个已发送 request，使 closing queue淘汰最旧 stream object；server 此后送达那个最旧 id 在看到 RST 前已经排队的 response HEADERS，且 field block对 dynamic table有增删作用。
+- 影响：client 在解压该合法在途 block 前发送 GOAWAY，整条 multiplexed connection及其他 streams失败。若未来只忽略而不 GOAWAY，则下一 header block 的 dynamic index会因本块未处理而解压失败；因此固定数量 tombstone既会制造间歇断连，也不能安全替换 RFC 所需的 connection-level compression processing。
+- 证据：`S.close` 对已发送 stream调用 `stream_reset` 后 push 到 `closingq`，队列超过 100 就执行 `streams[s.id]=nil; s.channel=nil`，淘汰依据仅是数量、没有 SETTINGS/PING/更新 stream 等 peer-observation signal。`frame_header_client` 首行查 `ch.streams[id]`，nil 时立即 `channel_goaway(PROTOCOL_ERROR)`；`read_header/hpack_unpack` 位于该分支之后，明确未执行。
+- 根因：把 application stream object 的回收策略同时当成 protocol closed-state history；client handler又在保持 connection-wide HPACK state之前依赖 object存在。
+- 建议解法：将 frame-level minimal processing与 application stream lookup分离：完整收集/decode field block以更新 `recvhpack` 后，再按 closed-state决定丢弃。closed history回收应由能证明 peer 已观察 reset 的 signal驱动；即使不保留完整 stream object，也需保留轻量 state/parity/id 信息并始终维护 HPACK/connection flow control。
+- 后续回归条件：修复阶段 cancel 101+ streams，延迟最旧 id 的 indexed/incremental HEADERS，再在 active stream发送引用其 dynamic entry 的 HEADERS；断言 late block被解压后丢弃、后续 block成功、无 GOAWAY。另覆盖 tombstone未淘汰、DATA/CONTINUATION和可靠 closing signal后行为。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -860,3 +873,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 SETTINGS initial-window delta 造成 stream window overflow 时仅 reset stream，未按规范终止 connection，记录为 `H2-021`。
 - 2026-08-06：确认 Content-Length 与 DATA 总量不一致时被升级为 connection GOAWAY，而非对应 stream PROTOCOL_ERROR，记录为 `H2-022`。
 - 2026-08-06：确认 initial HEADERS admission 顺序使部分 rejected id 可复用、invalid Content-Length 又永久泄漏 streamcount，合并记录为 `H2-023`。
+- 2026-08-06：确认 client 的 local-RST tombstone 超过 100 被淘汰后，late HEADERS 在 HPACK 解码前直接 GOAWAY，记录为 `H2-024`。
