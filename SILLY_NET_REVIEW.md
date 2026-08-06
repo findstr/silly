@@ -584,6 +584,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分块喂入`uInt`范围内input，持续inflate直到`Z_STREAM_END`；输入耗尽但未到终态必须报truncated，其他非`Z_OK`终态失败。选择并文档化strict single-member（要求无剩余）或按RFC循环`inflateReset2`处理全部members；同时与`HTTPC-001`的decoded-size/ratio budget统一实现。
 - 回归测试：修复阶段覆盖每个header/trailer边界截断、deflate中途截断、CRC/ISIZE错误、空输入、尾随垃圾、两个members以及大于单次`uInt`的分块输入；失败不得返回partial output。当前不新增压缩样本。
 
+### REDIS-001 — P1 — RESP 畸形响应触发未清理异常，永久占住 reader queue
+
+- 状态：已确认；parser到reader ownership调用链静态推导。本阶段不向driver发送畸形RESP。
+- 规范：[Redis RESP specification](https://redis.io/docs/latest/develop/reference/protocol-spec/)规定首byte标识合法type、所有protocol片段以CRLF结束、integer为有符号64位十进制，RESP2 bulk/array只有`-1`表示null；客户端应把非法编码作为protocol error并丢弃连接。
+- 位置：`read_response/response_header`在`lualib/silly/store/redis.lua:33-82`；单命令reader ownership与queue交接在`:215-264,266-300`；pipeline对应路径在`:310-348`。
+- 触发：peer返回未知type byte、空/非数字bulk或array length、非法负length、错误line terminator，或使递归parser内部抛出的其他异常。
+- 影响：当前reader coroutine异常退出而不执行`close_socket`或`wakeup_next_reader`，`redis.readco`永久指向已死亡coroutine，socket仍可能保留；所有后来请求在`waitq`永久挂起。若异常发生在pipeline同样会遗留整条连接和等待者，单个错误响应可造成持久性应用级DoS。
+- 证据：`read_response`不检查`response_header[head]`即调用`func(...)`；bulk/array handler不验证`tonumber`结果就执行`nr < 0`；line只用`sub(...,-3)`盲删两byte，不验证CRLF，bulk body也不验证尾随CRLF。外层命令/pipeline没有`pcall/finally`，正常路径末尾才交接reader。
+- 根因：协议解析错误使用Lua runtime exception表达，而reader token和pending waiter清理依赖显式正常/已知I/O错误分支，没有统一的connection-fatal收尾边界。
+- 建议解法：parser对每个type、数字grammar/range、null sentinel和CRLF显式验证并只返回structured protocol error；reader owner以protected/finally结构保证任意失败都关闭并清空socket、复位`readco`、唤醒全部waiters。协议错误连接绝不复用，保留原始错误给所有受影响调用。
+- 回归测试：修复阶段逐项覆盖unknown prefix、empty/nondecimal/overflow length、`-2`、LF-only、错误bulk terminator和nested malformed element；断言所有并发调用有限时间返回同一connection error，`readco=false`且下一次命令能新建连接。当前不生成畸形RESP。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1561,6 +1573,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP/1 receiver用%S+代替token/value octet校验，sender把header原样拼接，CRLF可注入控制字段/空行，记录为`HTTP1-009`；未构造injection报文。
 - 2026-08-06：确认HTTP/1 request/status-line parser未锚定、版本字符类含`|`且status不限3位，method白名单又先于语法/能力判断，记录为`HTTP1-010`；未构造畸形start-line。
 - 2026-08-06：确认gzip inflate以output buffer是否填满代替`Z_STREAM_END`，截断、尾随或multi-member输入可被部分成功接受，记录为`COMP-001`；未生成压缩样本。
+- 2026-08-06：确认Redis RESP未知type/非法length等会抛出未清理异常，reader token与wait queue因此永久卡死，记录为`REDIS-001`；未发送畸形RESP。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
