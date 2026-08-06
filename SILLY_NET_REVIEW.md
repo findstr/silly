@@ -145,6 +145,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.3.1/8.5-CONNECT-PSEUDO | MUST | `lualib/silly/net/http/h2.lua:126-133,386-444,700-738` | client sender/server recipient | 偏离 | client 对 CONNECT 仍发送 scheme/path；server 固定要求 scheme/path 且不要求 authority，正好与 CONNECT mandatory/omitted 集合相反 | 现有 HTTP/2 测试没有 CONNECT | H2-012 |
 | RFC9113-10.5/10.5.1-FIELD-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:74-80,314-384`; `luaclib-src/lhttp.c:696-780` | client/server recipient | 偏离 | 只限制 65,535 compressed wire bytes，不累计 uncompressed name+value+32、字段数或单字段大小，也无配置/advertisement | 现有测试没有 indexed expansion、超限并发 field blocks | H2-013 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
+| RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
 ## 3. 基线结果
 
@@ -625,6 +626,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：让 decoder 返回 `{ok, value}`，使用明确宽度无符号类型；在每个 octet 前检查 shift、乘法/加法和每用途 maximum，并要求遇到 continuation=0 才成功。string length 用 `size_t` 且以 `len <= (size_t)(e-p)` 做 subtraction-based bounds check，绝不先构造可能越界的 `p+len`；任何超值、超长或未终止编码返回 decoding error/HTTP2 `COMPRESSION_ERROR`。
 - 后续回归条件：修复阶段覆盖各 prefix 的最大合法值、跨 32/64-bit 边界、过多零 continuation、过多 0xFF、未终止、non-minimal 但未溢出的合法整数，以及 string/index/table-size 三种用途；ASan/UBSan 下零告警并确认下一连接/stream 的错误作用域。本轮不新增测试代码。
 
+### HPACK-003 — P2 — Huffman EOS symbol 被截断并解码成 NUL
+
+- 状态：已确认；RFC 7541、生成表规模与确定性 C 类型转换推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 7541 §5.2 要求 Huffman string 中出现 EOS symbol 必须作为 decoding error；只有末尾不超过 7 bits、且为 EOS code 最高位前缀的残余 bits 才能作为 padding 丢弃。EOS 不能作为普通 octet 输出。
+- 位置：Huffman node/root 类型在 `luaclib-src/lhttp.c:33-43`，建树在 `:62-94,215-225`，decode 在 `:135-172`；257-entry code/length 表在 `luaclib-src/http2_table.h`。
+- 触发：peer 在 HPACK Huffman-encoded field name/value 中编码完整 EOS code（symbol index 256），并提供合法的剩余 byte padding使 string 到 octet boundary。
+- 影响：decoder 不返回 compression error，而是向 Lua header string 追加 byte `0x00`。结合 HTTP/2 field validator 对通用 name/value syntax 的缺口，NUL 可进入 path、metadata或应用 header map；Lua 长度感知字符串与下游 C API/日志/代理若采用 NUL-terminated 解释，可能产生截断和验证/使用差异。即使没有下游利用，也明确接受了 HPACK 必须拒绝的压缩输入。
+- 证据：规范 Huffman table 包含 257 entries，最后一个是 EOS；`create_huffman_tree` 遍历整个数组并把 index `i` 传给 `add_node(..., uint8_t sym, ...)`。当 i=256 时 C 转换得到 0，存入同为 `uint8_t` 的 `node.sym`。`huffman_decode` 命中任何 leaf 都无条件 `luaL_addchar(buf, n->sym)`，没有 EOS 标志或 symbol==256 分支，因此输出 NUL。末尾 `sbits/mask` 只检查 padding，不能识别已经消费的 EOS leaf。
+- 根因：node representation 只为 byte alphabet 预留 8 bits，未为 HPACK 的第 257 个 sentinel symbol建模；decoder 又把所有 leaf 统一当作可输出 byte。
+- 建议解法：将 symbol 类型扩为至少 9-bit/`uint16_t`，保留 EOS=256；decoder 命中 EOS leaf 立即返回 decoding error，不输出字符。padding 继续只通过残余 bit 长度≤7且全为 EOS 前缀来接受，不能把完整 EOS 与 padding合并处理。
+- 后续回归条件：修复阶段覆盖完整 EOS 位于开头/中间/末尾、EOS 后更多 symbol、1..7-bit 合法全 1 padding、8+bit padding、非全 1 padding，以及全部 RFC Huffman examples；断言 EOS 统一导致 HTTP/2 `COMPRESSION_ERROR` 且无 NUL 输出。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -706,3 +719,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client 固定为 CONNECT 发送 scheme/path，server 又固定要求 scheme/path且不要求 authority，普通 CONNECT 双向不符合，记录为 `H2-012`。
 - 2026-08-06：确认 HPACK 只限制 compressed wire block，没有 uncompressed field-section/字段数/单字段预算或配置，记录为 `H2-013`。
 - 2026-08-06：确认 HPACK varint 无 value/octet 上限，存在 signed shift UB、unsigned→int 回绕和 string pointer/length 越界路径，记录为 `HPACK-002`；按要求未新增触发代码。
+- 2026-08-06：确认 Huffman EOS=256 被 `uint8_t` 截断为 0，decoder 无 EOS guard并输出 NUL，记录为 `HPACK-003`。

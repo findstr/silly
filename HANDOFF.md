@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（40 条）
+## 5. 已确认问题（41 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -163,8 +163,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-012 | P2 | 普通 CONNECT 的 pseudo-header 生成/校验与 mandatory/omitted 规则相反。 |
 | H2-013 | P1 | HPACK 解压后无 uncompressed field-section/字段数/单字段资源上限。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
+| HPACK-003 | P2 | Huffman EOS symbol 256 被截断为 0 并作为 NUL 输出，而非 decoding error。 |
 
-统计口径为 40 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 13 个 HTTP/2 + 2 个 HPACK；以主报告中的编号和证据为准。
+统计口径为 41 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 13 个 HTTP/2 + 3 个 HPACK；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -218,7 +219,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-013`，HPACK 已确认 `HPACK-001` 至 `HPACK-002`。下一项继续检查 HPACK Huffman/EOS 与 dynamic table，再回到 RST/DATA stream state。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-013`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`。下一项继续检查 HPACK dynamic table，再回到 RST/DATA stream state。每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
