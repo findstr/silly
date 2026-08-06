@@ -296,6 +296,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把接收payload包装为full userdata/opaque buffer handle并附`__gc/__close`，消费或转移时原子清空其owner；Lua callback异常退出后未消费payload由finalizer释放。若保留裸pointer API，则dispatcher必须以受保护调用配合显式take/consume协议，并在异常时关闭socket，不能盲目finally-free造成已转移后的double-free。
 - 回归测试：修复阶段让TCP/UDP callback分别在消费前、消费后、buffer接管后抛错；断言payload各释放恰好一次、无泄漏/double-free，异常策略会阻止同连接无限重复。ASan/LSan与Silly allocator计数均回基线。当前不新增异常触发。
 
+### TLS-001 — P1 — TLS client 完全不验证服务端证书链或 hostname
+
+- 状态：已确认；OpenSSL默认契约、公开配置面与确定性调用链推导。本阶段不搭建MITM/伪证书动态复现。
+- 规范/权威依据：OpenSSL文档明确新建context默认不验证peer（`SSL_VERIFY_NONE`）；标准client流程需启用`SSL_VERIFY_PEER`、加载默认或指定trust store，并在握手前设置期望DNS hostname/IP。参见 [SSL_CTX_set_verify](https://docs.openssl.org/3.0/man3/SSL_CTX_set_verify/)、[TLS client guide](https://docs.openssl.org/3.3/man7/ossl-guide-tls-client-block/) 与 [SSL_set1_host](https://docs.openssl.org/3.0/man3/SSL_set1_host/)。
+- 位置：全局client context创建在`luaclib-src/ltls.c:217-230`；TLS对象/SNI设置在`:458-496`；Lua公开connect options在`lualib/silly/net/tls.lua:284-330`；文档示例在`docs/src/reference/net/tls.md:176-233,350-382`。
+- 触发：任何`silly.net.tls.connect`（以及使用它的HTTPS/WSS/gRPC client）连接到攻击者、错误配置或被DNS/路由劫持的endpoint；peer提供任意自签名、过期、不受信任或hostname不匹配的证书。即使调用方传入正确`hostname`也会触发，因为该参数只用于SNI。
+- 影响：链路虽然加密但没有服务端身份认证；主动中间人可终止并重新建立TLS，读取或篡改HTTP凭据、cookies、gRPC metadata及应用数据。API/文档把该连接描述为TLS/HTTPS且没有“不安全模式”警告，调用方也没有可用选项自行开启验证。
+- 证据：`lctx_client`只调用`SSL_CTX_new(TLS_method())`，从未调用`SSL_CTX_set_verify(...SSL_VERIFY_PEER...)`、`SSL_CTX_set_default_verify_paths`或加载CA。`ltls_open`对hostname只调用`SSL_set_tlsext_host_name`，没有`SSL_set1_host/SSL_set1_ipaddr`，握手成功路径也不检查`SSL_get_verify_result`。整个Lua conf没有CA、verify或expected-name字段。
+- 根因：把SNI（告诉服务端选择证书）误当作/替代了peer authentication，且client context只有一个无配置的全局实例。
+- 建议解法：安全默认开启peer verification并加载系统trust store；要求从目标URI自动导出expected hostname/IP，分别调用适用的OpenSSL verification API，SNI只对DNS名设置。提供`cafile/capath/ca_pem`和可选client cert；若确需测试用insecure模式，必须显式命名、默认false并向上层传播，不能让hostname=nil静默关闭所有认证。任何verify配置失败或握手验证失败均返回明确TLS错误。
+- 回归测试：修复阶段用独立证书矩阵覆盖受信CA+正确SAN成功，自签名、未知CA、过期、错误SAN、DNS/IP类型不匹配均失败；custom CA成功，显式insecure仅在主动配置时成功。HTTPS/WSS/gRPC集成路径均验证默认安全行为。当前不新增MITM复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1248,6 +1260,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认timer把64位毫秒delta窄化为int，大于约24.8天的暂停/时钟跳变可触发assert、无符号巨大跳变或长期错时，记录为`CORE-006`；未新增长期暂停复现。`queue_push`返回int只在超过INT_MAX条消息时影响过载诊断，降为构建卫生，不单列缺陷。
 - 2026-08-06：确认listener close同步删除Lua callback而已排队ACCEPT已拥有独立C socket，late event只assert且不close accepted fd，记录为`NET-001`；未新增accept/close barrier复现。
 - 2026-08-06：确认TCP/UDP message在Lua callback前清空C owner，而callback异常路径既不释放payload也不关闭socket，记录为`NET-002`；未新增故意抛错复现。
+- 2026-08-06：确认TLS client保持OpenSSL默认VERIFY_NONE且hostname只用于SNI，没有trust store、链或hostname验证，记录为`TLS-001`；未新增MITM/伪证书复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
