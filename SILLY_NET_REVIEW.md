@@ -343,6 +343,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供异步TLS close：在未发生fatal error时调用`SSL_shutdown`，drain并发送out BIO中的close_notify；可选择一次调用后关闭的documented fast shutdown，或在deadline内等待peer close_notify后关闭。fatal路径不得错误调用shutdown，但应尽力发送已生成alert。区分`abort()`与graceful `close()`，并保证GC finalizer采用有界、不会yield的安全策略。
 - 回归测试：修复阶段让OpenSSL/Go等strict peer验证主动client/server close都收到close_notify，双向关闭在deadline内完成；同时覆盖peer不响应、已有fatal error、pending ciphertext和GC fallback，无挂起/double-close。当前不新增互操作复现。
 
+### TLS-005 — P1 — server TLS handshake 无 deadline，可被空连接永久占用资源
+
+- 状态：已确认；accept、handshake与timeout配置调用链的确定性推导。本阶段不新增慢连接压力复现。
+- 位置：server accept固定无timeout调用handshake在`lualib/silly/net/tls.lua:186-205`；等待/timer逻辑在`:139-180`；listen配置在`:338-367`；底层accept后立即注册connection在`src/socket.c:805-849`。
+- 触发：远端完成TCP三次握手后不发送ClientHello，或只发送不足以完成握手的零散TLS字节，并保持TCP连接；可并行建立大量连接。
+- 影响：每个连接在应用`accept` callback运行前永久保留OS fd、C socket slot、SSL/BIO/buffer userdata和一个WAIT coroutine；业务handler尚未获得connection，无法设置read timeout或主动淘汰。攻击者可低带宽耗尽fd/内存，阻止合法TLS连接。
+- 证据：EVENT.accept执行`handshake(s)`时没有第二参数；当`SSL_do_handshake`返回WANT_READ时，`block_read(s,HANDSHAKE,nil)`直接`wait()`且不创建timer。`tls.listen`配置没有handshake timeout/deadline字段。TCP keepalive不能提供短期握手防护，socket层也没有accept-age deadline。
+- 根因：client connect实现了可选的TCP+TLS总deadline，但server accept路径没有对应资源生命周期预算，并把握手放在用户callback之前。
+- 建议解法：listener提供有安全默认值的`handshake_timeout`和可选全局/每IP pending-handshake上限；从TCP accept时刻开始单调deadline，超时以TLS alert（若可行）后abort close，并释放所有callback/table状态。握手每次进展不能无限重置总deadline；若另设idle-progress timeout需同时保留absolute cap。
+- 回归测试：修复阶段覆盖完全不发ClientHello、逐字节slow ClientHello、握手中断、正常临界时间成功及大量并发；断言超时后fd/task/SSL/slot全部回收，应用accept只收到成功握手连接。当前不新增慢连接复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1299,6 +1310,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认accepted TLS userdata未强引用SNI callback arg所属ctx，reload/close+GC后在途ClientHello可访问失效userdata，记录为`TLS-002`；未新增GC/reload竞态复现。
 - 2026-08-06：确认TLS record input丢弃所有SSL_read非正结果且不flush控制输出，close_notify/fatal error不会唤醒reader，记录为`TLS-003`；未新增alert输入。
 - 2026-08-06：确认TLS close只断开TCP且native模块完全没有SSL_shutdown，peer永远收不到authenticated close_notify，记录为`TLS-004`；未新增strict-peer互操作。
+- 2026-08-06：确认TLS server在应用accept前以nil timeout等待ClientHello，listener无握手deadline配置，空连接可永久占用fd/SSL/task，记录为`TLS-005`；未新增slow-handshake压力复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
