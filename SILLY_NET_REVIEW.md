@@ -137,6 +137,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
 | RFC9113-5.1.2/6.5.2-MAX-CONCURRENT-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-160,239-263,618-659,1211-1278,1555-1648` | server recipient | 偏离 | server 收到 client setting 后覆盖用于限制 inbound request 的 `ch.streammax`；client setting 只限制 server 发起的 streams | 现有双方恰好都发送 100，没有非对称/运行时变更覆盖 | H2-005 |
 | RFC9113-6.3-PRIORITY-SIZE-SCOPE | MUST | `lualib/silly/net/http/h2.lua:1281-1310` | client/server recipient | 偏离 | PRIORITY payload 非 5 bytes 时调用 connection `GOAWAY(FRAME_SIZE_ERROR)`；规范要求 stream error | 现有测试没有 malformed PRIORITY 或错误作用域断言 | H2-006 |
+| RFC9113-4.2/6.8-GOAWAY-MIN-SIZE | MUST | `lualib/silly/net/http/h2.lua:1357-1367` | client/server recipient | 偏离 | GOAWAY handler 只检查 stream-id，完全忽略 payload；少于强制 8 bytes 的 frame 也被接受，而非 `FRAME_SIZE_ERROR` | 现有测试没有 malformed GOAWAY 长度 | H2-007 |
 
 ## 3. 基线结果
 
@@ -521,6 +522,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：将非零 stream 的 PRIORITY 长度错误改为 `stream_reset(streamid, ch, FRAME_SIZE_ERROR)`，并确保该错误不会清除其他 streams；stream-id 0 的优先 `PROTOCOL_ERROR` connection 分支保持不变。还需按 stream state 验证 idle/closed PRIORITY 的允许规则。
 - 后续回归条件：修复阶段覆盖长度 0/4/6、stream-id 0 与非零、idle/open/closed stream；断言只有 id 0 终止 connection，非零只产生对应 RST_STREAM，其他并发 stream 可继续。合法 5-byte PRIORITY 仍被忽略且不改变 stream state。本轮不新增测试代码。
 
+### H2-007 — P2 — 过短 GOAWAY payload 被当作合法 shutdown 接受
+
+- 状态：已确认；RFC 9113 与确定性 handler 推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §6.8 的 GOAWAY payload 必须至少包含 4-byte Last-Stream-ID 和 4-byte Error Code，之后才是可选 debug data；§4.2 要求小到无法包含 mandatory frame data 的 frame 发送 `FRAME_SIZE_ERROR`，stream-id 0 frame 的 size error 属于 connection error。
+- 位置：`lualib/silly/net/http/h2.lua:1357-1367`；通用 dispatch 在 `:1425-1448`。
+- 触发：peer 在 stream 0 发送 payload 长度 0..7 的 GOAWAY frame；空 payload 是最小触发。
+- 影响：Silly 将 malformed control frame 当作合法 GOAWAY，设置 `ch.goaway=true` 而不发送 `FRAME_SIZE_ERROR`。client 会停止新建 stream，却无法得到 last-stream/error 语义；server 也接受无效关闭信号。畸形 peer 因而能以非规范 frame 改变连接状态并掩盖真实协议错误，造成挂起或错误诊断。
+- 证据：`frame_goaway(ch, streamid, _, _)` 明确丢弃 flags 与 payload；除 `streamid ~= 0` 外没有任何长度检查或 `unpack`，随后直接置 `ch.goaway = true`。因此所有 0..7-byte payload 都走成功路径，8-byte mandatory structure 也未被验证/读取。
+- 根因：GOAWAY 被简化为单一布尔通知，未实现其最小 wire structure。
+- 建议解法：先检查 `#dat >= 8`，否则 `channel_goaway(ch, FRAME_SIZE_ERROR)`；再解析 reserved-masked Last-Stream-ID 与 Error Code，保留可选 debug data 的 opaque 语义。last-stream/error 对 active streams 的处理需要与 `H2-008` 的 retry/完成边界一起修复。
+- 后续回归条件：修复阶段覆盖长度 0/7/8/9、非零 stream-id、reserved bit、任意 error code 与 debug bytes；断言过短为 connection `FRAME_SIZE_ERROR`，合法 8+ bytes 被完整解析且 debug data 不影响结构。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -594,3 +607,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 HPACK encoder 的 `hardlimit` 仅本地改表，下一 header block 不会发送强制 dynamic table size update，记录为 `HPACK-001`。
 - 2026-08-06：确认 server 把 client 的 MAX_CONCURRENT_STREAMS 反向用于限制该 client 的 request streams，记录为 `H2-005`。
 - 2026-08-06：确认非 5-byte PRIORITY 被错误升级为 connection GOAWAY，而 RFC 9113 要求 stream `FRAME_SIZE_ERROR`，记录为 `H2-006`。
+- 2026-08-06：确认 GOAWAY handler 完全忽略 payload，0..7-byte frame 未触发强制 connection `FRAME_SIZE_ERROR`，记录为 `H2-007`。
