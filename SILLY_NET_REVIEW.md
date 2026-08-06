@@ -536,6 +536,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供request context/deadline并从入口计算一次absolute deadline，向DNS、TCP、TLS、H1/H2每次等待传播remaining time；redirect共享原deadline与预算。到期时H1关闭连接、H2发送RST_STREAM(CANCEL)并清pending，所有timer/stream恰好释放一次；另提供显式cancel handle且与timeout/response竞态安全。
 - 回归测试：修复阶段在DNS、connect、ClientHello、header、chunk、H2 frame/body和redirect各阶段停滞，断言同一absolute deadline内返回、资源清零且其他H2 streams不受影响。当前不运行slow peer。
 
+### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
+
+- 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
+- 规范：RFC 9112 §3.2要求HTTP/1.1请求缺Host、包含多条Host或Host值非法时server必须返回400；§3.2.2要求接受absolute-form，并在origin server以request-target authority替代收到的Host。参见 [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html)。
+- 位置：通用header reader在`lualib/silly/net/http/h1.lua:94-140`；request-line/handler dispatch在`:818-889`；target helper在`lualib/silly/net/http/helper.lua:27-43`。
+- 触发：发送HTTP/1.1请求缺失Host、带两条Host、非法/空Host，或absolute-form target与Host指向不同authority；请求语法其他部分可正常。
+- 影响：所有这些请求都进入业务handler。多租户virtual host、cache、反向代理或鉴权若从不同位置/合并表读取authority，可能路由到默认/错误tenant，产生Host-header poisoning、cache key混淆、reset-link/absolute URL污染或访问控制绕过；absolute-form整串还被当普通path，authority语义完全丢失。
+- 证据：duplicate fields被`read_header`变为Lua array，但httpd从不读取或验证`header["host"]`。request target仅交给`parsetarget`按第一个`?`分path/query，它不识别absolute-form/authority-form/asterisk-form；handler stream也没有规范化effective authority字段。只有WebSocket审计曾将缺Host作为其握手子问题，普通HTTP路径尚未拦截。
+- 根因：HTTP/1 parser只完成framing，没有建立request-target form与effective request URI/authority模型；Host被视为普通业务header而非HTTP/1.1路由控制字段。
+- 建议解法：解析四种request-target form；HTTP/1.1 origin-form/asterisk-form要求恰好一个语法合法Host，absolute-form解析URI authority并按规范忽略/替代Host用于effective target，同时检查安全策略，CONNECT要求合法authority-form。任何缺失/重复/非法组合在handler前400并关闭，stream暴露单一validated authority。
+- 回归测试：修复阶段覆盖missing/empty/duplicate/comma-list/whitespace/invalid port/IPv6 Host，absolute-form Host一致/冲突、CONNECT authority与OPTIONS `*`；断言违规请求不进handler且连接关闭。当前不新增Host ambiguity报文。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1509,6 +1521,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认URL relative resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect可生成错误target，记录为`URL-003`；未新增redirect server复现。
 - 2026-08-06：确认HTTP convenience client自动readall与gzip解压均无wire/decoded大小或ratio预算，恶意响应可耗尽内存，记录为`HTTPC-001`；未生成gzip bomb/大响应。
 - 2026-08-06：确认HTTP client没有端到端deadline/cancel，pool idle timeout不覆盖DNS/connect/TLS或在途H1/H2 reads，记录为`HTTPC-002`；未运行slow peer。
+- 2026-08-06：确认HTTP/1 server不要求唯一合法Host，也不解析absolute-form effective authority，歧义请求会进入handler，记录为`HTTP1-008`；未新增Host报文。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
