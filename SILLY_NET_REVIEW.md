@@ -151,6 +151,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1.1/8.2.2/8.3-SENDER-FIELDS | MUST/MUST NOT | `lualib/silly/net/http/h2.lua:700-738,938-1025`; `lualib/silly/net/http/client.lua:318-365`; `luaclib-src/lhttp.c:357-556` | client/server sender | 偏离 | request/response/trailer 在 HPACK 前无 sender validation；可生成 connection-specific/uppercase/非法或重复 pseudo/status fields | 现有测试只验证正常 fields，未检查 outbound malformed block | H2-018 |
 | RFC9113-8.1.1/8.2.1-FIELD-VALIDITY | MUST/security | `lualib/silly/net/http/h2.lua:331-447,1562-1648` | server recipient | 偏离 | request validator 未拒绝非法 name bytes/冒号及 value 中 NUL/CR/LF/首尾空白；Content-Length 又用宽松 tonumber | 现有测试没有 generic invalid field octets 或非十进制 length | H2-019 |
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
+| RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -705,6 +706,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：final frame 使用当前 `type`；首帧保留 HEADERS 与可能的 END_STREAM，后续所有 fragments 只能 CONTINUATION，只有 final fragment设置 END_HEADERS。抽出 sequence builder，避免 header/trailer路径分叉，并对 frame-size 做非零/范围保护。
 - 后续回归条件：修复阶段覆盖 HPACK 长度 `limit-1/limit/limit+1/2*limit/2*limit+1`，逐帧断言 type、stream id、END_STREAM 只在首 HEADERS、END_HEADERS 只在末帧；request/response/trailer 三条路径及 peer 调大 frame size均覆盖。本轮不新增测试代码。
 
+### H2-021 — P2 — SETTINGS initial-window overflow 被降成 stream error
+
+- 状态：已确认；RFC 9113 明确错误作用域与确定性 SETTINGS/window 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §6.9.2 要求收到 `SETTINGS_INITIAL_WINDOW_SIZE` 后，将新旧值差额应用于所有维护 active flow-control window 的 streams；如果该变化导致任何 flow-control window 超过 2^31-1，endpoint MUST 将其作为 connection `FLOW_CONTROL_ERROR`。减小后出现负 window 是合法状态，必须保留直到 credit 恢复。
+- 位置：普通 connection/stream WINDOW_UPDATE helper 在 `lualib/silly/net/http/h2.lua:1131-1172`，SETTINGS initial-window 分支在 `:1211-1278`。
+- 触发：先通过合法 stream WINDOW_UPDATE 将某 active stream 的 send window 提高到接近 2^31-1，再发送更大的 `SETTINGS_INITIAL_WINDOW_SIZE`，使 `current_stream_window + (new_initial-old_initial) > 2^31-1`。
+- 影响：Silly 只 reset 发生 overflow 的 stream，继续使用本应终止的 connection，并可能继续遍历其他 streams、应用后续 SETTINGS values 和发送 ACK。双方对 connection validity 与 stream window state产生分歧；同一 peer 可重复制造局部 resets，而规范要求立即隔离整连接的失同步状态。
+- 证据：SETTINGS 分支计算 delta 后对 `ch.streams` 每项调用 `stream_winupdate(s, delta)`。该 helper 检测 `nwindow > 0x7fffffff` 时调用 `stream_reset(..., FLOW_CONTROL_ERROR)` 并返回，永不调用 `channel_goaway`；`frame_settings` 也不接收失败结果，循环结束仍发送 SETTINGS ACK。普通 WINDOW_UPDATE overflow 使用 stream error是正确规则，但不能复用于 SETTINGS delta 的显式 connection-error 例外。
+- 根因：将两种数值相同但 RFC 错误作用域不同的 window update 共用无 context helper，且 SETTINGS processing 没有原子预检查/失败传播。
+- 建议解法：应用 setting 前先只遍历 active flow-control windows 计算所有新值并检查上限；任一 overflow 立即 `channel_goaway(FLOW_CONTROL_ERROR)`，不得应用 setting 或 ACK 后续值。全体通过后再原子提交 delta；负值保留，closed/tombstone streams 不调整。
+- 后续回归条件：修复阶段覆盖单/多 stream 临界 `2^31-1`、加一 overflow、负 delta、负后恢复、closed stream 和同一 SETTINGS 中后续参数；断言 overflow 只发 GOAWAY(FLOW_CONTROL_ERROR)、无 SETTINGS ACK/RST fan-out，合法边界继续发送。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -818,3 +831,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 request/response/trailer sender 在 HPACK 前无 HTTP/2 field validation，可生成 connection-specific/非法或重复控制 fields，记录为 `H2-018`。
 - 2026-08-06：确认 server request validator 未执行 RFC 9113 最低 name/value octet 规则，且用宽松 `tonumber` 解析 Content-Length，记录为 `H2-019`。
 - 2026-08-06：确认 outbound HPACK block 跨 frame 时 final fragment 被硬编码成第二个 HEADERS，而非 CONTINUATION，记录为 `H2-020`。
+- 2026-08-06：确认 SETTINGS initial-window delta 造成 stream window overflow 时仅 reset stream，未按规范终止 connection，记录为 `H2-021`。
