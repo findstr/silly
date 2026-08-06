@@ -479,6 +479,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有address入口先用`luaL_checklstring`取得长度并拒绝任何embedded NUL；再复制/确保唯一terminator后调用inet_pton/getaddrinfo。让parse/join/iptype/connect共享同一validated endpoint类型，避免helper与最终consumer规则漂移。
 - 回归测试：修复阶段覆盖IPv4/IPv6/hostname/port在每个位置嵌NUL，addr分类、DNS和TCP/UDP/TLS/cluster均返回明确EINVAL且不发起连接；合法普通string行为不变。当前不新增NUL连接复现。
 
+### URL-001 — P1 — URL fragment 被保留在 HTTP request target 并发送给服务端
+
+- 状态：已确认；RFC URI/HTTP语义与URL→HTTP/1/HTTP/2调用链推导。本阶段不发送含敏感fragment的请求。
+- 规范：RFC 3986 §3.5/§5规定fragment在dereference前从URI其余部分分离；RFC 9110 §7.1明确target URI排除fragment，因为它只供client-side处理。参见 [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986.html) 与 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html)。
+- 位置：URL parse/resolve/build在`lualib/silly/net/http/url.lua:18-137`；HTTP client把`u.path`直接交给stream在`lualib/silly/net/http/client.lua:278-314,329-382`；HTTP/1与HTTP/2 request sender分别在`lualib/silly/net/http/h1.lua`和`h2.lua`的`stream.request`路径。
+- 触发：调用HTTP client请求`https://host/path?x=1#secret`，或redirect Location包含/继承`#fragment`；parse pattern把`#`包含在尾部`path`，fragment-only resolve也显式拼回`bpath`。
+- 影响：fragment原样进入HTTP/1 request-line或HTTP/2`:path`，被origin、proxy和access log观察。OAuth implicit flow token、reset secret、客户端解密key或页面内定位私有值常依赖“fragment不会上网”的语义，因而可能直接泄露；还会生成不规范request target并改变cache/router匹配。
+- 证据：parts注解甚至把`path`描述为`path + query + fragment`；`parsehostport`只处理空path/leading query，不在`#`处分割。`request_url`无转换地调用`stream:request(method,u.path,header)`。`url.resolve`的fragment-only分支返回`base-without-old-fragment .. ref`，之后同样发送。
+- 根因：URL model没有独立query/fragment component，把“用于重建显示URL的reference”与“允许上wire的HTTP target”混为一个字段。
+- 建议解法：按RFC 3986解析为scheme/authority/path/query/fragment；`build`可按需要包含fragment，但HTTP dereference必须构造只含path+可选query的request target。redirect resolution先完整处理fragment继承/替换，再在发送边界剥离；日志和sensitive-data policy也应避免默认记录fragment。
+- 回归测试：修复阶段覆盖absolute、query+fragment、fragment-only、redirect Location相对/绝对及percent-encoded `%23`；wire捕获断言literal fragment永不出现，而合法path中的`%23`保留。当前不发送敏感fragment。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1447,6 +1459,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster接受UINT32_MAX hardlimit，但receive的psize+1与send的4+body会32-bit回绕后小分配/大copy，记录为`CLUSTER-005`；未构造越界包。
 - 2026-08-06：确认cluster把native整数/struct直接memcpy上wire且文档长度/顺序也与实现不符，跨端序节点无法互操作，记录为`CLUSTER-006`；未运行big-endian peer。
 - 2026-08-06：确认addr IP分类把Lua string按首个NUL截断，而中间层仍保留/返回完整值、socket再次截断，形成验证与实际endpoint混淆，记录为`ADDR-001`；未新增NUL连接复现。
+- 2026-08-06：确认HTTP URL model把fragment留在u.path并直接用于HTTP/1 request-target/HTTP/2 :path，客户端私有fragment会上wire，记录为`URL-001`；未发送敏感fragment。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
