@@ -167,6 +167,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-METHOD-CARDINALITY | MUST | `lualib/silly/net/grpc/registrar.lua:80-154`; `lualib/silly/net/grpc/client/service.lua:56-63,134-176` | client/server recipient | 偏离 | 单 request 方法读第一条即调用 handler；单 response 方法读第一条后 raw drain 其余 bytes，均未验证恰好一条 message 与 EOS | 自测只由守规 peer 各发一条 | GRPC-006 |
 | GRPC-SERVER-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/registrar.lua:17-31,80-228`; `lualib/silly/net/http/h2.lua:1549-1559` | server | 偏离 | unary parse errors end without grpc-status；client/bidi stream read status is ignored and wrapper emits OK；truncated envelope at EOS is mistaken for clean EOF | 无 malformed/truncated protobuf envelope 与 final status 覆盖 | GRPC-007 |
 | GRPC-TRAILERS-ONLY-CLIENT | MUST | `lualib/silly/net/grpc/client/service.lua:38-81,164-173`; `lualib/silly/net/http/h2.lua:1441-1500` | streaming client recipient | 偏离 | streaming status helper只查 trailer map；Trailers-Only 的 status 位于 END_STREAM initial header，故真实错误一律变 UNKNOWN；只有 unary 特判 header fallback | 无 streaming immediate-error/Trailers-Only 测试 | GRPC-008 |
+| GRPC-HTTP-STATUS-FALLBACK | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:38-81,134-176`; `lualib/silly/net/http/h2.lua:1463-1487` | client recipient | 偏离 | transport 保存 HTTP status/header，但 gRPC client 不检查 status 或 Content-Type；缺 grpc-status 时不按标准表映射 HTTP错误 | 无 proxy/non-gRPC HTTP response 测试 | GRPC-009 |
 
 ## 3. 基线结果
 
@@ -910,6 +911,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：unary 与 streaming 各自实现终局 status 解析，Trailers-Only fallback 没有抽成共享逻辑。
 - 建议解法：建立单一 response finalizer，识别 initial headers 是否 END_STREAM/是否含 grpc-status，并从正确 field section读取 Trailers-Only；普通 response仍要求最终 trailer status。四种 RPC API复用相同的 status/message/HTTP fallback 规则。
 - 后续回归条件：修复阶段对三种 streaming 分别返回每个代表性非 OK Trailers-Only status及 OK/非法组合，断言 status/message 与 unary 完全一致；覆盖同库 unknown method和独立 gRPC server。本轮不新增测试代码。
+
+### GRPC-009 — P1 — client 不执行 HTTP status/Content-Type 的 gRPC fallback
+
+- 状态：已确认；gRPC response handling 与官方 HTTP→gRPC status mapping、确定性 client finalizer 路径推导。本阶段只做静态 review，不新增 proxy 响应。
+- 规范：client 必须能处理 intermediary 返回的非 200、非 gRPC Content-Type或缺失 grpc-status 的 response，并向应用合成 gRPC status/message。缺 grpc-status 时官方映射至少规定：400→INTERNAL，401→UNAUTHENTICATED，403→PERMISSION_DENIED，404→UNIMPLEMENTED，429/502/503/504→UNAVAILABLE，其他（包括 200）→UNKNOWN；若有 grpc-status则优先使用它。
+- 位置：HTTP/2 已保存 status/header 在 `lualib/silly/net/http/h2.lua:1463-1487`；gRPC status consumers 在 `lualib/silly/net/grpc/client/service.lua:38-81,134-176`。
+- 触发：proxy、load balancer或非 gRPC upstream返回 401/403/404/429/502/503/504 等 HTTP response，缺少 grpc-status；或返回非 `application/grpc` Content-Type 的 body。
+- 影响：认证/授权/未实现/临时不可用全部退化为 UNKNOWN或一个无结构的 `No status in trailer` 字符串。尤其 429/502/503/504 的 UNAVAILABLE语义丢失后，上层 retry/load-balancing policy 无法做标准决策；client还可能把 HTML/JSON body 前 5 bytes当作 gRPC envelope length，叠加无界 response read。
+- 证据：底层解析后将 numeric HTTP status 放入 `h2stream.status`，并保留 content-type；gRPC service 文件从未读取这两个值。`check_trailer` 缺 grpc-status时固定 UNKNOWN；unary则直接返回 read error或固定文本，没有任何 mapping table或 Content-Type prefix检查。
+- 根因：gRPC response finalization只围绕 trailer map实现，没有把 HTTP response admission与 intermediary fallback 纳入同一状态机。
+- 建议解法：在读取任何 message envelope 前验证 response HTTP status和 gRPC Content-Type；终局若缺 grpc-status，按官方单向 mapping合成 code/message。若 status存在则优先，但仍记录/处理不合规 Content-Type；四种 RPC返回统一的结构化 status。
+- 后续回归条件：修复阶段覆盖 mapping 表每个 HTTP code、其他 code、200 无 grpc-status、合法/非法 Content-Type、存在 grpc-status优先；断言非 gRPC body不进入 envelope decoder，UNAVAILABLE等 code准确传给上层。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
