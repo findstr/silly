@@ -156,6 +156,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,880-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission 非事务：部分拒绝不记录已用 id、允许复用；invalid Content-Length 则泄漏 streamcount | 现有 malformed header tests 未检查 id reuse/长期 quota | H2-023 |
 | RFC9113-5.1/5.4.2-CLOSED-HPACK | MUST | `lualib/silly/net/http/h2.lua:1038-1080,1446-1499`; `luaclib-src/lhttp.c:692-780` | client recipient | 偏离 | local RST tombstone 固定只留 100 个；淘汰后 late HEADERS 在 HPACK 前直接 GOAWAY，未 minimally process compression state | 现有测试没有 >100 cancel 后 delayed response headers | H2-024 |
 | RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
+| RFC9113-6.6/8.4-PUSH-DISABLED | MUST | `lualib/silly/net/http/h2.lua:1500-1547` | client recipient | 偏离 | client 广告 ENABLE_PUSH=0 并获 ACK 后仍静默忽略 PUSH_PROMISE；未报 PROTOCOL_ERROR且未处理 HPACK/stream state | 现有测试没有 disabled-push violation | H2-026 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -770,6 +771,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：提供 server/client 可配置的 preface、SETTINGS/ACK、frame-progress、header-block-total 和 connection-idle deadlines；每个 deadline按整体阶段累计而非每次 byte重置，超时后关闭/GOAWAY并释放全部 state。再加每连接 small-frame/SETTINGS/PING rate budgets；默认值需兼顾高延迟网络并可关闭/调整。
 - 后续回归条件：修复阶段用可控时钟覆盖 preface 23/24 bytes、frame header 8/9、partial body、无 ACK、无限 CONTINUATION、持续 small frames和正常高延迟完成；断言超时释放 fd/task/channel并唤醒所有 waiters，合法活动不会被 pool idle timer误杀。本轮不新增测试代码。
 
+### H2-026 — P1 — client 在禁用 push 后仍静默忽略 PUSH_PROMISE
+
+- 状态：已确认；RFC 9113 mandatory error rule 与确定性 dispatch table推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §6.6/§8.4 规定，client 将 `SETTINGS_ENABLE_PUSH=0` 发送且获 ACK 后，收到任何 PUSH_PROMISE 必须作为 connection `PROTOCOL_ERROR`；即使实现支持 push，也不能把 PUSH_PROMISE 当未知 frame丢弃，因为它同时更新 HPACK connection state并保留 promised stream。
+- 位置：client frame dispatch table与 initial SETTINGS/ACK handshake在 `lualib/silly/net/http/h2.lua:1500-1547`；通用 dispatcher 对无 handler type不做任何处理在 `:1420-1440`。
+- 触发：handshake 完成后，server 在任一 client-initiated open/half-closed stream 发送语法完整的 PUSH_PROMISE；field block可包含 incremental indexing，随后 server在普通 response HEADERS 中引用该 dynamic entry。
+- 影响：Silly 既不按已协商禁用规则终止 connection，也完全不处理 promised id 与 HPACK block。下一普通 response可能因 dynamic table index不同步触发 COMPRESSION_ERROR/断连；若未立即引用，则协议违规被隐藏，client/server对 stream state仍不一致。恶意 server可选择延迟制造难诊断的后续失败。
+- 证据：client 初始 setting明确包含 `SETTINGS_ENABLE_PUSH, 0`，handshake等到 SETTINGS ACK 后才启动正常 dispatch；但 `frame_client` 只有 HEADERS/DATA/PRIORITY/RST/SETTINGS/PING/GOAWAY/WINDOW_UPDATE/CONTINUATION，没有 type 5。`common_dispatch` 只在 `func` truthy时处理，因此 PUSH_PROMISE无条件静默丢弃。server table反而显式为 type 5调用 `channel_goaway(PROTOCOL_ERROR)`。
+- 根因：把“功能未实现”误作 unknown extension frame处理，遗漏已定义 frame即使不支持其业务语义也有 mandatory validation和 connection-state副作用。
+- 建议解法：client table显式处理 PUSH_PROMISE；在本实现始终广告/确认 push=0 的前提下直接 connection PROTOCOL_ERROR。若将来支持 push，则必须解析 promised id、保持 HPACK、校验 associated/promised stream state、authority/safe/cacheable fields和 concurrency，并为 application提供明确接受/拒绝机制。
+- 后续回归条件：修复阶段在 ACK 前/后发送 PUSH_PROMISE，覆盖 stream id 0、invalid promised id、incremental HPACK 与后续 indexed response；当前 disabled模式断言 ACK 后统一 GOAWAY(PROTOCOL_ERROR)，绝不静默继续。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -888,3 +901,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 initial HEADERS admission 顺序使部分 rejected id 可复用、invalid Content-Length 又永久泄漏 streamcount，合并记录为 `H2-023`。
 - 2026-08-06：确认 client 的 local-RST tombstone 超过 100 被淘汰后，late HEADERS 在 HPACK 解码前直接 GOAWAY，记录为 `H2-024`。
 - 2026-08-06：确认 HTTP/2 preface/SETTINGS/ACK/frame/header-block reads 全部无 progress deadline且配置无入口，记录为 `H2-025`。
+- 2026-08-06：确认 client 在 ENABLE_PUSH=0 获 ACK 后仍因缺少 handler 静默忽略 PUSH_PROMISE并跳过 HPACK，记录为 `H2-026`。
