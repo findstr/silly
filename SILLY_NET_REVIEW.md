@@ -402,6 +402,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每个UDP transaction用CSPRNG生成不可预测且当前socket内不冲突的16-bit ID，cache generation另设字段；采用RFC 5452建议的source-port randomization/安全socket pool与适当轮换，同时保持connected-source校验。接收端严格匹配source/destination endpoint、ID、完整QNAME、QCLASS=IN和QTYPE；必要时加入0x20 case randomization作为额外而非替代防线，优先支持加密resolver或DNSSEC验证。
 - 回归测试：修复阶段统计大量并发/顺序query，断言不同name首包不恒定、活动ID唯一且port按策略具有entropy；伪造错误ID/port/name/class/type均被丢弃且不改cache。当前不发送spoofed response。
 
+### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
+
+- 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
+- 位置：全局session生成与ACK解析在`luaclib-src/lcluster.c:31-49,333-366,398-437`；C pop返回fd/session在`:294-331`；Lua response dispatch忽略fd在`lualib/silly/net/cluster.lua:52-95`；wait_pool注册在`:238-258`。
+- 触发：节点同时连接多个cluster peer；任一peer发送ACK_BIT置位且session等于当前另一peer在途调用的response frame。session是进程全局递增值，连接双方可从自己收到的request观察相邻值并预测；运行足够久发生2^31 wrap时，旧连接的late ACK也可与新调用碰撞。
+- 影响：攻击/错误peer可抢先完成发往另一节点的RPC，让调用方把攻击者body交给原cmd的`unmarshal`并接受伪造结果；真正response随后变成unknown/late ACK。即使peer都可信，重连、延迟与wrap也会造成跨请求错误归属，破坏RPC完整性和业务状态。
+- 证据：`c.pop(ctx)`明确返回`fd,buf,session,...`，但`cmd==nil`分支只执行`co=wait_pool[session]`并立即清除/wakeup，没有比较fd、peer generation、cmd或request nonce。`wait_pool`值只是coroutine；C ACK header也只有32-bit session。session generator为单一static counter且不避开仍active id。
+- 根因：session被视为全进程唯一且永不碰撞，response correlation没有绑定transport identity/lifecycle；C层已经保留fd provenance但上层丢弃。
+- 建议解法：pending key至少使用`(fd generation,session)`，值保存co/cmd/peer/request generation；分配session时跳过该connection仍active的值。response必须验证同一live peer generation后才能consume pending项，unknown/late response按协议策略丢弃或关闭该peer。更强方案为每连接随机起点+足够宽nonce，若跨不可信节点使用还需TLS mutual auth/message authentication。
+- 回归测试：修复阶段建立A/B两个peer，让B发送A的active session ACK，断言A waiter不被唤醒且B按策略报错；覆盖断线重连同slot、late response、强制session wrap和同session不同fd并发。当前不构造伪ACK。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1363,6 +1374,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认DNS CNAME/SRV/SOA name decoder使用整条message边界且A/AAAA只校验最小长度，typed RDATA可跨越声明RDLENGTH，记录为`DNS-001`；未新增畸形packet。
 - 2026-08-06：确认DNS parser抹平answer/authority/additional并丢弃CLASS，cache无条件按owner清除/写入，低trust无关记录可覆盖任意名字，记录为`DNS-002`；未新增恶意上游互操作。
 - 2026-08-06：确认DNS新name TXID恒为1且按name独立递增，同时每个server长期复用单一UDP source port，偏离RFC5452防伪entropy要求，记录为`DNS-003`；未发送伪造response。
+- 2026-08-06：确认cluster response虽携带fd但Lua只按全局31-bit session匹配waiter，任意peer/late wrap ACK可跨连接完成其他RPC，记录为`CLUSTER-001`；未构造伪ACK。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
