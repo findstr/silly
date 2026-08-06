@@ -676,6 +676,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：集中`destroy_conn(pool, conn)`并幂等更新fd、open_count、statement state及waiter调度；所有过期、broken、login失败、pool close路径复用。更稳妥地显式跟踪idle/in-use/connecting集合，并在每次状态转换校验计数；销毁释放capacity后应立即唤醒/授权最早waiter创建连接。
 - 回归测试：修复阶段用max_open=1/2覆盖checkout时过期与timer清理、idle/lifetime同时命中及连续多轮；每轮断言真实fd数、open_count与队列一致，清理后新query不会等待。当前仅静态验证。
 
+### MYSQL-002 — P1 — 不支持 TLS/server identity，full-auth 接受未认证 peer 提供的 RSA key
+
+- 状态：已确认；MySQL握手与认证调用链静态核对。本阶段不搭建MITM。
+- 规范：[MySQL 8.4 encrypted connection guide](https://dev.mysql.com/doc/refman/8.4/en/using-encrypted-connections.html)要求client可选择REQUIRED/VERIFY_CA/VERIFY_IDENTITY，并强调验证server identity以防MITM；[connection options](https://dev.mysql.com/doc/refman/8.4/en/connection-options.html)区分从server临时获取RSA key与使用client-side trusted public-key path。
+- 位置：pool配置与TCP建立在`lualib/silly/store/mysql.lua:78-90,1018-1079,1138-1160`；client capability未设置`CLIENT_SSL`在`:414-466`；sha256/caching_sha2 public-key retrieval及password加密在`:482-760`。
+- 触发：任意TCP MySQL连接均无加密/peer认证；当`sha256_password`或`caching_sha2_password`要求full authentication时，peer返回其选择的PEM key，driver无pin/CA验证即用它加密`password .. NUL`。
+- 影响：网络旁路者可读取/修改SQL、参数、结果和事务控制；可伪装server、提供攻击者RSA key、解密client发回的password，然后转接真实server，造成数据库凭据泄露。driver也无法连接`require_secure_transport=ON`或`REQUIRE SSL/X509`部署，文档宣称的MySQL 8完全兼容不成立。
+- 证据：`conn_new`只调用`tcp_connect`；虽然定义`CLIENT_SSL`，client flags从未包含它，也不发送SSLRequest。full-auth直接`pkey.new(pubkey_data)`，无trusted key comparison、证书链或hostname输入；opts没有tls/ssl-mode/CA/client-cert/public-key pin字段。
+- 根因：把RSA password wrapping当作server authentication/transport security；连接API没有MySQL SSLRequest后原位升级TLS与验证策略的抽象。
+- 建议解法：实现MySQL规范SSLRequest后、发送credential前的TLS upgrade，提供DISABLED/REQUIRED/VERIFY_CA/VERIFY_IDENTITY（安全默认至少REQUIRED，生产推荐VERIFY_IDENTITY）、trust store、SNI/hostname和mTLS配置；复用修复后的TLS验证能力。非TLS full-auth只在显式允许且server public key已预配置/pinned时发送密码，默认拒绝运行时未认证key retrieval。
+- 回归测试：修复阶段与MySQL 8/MariaDB分别覆盖require_secure_transport、CA/hostname正确与错误、mTLS、TLS downgrade；用不同临时RSA key确认pin失败且client不发送可解密credential。当前不建立MITM。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1661,6 +1673,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
+- 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
