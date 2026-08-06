@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（72 条）
+## 5. 已确认问题（73 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -133,6 +133,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
 | SOCK-004 | P2 | TCP connect 在加入 multiplexer 前立即失败会泄漏 fd；8 次失败令 open fd 从 8 增至 16。 |
 | SOCK-005 | P2 | `socket_stat` 与 close 并发时数据竞争，可读取失效 fd 并触发进程断言。 |
+| SOCK-006 | P1 | send length经`size_t→int→size_t`窄化，裸pointer可形成巨大iov并越界读取/泄露内存。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -196,7 +197,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-统计口径为 72 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 18 个 gRPC；以主报告中的编号和证据为准。
+统计口径为 73 条：5 个 CORE + 6 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 18 个 gRPC；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -277,13 +278,14 @@ review-repros/socket_stat_close_race.lua
 按顺序调查并记录：
 
 1. `CAND-SOCK-002`：worker 做 sid check 后 slot 被 close/reuse，随后 `wlbytes` 可能记到新 socket；需要 barrier 命中 check→accounting 窗口。
-2. `socket_send/socket_sendto` 的 public `size_t` 被写入 op 的 `int size`；超过 `INT_MAX` 时可能转负，socket thread 再转回 `size_t`，存在 over-read/信息泄漏或崩溃风险。先查所有上层长度上限，再做不分配超大内存的注入测试。
-3. `socket_exit` 的 worker/socket teardown 顺序：`worker_exit` 后 `socket_exit` 仍可能在 flush error 路径调用 `worker_push`，疑似 use-after-free；要构造 send error 的退出复现。
-4. stale multiplexer event 携带 slot 指针时，slot 已复用为新 socket，旧 event 是否会误作用于新 generation；Linux epoll 与 BSD/macOS kqueue 要分别分析。
-5. `rw_enable`/`sp_ctrl` 失败被忽略，可能造成永久收不到读写事件。
-6. `socket_stat`/sockaddr 边界：错误 family、getsockname/getpeername 失败后的未初始化地址、低层 API assert 契约。
-7. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler 堵塞是否可导致内存 DoS。
-8. `timer` delta 转 `int`、queue size 返回 `int` 等 conversion warnings；区分真实可达缺陷与构建卫生。
+2. `socket_exit` 的 worker/socket teardown 顺序：`worker_exit` 后 `socket_exit` 仍可能在 flush error 路径调用 `worker_push`，疑似 use-after-free；先做静态所有权证明，不新增触发代码。
+3. stale multiplexer event 携带 slot 指针时，slot 已复用为新 socket，旧 event 是否会误作用于新 generation；Linux epoll 与 BSD/macOS kqueue 要分别分析。
+4. `rw_enable`/`sp_ctrl` 失败被忽略，可能造成永久收不到读写事件。
+5. `socket_stat`/sockaddr 边界：错误 family、getsockname/getpeername 失败后的未初始化地址、低层 API assert 契约。
+6. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler 堵塞是否可导致内存 DoS。
+7. `timer` delta 转 `int`、queue size 返回 `int` 等 conversion warnings；区分真实可达缺陷与构建卫生。
+
+原第2项已由静态完整调用链确认并记录为`SOCK-006`；本阶段不新增大长度/越界动态复现。
 
 阶段 4 完成前，再审阅 `src/socket_poll_*`、pool/flipbuf、所有 `free_socket` 调用点和 stop/exit ownership table，跑一次严格 warnings 静态检查并把结论入报告。
 

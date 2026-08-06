@@ -316,6 +316,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：优先让 socket thread 通过 command/message 生成单一 generation 的 snapshot；若必须由 worker 直接读取，则需要覆盖 slot 生命周期和全部字段的真实锁/seqlock 协议。只有 name syscall 成功后才能调用 `ntop`，失败时返回显式无效/错误状态，不能解析旧栈内容。
 - 回归测试：加入确定性 barrier 覆盖 sid check→close/free→fd reuse 窗口，断言旧 sid 只能得到完整旧快照或显式 invalid，绝不能得到混合字段；对两个 name syscall 分别注入 `EBADF/ENOTCONN`，断言不崩溃、不返回未初始化地址，并要求目标 TSAN 堆栈清零。
 
+### SOCK-006 — P1 — send length 在 `size_t→int→size_t` 转换后可越界读取
+
+- 状态：已确认；公开Lua/C边界、确定性整数转换与send iovec路径推导。按用户要求不构造超大内存或越界发送复现。
+- 位置：Lua buffer/length取得在 `luaclib-src/lnet.c:78-118,166-217,239-278`；public C API在 `src/silly.h:130-134`、`src/api.c:96-105`；op的窄字段在 `src/socket.c:317-330`，赋值/扩回在`:1614-1659,1663-1727`；TCP iovec消费在`:1118-1175`。
+- 触发：调用公开`tcp_send/udp_send`的lightuserdata重载并提供负数或大于`INT_MAX`的Lua length；也可由超过`INT_MAX`的string/table总长度进入。lightuserdata路径不验证指针实际allocation大小，且`luaL_checkinteger`结果直接写入`size_t`。
+- 影响：负数先按C unsigned转换成巨大`size_t`，再赋给op的`int size`发生实现定义窄化；socket线程把负int扩回巨大`size_t`。TCP wlist最终将原始小buffer与巨大`iov_len`交给`writev`，kernel可能在遇到fault前发送相邻heap内容，形成进程内存泄露；也可能EFAULT/断连/崩溃。`wlbytes`仅32-bit，还会同步回绕，破坏背压/关闭计数。UDP路径可产生巨大send length及错误状态异常。
+- 证据：public签名全程声明`size_t`，但`struct op_tcpsend/op_udpsend.size`都是`int`且赋值无range check。`op_tcp_send`立刻以`size_t sz=op->size`扩回并保存到同为size_t的wlist；`drain_wlist_tcp`原样设置`iov[i].iov_len=w->size`。Lua lightuserdata helper执行`*size=luaL_checkinteger(...)`，没有`>=0`或实际allocation bound；类型注解也公开该重载。
+- 根因：异步op wire struct沿用32-bit signed length，而API/owned buffer模型使用平台`size_t`；边界层又把“pointer+claimed length”当作可信组合。
+- 建议解法：op size统一为`size_t`或明确的checked无符号宽度，并在所有入口先拒绝0、负值、超过`SSIZE_MAX`/实现单次发送与queue上限的长度；lightuserdata必须携带不可伪造的owned-buffer对象及真实capacity，不能接受裸pointer+任意length。`wlbytes/sendsize`升级到能表示queue上限的类型并做checked add。
+- 回归测试：修复阶段不分配巨量内存地用测试专用owned buffer/length注入覆盖-1、INT_MAX、INT_MAX+1、UINT32_MAX、SIZE_MAX；断言超限在入队前失败并只释放一次，socket线程从不收到截断值，ASan/UBSan下无越界，正常边界发送与背压计数正确。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1128,6 +1139,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认 HPACK varint 无 value/octet 上限，存在 signed shift UB、unsigned→int 回绕和 string pointer/length 越界路径，记录为 `HPACK-002`；按要求未新增触发代码。
 - 2026-08-06：确认 Huffman EOS=256 被 `uint8_t` 截断为 0，decoder 无 EOS guard并输出 NUL，记录为 `HPACK-003`。
 - 2026-08-06：完成gRPC over HTTP/2首轮静态矩阵，确认`GRPC-001`至`GRPC-018`；按用户要求未新增畸形输入/独立peer复现。基础length-prefix重组、正常response trailer和“不自动重放”路径符合；custom metadata/user-agent等保留为可选能力/API缺口。
+- 2026-08-06：确认public send length经`size_t→int→size_t`截断，裸pointer+claimed length可形成巨大TCP iovec，记录为`SOCK-006`；按要求未构造越界发送。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
