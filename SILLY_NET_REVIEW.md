@@ -145,6 +145,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.3.1/8.5-CONNECT-PSEUDO | MUST | `lualib/silly/net/http/h2.lua:126-133,386-444,700-738` | client sender/server recipient | 偏离 | client 对 CONNECT 仍发送 scheme/path；server 固定要求 scheme/path 且不要求 authority，正好与 CONNECT mandatory/omitted 集合相反 | 现有 HTTP/2 测试没有 CONNECT | H2-012 |
 | RFC9113-10.5/10.5.1-FIELD-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:74-80,314-384`; `luaclib-src/lhttp.c:696-780` | client/server recipient | 偏离 | 只限制 65,535 compressed wire bytes，不累计 uncompressed name+value+32、字段数或单字段大小，也无配置/advertisement | 现有测试没有 indexed expansion、超限并发 field blocks | H2-013 |
 | RFC9113-5.1-HALF-CLOSED-REMOTE | MUST | `lualib/silly/net/http/h2.lua:64-70,845-877,1177-1205` | client/server recipient | 偏离 | 已收到 END_STREAM 后再收 DATA 应为该 stream 的 STREAM_CLOSED；当前升级为整连接 GOAWAY(PROTOCOL_ERROR) | 现有测试没有 END_STREAM 后 DATA 与并发 stream 隔离 | H2-014 |
+| RFC9113-5.1/6.9-CLOSED-WINDOW-UPDATE | MUST NOT | `lualib/silly/net/http/h2.lua:238-241,1038-1080,1366-1407,1562-1648` | client recipient | 偏离 | client 不记录本端已用 stream-id；完成 stream 移除后，合法 late WINDOW_UPDATE 被误判为 idle 并触发 GOAWAY | 现有测试只覆盖 active stream flow-control，没有 close 后在途 update | H2-015 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -627,6 +628,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：先按 stream id 历史和双向状态分类：idle DATA 保持 connection `PROTOCOL_ERROR`；half-closed(remote) DATA 使用 `stream_reset(id, ch, STREAM_CLOSED)`；closed stream 按 §5.1 的 race 例外和最小必要处理决定忽略或 connection `STREAM_CLOSED`。不要让 late DATA 覆盖既有 terminal state。
 - 后续回归条件：修复阶段覆盖 HEADERS+END_STREAM 后 DATA、DATA+END_STREAM 后 DATA、open stream DATA、never-opened id DATA、RST 后在途 DATA，以及两个并发 streams；断言 half-closed(remote) 只产生该 id 的 RST_STREAM(STREAM_CLOSED)，idle 才产生 connection PROTOCOL_ERROR，其他 stream 可继续。本轮不新增测试代码。
 
+### H2-015 — P1 — client 将 closed stream 的 WINDOW_UPDATE 误判为 idle 并断连接
+
+- 状态：已确认；RFC 9113、client stream-id bookkeeping 与确定性 close/update 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §5.1/§6.9 明确允许 peer 在发送 END_STREAM 后继续发送 WINDOW_UPDATE；receiver 可能在 stream 已 half-closed(remote) 或 closed 时收到该 frame，且 MUST NOT 将其视为错误。只有真正 idle（从未打开）的 stream 上的 WINDOW_UPDATE 才按 state rules 处理为 connection `PROTOCOL_ERROR`。
+- 位置：`laststreamid` 初始化在 `lualib/silly/net/http/h2.lua:238-241`，stream 完成/移除在 `:1038-1080`，WINDOW_UPDATE 分类在 `:1366-1407`；该字段唯一更新位于 server request open 路径 `:1562-1648`。
+- 触发：Silly client 的本端 request stream（例如 id 1）已双向 END_STREAM，`S.close` 因两侧 state 均 closed 立即从 `ch.streams` 删除；server 随后发送此前已排队或用于 request-body credit 的 stream-1 WINDOW_UPDATE。
+- 影响：完全合法的在途 flow-control frame 使 client 发送 GOAWAY(PROTOCOL_ERROR)，整条 multiplexed connection 被标记不可用，其他并发请求随后被清除/失败。该竞态不要求恶意 frame，取决于完成、调度和网络到达顺序，因此可能表现为间歇性“对话废了”或 remote 断开。
+- 证据：client-created id 只写入 `streamidx`，从不更新 `laststreamid`；`laststreamid` 初始且始终为 -1。stream 被删除后，`frame_winupdate` 得到 `s=nil`，再以 `if id > ch.laststreamid` 判断 idle；任意合法正 id 都满足 `id > -1`，遂 `channel_goaway(ch, PROTOCOL_ERROR)`。server 收 request 时才更新该字段，因此同一启发式在两个角色上方向不对称。
+- 根因：用“对端曾打开的最大 id”同时判断本端发起 stream 的历史状态；没有按 initiator parity 分开维护最高已用 id/closed tombstone，也没有在允许的 race 窗口保留必要状态。
+- 建议解法：分别跟踪 local-initiated 与 peer-initiated stream-id 历史，并按 parity/角色判断 idle；对已存在过但关闭的 stream，WINDOW_UPDATE 一律忽略。不能只用固定 100-entry queue 推断协议状态；若为其他 closed-frame race回收 tombstone，应使用 RFC 建议的已确认 closing signal，而不是数量或 timer。
+- 后续回归条件：修复阶段在 client stream 1 双向完成并从 active map 删除后注入 WINDOW_UPDATE，断言忽略且并发 stream 3 继续；覆盖 half-closed(remote)、local RST 后在途 update、从未打开的 id、奇偶两方向、超过 100 个已关闭 streams，以及 server 角色。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -734,3 +747,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 HPACK varint 无 value/octet 上限，存在 signed shift UB、unsigned→int 回绕和 string pointer/length 越界路径，记录为 `HPACK-002`；按要求未新增触发代码。
 - 2026-08-06：确认 Huffman EOS=256 被 `uint8_t` 截断为 0，decoder 无 EOS guard并输出 NUL，记录为 `HPACK-003`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
+- 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
