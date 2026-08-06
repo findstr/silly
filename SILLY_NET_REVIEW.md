@@ -142,6 +142,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1.1/8.2/8.3-RESPONSE-FIELDS | MUST | `lualib/silly/net/http/h2.lua:367-384,1441-1500` | client recipient | 偏离 | response/trailer 未验证 pseudo 集合/顺序、lowercase、field syntax 或 connection-specific fields；`:status` 仅 `tonumber`，接受非三位语法 | 现有测试只覆盖本库 server 生成的规范 headers | H2-009 |
 | RFC9113-8.1-INTERIM-RESPONSES | MUST | `lualib/silly/net/http/h2.lua:1441-1500,1075-1123` | client recipient | 偏离 | 第一个 HEADERS 无论 1xx/最终都进入 HEADER 并唤醒 waiter；后续 final response 被当 trailer，未实现零到多个 interim→一个 final 的状态 | 现有测试没有 100/103 response | H2-010 |
 | RFC9113-8.1-TRAILER-END-STREAM | MUST | `lualib/silly/net/http/h2.lua:1177-1204,1441-1500` | client recipient | 偏离 | final 后的 HEADERS 无论 END_STREAM 都被当 trailer；不终止时后续 DATA 仍被接受并把 TRAILER 状态倒退为 DATA | 现有 trailer 测试只覆盖本库 server 生成的 END_STREAM trailer | H2-011 |
+| RFC9113-8.3.1/8.5-CONNECT-PSEUDO | MUST | `lualib/silly/net/http/h2.lua:126-133,386-444,700-738` | client sender/server recipient | 偏离 | client 对 CONNECT 仍发送 scheme/path；server 固定要求 scheme/path 且不要求 authority，正好与 CONNECT mandatory/omitted 集合相反 | 现有 HTTP/2 测试没有 CONNECT | H2-012 |
 
 ## 3. 基线结果
 
@@ -586,6 +587,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：final response 后第二个 HEADERS 必须同时满足 trailer field 规则与 END_STREAM，否则对该 stream 报 `PROTOCOL_ERROR`；成功 trailer 直接进入 END。DATA handler 只允许合法 open/half-closed local 且 message phase 为 pre-trailer body，禁止 TRAILER→DATA 回退；第三个 HEADERS 永远拒绝。
 - 后续回归条件：修复阶段覆盖 final→trailer(END_STREAM)、final→trailer(no END_STREAM)、trailer 后 DATA/HEADERS、空 trailer、分片 CONTINUATION trailer，以及与 informational response 的组合；断言 malformed 只 reset 对应 stream，合法并发 stream不受影响。本轮不新增测试代码。
 
+### H2-012 — P2 — 普通 CONNECT 的 pseudo-header 生成与校验均相反
+
+- 状态：已确认；RFC 9113 与确定性 sender/recipient 路径推导。本阶段只做静态 review，不新增复现代码；RFC 8441 extended CONNECT 另行按是否宣称支持检查。
+- 规范：RFC 9113 §8.5 规定普通 CONNECT 的 `:method` 必须为 CONNECT，`:authority` 必须包含目标 host:port，而 `:scheme` 和 `:path` 必须省略；不满足即 malformed。§8.3.1 的一般 method/scheme/path 必需集合明确对 CONNECT 例外。
+- 位置：request pseudo mask/validator 在 `lualib/silly/net/http/h2.lua:126-133,386-444`；client header generation 在 `:700-738`；generic request API 在 `:939-956` 和 `lualib/silly/net/http/client.lua:302-341`。
+- 触发：通过公开 generic request API 发送 method `CONNECT`，或外部规范 client 向 Silly HTTP/2 server 发送合法 CONNECT field section。
+- 影响：Silly client 总是产生 peer 必须视为 malformed 的 CONNECT；Silly server 则会拒绝合法 CONNECT，并可能接受同时含 scheme/path、缺 authority 的非法变体。代理隧道、基于 CONNECT 的上层协议和兼容性因此不可用；若应用自行解释错误 pseudo 集合，还可能把空/错误 authority 当作目标。
+- 证据：client `stream_writeheader` 对所有 active streams 无条件编码 `:authority/:method/:path/:scheme`。server 的 `pseudo_must_mask=0x07` 固定要求 method、scheme、path；`check_req_header` 不根据 `:method` 分支，最终只比较该 mask，且从不要求 authority。故发送端与接收端都没有 CONNECT 例外。
+- 根因：用一套固定 request pseudo schema 处理所有 methods，没有在完整 ordered field list 验证后按 method 选择普通/CONNECT 控制数据规则。
+- 建议解法：sender 对普通 CONNECT 只编码 method+authority，path API 参数不得落到 wire；recipient 先收集并验证唯一 pseudo，再按 method 检查：CONNECT 必须 authority、禁止 scheme/path，普通请求要求 method/scheme/path并按 URI 情况处理 authority。若实现 RFC 8441，则只有成功协商 `SETTINGS_ENABLE_CONNECT_PROTOCOL` 后才允许额外 `:protocol` 与 extended CONNECT 的不同集合。
+- 后续回归条件：修复阶段覆盖合法 CONNECT、缺/空 authority、误带 scheme/path、普通 GET 缺 scheme/path、authority-form host:port，以及 client wire field 集合；另覆盖未协商 `:protocol` 必须拒绝，不把普通 CONNECT 与 RFC 8441 混为一类。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -664,3 +677,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client 没有 response/trailer field validator，非法 pseudo/uppercase/connection fields 和非三位 status 可被接受，记录为 `H2-009`。
 - 2026-08-06：确认 client 把首个合法 1xx informational response 当 final，真正 final HEADERS 被误分类为 trailer，记录为 `H2-010`。
 - 2026-08-06：确认 client 接受不带 END_STREAM 的 trailer HEADERS，之后仍允许 DATA 并发生 TRAILER→DATA 状态回退，记录为 `H2-011`。
+- 2026-08-06：确认 client 固定为 CONNECT 发送 scheme/path，server 又固定要求 scheme/path且不要求 authority，普通 CONNECT 双向不符合，记录为 `H2-012`。

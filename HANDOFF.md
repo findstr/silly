@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（37 条）
+## 5. 已确认问题（38 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -160,8 +160,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-009 | P2 | client 不验证 response/trailer pseudo、field syntax、connection fields 或严格 status 语法。 |
 | H2-010 | P2 | client 将首个 1xx informational response 当 final，真正 final HEADERS 被当 trailer。 |
 | H2-011 | P2 | client 接受无 END_STREAM trailer，之后仍接受 DATA 并发生状态回退。 |
+| H2-012 | P2 | 普通 CONNECT 的 pseudo-header 生成/校验与 mandatory/omitted 规则相反。 |
 
-统计口径为 37 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 11 个 HTTP/2 + 1 个 HPACK；以主报告中的编号和证据为准。
+统计口径为 38 条：5 个 CORE + 5 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 12 个 HTTP/2 + 1 个 HPACK；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -215,7 +216,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-011`，HPACK 已确认 `HPACK-001`。下一项继续检查 RST/DATA stream state、request CONNECT 规则与 HPACK integer/Huffman 边界。每次只记录一个规范结论，不新增复现代码。
+HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`。HTTP/2 已确认 `H2-001` 至 `H2-012`，HPACK 已确认 `HPACK-001`。下一项继续检查 RST/DATA stream state、field-size limits 与 HPACK integer/Huffman 边界。每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
