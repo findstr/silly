@@ -165,6 +165,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-MESSAGE-COMPRESSION | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81` | client/server recipient | 偏离 | 任意非零 compressed flag 被统一当 unsupported，未校验 0/1 domain 或 `grpc-encoding`；server 固定回 UNIMPLEMENTED，client 不能稳定映射 INTERNAL | 无 compression、非法 flag、encoding/flag 组合测试 | GRPC-004 |
 | GRPC-MESSAGE-SIZE-LIMIT | security | `lualib/silly/net/grpc/helper.lua:6-50`; `lualib/silly/net/http/h2.lua:779-799,1084-1105,1177-1204` | client recipient | 偏离 | 4 MiB cap 仅用于 request；response 按 peer 的 32-bit length 无上限等待并缓存，且持续 WINDOW_UPDATE | 无 oversized response；server-only request cap 不覆盖 client | GRPC-005 |
 | GRPC-METHOD-CARDINALITY | MUST | `lualib/silly/net/grpc/registrar.lua:80-154`; `lualib/silly/net/grpc/client/service.lua:56-63,134-176` | client/server recipient | 偏离 | 单 request 方法读第一条即调用 handler；单 response 方法读第一条后 raw drain 其余 bytes，均未验证恰好一条 message 与 EOS | 自测只由守规 peer 各发一条 | GRPC-006 |
+| GRPC-SERVER-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/registrar.lua:17-31,80-228`; `lualib/silly/net/http/h2.lua:1549-1559` | server | 偏离 | unary parse errors end without grpc-status；client/bidi stream read status is ignored and wrapper emits OK；truncated envelope at EOS is mistaken for clean EOF | 无 malformed/truncated protobuf envelope 与 final status 覆盖 | GRPC-007 |
 
 ## 3. 基线结果
 
@@ -884,6 +885,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：共用 helper 只提供“读取下一条 message”，wrapper 没有提供“读取唯一 message 并确认 EOS”的组合操作；raw drain 被误用为完整性校验。
 - 建议解法：实现 cardinality-aware reader。单消息 request/response 在解码第一条后必须继续解析到 EOS/trailer并确认没有第二个 envelope；零条、多条、截断余字节均以 INTERNAL/适当 RPC error结束且不得返回业务成功。server 应在调用 unary handler 前完成 request-side cardinality验证。
 - 后续回归条件：修复阶段对 unary、server-streaming request side及 unary、client-streaming response side分别覆盖 0/1/2 条、第二条截断、第一条后延迟 EOS；只允许恰好一条进入/返回业务成功。本轮不新增测试代码。
+
+### GRPC-007 — P1 — server 解析失败会缺失 status 或被覆盖成 OK
+
+- 状态：已确认；gRPC response/trailer status 要求与确定性 wrapper/control-flow 推导。本阶段只做静态 review，不新增畸形 payload。
+- 规范：RPC runtime/application error 必须通过 trailers 中的 `grpc-status`（通常 INTERNAL 等非 OK）传播；正常 response 的最终 Status 也始终必需。截断 envelope、protobuf decode failure或 streaming read error不能以无 status 的 HTTP/2 END_STREAM结束，更不能报告 `grpc-status: 0`。
+- 位置：envelope/protobuf reader 在 `lualib/silly/net/grpc/helper.lua:16-50`；server stream reader 与四种 wrapper 在 `lualib/silly/net/grpc/registrar.lua:17-31,80-228`；通用 server handler 的无条件收尾在 `lualib/silly/net/http/h2.lua:1549-1559`。
+- 触发：unary/server-streaming request 的 5-byte header或 payload 在 END_STREAM 前截断，或 payload 不是目标 protobuf；client-streaming/bidi handler 循环读取时遇到同类错误后按 nil 结束并正常 return。
+- 影响：前两类返回 HTTP 200/application-grpc 但完全没有 grpc-status，client只能合成 UNKNOWN；后两类可明确把 malformed request报告成 OK。应用、监控、retry policy 和审计日志会把协议损坏误判成成功或不可分类错误，client-streaming handler 还可能基于错误前已读消息产生并提交副作用。
+- 证据：unary/sstream wrapper 在 `readbody` 返回 nil 时只 `logger.warnf` 后 return，没有 `closewrite` trailer；外层 `server_handler` 随后调用无参数 `s:closewrite()`，把预置 content-type header以 END_STREAM发送。stream reader虽设置 `s.status=INTERNAL`，但 cstream/bstream wrapper在用户函数正常返回后从不检查它，固定发 `grpc-status=OK`。若 partial bytes 后收到 EOS，底层 exact read返回 EOF且 `h2stream:eof()` 为真，reader还会把截断误标 OK。
+- 根因：message reader 只返回松散字符串错误，没有区分 clean message-boundary EOS 与 mid-envelope EOF；stream object status 也没有成为 wrapper 终局状态机的权威输入。
+- 建议解法：让 decoder 返回结构化结果 `message/clean_eos/protocol_error/transport_error` 并跟踪当前 envelope offset；所有 wrappers通过一个唯一 finalize 函数选择最终 status，已有 runtime error不可被用户函数正常 return覆盖。能够发送 trailer时用 INTERNAL等非 OK，无法继续 framing 时按 gRPC transport mapping reset stream。
+- 后续回归条件：修复阶段覆盖 0..4-byte header截断、payload 少 1 byte、invalid protobuf、错误发生于第 1/第 N 条 streaming message；断言始终只有一个非 OK final status、handler副作用边界明确、永不缺 status或回 OK。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
