@@ -160,6 +160,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 | GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
+| GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
 
 ## 3. 基线结果
 
@@ -819,6 +820,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：连接层分别维护 network address 与 logical hostname，但创建 HTTP/2 channel 时没有把 logical authority 穿过 API 边界；底层 sender 又对 nil 做宽松字符串化，未 fail closed。
 - 建议解法：将规范化的 target authority（含非默认端口时的端口）显式传给 `h2.newchannel(scheme, conn, authority)`；HTTP/2 sender 在缺失/非法 authority 时应在写 wire 前返回错误，不应依赖 Lua 通用字符串转换。TLS SNI 仍只使用不含端口的 hostname。
 - 后续回归条件：修复阶段用捕获 peer 分别验证 DNS target、IPv4、bracketed IPv6、默认/非默认端口和 TLS SNI：`:authority` 与 target 一致且绝不为 `nil`；再以两个 virtual hosts 证明请求只路由到目标服务。本轮不新增测试代码。
+
+### GRPC-002 — P2 — 四种 client 调用都缺少 `te: trailers`
+
+- 状态：已确认；gRPC over HTTP/2 Call-Definition 与确定性 request 构造路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：gRPC HTTP/2 protocol 的 Request-Headers grammar 把 `TE → "te" "trailers"` 列入 Call-Definition，并说明它用于探测不兼容的 proxy。RFC 9113 允许 HTTP/2 request 中的 `te` 仅取值 `trailers`。
+- 位置：四种调用分别在 `lualib/silly/net/grpc/client/service.lua:134-176,178-213,215-235,237-257` 构造 request headers；最终 HTTP/2 sender 在 `lualib/silly/net/http/h2.lua:700-738`。
+- 触发：通过任意检查 gRPC Call-Definition、或需要确认下游支持 trailers 的 proxy/server 发起 unary、client-streaming、server-streaming 或 bidi RPC。
+- 影响：请求不能声明客户端理解 HTTP trailers；中间层可将其判定为不兼容客户端并拒绝、降级或错误处理尾部 `grpc-status`，造成跨实现调用失败。即使直连 server 接受，缺字段仍使 wire request 不满足 gRPC 调用定义。
+- 证据：四个 constructor 都传入仅含 `['content-type']='application/grpc'` 的 Lua table；HTTP/2 request sender只补 pseudo headers，不会自动补 `te`。仓库内 gRPC server 也不校验 TE，因此同库测试无法发现。
+- 根因：gRPC 层把 HTTP/2 transport 能力视为隐式已知，没有把 gRPC 要求的代理兼容性信号写入调用模板；四条调用路径又复制了同一个不完整 header literal。
+- 建议解法：集中定义并复用 gRPC request header builder，所有 RPC 固定加入 `te = 'trailers'`，同时承载 authority、timeout、metadata 与 content subtype；继续由 HTTP/2 层拒绝其他 TE 值。
+- 后续回归条件：修复阶段捕获四种 RPC 的首个 HEADERS，逐一断言只有一个小写 `te: trailers`；再经会拒绝缺失 TE 的独立 gRPC-aware proxy 验证正常转发。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
