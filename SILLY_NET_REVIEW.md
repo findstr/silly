@@ -424,6 +424,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：pending entry保存fd generation/peer/cmd/timer/co，并在peer维护active session set；任何close路径原子摘除该generation全部pending、cancel timers并以实际close errno唤醒。response/timeout/close竞争都用单一`finish_pending`保证恰好完成一次；可重连peer不得把旧调用迁移/静默重放到新连接。
 - 回归测试：修复阶段并发多个call后分别触发EOF、RST、local close和connect replacement；断言所有waiter立即返回对应错误、timer取消、wait tables清空，late response/late timer不二次wakeup。当前不新增断线复现。
 
+### CLUSTER-003 — P2 — unknown/late ACK 对 nil coroutine 执行 wakeup，可被持续触发异常与日志
+
+- 状态：已确认；response dispatch与task状态检查的确定性推导。本阶段不发送ACK flood。
+- 位置：cluster response分支在`lualib/silly/net/cluster.lua:52-95`；timeout删除pending在`:226-258`；`task.wakeup`状态校验在`lualib/silly/task.lua:178-190`。
+- 触发：peer发送任意ACK_BIT frame，其session从未分配、已timeout/完成、重复，或因`CLUSTER-001`来自错误连接；合法response与本地timeout相邻到达也可产生late ACK。
+- 影响：`wait_pool[session]`为nil，代码仍清slot并`task.wakeup(nil,buf)`，触发`BUG: wakeup on task stat:nil`异常与完整traceback日志。`process`在处理当前packet前已经`task.fork(process)`，异常不会关闭peer；恶意peer可用最小4-byte body持续生成coroutine异常、日志I/O和CPU负载，并干扰诊断。
+- 证据：response分支没有`if not co`检查。`task.wakeup`只允许WAIT task，否则主动`error`。C parser只要求ACK packet body至少4字节并不验证session active，因此任意32-bit ACK session都能进入该分支。
+- 根因：RPC协议把所有ACK默认假设为本地active request，没有为unmatched/duplicate/late response定义接收状态机与连接级违规策略。
+- 建议解法：在验证`(fd generation,session)`pending存在后才consume/wakeup；unknown和late ACK应有bounded metric/log并按配置丢弃，重复/明显恶意流量可关闭该peer，绝不能以Lua exception作为控制流。timeout/response/close统一finish函数保留短期tombstone可区分late与never-issued。
+- 回归测试：修复阶段覆盖随机、重复、刚timeout、错误fd及wrap-old ACK；断言无task异常/traceback、active waiter不变、日志限速，达到违规阈值时只关闭发送peer。当前不发送ACK flood。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1387,6 +1398,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认DNS新name TXID恒为1且按name独立递增，同时每个server长期复用单一UDP source port，偏离RFC5452防伪entropy要求，记录为`DNS-003`；未发送伪造response。
 - 2026-08-06：确认cluster response虽携带fd但Lua只按全局31-bit session匹配waiter，任意peer/late wrap ACK可跨连接完成其他RPC，记录为`CLUSTER-001`；未构造伪ACK。
 - 2026-08-06：确认cluster pending只存coroutine且两个close路径都没有peer反向索引/finish，断线后RPC只能保留到timeout，记录为`CLUSTER-002`；未新增断线timing复现。
+- 2026-08-06：确认cluster unknown/late/duplicate ACK取到nil waiter后仍task.wakeup，且连接保持可重复制造异常与日志，记录为`CLUSTER-003`；未发送ACK flood。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
