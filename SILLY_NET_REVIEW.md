@@ -146,6 +146,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-10.5/10.5.1-FIELD-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:74-80,314-384`; `luaclib-src/lhttp.c:696-780` | client/server recipient | 偏离 | 只限制 65,535 compressed wire bytes，不累计 uncompressed name+value+32、字段数或单字段大小，也无配置/advertisement | 现有测试没有 indexed expansion、超限并发 field blocks | H2-013 |
 | RFC9113-5.1-HALF-CLOSED-REMOTE | MUST | `lualib/silly/net/http/h2.lua:64-70,845-877,1177-1205` | client/server recipient | 偏离 | 已收到 END_STREAM 后再收 DATA 应为该 stream 的 STREAM_CLOSED；当前升级为整连接 GOAWAY(PROTOCOL_ERROR) | 现有测试没有 END_STREAM 后 DATA 与并发 stream 隔离 | H2-014 |
 | RFC9113-5.1/6.9-CLOSED-WINDOW-UPDATE | MUST NOT | `lualib/silly/net/http/h2.lua:238-241,1038-1080,1366-1407,1562-1648` | client recipient | 偏离 | client 不记录本端已用 stream-id；完成 stream 移除后，合法 late WINDOW_UPDATE 被误判为 idle 并触发 GOAWAY | 现有测试只覆盖 active stream flow-control，没有 close 后在途 update | H2-015 |
+| RFC9113-4.1/6.8-GOAWAY-LAST-ID | MUST | `lualib/silly/net/http/h2.lua:238-241,596-608,1562-1648`; `luaclib-src/lhttp.c:1049-1072` | client/server sender | 偏离 | 无 peer stream 时 last id=-1 被转成 0xffffffff；reserved bit 非零且错误声明最大 Last-Stream-ID，而非 0 | 现有测试未检查 outbound GOAWAY bytes/processed boundary | H2-016 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -640,6 +641,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：分别跟踪 local-initiated 与 peer-initiated stream-id 历史，并按 parity/角色判断 idle；对已存在过但关闭的 stream，WINDOW_UPDATE 一律忽略。不能只用固定 100-entry queue 推断协议状态；若为其他 closed-frame race回收 tombstone，应使用 RFC 建议的已确认 closing signal，而不是数量或 timer。
 - 后续回归条件：修复阶段在 client stream 1 双向完成并从 active map 删除后注入 WINDOW_UPDATE，断言忽略且并发 stream 3 继续；覆盖 half-closed(remote)、local RST 后在途 update、从未打开的 id、奇偶两方向、超过 100 个已关闭 streams，以及 server 角色。本轮不新增测试代码。
 
+### H2-016 — P2 — 无已处理 stream 的 GOAWAY 写出非法/错误 Last-Stream-ID
+
+- 状态：已确认；RFC 9113 wire format、Lua-to-C conversion 与确定性 builder 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §4.1 要求保留位发送时为 0；§6.8 将 GOAWAY Last-Stream-ID 定义为 sender 可能处理过的最高 peer-initiated stream，并明确没有处理任何 stream 时可设为 0。该边界决定哪些操作能被安全重试，sender 不得以内部 sentinel 代替 wire value。
+- 位置：`laststreamid` 初始化在 `lualib/silly/net/http/h2.lua:238-241`，GOAWAY 调用在 `:596-608`，唯一更新位于 server request path `:1562-1648`；C frame builder 在 `luaclib-src/lhttp.c:1049-1072`。
+- 触发：client 因本地 close 或任一 protocol/flow-control error 发送 GOAWAY；或 server 在收到首个合法 request HEADERS 前发送 GOAWAY。此时 `ch.laststreamid` 仍为 -1。
+- 影响：wire payload 的首 4 bytes 是 `ff ff ff ff`：reserved bit 违反 sender 规则，低 31 位又声明 2^31-1。规范 peer 虽会忽略 reserved bit，却会据此认为所有本端发起 streams 都可能已被处理，丢失本可确定安全重试的边界；诊断也无法分辨“零个已处理”和“最大 graceful drain sentinel”。
+- 证据：Lua 初始化明确使用 `laststreamid=-1`；client 路径从不更新它。`channel_goaway` 无条件传给 `build_goaway`。C 函数以 `unsigned int last_stream_id = luaL_checkinteger(...)` 接收，-1 转为 `UINT_MAX`，再由 `write_int` 原样写四字节，既未验证 0..0x7fffffff 也未 mask reserved bit。
+- 根因：将内部“尚无 id”sentinel 直接序列化到 unsigned 31-bit protocol field，且 builder 缺少范围/保留位保护。
+- 建议解法：协议状态从 0 初始化（无 peer-initiated stream 即 last=0），按角色只在真正把 peer stream 交给上层时更新；GOAWAY builder 接受前验证范围并强制保留位为 0。若实现两阶段 graceful shutdown，2^31-1 必须是显式策略值，不能由 -1 偶然产生。
+- 后续回归条件：修复阶段逐字节检查 client close、server pre-request error、server 处理 id1 后 error 和 graceful two-stage GOAWAY；断言 reserved bit 恒 0、无处理时 last=0、处理后为正确 peer id、多次 GOAWAY 不增加边界。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -748,3 +761,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 Huffman EOS=256 被 `uint8_t` 截断为 0，decoder 无 EOS guard并输出 NUL，记录为 `HPACK-003`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
+- 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
