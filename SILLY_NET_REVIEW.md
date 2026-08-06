@@ -548,6 +548,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：解析四种request-target form；HTTP/1.1 origin-form/asterisk-form要求恰好一个语法合法Host，absolute-form解析URI authority并按规范忽略/替代Host用于effective target，同时检查安全策略，CONNECT要求合法authority-form。任何缺失/重复/非法组合在handler前400并关闭，stream暴露单一validated authority。
 - 回归测试：修复阶段覆盖missing/empty/duplicate/comma-list/whitespace/invalid port/IPv6 Host，absolute-form Host一致/冲突、CONNECT authority与OPTIONS `*`；断言违规请求不进handler且连接关闭。当前不新增Host ambiguity报文。
 
+### HTTP1-009 — P1 — field name/value 无 octet 校验，sender 可直接生成 CRLF injection
+
+- 状态：已确认；RFC field grammar与收发共同helper调用链推导。本阶段不构造header injection报文。
+- 规范：RFC 9110 §5.1/§5.5要求field name为token，field value不得含CR、LF、NUL；RFC 9112要求含非法field-name或value的消息作为malformed处理，sender不得生成这类消息。不同recipient对非法whitespace/line的容忍会形成request smuggling/response splitting风险。
+- 位置：receiver `read_header`在`lualib/silly/net/http/h1.lua:94-140`；sender `compose_header/flush_header/close_write`在`:79-93,347-467`；client/server公开header入口在`:557-600,761-798`及`lualib/silly/net/http/client.lua:278-345`。
+- 触发：远端发送包含非token字符、额外colon或NUL/控制字节的field name/value；或本地应用把包含`\r\n`的untrusted key/value传给request/respond/trailer header table。
+- 影响：receiver把其他实现会拒绝/不同解释的字段交给handler，并可能让控制字段识别与中间层分叉。sender逐片拼接后，value中的CRLF可结束当前字段并注入Host、Content-Length、Transfer-Encoding、Connection等额外字段甚至空行/body，造成HTTP request smuggling、response splitting、cache poisoning或header-based安全策略绕过。
+- 证据：receiver pattern只有`^(%S+):%s*(.-)%s*$`，`%S`不是RFC token allowlist，也没有逐octet value检查。`compose_header`对除client内建Host外的key/value直接追加`k,": ",v,"\r\n"`；table多值同样无验证，trailer复用该helper。高层client只lowercase key，不能消除非法字符。
+- 根因：Lua table到wire和wire到Lua之间没有统一field validator，代码依赖调用方与peer永远给规范文本；控制字段语义校验也在已经宽松解析之后。
+- 建议解法：共享严格HTTP/1 field validator：name逐octet符合`tchar`且非空，value拒绝CR/LF/NUL及不允许的CTL并按规范处理OWS；receiver任一非法字段400/关闭，sender在写任何字节前返回错误。不同context另加Host/TE/CL/trailer/hop-by-hop规则，禁止用字符串替换“清洗”危险值。
+- 回归测试：修复阶段枚举全部0..255 octet用于name/value，覆盖colon、space、tab、NUL、CRLF、obs-fold及table multi-value；sender必须零字节输出后失败，receiver不得进handler且关闭。当前不构造injection报文。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1522,6 +1534,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP convenience client自动readall与gzip解压均无wire/decoded大小或ratio预算，恶意响应可耗尽内存，记录为`HTTPC-001`；未生成gzip bomb/大响应。
 - 2026-08-06：确认HTTP client没有端到端deadline/cancel，pool idle timeout不覆盖DNS/connect/TLS或在途H1/H2 reads，记录为`HTTPC-002`；未运行slow peer。
 - 2026-08-06：确认HTTP/1 server不要求唯一合法Host，也不解析absolute-form effective authority，歧义请求会进入handler，记录为`HTTP1-008`；未新增Host报文。
+- 2026-08-06：确认HTTP/1 receiver用%S+代替token/value octet校验，sender把header原样拼接，CRLF可注入控制字段/空行，记录为`HTTP1-009`；未构造injection报文。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
