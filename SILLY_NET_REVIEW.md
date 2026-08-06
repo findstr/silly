@@ -446,6 +446,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有close入口调用同一个幂等teardown，先摘除peer generation的pending/complete/incomplete state，再清map和关闭socket；`c.clear`应同时考虑已完成但尚未pop的packet，或C ctx提供`clear_fd`统一释放该fd全部状态。明确listener与connection类型避免对listener误操作。
 - 回归测试：修复阶段发送length=hardlimit与少量body后主动close，断言allocator立即回基线、hash无该sid；覆盖header partial、body partial、complete queued、重复close及sid复用，无double-free。当前不发送大partial frame。
 
+### CLUSTER-005 — P1 — 合法 `UINT32_MAX` hardlimit 使 frame allocation/total 长度回绕
+
+- 状态：已确认；配置范围与确定性unsigned arithmetic/memcpy路径推导。按要求不构造超大length或越界copy触发。
+- 位置：hard/soft limit validation在`luaclib-src/lcluster.c:77-105`；接收length与allocation/copy在`:167-246`；发送request/response size计算在`:333-397,398-437`；lightuserdata length入口在`:295-304`。
+- 触发：应用通过公开`cluster.serve{hardlimit=0xffffffff,...}`或直接`c.create`使用被接受的最大值。远端随后只需发送host-order length prefix `0xffffffff`及任意body字节；发送侧也可用接近上限的string，或直接C module的lightuserdata+claimed length生成接近4GiB body。
+- 影响：接收侧`ic->header.psize + 1`在32-bit unsigned域回绕为0，得到零/极小allocation，紧接着把网络body复制到`ic->buff`造成heap overflow。发送侧`total=HEADER_SIZE+body`赋给uint32后回绕，按小total分配，再复制16/4-byte header和巨大payload，同样heap overflow/越界读取；可能导致进程崩溃或可利用的内存破坏。
+- 证据：`lcreate`明确允许`hardval <= UINT32_MAX`；wire psize与hardlimit均uint32，validate仅比较大小。allocation表达式没有先提升到size_t或检查`SIZE_MAX-1`。pack路径虽用uint64计算body并验证，但随后无`body<=UINT32_MAX-HEADER_SIZE`检查就窄化到uint32 total。默认128MiB不会触发，不代表公开合法配置安全。
+- 根因：协议32-bit body length的理论最大值被直接当作可配置资源上限，没有为NUL sentinel、外层4-byte prefix和allocation arithmetic保留空间；多个域之间缺少checked add/narrow。
+- 建议解法：定义远低于`UINT32_MAX`且受`INT_MAX/SIZE_MAX`约束的绝对protocol cap；对`psize+1`、`HEADER_SIZE+body`、allocation与copy全部使用checked `size_t/uint64_t`加法，验证后才窄化wire字段。lightuserdata入口同时校验非负、实际owner范围或改opaque buffer。配置超出安全cap应立即报错。
+- 回归测试：修复阶段只做checked-arithmetic单元边界，覆盖hardlimit/psize/body在cap、`UINT32_MAX-4..UINT32_MAX`及负claimed length，断言在allocation/copy前拒绝；不分配4GiB。ASan/UBSan下合法最大安全frame round-trip。当前不构造越界包。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1411,6 +1422,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster pending只存coroutine且两个close路径都没有peer反向索引/finish，断线后RPC只能保留到timeout，记录为`CLUSTER-002`；未新增断线timing复现。
 - 2026-08-06：确认cluster unknown/late/duplicate ACK取到nil waiter后仍task.wakeup，且连接保持可重复制造异常与日志，记录为`CLUSTER-003`；未发送ACK flood。
 - 2026-08-06：确认cluster主动close不调用C parser clear且net已移除close callback，partial frame allocation永久挂在全局ctx，记录为`CLUSTER-004`；未发送大partial frame。
+- 2026-08-06：确认cluster接受UINT32_MAX hardlimit，但receive的psize+1与send的4+body会32-bit回绕后小分配/大copy，记录为`CLUSTER-005`；未构造越界包。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
