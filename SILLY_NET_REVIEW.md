@@ -144,6 +144,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1-TRAILER-END-STREAM | MUST | `lualib/silly/net/http/h2.lua:1177-1204,1441-1500` | client recipient | 偏离 | final 后的 HEADERS 无论 END_STREAM 都被当 trailer；不终止时后续 DATA 仍被接受并把 TRAILER 状态倒退为 DATA | 现有 trailer 测试只覆盖本库 server 生成的 END_STREAM trailer | H2-011 |
 | RFC9113-8.3.1/8.5-CONNECT-PSEUDO | MUST | `lualib/silly/net/http/h2.lua:126-133,386-444,700-738` | client sender/server recipient | 偏离 | client 对 CONNECT 仍发送 scheme/path；server 固定要求 scheme/path 且不要求 authority，正好与 CONNECT mandatory/omitted 集合相反 | 现有 HTTP/2 测试没有 CONNECT | H2-012 |
 | RFC9113-10.5/10.5.1-FIELD-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:74-80,314-384`; `luaclib-src/lhttp.c:696-780` | client/server recipient | 偏离 | 只限制 65,535 compressed wire bytes，不累计 uncompressed name+value+32、字段数或单字段大小，也无配置/advertisement | 现有测试没有 indexed expansion、超限并发 field blocks | H2-013 |
+| RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 
 ## 3. 基线结果
 
@@ -612,6 +613,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：增加可配置的 per-field、field-count、uncompressed field-section 和 connection-level pending-header budgets；HPACK 解码时按 name+value+32 增量计数，超限时仍按 RFC 维护 compression state，但停止构造/保留应用列表，随后 server 返回 431 或 reset stream、client 丢弃 response。向 peer 广告合理 `SETTINGS_MAX_HEADER_LIST_SIZE`，但不能依赖 peer 遵守。
 - 后续回归条件：修复阶段覆盖大量 1-byte indexes、单大 literal/Huffman、重复 fields、恰好 limit/limit+1、CONTINUATION、多并发 streams、超限后下一合法 block 的 HPACK state 仍同步，以及配置/setting 的方向性。本轮不新增测试代码。
 
+### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
+
+- 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
+- 规范：RFC 7541 §5.1 明确 HPACK integer 可有任意长度，攻击者可用大量 octets 溢出实现整数；超过实现的 value 或 octet-length 限制必须作为 decoding error。所有 index、string length 和 dynamic table size update 都复用该整数格式。
+- 位置：`read_varint` 在 `luaclib-src/lhttp.c:558-583`；string length 消费在 `:613-630`；index/table-size 调用在 `:632-771`。HTTP/2 可达入口为 `lualib/silly/net/http/h2.lua:314-365`。
+- 触发：peer 在 HPACK field block 中提供 prefix 饱和后带过多 continuation octets 的整数，尤其作为 literal name/value 的 7-bit-prefixed string length；也可使用一直设置 continuation bit、到 block 末尾仍未终止的编码。
+- 影响：`M` 每轮加 7 且没有上限，表达式 `(B & 0x7f) << M` 在 M 达到有符号 int 的符号位或位宽后构成 C 未定义行为。累加结果是 `unsigned int`，函数却返回 `int`；实现定义的负值/回绕长度进入 `uctx->p + len`，其本身可形成对象外指针，随后 raw string 分支把负 `int` 转成巨大 `size_t` 交给 `lua_pushlstring`，存在越界读取、异常巨额分配、崩溃或进程未定义行为风险。未终止 varint 也可能被当作已有值继续处理，而不是稳定返回 compression error。
+- 证据：循环条件只有 `ctx->p < ctx->e`，没有 `M`、octet count、`UINT_MAX` 加法或 termination 检查；shift 左操作数经 integer promotion 为 signed `int`。`push_sv` 声明 `int len`，只用 `if (uctx->p + len > uctx->e)` 检查上界，没有先验证 len 非负/可表示和 remaining subtraction；raw 分支直接 `lua_pushlstring(..., len)`。65,535-byte compressed block 足以越过 32-bit shift 边界。
+- 根因：照抄数学伪代码但未把“indefinite size”映射为显式的实现上限和 checked arithmetic，又混用 unsigned accumulator、signed return/length与指针加法。
+- 建议解法：让 decoder 返回 `{ok, value}`，使用明确宽度无符号类型；在每个 octet 前检查 shift、乘法/加法和每用途 maximum，并要求遇到 continuation=0 才成功。string length 用 `size_t` 且以 `len <= (size_t)(e-p)` 做 subtraction-based bounds check，绝不先构造可能越界的 `p+len`；任何超值、超长或未终止编码返回 decoding error/HTTP2 `COMPRESSION_ERROR`。
+- 后续回归条件：修复阶段覆盖各 prefix 的最大合法值、跨 32/64-bit 边界、过多零 continuation、过多 0xFF、未终止、non-minimal 但未溢出的合法整数，以及 string/index/table-size 三种用途；ASan/UBSan 下零告警并确认下一连接/stream 的错误作用域。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -692,3 +705,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client 接受不带 END_STREAM 的 trailer HEADERS，之后仍允许 DATA 并发生 TRAILER→DATA 状态回退，记录为 `H2-011`。
 - 2026-08-06：确认 client 固定为 CONNECT 发送 scheme/path，server 又固定要求 scheme/path且不要求 authority，普通 CONNECT 双向不符合，记录为 `H2-012`。
 - 2026-08-06：确认 HPACK 只限制 compressed wire block，没有 uncompressed field-section/字段数/单字段预算或配置，记录为 `H2-013`。
+- 2026-08-06：确认 HPACK varint 无 value/octet 上限，存在 signed shift UB、unsigned→int 回绕和 string pointer/length 越界路径，记录为 `HPACK-002`；按要求未新增触发代码。
