@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（79 条）
+## 5. 已确认问题（80 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -128,6 +128,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CORE-003 | P2 | `volatile running` 不是线程同步，退出状态有数据竞争；TSAN 实证。 |
 | CORE-004 | P1 | `pthread_create` 只检查 `err < 0`，漏掉 POSIX 的正错误码，失败回滚不可靠。 |
 | CORE-005 | P3 | `worker.maxmsg` 诊断阈值跨线程普通读写；TSAN 实证。 |
+| CORE-006 | P2 | timer把64位毫秒delta窄化为int，长暂停/时钟跳变可崩溃、错时或产生巨量catch-up循环。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -281,9 +282,7 @@ review-repros/socket_stat_close_race.lua
 
 ### 8.3 后续 socket 核心候选（尚未确认）
 
-按顺序调查并记录：
-
-1. `timer` delta转`int`、queue size返回`int`等conversion warnings；区分真实可达缺陷与构建卫生。
+本轮conversion候选已完成：timer delta窄化是可达可靠性缺陷，记录为`CORE-006`；`queue_push`的`size_t→int`只有在超过`INT_MAX`条在途消息后影响过载诊断，现实中通常先耗尽内存，暂列构建卫生而不单列问题。API仍应改回`size_t`以消除不必要的截断。
 
 原send-length与late-accounting两项已由静态完整调用链确认并记录为`SOCK-006`/`SOCK-007`；本阶段不新增大长度或并发barrier动态复现。
 默认TCP/TLS/UDP接收stash已确认无上限并记录为`SOCK-012`；本阶段不新增流量压力复现。

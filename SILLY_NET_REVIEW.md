@@ -263,6 +263,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把阈值改为 atomic 并用 CAS 更新，或只让 worker 根据原子 backlog/max-observed 指标生成告警。
 - 回归测试：多生产者推送压力下 TSAN 零告警，验证告警阈值单调且 dispatch 后正确复位。
 
+### CORE-006 — P2 — timer 大时间跳变被窄化为 `int`，可崩溃或长期错时
+
+- 状态：已确认；整数范围、时钟单位与确定性控制流推导。本阶段不通过长期SIGSTOP/虚拟机快照做动态复现。
+- 位置：`src/timer.c:366-381,501-539`；timer线程消费返回值在`src/engine.c:34-48`；默认分辨率在`src/silly_conf.h:53-58`。
+- 触发：timer线程连续两次`timer_update()`间的monotonic clock差超过`INT_MAX`毫秒（约24.8天），例如进程长期SIGSTOP、调试冻结、支持该语义的平台休眠或虚拟机快照/迁移造成的大时钟步进。较小但很大的delta也会触发逐tick catch-up。
+- 影响：64位`time-lasttick`先赋给`int delta`，结果超出范围时实现定义；常见平台会成为负数并在assert build触发`assert(delta>0)`终止进程，NDEBUG下则可能计算负`ticks/tickstep`并以无符号atomic add形成巨大跳变。若低32位恰为小正数，实现只推进错误的一小段时间，既有timer可额外延迟约49.7天的整数倍。尚未越界时，代码也按10ms逐tick循环，24天量级需要约2.1亿次`update_timer`，恢复后长时间占满timer线程。
+- 证据：`ticktime()`返回`uint64_t`毫秒，`lasttick`也是atomic uint64；`timer_update`却把`delta/ticks/tickstep/i`全部声明为int。`tickstep=ticks*TIMER_RESOLUTION`还有第二处signed overflow边界，随后被传给uint64 atomic add。`TIME_DELAY_WARNING`仅打印日志，不限制或安全处理大delta。顶部`time < lasttick + resolution`提前return也使后面的rewind日志分支在正常无溢出范围内不可达。
+- 根因：64位monotonic时间域与32位循环/返回值混用，并假定timer线程不会长时间停止；分层时间轮已有级联结构，但catch-up仍按每个基础tick线性迭代。
+- 建议解法：用`uint64_t`计算delta/ticks/tickstep，只在最终sleep已证明为`0..TIMER_RESOLUTION`时转int；显式处理rewind。为大delta实现有界fast-forward/cascade策略，在保持32位jiffies wrap语义下直接定位并触发到期节点，或每轮设catch-up预算且保证过期timer最终及时交付，不能用signed溢出截断时间。
+- 回归测试：修复阶段注入可控clock，覆盖resolution边界、`INT_MAX`前后、`UINT32_MAX`前后、49.7天倍数、rewind和jiffies wrap；assert/NDEBUG均不崩溃、不出现数十亿循环，已到期timer恰好触发一次，未来timer保持正确相对顺序。当前不新增长暂停复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1212,6 +1223,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认`rw_enable`在backend MOD前提交state且忽略失败，导致永久stall/busy-loop，记录为`SOCK-010`；没有新增multiplexer fault injection。
 - 2026-08-06：确认公开UDP/ntop把任意Lua string当trusted sockaddr，assert/NDEBUG分别可abort/stack overflow或OOB，记录为`SOCK-011`；未新增破坏性blob测试。
 - 2026-08-06：确认TCP/TLS默认buffer及UDP packet stash均无资源上限，慢消费/不读取时远端输入可持续占用内存，记录为`SOCK-012`；未新增流量压力复现。
+- 2026-08-06：确认timer把64位毫秒delta窄化为int，大于约24.8天的暂停/时钟跳变可触发assert、无符号巨大跳变或长期错时，记录为`CORE-006`；未新增长期暂停复现。`queue_push`返回int只在超过INT_MAX条消息时影响过载诊断，降为构建卫生，不单列缺陷。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
