@@ -168,6 +168,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-SERVER-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/registrar.lua:17-31,80-228`; `lualib/silly/net/http/h2.lua:1549-1559` | server | 偏离 | unary parse errors end without grpc-status；client/bidi stream read status is ignored and wrapper emits OK；truncated envelope at EOS is mistaken for clean EOF | 无 malformed/truncated protobuf envelope 与 final status 覆盖 | GRPC-007 |
 | GRPC-TRAILERS-ONLY-CLIENT | MUST | `lualib/silly/net/grpc/client/service.lua:38-81,164-173`; `lualib/silly/net/http/h2.lua:1441-1500` | streaming client recipient | 偏离 | streaming status helper只查 trailer map；Trailers-Only 的 status 位于 END_STREAM initial header，故真实错误一律变 UNKNOWN；只有 unary 特判 header fallback | 无 streaming immediate-error/Trailers-Only 测试 | GRPC-008 |
 | GRPC-HTTP-STATUS-FALLBACK | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:38-81,134-176`; `lualib/silly/net/http/h2.lua:1463-1487` | client recipient | 偏离 | transport 保存 HTTP status/header，但 gRPC client 不检查 status 或 Content-Type；缺 grpc-status 时不按标准表映射 HTTP错误 | 无 proxy/non-gRPC HTTP response 测试 | GRPC-009 |
+| GRPC-STATUS-SYNTAX | MUST | `lualib/silly/net/grpc/client/service.lua:38-53,164-174` | client recipient | 偏离 | `tonumber` 接受空白/符号/hex/指数/小数/前导零；非法形式可成为 OK，parse failure 可返回 nil而非 UNKNOWN | 只覆盖本库生成的 canonical integer status | GRPC-010 |
 
 ## 3. 基线结果
 
@@ -923,6 +924,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：gRPC response finalization只围绕 trailer map实现，没有把 HTTP response admission与 intermediary fallback 纳入同一状态机。
 - 建议解法：在读取任何 message envelope 前验证 response HTTP status和 gRPC Content-Type；终局若缺 grpc-status，按官方单向 mapping合成 code/message。若 status存在则优先，但仍记录/处理不合规 Content-Type；四种 RPC返回统一的结构化 status。
 - 后续回归条件：修复阶段覆盖 mapping 表每个 HTTP code、其他 code、200 无 grpc-status、合法/非法 Content-Type、存在 grpc-status优先；断言非 gRPC body不进入 envelope decoder，UNAVAILABLE等 code准确传给上层。本轮不新增测试代码。
+
+### GRPC-010 — P1 — 非法 `grpc-status` 文本可被 client 接受为 OK
+
+- 状态：已确认；gRPC Status ABNF、status-code error mapping 与确定性 Lua numeric conversion 推导。本阶段只做静态 review，不新增伪造 response。
+- 规范：`grpc-status` 必须是至少一位十进制数字的 ASCII string，且不能有前导零；解析 status 出错时 client runtime应产生 UNKNOWN。定义范围外的整数可以直接传播或转成 UNKNOWN，但语法非法的文本不能先按 Lua number grammar解释，更不能成为 OK。
+- 位置：streaming finalizer 在 `lualib/silly/net/grpc/client/service.lua:38-53`；unary 独立解析在 `:164-174`；canonical code table 在 `lualib/silly/net/grpc/code.lua`。
+- 触发：peer 在普通 trailers或 Trailers-Only发送 `grpc-status: " 0 "`、`+0`、`0x0`、`0e0`、`00`、小数等 Lua `tonumber` 可接受但 gRPC grammar禁止的值；或发送完全不可转换文本。
+- 影响：多种 malformed status可被解释为 numeric 0，client把本应 UNKNOWN 的损坏 response报告成功，可能提交调用结果或触发成功侧业务流程。不可转换文本在 streaming helper中则产生 `status=nil`，破坏 API宣称的 integer status invariant并导致调用方分支异常。
+- 证据：两处都直接调用通用 `tonumber(grpc_status)`，没有先以 canonical decimal grammar验证。unary只比较 `n ~= code.OK`，所以任何可转为 0 的非法文本通过成功判断；streaming直接返回转换结果，nil不替换成 UNKNOWN。没有 leading-zero、范围或整数字符检查。
+- 根因：把通用编程语言数字 parser 当作 wire-level canonical integer parser，并且 unary/streaming继续各自处理失败分支。
+- 建议解法：只接受 `"0"` 或首位 1..9 后跟 DIGIT 的完整字节串，使用 checked decimal accumulation；语法/溢出失败统一合成 UNKNOWN。再按 code table决定已知、未知整数的传播策略，四种 RPC共用 parser且永不返回 nil status。
+- 后续回归条件：修复阶段覆盖 0..16、17/大整数、空串、00/01、空白、正负号、hex、指数、小数、非 ASCII digit与溢出；只有 canonical decimal可达对应 code，所有非法文本均为 UNKNOWN且不得成功。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
