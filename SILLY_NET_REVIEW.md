@@ -150,6 +150,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1-RST-NO-ERROR-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1088-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的 RST_STREAM(NO_ERROR) 覆盖 END 为 RST；尚未读取的空响应会被丢弃为错误 | 现有测试没有 response END 后 RST(NO_ERROR) | H2-017 |
 | RFC9113-8.1.1/8.2.2/8.3-SENDER-FIELDS | MUST/MUST NOT | `lualib/silly/net/http/h2.lua:700-738,938-1025`; `lualib/silly/net/http/client.lua:318-365`; `luaclib-src/lhttp.c:357-556` | client/server sender | 偏离 | request/response/trailer 在 HPACK 前无 sender validation；可生成 connection-specific/uppercase/非法或重复 pseudo/status fields | 现有测试只验证正常 fields，未检查 outbound malformed block | H2-018 |
 | RFC9113-8.1.1/8.2.1-FIELD-VALIDITY | MUST/security | `lualib/silly/net/http/h2.lua:331-447,1562-1648` | server recipient | 偏离 | request validator 未拒绝非法 name bytes/冒号及 value 中 NUL/CR/LF/首尾空白；Content-Length 又用宽松 tonumber | 现有测试没有 generic invalid field octets 或非十进制 length | H2-019 |
+| RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -692,6 +693,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：在任何 map/application access 前对 ordered field list做 byte-level validation；普通 name 要求非空且逐 byte 满足允许集合，pseudo 只允许单个 leading colon 和已知名字；value 拒绝规定 octets与边界空白。Content-Length 用 checked decimal parser，保留重复 field 顺序并按规范统一/拒绝；malformed 只 reset 对应 stream，HPACK state仍保持同步。
 - 后续回归条件：修复阶段覆盖每个禁止 byte range 边界、普通 name 内 colon/空 name、value NUL/CR/LF/leading/trailing SP/HTAB、合法 obs-text policy，以及 Content-Length decimal/hex/exponent/溢出/相同列表；验证 handler 从不被调用且并发 stream 可继续。本轮不新增测试代码。
 
+### H2-020 — P1 — fragmented field block 的最后一帧错误地再次发送 HEADERS
+
+- 状态：已确认；RFC 9113 frame sequence 与确定性 C builder 控制流推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §4.3/§6.2/§6.10 要求未设置 END_HEADERS 的 HEADERS 后只能紧跟同一 stream 的一个或多个 CONTINUATION，直到最后一个 CONTINUATION 设置 END_HEADERS；期间出现任何其他 frame type（包括第二个 HEADERS）都必须作为 connection `PROTOCOL_ERROR`。
+- 位置：C field-block frame builder 在 `luaclib-src/lhttp.c:883-949`；request/response 调用在 `lualib/silly/net/http/h2.lua:700-738`，trailer 调用在 `:1018-1024`。
+- 触发：任一 outbound HPACK block 长度严格大于 `ch.sendframemaxsize`（默认 16,384，或 peer SETTINGS_MAX_FRAME_SIZE），例如大 request metadata、response headers 或 trailer。长度恰好等于 limit 不触发分片。
+- 影响：wire 序列是 `HEADERS(no END_HEADERS)`，可选若干 `CONTINUATION(no END_HEADERS)`，最后却是 `HEADERS(END_HEADERS)`。规范 peer 必须终止整条 connection，所有并发 streams 一同失败；表现为 header 较小时正常、跨阈值后 remote 突然断开/对话废弃，且无法通过重试同一 payload 恢复。
+- 证据：`lframe_build_header` 初始 `type=FRAME_HEADERS`，每次 while iteration 后改为 `FRAME_CONTINUATION`；但循环结束的 final call 明确写死 `write_frame_header(..., FRAME_HEADERS, flag | END_HEADERS, id)`，完全忽略变量 `type`。因此只要 while 至少执行一次，final type 必错。接收侧 `read_header` 反而正确要求后续 `t == FRAME_CONTINUATION`，说明发送/接收实现不对称。
+- 根因：分片循环维护了当前 frame type，却在尾帧使用常量；现有 tests 只覆盖单帧 headers，未在 frame boundary 上解码完整 wire sequence。
+- 建议解法：final frame 使用当前 `type`；首帧保留 HEADERS 与可能的 END_STREAM，后续所有 fragments 只能 CONTINUATION，只有 final fragment设置 END_HEADERS。抽出 sequence builder，避免 header/trailer路径分叉，并对 frame-size 做非零/范围保护。
+- 后续回归条件：修复阶段覆盖 HPACK 长度 `limit-1/limit/limit+1/2*limit/2*limit+1`，逐帧断言 type、stream id、END_STREAM 只在首 HEADERS、END_HEADERS 只在末帧；request/response/trailer 三条路径及 peer 调大 frame size均覆盖。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -804,3 +817,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认完整响应后的 RST_STREAM(NO_ERROR) 会把 client END 覆盖为 RST，使尚未读取的空响应被丢弃，记录为 `H2-017`。
 - 2026-08-06：确认 request/response/trailer sender 在 HPACK 前无 HTTP/2 field validation，可生成 connection-specific/非法或重复控制 fields，记录为 `H2-018`。
 - 2026-08-06：确认 server request validator 未执行 RFC 9113 最低 name/value octet 规则，且用宽松 `tonumber` 解析 Content-Length，记录为 `H2-019`。
+- 2026-08-06：确认 outbound HPACK block 跨 frame 时 final fragment 被硬编码成第二个 HEADERS，而非 CONTINUATION，记录为 `H2-020`。
