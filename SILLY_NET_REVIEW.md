@@ -153,6 +153,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
 | RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
 | RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
+| RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,880-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission 非事务：部分拒绝不记录已用 id、允许复用；invalid Content-Length 则泄漏 streamcount | 现有 malformed header tests 未检查 id reuse/长期 quota | H2-023 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -731,6 +732,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：在确定 stream id 的上下文返回结构化 malformed result，并调用 `stream_reset(s.id, ch, PROTOCOL_ERROR)`；保留 connection flow-control/HPACK状态，停止该 stream 的 handler/read/write。对无 content 语义的 HEAD/204/304/成功 CONNECT 继续按既有例外不做长度一致性比较。
 - 后续回归条件：修复阶段覆盖 declared 0/1、少发/多发、HEADERS 直接 END、多个 DATA、request/response/no-content methods/status，以及并发第二 stream；断言 mismatch 只产生对应 RST_STREAM(PROTOCOL_ERROR)，其他 stream和 connection继续工作。本轮不新增测试代码。
 
+### H2-023 — P1 — rejected initial HEADERS 的 stream-id/quota bookkeeping 非事务
+
+- 状态：已确认；RFC 9113 stream lifecycle 与确定性 admission/error branches 推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §5.1.1 规定 initial HEADERS 使 idle stream 离开 idle，stream identifier 一经使用不得复用；malformed request 按 §8.1.1 reset 后 stream 已 closed。§5.1.2 的 concurrent limit 只统计 open 或任一 half-closed streams，已经 reset/closed 或根本未建立的 stream 不得永久占用名额。
+- 位置：stream object/count fields 在 `lualib/silly/net/http/h2.lua:453-495`，`stream_reset` 在 `:880-894`，正常 close decrement 在 `:1038-1080`，server initial HEADERS admission 在 `:1562-1648`。
+- 触发：路径 A：id 1 initial HEADERS 含 invalid pseudo/forbidden field，收到 RST后在同一 id 再发送合法 request HEADERS。路径 B：连续使用递增奇数 id 发送可通过 field validator但 `content-length` 无法解析的 HEADERS，达到默认 100 次后再发合法 request。
+- 影响：路径 A 会把已 reset 的 id 再次当作新 stream并可能把第二个请求交 application，违反不可复用约束并造成请求身份/重放混淆。路径 B 每次无实际 active stream却永久增加 `streamcount`，最终所有后续合法请求均被 `REFUSED_STREAM`，单连接低成本稳定 DoS，且没有对象可 close 来归还 quota。
+- 证据：`check_req_header` 在 parity/history check 与 `laststreamid` 更新之前；失败时 `stream_reset` 查不到 `ch.streams[id]`，只写 RST，不保存 id/closed tombstone，所以相同 id仍满足 future `id > laststreamid`。相反通过该检查后代码先执行 `laststreamid=id; streamcount++`，随后才 `check_content_length`；其失败同样在 stream object创建前调用 `stream_reset`，既不存 object也不 decrement。唯一正常 decrement在 `S.close`，该路径永远不可达。
+- 根因：stream protocol transition、semantic validation、quota reservation和 object publication分散在多个不可回滚步骤；`stream_reset` 又假定 object 已存在才能更新 bookkeeping。
+- 建议解法：收到合法形状/方向的 initial HEADERS 时先原子记录 stream id 已使用/closed history，再做 message validation；quota只在决定建立 active stream 时增加，或预留后保证所有失败分支回滚。reset helper必须能对尚未发布 object 的 id记录 closed state而不泄漏计数；parity/history connection checks应先于 message semantic stream checks。
+- 后续回归条件：修复阶段覆盖 invalid pseudo→同 id重用、invalid Content-Length 连续超过 limit、even id 搭配 malformed fields、HPACK error、concurrency恰好 limit，以及失败后下一更高合法 id；断言同 id不能复用、quota无泄漏、正确 connection/stream error scope且 handler只调用一次。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -846,3 +859,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 outbound HPACK block 跨 frame 时 final fragment 被硬编码成第二个 HEADERS，而非 CONTINUATION，记录为 `H2-020`。
 - 2026-08-06：确认 SETTINGS initial-window delta 造成 stream window overflow 时仅 reset stream，未按规范终止 connection，记录为 `H2-021`。
 - 2026-08-06：确认 Content-Length 与 DATA 总量不一致时被升级为 connection GOAWAY，而非对应 stream PROTOCOL_ERROR，记录为 `H2-022`。
+- 2026-08-06：确认 initial HEADERS admission 顺序使部分 rejected id 可复用、invalid Content-Length 又永久泄漏 streamcount，合并记录为 `H2-023`。
