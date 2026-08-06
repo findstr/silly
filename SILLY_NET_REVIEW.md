@@ -360,6 +360,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：event userdata应携带可验证generation（例如稳定registration对象含slot index+sid snapshot），消费前比较当前sid；或保证event batch完全消费前不把freed slot归还allocator，使用deferred-reuse epoch。仅把op_process移到event后不能覆盖event处理中close/accept复用和其他backend语义，generation check仍应存在。
 - 回归测试：修复阶段用小pool/testbarrier让epoll_wait/kevent/wepoll返回old READ/WRITE/EOF后，在consume前执行close并复用为listener/connecting/connected socket；断言stale event全部丢弃，新socket不读写、不提前connect、不关闭且无assert。当前无独立动态复现。
 
+### SOCK-010 — P2 — `sp_ctrl` 失败后软件状态与内核订阅永久分叉
+
+- 状态：已确认；确定性state/syscall/error路径推导，无独立动态复现。本轮不新增multiplexer故障注入。
+- 位置：`rw_enable`在 `src/socket.c:851-879`；调用点覆盖connect、TCP/UDP drain、closewait、EOF和公开readenable，见`:896-912,1087-1107,1118-1239,1480-1493,1601-1611,1714-1726,1874-1908`；backend在`src/unix/event_epoll.h:47-53`、`event_kevent.h:46-56`、`src/win/event_iocp.h:48-54`。
+- 触发：epoll_ctl MOD、kevent enable/disable或wepoll MOD因ENOMEM、EBADF、ENOENT、lifecycle/backend错误等返回失败；既可能发生于开启write等待EAGAIN，也可能发生于queue清空/EOF/closewait时关闭read/write。
+- 影响：enable-write失败时software已标WRITING，future calls因early-return不再重试，但kernel未订阅writable，wlist可永久卡住并阻塞close；disable-write失败时kernel持续报告通常level-triggered writable，event loop对空queue反复唤醒形成CPU spin。disable-read失败可重复收到EOF/error并重复report_close；上层既无错误通知也无法修复状态。
+- 证据：`rw_enable`先用atomic set/clr修改state，再计算flags并调用`sp_ctrl`，完全丢弃int返回值。入口第一句`if(test_state(...)==enable)return`使失败后的logical state阻止下一次相同操作。三个backend都返回实际control syscall结果，证明错误原本可检测但被上层抛弃。
+- 根因：subscription update不是事务：期望状态被提前提交，backend失败没有rollback、retry、close或report策略。
+- 建议解法：先计算desired flags并调用backend，成功后再commit state；失败时保持旧state并按errno选择bounded retry或将socket以明确错误关闭。若多线程需要先发布intent，增加separate desired/applied state与socket-thread reconciliation，不能用一个bit同时表示两者。
+- 回归测试：修复阶段分别让每次enable/disable read/write的sp_ctrl返回ENOMEM/ENOENT/EBADF，覆盖TCP/UDP、queue EAGAIN/empty、EOF/closewait；断言无永久stall或busy loop、状态可重试/关闭、错误只报告一次。当前无独立动态复现。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1176,6 +1187,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：通过确定性generation交错确认late send accounting可污染复用slot，记录为`SOCK-007`；没有为窄窗口新增barrier复现。
 - 2026-08-06：确认`worker_exit`释放W后`socket_exit` final flush仍可经report_close调用worker_push，记录为`SOCK-008`；没有新增退出send-error复现。
 - 2026-08-06：确认poll batch先snapshot、后处理close/reuse op，裸slot userdata缺generation校验，记录为`SOCK-009`；没有新增跨平台动态复现。
+- 2026-08-06：确认`rw_enable`在backend MOD前提交state且忽略失败，导致永久stall/busy-loop，记录为`SOCK-010`；没有新增multiplexer fault injection。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
