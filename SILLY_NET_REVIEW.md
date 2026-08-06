@@ -152,6 +152,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1.1/8.2.1-FIELD-VALIDITY | MUST/security | `lualib/silly/net/http/h2.lua:331-447,1562-1648` | server recipient | 偏离 | request validator 未拒绝非法 name bytes/冒号及 value 中 NUL/CR/LF/首尾空白；Content-Length 又用宽松 tonumber | 现有测试没有 generic invalid field octets 或非十进制 length | H2-019 |
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
 | RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
+| RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
 | RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 
@@ -718,6 +719,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：应用 setting 前先只遍历 active flow-control windows 计算所有新值并检查上限；任一 overflow 立即 `channel_goaway(FLOW_CONTROL_ERROR)`，不得应用 setting 或 ACK 后续值。全体通过后再原子提交 delta；负值保留，closed/tombstone streams 不调整。
 - 后续回归条件：修复阶段覆盖单/多 stream 临界 `2^31-1`、加一 overflow、负 delta、负后恢复、closed stream 和同一 SETTINGS 中后续参数；断言 overflow 只发 GOAWAY(FLOW_CONTROL_ERROR)、无 SETTINGS ACK/RST fan-out，合法边界继续发送。本轮不新增测试代码。
 
+### H2-022 — P2 — Content-Length mismatch 被升级为 connection error
+
+- 状态：已确认；RFC 9113 malformed-message scope 与确定性 END_STREAM 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：RFC 9113 §8.1.1 明确规定，含 message content 的 request/response 若 Content-Length 不等于组成 content 的 DATA payload 总长度，则 message malformed；检测到的 malformed request/response 必须作为对应 stream 的 `PROTOCOL_ERROR` 处理，而不是 connection error。
+- 位置：共享 terminal validator 在 `lualib/silly/net/http/h2.lua:845-877`，DATA END_STREAM path 在 `:1177-1205`，client response HEADERS END 在 `:1446-1499`，server request HEADERS END 在 `:1562-1648`。
+- 触发：任一 initial field section 声明 `content-length: 1`，随后以零 DATA bytes结束（可直接在 HEADERS 设置 END_STREAM），或发送与声明值不同的 DATA 总量后设置 END_STREAM。request 与有 content 的 response均可触发。
+- 影响：单个 malformed message 导致 GOAWAY、清除同 connection 所有 active streams并关闭复用连接；攻击者或坏 upstream 可用一条 stream 中断其他用户/请求。调用方也看不到规范的 per-stream protocol failure，连接池被不必要销毁。
+- 证据：`stream_remoteend` 在 `state==STATE_END` 时比较 `s.recvbytes ~= s.recvexpect`，mismatch 直接 `channel_goaway(s.channel, PROTOCOL_ERROR)`。该 helper被 request/response 及 HEADERS/DATA END 路径共用，没有调用 `stream_reset` 的分支。`channel_goaway` 对非 NO_ERROR 立即 `channel_clearstream`，确定扩大到整连接。
+- 根因：message semantic validation 放在无错误作用域参数的共享 terminal helper 中，默认选择 connection-level helper；没有区分 HPACK/framing connection errors 与单消息 malformed stream errors。
+- 建议解法：在确定 stream id 的上下文返回结构化 malformed result，并调用 `stream_reset(s.id, ch, PROTOCOL_ERROR)`；保留 connection flow-control/HPACK状态，停止该 stream 的 handler/read/write。对无 content 语义的 HEAD/204/304/成功 CONNECT 继续按既有例外不做长度一致性比较。
+- 后续回归条件：修复阶段覆盖 declared 0/1、少发/多发、HEADERS 直接 END、多个 DATA、request/response/no-content methods/status，以及并发第二 stream；断言 mismatch 只产生对应 RST_STREAM(PROTOCOL_ERROR)，其他 stream和 connection继续工作。本轮不新增测试代码。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -832,3 +845,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 server request validator 未执行 RFC 9113 最低 name/value octet 规则，且用宽松 `tonumber` 解析 Content-Length，记录为 `H2-019`。
 - 2026-08-06：确认 outbound HPACK block 跨 frame 时 final fragment 被硬编码成第二个 HEADERS，而非 CONTINUATION，记录为 `H2-020`。
 - 2026-08-06：确认 SETTINGS initial-window delta 造成 stream window overflow 时仅 reset stream，未按规范终止 connection，记录为 `H2-021`。
+- 2026-08-06：确认 Content-Length 与 DATA 总量不一致时被升级为 connection GOAWAY，而非对应 stream PROTOCOL_ERROR，记录为 `H2-022`。
