@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（97 条）
+## 5. 已确认问题（98 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -146,6 +146,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-004 | P2 | cluster主动close不清C parser的per-fd incomplete buffer，默认单块可滞留至128MiB。 |
 | CLUSTER-005 | P1 | 合法UINT32_MAX hardlimit使receive psize+1及send 4+body回绕，进入小分配/大copy内存破坏。 |
 | CLUSTER-006 | P2 | cluster wire直接复制native整数/struct，大小端不同节点无法互操作且文档格式也与实现不符。 |
+| ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |

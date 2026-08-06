@@ -468,6 +468,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义版本化wire format，所有u32/u64固定network(big-endian)或明确little-endian并用逐字段codec，禁止raw struct serialization；为旧同端序部署提供显式版本协商/迁移，而非启发式猜端序。同步更正文档的长度、顺序、limit语义。
 - 回归测试：修复阶段使用固定golden byte vectors验证encode/decode，与独立实现互操作；通过字节交换模拟big-endian，覆盖length/session ACK/cmd/traceid及协议版本拒绝。当前不运行big-endian peer。
 
+### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
+
+- 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
+- 位置：`iptype`及三个Lua入口在`luaclib-src/laddr.c:64-72,137-168`；DNS fast path在`lualib/silly/net/dns.lua:472-493,524-535`；socket参数最终以C string读取在`luaclib-src/lnet.c:109-142,145-166`。
+- 触发：公开addr/DNS/network API接收包含embedded NUL的Lua string，例如`"127.0.0.1\0.attacker"`或`"::1\0suffix"`；Lua层及`luastr`知道完整长度，但IP分类函数只把NUL-terminated pointer交给`inet_pton`。
+- 影响：`iptype/isv4/isv6`把带任意后缀的完整值判为合法IP，`ishost`反向判为false。DNS `resolve/lookup`据此跳过name验证与DNS、原样返回带NUL值；后续join/日志/ACL可保留并比较后缀，而socket C API再次按首个NUL截断并实际连接前缀IP，形成校验、审计显示与真实endpoint不一致。依赖这些helper做SSRF/allowlist判断的调用方可能被绕过。
+- 证据：`liptype/lisv4/lisv6`均调用`luaL_checkstring`而不取得长度；`inet_pton`没有length参数。`lishost`虽取得`len`，仍把同一pointer传给`iptype`，只用len判断是否空。DNS的IP fast path直接返回原始Lua string；低层connect又用`luaL_checkstring`传给OS resolver。
+- 根因：二进制安全Lua string与NUL-terminated OS address API之间没有统一的“不得含NUL”验证，分类与消费分别截断但中间层仍把值当完整字符串。
+- 建议解法：所有address入口先用`luaL_checklstring`取得长度并拒绝任何embedded NUL；再复制/确保唯一terminator后调用inet_pton/getaddrinfo。让parse/join/iptype/connect共享同一validated endpoint类型，避免helper与最终consumer规则漂移。
+- 回归测试：修复阶段覆盖IPv4/IPv6/hostname/port在每个位置嵌NUL，addr分类、DNS和TCP/UDP/TLS/cluster均返回明确EINVAL且不发起连接；合法普通string行为不变。当前不新增NUL连接复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1435,6 +1446,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认cluster主动close不调用C parser clear且net已移除close callback，partial frame allocation永久挂在全局ctx，记录为`CLUSTER-004`；未发送大partial frame。
 - 2026-08-06：确认cluster接受UINT32_MAX hardlimit，但receive的psize+1与send的4+body会32-bit回绕后小分配/大copy，记录为`CLUSTER-005`；未构造越界包。
 - 2026-08-06：确认cluster把native整数/struct直接memcpy上wire且文档长度/顺序也与实现不符，跨端序节点无法互操作，记录为`CLUSTER-006`；未运行big-endian peer。
+- 2026-08-06：确认addr IP分类把Lua string按首个NUL截断，而中间层仍保留/返回完整值、socket再次截断，形成验证与实际endpoint混淆，记录为`ADDR-001`；未新增NUL连接复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
