@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（13 条）
+## 5. 已确认问题（14 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -136,8 +136,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
+| HTTP1-004 | P2 | chunk reader 忽略 size 后的全部尾缀，静默接受非法 chunk extension/垃圾。 |
 
-统计口径为 13 条：5 个 CORE + 5 个 SOCK + 3 个 HTTP/1；以主报告中的编号和证据为准。
+统计口径为 14 条：5 个 CORE + 5 个 SOCK + 4 个 HTTP/1；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -191,7 +192,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ### 8.0 当前第一优先：继续 HTTP/1 RFC 9112 矩阵
 
-消息体长度优先级已经确认 `HTTP1-001`（TE+CL 后没有强制关闭）、`HTTP1-002`（相同 `Content-Length` 列表被拒绝）和 `HTTP1-003`（TE 未按列表/final coding 决定 framing）。下一项继续检查 chunk size/extension/trailer 语法与上限；每次只记录一个规范结论，不新增复现代码。
+消息体长度优先级已经确认 `HTTP1-001`（TE+CL 后没有强制关闭）、`HTTP1-002`（相同 `Content-Length` 列表被拒绝）、`HTTP1-003`（TE 未按列表/final coding 决定 framing）和 `HTTP1-004`（非法 chunk extension/尾随垃圾被接受）。下一项继续检查 chunk-size 数值表示与上限，再检查 trailer 字段限制；每次只记录一个规范结论，不新增复现代码。
 
 ### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
 
