@@ -354,6 +354,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：listener提供有安全默认值的`handshake_timeout`和可选全局/每IP pending-handshake上限；从TCP accept时刻开始单调deadline，超时以TLS alert（若可行）后abort close，并释放所有callback/table状态。握手每次进展不能无限重置总deadline；若另设idle-progress timeout需同时保留absolute cap。
 - 回归测试：修复阶段覆盖完全不发ClientHello、逐字节slow ClientHello、握手中断、正常临界时间成功及大量并发；断言超时后fd/task/SSL/slot全部回收，应用accept只收到成功握手连接。当前不新增慢连接复现。
 
+### TLS-006 — P2 — protocol minimum 允许 TLS 1.1，且 client 版本基线依赖环境默认值
+
+- 状态：已确认；RFC要求与context构造调用链推导。本阶段不启用legacy cipher做动态协商。
+- 规范：RFC 8996要求实现不得协商TLS 1.0或TLS 1.1；见 [RFC 8996](https://www.rfc-editor.org/rfc/rfc8996.html)。最低版本应由实现/API明确设为TLS 1.2或更高，不能依赖发行版OpenSSL配置偶然禁用旧协议。
+- 位置：client context在`luaclib-src/ltls.c:217-230`；每个server certificate context在`:285-352`，其中`:298`显式设置`TLS1_1_VERSION`；Lua TLS配置在`lualib/silly/net/tls.lua:43-48,338-367`。
+- 触发：在允许legacy协议/cipher的OpenSSL构建或系统策略下，与只提供TLS 1.1的peer协商；server路径代码明确允许1.1，client则完全使用库默认minimum。不同部署可因此产生不一致结果。
+- 影响：成功协商已被BCP禁止的旧TLS版本，继承其过时算法/协议风险；同一应用在不同OpenSSL版本或系统配置上安全基线漂移。配置API也无法把minimum提升到TLS 1.3或为受控legacy场景显式声明例外。
+- 证据：server唯一版本调用是`SSL_CTX_set_min_proto_version(ptr,TLS1_1_VERSION)`且忽略返回值；client context没有任何min/max调用。`TLS_method()`本身是version-flexible method，不等价于TLS 1.2 minimum。Lua conf只暴露cipher/cert/ALPN。
+- 根因：实现保留旧兼容minimum并把client policy隐式委托给OpenSSL全局默认，没有建立统一、可验证的TLS policy层。
+- 建议解法：client/server默认明确设置minimum TLS 1.2并检查API返回值；可选`min_version/max_version`只接受受支持、安全的枚举，任何legacy override需显式风险开关和告警。分别配置TLS≤1.2 cipher list与TLS1.3 ciphersuites，并在启动时记录最终policy。
+- 回归测试：修复阶段用TLS 1.0/1.1-only peer断言client/server均拒绝，TLS 1.2/1.3成功；覆盖不同OpenSSL major与系统security-level，显式配置错误必须启动失败而非静默回退。当前不启用legacy互操作。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1311,6 +1323,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TLS record input丢弃所有SSL_read非正结果且不flush控制输出，close_notify/fatal error不会唤醒reader，记录为`TLS-003`；未新增alert输入。
 - 2026-08-06：确认TLS close只断开TCP且native模块完全没有SSL_shutdown，peer永远收不到authenticated close_notify，记录为`TLS-004`；未新增strict-peer互操作。
 - 2026-08-06：确认TLS server在应用accept前以nil timeout等待ClientHello，listener无握手deadline配置，空连接可永久占用fd/SSL/task，记录为`TLS-005`；未新增slow-handshake压力复现。
+- 2026-08-06：确认TLS server显式minimum为TLS1.1、client不设置minimum，安全基线依赖环境且可偏离RFC8996，记录为`TLS-006`；未启用legacy cipher互操作。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
