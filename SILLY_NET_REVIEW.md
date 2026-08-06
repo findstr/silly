@@ -169,6 +169,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-TRAILERS-ONLY-CLIENT | MUST | `lualib/silly/net/grpc/client/service.lua:38-81,164-173`; `lualib/silly/net/http/h2.lua:1441-1500` | streaming client recipient | 偏离 | streaming status helper只查 trailer map；Trailers-Only 的 status 位于 END_STREAM initial header，故真实错误一律变 UNKNOWN；只有 unary 特判 header fallback | 无 streaming immediate-error/Trailers-Only 测试 | GRPC-008 |
 | GRPC-HTTP-STATUS-FALLBACK | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:38-81,134-176`; `lualib/silly/net/http/h2.lua:1463-1487` | client recipient | 偏离 | transport 保存 HTTP status/header，但 gRPC client 不检查 status 或 Content-Type；缺 grpc-status 时不按标准表映射 HTTP错误 | 无 proxy/non-gRPC HTTP response 测试 | GRPC-009 |
 | GRPC-STATUS-SYNTAX | MUST | `lualib/silly/net/grpc/client/service.lua:38-53,164-174` | client recipient | 偏离 | `tonumber` 接受空白/符号/hex/指数/小数/前导零；非法形式可成为 OK，parse failure 可返回 nil而非 UNKNOWN | 只覆盖本库生成的 canonical integer status | GRPC-010 |
+| GRPC-STATUS-MESSAGE-CODEC | MUST | `lualib/silly/net/grpc/server.lua:8-27`; `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/grpc/client/service.lua:38-53,164-173` | client/server | 偏离 | server 原样发送 message，不做 UTF-8 percent encoding；client原样返回且 unary Trailers-Only 不从 initial header 取 message | 自测错误文本仅简单 ASCII，未覆盖 `%`/Unicode/control/Trailers-Only message | GRPC-011 |
 
 ## 3. 基线结果
 
@@ -936,6 +937,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：把通用编程语言数字 parser 当作 wire-level canonical integer parser，并且 unary/streaming继续各自处理失败分支。
 - 建议解法：只接受 `"0"` 或首位 1..9 后跟 DIGIT 的完整字节串，使用 checked decimal accumulation；语法/溢出失败统一合成 UNKNOWN。再按 code table决定已知、未知整数的传播策略，四种 RPC共用 parser且永不返回 nil status。
 - 后续回归条件：修复阶段覆盖 0..16、17/大整数、空串、00/01、空白、正负号、hex、指数、小数、非 ASCII digit与溢出；只有 canonical decimal可达对应 code，所有非法文本均为 UNKNOWN且不得成功。本轮不新增测试代码。
+
+### GRPC-011 — P2 — `grpc-message` 未 percent-encode/decode
+
+- 状态：已确认；gRPC Status-Message wire grammar 与确定性 server/client header path 推导。本阶段只做静态 review，不新增错误字符串触发。
+- 规范：grpc-message 在语义上是 Unicode description，wire 上必须先编码为 UTF-8，再按 gRPC 的允许字节集合进行 percent-encoding（`%` 本身必须编码）。client应解码合法 `%HH`；遇到非法编码不得抛错或丢弃整个 message，可以保留原文或部分解码。
+- 位置：unknown method message 在 `lualib/silly/net/grpc/server.lua:8-20`；应用/异常 error trailers 在 `lualib/silly/net/grpc/registrar.lua:80-228`；client message 读取在 `lualib/silly/net/grpc/client/service.lua:38-53,164-173`。
+- 触发：unknown method path或业务/pcall error包含 `%`、Unicode、控制字符、换行；或独立 server 返回 percent-encoded message，例如 `permission%20denied`，包括 Trailers-Only response。
+- 影响：Silly server 生成不符合 gRPC message grammar 的字段；多行异常还会利用 HTTP/2 sender校验缺口直接生成非法 field-value，严格 peer可能 reset stream/connection。Silly client则把 percent文本原样暴露给应用，且 unary Trailers-Only即使读到 status也丢失位于 initial header的 message，导致错误信息损坏或缺失。
+- 证据：所有 server分支直接把 Lua error/path字符串赋给 `['grpc-message']`，仓库无 percent encoder；所有 client分支直接取 map value，仓库无 percent decoder。unary的 status使用 `trailer[...] or header[...]`，但 message只读取 `trailer['grpc-message']`，Trailers-Only message不会回退到 header。
+- 根因：status message 被当作普通 header string，未实现 gRPC 独立于 URI/form encoding的 wire codec；终局 field-section选择同样未集中。
+- 建议解法：实现共享的 gRPC percent encoder/decoder：server验证/编码 UTF-8 bytes并至少转义 `%`、控制及非允许字节；client容错解码有效 `%HH`且保留非法片段。message与status必须从同一个最终 field section读取，避免混配。
+- 后续回归条件：修复阶段覆盖空格、`%`、ASCII边界、中文/emoji、CR/LF/NUL、合法大小写 hex、孤立/短/非 hex `%`，以及普通 trailer/Trailers-Only；严格 peer接受 server输出，client不因坏编码抛错。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
