@@ -653,6 +653,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义公开且唯一的`redis.null` sentinel（或typed reply对象），array/pipeline内部一律保存sentinel并保持dense sequence；顶层命令可为兼容性选择继续返回nil，但文档须区分。pipeline最好返回每项`{ok=..., value=...}`而非含nil的flat tuple，并提供迁移策略。
 - 回归测试：修复阶段覆盖首/中/尾/全null、nested arrays、空array与null array、pipeline null/error混合；断言元素count、顺序和null identity可精确round-trip。当前仅作静态语义核对。
 
+### MYSQLC-001 — P1 — binary result row 未验证 NULL bitmap 长度即发生 C 越界读
+
+- 状态：已确认；C pointer与官方binary row布局静态推导。本阶段不生成截断MySQL packet。
+- 规范：[MySQL Binary Protocol Resultset Row](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html)规定row为1-byte header、长度`(column_count + 7 + 2) / 8`的NULL bitmap及非null values；parser必须先确认packet完整包含bitmap再逐bit访问。
+- 位置：`lparse_row_data_binary`在`luaclib-src/mysql/lmysql.c:430-471`，特别是bitmap pointer/size推进`:439-456`；通用checked readers在`luaclib-src/mysql/binary.h:36-145`。
+- 触发：prepared statement返回的column definitions有足够列数，但某个binary row packet只有header和不足长度的NULL bitmap。例如8列需要2-byte bitmap，packet只带1 byte后截断。
+- 影响：`null_map[byte]`从Lua string边界外读取原生内存，ASan构建可abort，普通构建产生undefined behavior并可能依据相邻内存错误判断列是否null；随后解析位置也已越界。恶意/受劫持MySQL peer可远程触发进程崩溃，并潜在影响数据完整性。
+- 证据：函数仅在`chk.pos += 1`后检查`chk.pos >= chk.len`；随后保存`null_map = data + pos`并无条件`chk.pos += null_bytes`，loop内直接访问`null_map[byte]`。该访问不经过会检查`pos/len`的`binary_read_*`。
+- 根因：bitmap被当作可信固定区间的裸pointer，而不是经统一checked slice取得；列元数据长度与当前row packet长度之间没有显式前置条件。
+- 建议解法：用overflow-safe计算null_bytes，在保存slice前验证`null_bytes <= chk.len - chk.pos`；最好新增`binary_read_slice`统一返回受界限约束的pointer/length。拒绝非`0x00`row header，解析所有非null值后还应按协议决定是否要求完整消费packet；任何codec error使连接fatal。
+- 回归测试：修复阶段按column_count 1/6/7/8/9等bitmap边界截断每一个byte，并覆盖空values、全部null和尾随数据；在ASan/UBSan下断言只返回protocol error且无越界。当前不新增packet样本。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1636,6 +1648,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis RESP line/bulk/array count与递归深度均无预算，peer可耗尽内存、CPU或stack，记录为`REDIS-004`；未生成大/深RESP。
 - 2026-08-06：确认Redis close看不到局部in-flight socket且connect/handshake完成后不复查closed，关闭对象可被复活，记录为`REDIS-005`；并发问题仅作时序说明。
 - 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
+- 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
