@@ -560,6 +560,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：共享严格HTTP/1 field validator：name逐octet符合`tchar`且非空，value拒绝CR/LF/NUL及不允许的CTL并按规范处理OWS；receiver任一非法字段400/关闭，sender在写任何字节前返回错误。不同context另加Host/TE/CL/trailer/hop-by-hop规则，禁止用字符串替换“清洗”危险值。
 - 回归测试：修复阶段枚举全部0..255 octet用于name/value，覆盖colon、space、tab、NUL、CRLF、obs-fold及table multi-value；sender必须零字节输出后失败，receiver不得进handler且关闭。当前不构造injection报文。
 
+### HTTP1-010 — P2 — request/status-line grammar 宽松且方法白名单破坏 HTTP 可扩展性
+
+- 状态：已确认；RFC grammar与双向parser静态推导。本阶段不构造畸形start-line。
+- 规范：RFC 9112 §3规定request-line为`method SP request-target SP HTTP-version CRLF`，HTTP-version只允许`HTTP-name "/" DIGIT "." DIGIT`；§4要求status-line的status-code恰为3位数字。RFC 9110 §9.1说明method token可扩展；501表示服务器不认识/未实现方法，405只适用于已知但目标资源不允许的方法。
+- 位置：server request-line解析与版本判断在`lualib/silly/net/http/h1.lua:811-866`；client status-line解析在`:512-553`；固定`valid_methods`表在`:54-63`。
+- 触发：请求行带leading junk、TAB/多空白、空target、`HTTP/1|1`或合法扩展method；或响应行带leading junk、非规范version以及1/2/4位status code。
+- 影响：Silly与严格proxy/upstream可能对同一字节流形成不同的message boundary/语义，放大为request smuggling或策略绕过；`HTTP/1|1`使`tonumber(ver)`返回nil，随后`nil > 1.1`抛异常并静默断开。合法扩展方法被错误拒绝为405，畸形/未知方法也无法得到正确400/501；client可接受规范上无效的响应并据伪status决定body framing。
+- 证据：两处pattern均未以`^...$`锚定；`[%d|.]`显式包含literal `|`，separator使用`%s+`而非SP，client status使用`%d+`。server在确认`target/ver`和转换version之前先执行`valid_methods[method]`，仅允许八个内建方法。
+- 根因：以宽松substring regex同时承担词法、语法、版本和能力判断，且把method语法合法性与应用method policy混在transport parser中。
+- 建议解法：对完整行做长度受限、逐字段且全字符串匹配的parser；只接受精确HTTP-version grammar与三位status，request separator要求SP并拒绝额外octet。先区分malformed(400)、valid but unsupported(501)，再让router决定known method对resource的405；client遇非法status-line必须标记连接broken。
+- 回归测试：修复阶段覆盖leading/trailing junk、HTAB/多SP、empty target、`HTTP/1|1`、多位version/status及合法extension method；验证400/501/route policy分类和client不复用broken连接。当前不新增畸形网络输入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1535,6 +1547,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP client没有端到端deadline/cancel，pool idle timeout不覆盖DNS/connect/TLS或在途H1/H2 reads，记录为`HTTPC-002`；未运行slow peer。
 - 2026-08-06：确认HTTP/1 server不要求唯一合法Host，也不解析absolute-form effective authority，歧义请求会进入handler，记录为`HTTP1-008`；未新增Host报文。
 - 2026-08-06：确认HTTP/1 receiver用%S+代替token/value octet校验，sender把header原样拼接，CRLF可注入控制字段/空行，记录为`HTTP1-009`；未构造injection报文。
+- 2026-08-06：确认HTTP/1 request/status-line parser未锚定、版本字符类含`|`且status不限3位，method白名单又先于语法/能力判断，记录为`HTTP1-010`；未构造畸形start-line。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。

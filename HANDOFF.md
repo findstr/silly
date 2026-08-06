@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（105 条）
+## 5. 已确认问题（106 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -173,6 +173,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-007 | P1 | HTTP/1 行和字段集合没有上限或解析 deadline，未认证连接可耗尽内存。 |
 | HTTP1-008 | P1 | HTTP/1 server不要求唯一合法Host，也不解析absolute-form authority，歧义请求直接进入handler。 |
 | HTTP1-009 | P1 | HTTP/1收发均无field octet校验，sender可由header key/value直接生成CRLF injection。 |
+| HTTP1-010 | P2 | HTTP/1起始行parser未锚定且版本/status grammar错误，固定方法白名单也破坏method扩展语义。 |
 | WS-001 | P1 | server 接受缺失/无效的 WebSocket opening handshake，并切换到 frame parser。 |
 | WS-002 | P1 | client 仅凭 101 status 接受握手，不验证 Accept 或 Upgrade/Connection。 |
 | WS-003 | P2 | frame parser 缺少 RSV/长度/control 校验，writer 的 125/65535 边界非规范。 |
