@@ -143,6 +143,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-8.1-INTERIM-RESPONSES | MUST | `lualib/silly/net/http/h2.lua:1441-1500,1075-1123` | client recipient | 偏离 | 第一个 HEADERS 无论 1xx/最终都进入 HEADER 并唤醒 waiter；后续 final response 被当 trailer，未实现零到多个 interim→一个 final 的状态 | 现有测试没有 100/103 response | H2-010 |
 | RFC9113-8.1-TRAILER-END-STREAM | MUST | `lualib/silly/net/http/h2.lua:1177-1204,1441-1500` | client recipient | 偏离 | final 后的 HEADERS 无论 END_STREAM 都被当 trailer；不终止时后续 DATA 仍被接受并把 TRAILER 状态倒退为 DATA | 现有 trailer 测试只覆盖本库 server 生成的 END_STREAM trailer | H2-011 |
 | RFC9113-8.3.1/8.5-CONNECT-PSEUDO | MUST | `lualib/silly/net/http/h2.lua:126-133,386-444,700-738` | client sender/server recipient | 偏离 | client 对 CONNECT 仍发送 scheme/path；server 固定要求 scheme/path 且不要求 authority，正好与 CONNECT mandatory/omitted 集合相反 | 现有 HTTP/2 测试没有 CONNECT | H2-012 |
+| RFC9113-10.5/10.5.1-FIELD-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:74-80,314-384`; `luaclib-src/lhttp.c:696-780` | client/server recipient | 偏离 | 只限制 65,535 compressed wire bytes，不累计 uncompressed name+value+32、字段数或单字段大小，也无配置/advertisement | 现有测试没有 indexed expansion、超限并发 field blocks | H2-013 |
 
 ## 3. 基线结果
 
@@ -599,6 +600,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：sender 对普通 CONNECT 只编码 method+authority，path API 参数不得落到 wire；recipient 先收集并验证唯一 pseudo，再按 method 检查：CONNECT 必须 authority、禁止 scheme/path，普通请求要求 method/scheme/path并按 URI 情况处理 authority。若实现 RFC 8441，则只有成功协商 `SETTINGS_ENABLE_CONNECT_PROTOCOL` 后才允许额外 `:protocol` 与 extended CONNECT 的不同集合。
 - 后续回归条件：修复阶段覆盖合法 CONNECT、缺/空 authority、误带 scheme/path、普通 GET 缺 scheme/path、authority-form host:port，以及 client wire field 集合；另覆盖未协商 `:protocol` 必须拒绝，不把普通 CONNECT 与 RFC 8441 混为一类。本轮不新增测试代码。
 
+### H2-013 — P1 — HPACK 解压后 field section 没有资源上限
+
+- 状态：已确认；RFC 9113 安全要求与确定性解压/映射路径推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §10.5 要求实现跟踪可能被滥用的 field compression 等特性并设置使用上限；§10.5.1 明确 uncompressed field block 可迫使 endpoint 承诺大量内存，可用 `SETTINGS_MAX_HEADER_LIST_SIZE` 提示 peer，但 setting 只是 advisory，receiver 仍需按自己可处理的大小拒绝/丢弃。其计算口径为每个 field 的 name length + value length + 32。
+- 位置：唯一 wire cap 在 `lualib/silly/net/http/h2.lua:74-80,314-365`，解压后 list/map 在 `:331-384`；HPACK decoder 在 `luaclib-src/lhttp.c:696-780`。HTTP listener/client 配置均没有 HTTP/2 header limits。
+- 触发：peer 用大量短 indexed representations、重复 fields 或 Huffman/literal fields 构造 compressed size 不超过 65,535 的 field block，使解压后字段数量/总尺寸远大于 wire size；对多个并发 streams 重复发送。server 侧还可利用 `H2-005` 先把错误使用的 `streammax` 调大。
+- 影响：decoder 先把全部 key/value 放入 Lua `header_list`，随后 `map_header` 再为重复字段扩展数组并让 stream/header 持有结果，CPU、Lua table slots 和字符串内存可显著放大。并发请求可耗尽进程内存或长时间占用 worker；没有 per-connection/global budget、deadline 或配置让部署收紧。65,535 compressed-byte cap 只给单 block 一个较大的 wire 上限，不限制协议定义的 uncompressed cost。
+- 证据：`max_header_wire_size` 只累计 HEADERS/CONTINUATION 的 `#d`。`hpack_unpack` 每解出一个 representation 就连续写入 `header_list`，没有 header-list-size 参数或累计值；`map_header` 再遍历全部结果。代码不发送 `SETTINGS_MAX_HEADER_LIST_SIZE`，收到 peer 的该 setting也只注释为 advisory 后忽略（发送约束也未实现）。
+- 根因：把 compressed frame/block size 当成 header 资源预算，没有在 HPACK decoder 的增量解码点计算 uncompressed HTTP/2 field-section size，也没有把限制暴露到 server/client 配置。
+- 建议解法：增加可配置的 per-field、field-count、uncompressed field-section 和 connection-level pending-header budgets；HPACK 解码时按 name+value+32 增量计数，超限时仍按 RFC 维护 compression state，但停止构造/保留应用列表，随后 server 返回 431 或 reset stream、client 丢弃 response。向 peer 广告合理 `SETTINGS_MAX_HEADER_LIST_SIZE`，但不能依赖 peer 遵守。
+- 后续回归条件：修复阶段覆盖大量 1-byte indexes、单大 literal/Huffman、重复 fields、恰好 limit/limit+1、CONTINUATION、多并发 streams、超限后下一合法 block 的 HPACK state 仍同步，以及配置/setting 的方向性。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -678,3 +691,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 client 把首个合法 1xx informational response 当 final，真正 final HEADERS 被误分类为 trailer，记录为 `H2-010`。
 - 2026-08-06：确认 client 接受不带 END_STREAM 的 trailer HEADERS，之后仍允许 DATA 并发生 TRAILER→DATA 状态回退，记录为 `H2-011`。
 - 2026-08-06：确认 client 固定为 CONNECT 发送 scheme/path，server 又固定要求 scheme/path且不要求 authority，普通 CONNECT 双向不符合，记录为 `H2-012`。
+- 2026-08-06：确认 HPACK 只限制 compressed wire block，没有 uncompressed field-section/字段数/单字段预算或配置，记录为 `H2-013`。
