@@ -162,6 +162,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
 | GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
 | GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
+| GRPC-MESSAGE-COMPRESSION | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81` | client/server recipient | 偏离 | 任意非零 compressed flag 被统一当 unsupported，未校验 0/1 domain 或 `grpc-encoding`；server 固定回 UNIMPLEMENTED，client 不能稳定映射 INTERNAL | 无 compression、非法 flag、encoding/flag 组合测试 | GRPC-004 |
 
 ## 3. 基线结果
 
@@ -845,6 +846,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：gRPC listener 被实现成 path router，没有位于 router 前的 protocol admission 层；通用 HTTP/2 parser 成功被误当成 gRPC request 已合法。
 - 建议解法：dispatch 前集中校验 method、scheme/path、Content-Type prefix 与 TE token；Content-Type 不匹配返回 HTTP 415，其他 malformed gRPC call 按协议定义选择 HTTP/gRPC error且不得调用业务 handler。只有完整通过 admission 才按 path 路由。
 - 后续回归条件：修复阶段以已知 path 覆盖 GET、缺 Content-Type、`application/json`、合法 `application/grpc+proto`、缺失/错误/正确 TE；断言无效请求不调用 handler、非 gRPC Content-Type 为 415、合法 subtype 可调用。本轮不新增测试代码。
+
+### GRPC-004 — P2 — compressed flag 与 `grpc-encoding` 关系未校验
+
+- 状态：已确认；gRPC length-prefixed message grammar、compression specification 与确定性 envelope reader 路径推导。本阶段只做静态 review，不新增触发代码。
+- 规范：Compressed-Flag 是单个 byte，但合法值只有 0 或 1；值 1 表示按本方向 `grpc-encoding` 声明的算法压缩。未声明 encoding 时 flag 必须为 0；flag 已设置却缺少非 identity encoding 的畸形消息必须得到 `INTERNAL`。server 收到真正不支持的 client compression 才应返回 `UNIMPLEMENTED`，并用 `grpc-accept-encoding` 告知支持集合；client 收到不支持的 server compression 应产生 `INTERNAL`。
+- 位置：共用 envelope reader 在 `lualib/silly/net/grpc/helper.lua:16-50`；server status 发出路径在 `:23-40` 和 `lualib/silly/net/grpc/registrar.lua:80-228`；client error/status 消费在 `lualib/silly/net/grpc/client/service.lua:38-81,134-176`。
+- 触发：message compressed flag 为 1、但对应方向没有 `grpc-encoding` 或值为 identity；flag 为 2..255；或 peer 使用实现不支持的已声明算法。
+- 影响：畸形消息与能力不匹配被混为一谈，server 把应为 `INTERNAL` 的 protocol invariant violation报告为可被理解成“方法/能力未实现”的 `UNIMPLEMENTED`；client 对不支持的压缩响应只返回普通字符串，streaming 路径甚至可随后从 trailer 记录 OK。上层无法按标准 status 分类，压缩协商也无法互操作。
+- 证据：reader 解出 flag 后只有 `compress ~= 0` 一个分支，不读取 stream headers 的 `grpc-encoding`，也不区分 1 与其他值。server 固定写 `grpc-status=UNIMPLEMENTED` 且不写 `grpc-accept-encoding`；client 共用同一分支直接返回 `"Compression not supported yet"`，之后的 status 仍由 peer trailer 决定。
+- 根因：wire bit 被当作实现 feature toggle，而不是由 per-direction metadata 决定语义的协议字段；压缩协商与 envelope decoding 没有共享 call state。
+- 建议解法：在 call admission 保存双方 encoding/accept-encoding 状态；先严格拒绝 flag 不在 {0,1}，再按 flag、declared encoding 与支持集合三者决定解压或标准 status。unsupported request algorithm 返回 UNIMPLEMENTED及接受集合；invalid flag/identity mismatch 和 unsupported response algorithm映射 INTERNAL。
+- 后续回归条件：修复阶段对 client/server 双向覆盖 flag 0/1/2、缺失/identity/supported/unsupported encoding，断言 payload 是否解压、status code 和 `grpc-accept-encoding`；每条 message 独立建立压缩 context。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
