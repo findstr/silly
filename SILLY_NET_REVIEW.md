@@ -331,6 +331,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让`tls.push`返回`plaintext_size,state,error`；每次`SSL_read<=0`立即在清空error queue的正确调用边界使用`SSL_get_error`。WANT_READ继续等待，WANT_WRITE先flush并维持重试，ZERO_RETURN标记authenticated EOF、唤醒reader并进入shutdown，fatal error flush alert后关闭并传播明确errno。所有产生out BIO数据的读/握手路径统一drain，且避免在fatal error后调用`SSL_shutdown`。
 - 回归测试：修复阶段覆盖peer close_notify但TCP保持open、fatal alert、bad record MAC、unexpected EOF、WANT_READ/WANT_WRITE与TLS 1.3 post-handshake control；断言reader及时返回EOF/错误、alert被发送、连接不泄漏且不会busy-loop。当前不新增alert输入。
 
+### TLS-004 — P2 — 正常关闭直接断 TCP，永远不发送 TLS `close_notify`
+
+- 状态：已确认；公开close到native SSL API的完整调用链推导。本阶段不新增strict peer互操作复现。
+- 规范/权威依据：OpenSSL说明`SSL_shutdown()`发送`close_notify`；若不等待双向shutdown，至少一次成功调用后再关闭transport才是受支持的fast shutdown。直接`SSL_free/close TCP`会让peer无法获得经认证的流结束，对不能自行确定消息完整性的应用存在truncation风险。参见 [SSL_shutdown](https://docs.openssl.org/3.1/man3/SSL_shutdown/)。
+- 位置：Lua close在`lualib/silly/net/tls.lua:409-426`；native TLS只导出open/read/write/handshake/push/size/free，在`luaclib-src/ltls.c:642-689`；`ltls_free`仅调用`SSL_free`在`:187-200`。
+- 触发：任意已完成握手的TLS connection调用`conn:close()`或经`__close/__gc`收尾；无需异常条件。
+- 影响：peer看到底层EOF而非authenticated TLS EOF，严格实现会报告`unexpected eof while reading`并可能拒绝session reuse；若上层协议没有自身无歧义长度/结束标记，应用无法区分正常结尾与攻击者截断。HTTPS/WSS等常见路径也失去规范的TLS关闭语义。
+- 证据：`conn.close`立即清Lua状态后调用`net.close(fd)`，从不访问`s.ssl`；native模块全文没有`SSL_shutdown`。GC只`SSL_free`内存对象，既不drain out BIO也不发送alert。OpenSSL quiet-shutdown也未配置，因此不是一个显式、受约束的兼容模式。
+- 根因：TLS wrapper只代理握手和application data，把连接关闭完全委托给TCP层，缺少独立的TLS shutdown状态机与write-close deadline。
+- 建议解法：提供异步TLS close：在未发生fatal error时调用`SSL_shutdown`，drain并发送out BIO中的close_notify；可选择一次调用后关闭的documented fast shutdown，或在deadline内等待peer close_notify后关闭。fatal路径不得错误调用shutdown，但应尽力发送已生成alert。区分`abort()`与graceful `close()`，并保证GC finalizer采用有界、不会yield的安全策略。
+- 回归测试：修复阶段让OpenSSL/Go等strict peer验证主动client/server close都收到close_notify，双向关闭在deadline内完成；同时覆盖peer不响应、已有fatal error、pending ciphertext和GC fallback，无挂起/double-close。当前不新增互操作复现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1286,6 +1298,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认TLS client保持OpenSSL默认VERIFY_NONE且hostname只用于SNI，没有trust store、链或hostname验证，记录为`TLS-001`；未新增MITM/伪证书复现。
 - 2026-08-06：确认accepted TLS userdata未强引用SNI callback arg所属ctx，reload/close+GC后在途ClientHello可访问失效userdata，记录为`TLS-002`；未新增GC/reload竞态复现。
 - 2026-08-06：确认TLS record input丢弃所有SSL_read非正结果且不flush控制输出，close_notify/fatal error不会唤醒reader，记录为`TLS-003`；未新增alert输入。
+- 2026-08-06：确认TLS close只断开TCP且native模块完全没有SSL_shutdown，peer永远收不到authenticated close_notify，记录为`TLS-004`；未新增strict-peer互操作。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
