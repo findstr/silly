@@ -630,6 +630,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client配置并默认启用max line、bulk bytes、aggregate elements、nesting depth及每response/pipeline累计decoded bytes；在分配/定长read前做整数overflow和budget检查，并给socket设置略高于parser工作集的buffer limit。超限视为connection-fatal protocol/resource error并失败同连接pending。
 - 回归测试：修复阶段覆盖无LF长行、limit边界bulk、超大/负/overflow count、宽array、深array及pipeline累计超限；断言在有界内存/时间内关闭且无partial result。当前不生成资源消耗输入。
 
+### REDIS-005 — P2 — close 看不到 in-flight connect/handshake，关闭对象可被晚到连接复活
+
+- 状态：已确认；close/connect interleaving静态推导。属于并发时序问题，本阶段不强行动态复现。
+- 位置：`redis:close`在`lualib/silly/store/redis.lua:168-174`；lazy connect、AUTH/SELECT与返回在`:180-213`；caller在`:266-277,310-321`收到返回后写入`self.sock`。
+- 触发：task A进入`tcp.connect`或AUTH/SELECT并yield，此时新socket只在`connect_to_redis`局部变量；task B调用`redis:close()`，看到`self.sock=false`后只设置`closed=true`；随后A连接/握手完成。
+- 影响：close无法取消/关闭in-flight socket，若peer停在handshake可在close返回后继续保留task与fd；若完成，A不复查closed就返回socket，caller把它赋回`self.sock`并发送命令，使逻辑已关闭的client重新拥有活连接。该连接之后不会再被最初close回收，破坏shutdown与资源所有权契约。
+- 证据：`closed`只在connect锁内、建立socket之前检查一次；局部`sock`直到函数返回后才由caller赋值。`close()`既不获取同一mutex，也无connecting generation/cancel handle；AUTH/SELECT后及两处赋值前均无second check。
+- 根因：对象状态只有`false/socket`两态，缺少CONNECTING状态和连接generation；close与异步建立连接之间没有共同的发布/撤销协议。
+- 建议解法：在锁保护下登记in-flight generation/cancel state；close原子标记closed并取消/关闭已建立或正在建立的transport。connect/每步handshake后及publish前复查generation与closed，失效即关闭局部socket并返回ECLOSED；socket发布也必须在同一同步边界完成，避免caller二次赋值窗口。
+- 回归测试：修复阶段在TCP connect、AUTH read和SELECT read三个yield点分别并发close，再让peer成功/失败/保持静默；断言close后命令不成功、无socket重新发布且所有fd/task最终结束。当前只说明并发时序。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1611,6 +1622,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis command在获取reader token前的write failure会调用reader-only cleanup并assert，pipeline又遗留坏socket，记录为`REDIS-002`；未注入send failure。
 - 2026-08-06：确认Redis connect、AUTH/SELECT、command/pipeline与reader queue均无deadline/cancel，一个slow peer可挂住整个client，记录为`REDIS-003`；未运行slow peer。
 - 2026-08-06：确认Redis RESP line/bulk/array count与递归深度均无预算，peer可耗尽内存、CPU或stack，记录为`REDIS-004`；未生成大/深RESP。
+- 2026-08-06：确认Redis close看不到局部in-flight socket且connect/handshake完成后不复查closed，关闭对象可被复活，记录为`REDIS-005`；并发问题仅作时序说明。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
