@@ -349,6 +349,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义两阶段quiesce/cleanup：停止接收新发送并joinproducer后，socket abort-cleanup不得再向worker报告消息，只释放payload/关闭fd；或保持worker queue存活到socket cleanup结束并明确丢弃/释放其消息。不要仅交换两行而让无人dispatch的close message泄漏；加入teardown flag和专用no-report cleanup路径更清晰。
 - 回归测试：修复阶段在退出final flush注入EPIPE/ECONNRESET/EAGAIN/partial write，覆盖有/无closewait和多个wlist；ASan断言无UAF，所有payload/message只释放一次，worker queue/socket manager/timer最终无泄漏。当前无独立动态复现。
 
+### SOCK-009 — P1 — 已返回的 poll event 可误作用于复用后的新 socket generation
+
+- 状态：已确认；确定性`eventwait→op_process→event consume`顺序与event payload推导，无独立动态复现。本轮不新增大规模slot复用测试。
+- 位置：epoll/kqueue/wepoll event均只保存slot pointer，见 `src/unix/event_epoll.h`、`src/unix/event_kevent.h`、`src/win/event_iocp.h`；主循环在`src/socket.c:1807-1918`；pool generation在`:458-538,755-786`。
+- 触发：`sp_wait`已把old socket的event写入`SM->eventbuf`；同批次包含control wakeup，随后`socket_poll`在消费event前先执行`op_process`，其中close/free old slot并在足够slot压力或后续listen/connect/accept中将其复用为new sid；之后才读取old event保存的slot pointer。
+- 影响：event loop只检查slot当前`zombie/sid/type`，因此把old generation的READ/WRITE/EOF/ERROR flags应用到new fd。可能提前报告connect成功、错误读写/关闭新连接，或在new slot是listener而old event不是READ时触发`assert(SP_READ(e))`终止进程；属于跨连接generation混淆。
+- 证据：三个backend的`SP_UD(e)`都返回注册时的`void *udata`，注册值是`struct socket *`，event数据没有sid/version。`socket_poll`明确先`eventwait`、再`op_process`、最后遍历已填充eventbuf；所以即使`sp_del`保证删除未来通知，也无法改写已经返回的用户态batch。消费时`sid(s)<0`只能过滤仍free的slot，一旦复用sid重新有效就通过，完全没有与event generation比较。
+- 根因：poll registration identity绑定永久slot地址而非generation token，且主循环在event snapshot与消费之间执行可free/reuse slot的commands。
+- 建议解法：event userdata应携带可验证generation（例如稳定registration对象含slot index+sid snapshot），消费前比较当前sid；或保证event batch完全消费前不把freed slot归还allocator，使用deferred-reuse epoch。仅把op_process移到event后不能覆盖event处理中close/accept复用和其他backend语义，generation check仍应存在。
+- 回归测试：修复阶段用小pool/testbarrier让epoll_wait/kevent/wepoll返回old READ/WRITE/EOF后，在consume前执行close并复用为listener/connecting/connected socket；断言stale event全部丢弃，新socket不读写、不提前connect、不关闭且无assert。当前无独立动态复现。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1164,6 +1175,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认public send length经`size_t→int→size_t`截断，裸pointer+claimed length可形成巨大TCP iovec，记录为`SOCK-006`；按要求未构造越界发送。
 - 2026-08-06：通过确定性generation交错确认late send accounting可污染复用slot，记录为`SOCK-007`；没有为窄窗口新增barrier复现。
 - 2026-08-06：确认`worker_exit`释放W后`socket_exit` final flush仍可经report_close调用worker_push，记录为`SOCK-008`；没有新增退出send-error复现。
+- 2026-08-06：确认poll batch先snapshot、后处理close/reuse op，裸slot userdata缺generation校验，记录为`SOCK-009`；没有新增跨平台动态复现。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。

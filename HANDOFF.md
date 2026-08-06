@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（75 条）
+## 5. 已确认问题（76 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -136,6 +136,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-006 | P1 | send length经`size_t→int→size_t`窄化，裸pointer可形成巨大iov并越界读取/泄露内存。 |
 | SOCK-007 | P2 | stale send在sid校验后close/reuse，可把wlbytes永久记入新generation socket。 |
 | SOCK-008 | P1 | worker已释放后socket final flush error仍调用worker_push，形成shutdown heap UAF。 |
+| SOCK-009 | P1 | poll batch中的裸slot pointer缺generation，close/reuse后old event可误作用于new socket。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -199,7 +200,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-统计口径为 75 条：5 个 CORE + 8 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 18 个 gRPC；以主报告中的编号和证据为准。
+统计口径为 76 条：5 个 CORE + 9 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 18 个 gRPC；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -279,11 +280,10 @@ review-repros/socket_stat_close_race.lua
 
 按顺序调查并记录：
 
-1. stale multiplexer event 携带 slot 指针时，slot 已复用为新 socket，旧 event 是否会误作用于新 generation；Linux epoll 与 BSD/macOS kqueue 要分别分析。
-2. `rw_enable`/`sp_ctrl` 失败被忽略，可能造成永久收不到读写事件。
-3. `socket_stat`/sockaddr 边界：错误 family、getsockname/getpeername 失败后的未初始化地址、低层 API assert 契约。
-4. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler 堵塞是否可导致内存 DoS。
-5. `timer` delta 转 `int`、queue size 返回 `int` 等 conversion warnings；区分真实可达缺陷与构建卫生。
+1. `rw_enable`/`sp_ctrl` 失败被忽略，可能造成永久收不到读写事件。
+2. `socket_stat`/sockaddr 边界：错误 family、getsockname/getpeername 失败后的未初始化地址、低层 API assert 契约。
+3. TCP/UDP 默认 receive stash 是否无上限，远端慢消费/handler 堵塞是否可导致内存 DoS。
+4. `timer` delta 转 `int`、queue size 返回 `int` 等 conversion warnings；区分真实可达缺陷与构建卫生。
 
 原send-length与late-accounting两项已由静态完整调用链确认并记录为`SOCK-006`/`SOCK-007`；本阶段不新增大长度或并发barrier动态复现。
 
