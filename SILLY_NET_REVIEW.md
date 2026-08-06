@@ -138,6 +138,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | RFC9113-5.1.2/6.5.2-MAX-CONCURRENT-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-160,239-263,618-659,1211-1278,1555-1648` | server recipient | 偏离 | server 收到 client setting 后覆盖用于限制 inbound request 的 `ch.streammax`；client setting 只限制 server 发起的 streams | 现有双方恰好都发送 100，没有非对称/运行时变更覆盖 | H2-005 |
 | RFC9113-6.3-PRIORITY-SIZE-SCOPE | MUST | `lualib/silly/net/http/h2.lua:1281-1310` | client/server recipient | 偏离 | PRIORITY payload 非 5 bytes 时调用 connection `GOAWAY(FRAME_SIZE_ERROR)`；规范要求 stream error | 现有测试没有 malformed PRIORITY 或错误作用域断言 | H2-006 |
 | RFC9113-4.2/6.8-GOAWAY-MIN-SIZE | MUST | `lualib/silly/net/http/h2.lua:1357-1367` | client/server recipient | 偏离 | GOAWAY handler 只检查 stream-id，完全忽略 payload；少于强制 8 bytes 的 frame 也被接受，而非 `FRAME_SIZE_ERROR` | 现有测试没有 malformed GOAWAY 长度 | H2-007 |
+| RFC9113-6.8-GOAWAY-LAST-STREAM | MUST/reliability | `lualib/silly/net/http/h2.lua:1357-1367,1425-1448`; `lualib/silly/net/http/client.lua:318-390` | client recipient | 偏离 | 合法 GOAWAY 只置 bool，不解析 Last-Stream-ID/error；高编号未处理 streams 不结束/不标 retryable，高层默认 readall 可无限等待 | 现有 Test 20/26 是本端主动 close，不覆盖 peer graceful GOAWAY 与在途 streams | H2-008 |
 
 ## 3. 基线结果
 
@@ -534,6 +535,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 建议解法：先检查 `#dat >= 8`，否则 `channel_goaway(ch, FRAME_SIZE_ERROR)`；再解析 reserved-masked Last-Stream-ID 与 Error Code，保留可选 debug data 的 opaque 语义。last-stream/error 对 active streams 的处理需要与 `H2-008` 的 retry/完成边界一起修复。
 - 后续回归条件：修复阶段覆盖长度 0/7/8/9、非零 stream-id、reserved bit、任意 error code 与 debug bytes；断言过短为 connection `FRAME_SIZE_ERROR`，合法 8+ bytes 被完整解析且 debug data 不影响结构。本轮不新增测试代码。
 
+### H2-008 — P1 — GOAWAY 不处理 Last-Stream-ID，未处理请求可无限等待
+
+- 状态：已确认；RFC 9113 与确定性 stream/high-level wait 路径推导。本阶段只做静态 review，不新增复现代码。
+- 规范：RFC 9113 §6.8 要求 GOAWAY 的 Last-Stream-ID 表示发送者可能处理过的最高 peer-initiated stream。接收者不得再开新 stream；自己已发送但 id 高于该值的 streams 被保证未处理，可以在新连接重试；低于等于该值的在途 streams仍可能完成。实现必须保存并按此边界区分，而不能把所有 stream 当成同一种状态。
+- 位置：GOAWAY handler 在 `lualib/silly/net/http/h2.lua:1357-1367`，dispatch/stream wait 在 `:790-864,1088-1123,1425-1448`；高层同步 request/readall 在 `lualib/silly/net/http/client.lua:318-390`。
+- 触发：server 在 client 已创建多个请求后发送合法 GOAWAY，Last-Stream-ID 小于至少一个在途 stream id，并按规范继续处理低编号 streams、忽略高编号 streams且暂不关闭 TCP。
+- 影响：高编号 stream 没有 response、END_STREAM 或 RST，本端也不主动结束/唤醒它；`stream:readall()` 默认 timeout 为 nil，高层 `httpc:get/request` 同样没有强制 deadline，因此调用可无限挂起。库还丢失“保证未处理”的 retryability 信息，无法安全自动重试；若粗暴等 TCP close，又会把可能已处理的低编号非幂等请求与确定未处理请求混淆。
+- 证据：`frame_goaway` 的 payload 参数名为 `_` 且唯一动作是 `ch.goaway=true`。它不遍历 `ch.streams`，不调用 `stream_remoteend/writewakeup`，也不保存 last-stream/error。dispatch 继续在仍活跃的 TCP 上读 frame；只有底层连接最终关闭才由 `channel_clearstream` 唤醒全部 streams。高层 `do_with_redirects` 直接无 timeout 调用 `stream:readall()`，且没有 GOAWAY-aware retry 分支。
+- 根因：将 GOAWAY 建模成“禁止新 stream”的布尔值，遗漏 graceful shutdown 的 per-stream processed boundary 与 retry contract。
+- 建议解法：解析并单调收紧 peer Last-Stream-ID/error code；立即将本端发起且 id 大于边界的 streams 标记为明确未处理，解除 read/write wait，并向上返回结构化 retryable error。低编号 streams 保持可完成；连接池不再选该 channel 开新 stream。自动重试只能对确定未处理的 streams，且需要保留 body replayability/cancellation 规则，不能按 method 猜测后无条件重放。
+- 后续回归条件：修复阶段并发创建 id 1/3/5，收到 last=3 的 NO_ERROR GOAWAY 后断言 id5 立即以 retryable-unprocessed 结束、id1/3 可继续完成、新请求走新连接；覆盖多次 GOAWAY 边界只能下降、非 NO_ERROR、非幂等 body、不可重放 body、peer 长时间不关 TCP和 connection close race。本轮不新增测试代码。
+
 ## 5. 正在验证的候选问题
 
 ### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
@@ -608,3 +621,4 @@ gRPC 审计清单（状态：待逐条核对）：
 - 2026-08-06：确认 server 把 client 的 MAX_CONCURRENT_STREAMS 反向用于限制该 client 的 request streams，记录为 `H2-005`。
 - 2026-08-06：确认非 5-byte PRIORITY 被错误升级为 connection GOAWAY，而 RFC 9113 要求 stream `FRAME_SIZE_ERROR`，记录为 `H2-006`。
 - 2026-08-06：确认 GOAWAY handler 完全忽略 payload，0..7-byte frame 未触发强制 connection `FRAME_SIZE_ERROR`，记录为 `H2-007`。
+- 2026-08-06：确认合法 GOAWAY 的 Last-Stream-ID/error 被丢弃，高编号未处理请求无法结束或标记 retryable，高层默认可无限等待，记录为 `H2-008`。
