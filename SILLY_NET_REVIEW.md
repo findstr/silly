@@ -572,6 +572,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：对完整行做长度受限、逐字段且全字符串匹配的parser；只接受精确HTTP-version grammar与三位status，request separator要求SP并拒绝额外octet。先区分malformed(400)、valid but unsupported(501)，再让router决定known method对resource的405；client遇非法status-line必须标记连接broken。
 - 回归测试：修复阶段覆盖leading/trailing junk、HTAB/多SP、empty target、`HTTP/1|1`、多位version/status及合法extension method；验证400/501/route policy分类和client不复用broken连接。当前不新增畸形网络输入。
 
+### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
+
+- 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
+- 规范：[zlib 1.3.1 manual](https://www.zlib.net/manual.html)说明`inflate()`只有在gzip member结尾返回`Z_STREAM_END`，且不会自动解码concatenated members；[RFC 1952 §2.2](https://www.rfc-editor.org/rfc/rfc1952.html#section-2.2)定义gzip file为一系列members，compliant decompressor须接受符合规范的file。
+- 位置：`lgzip_decompress`在`luaclib-src/lcompress.c:62-110`；HTTP convenience client自动调用点在`lualib/silly/net/http/client.lua:389-395`。
+- 触发：输入在header/deflate stream/trailer中途截断、只产生少于一个Lua buffer的partial output，或包含多个合法gzip members/第一个member后的尾随octet；超大Lua string还会在赋给zlib `uInt avail_in`时窄化。
+- 影响：截断或未校验完整性的HTTP响应会以成功和partial plaintext交给应用，可能绕过“解压失败即拒绝”的完整性策略；合法concatenated gzip只返回首member而静默丢数据，尾随垃圾也不报错。大于`UINT_MAX`的输入可能只处理前缀却仍报告成功。
+- 证据：loop条件是`while (stream.avail_out == 0)`而非`ret != Z_STREAM_END`；switch仅拒绝`Z_NEED_DICT/Z_DATA_ERROR/Z_MEM_ERROR`，`Z_BUF_ERROR`和普通`Z_OK`在output未填满时直接落入成功；结束时不检查`ret`、`avail_in`或重置解码下一member。
+- 根因：把“当前调用还有输出空间”误当作“压缩流完整结束”，并缺少明确的single-member/multi-member及trailing-data API契约。
+- 建议解法：分块喂入`uInt`范围内input，持续inflate直到`Z_STREAM_END`；输入耗尽但未到终态必须报truncated，其他非`Z_OK`终态失败。选择并文档化strict single-member（要求无剩余）或按RFC循环`inflateReset2`处理全部members；同时与`HTTPC-001`的decoded-size/ratio budget统一实现。
+- 回归测试：修复阶段覆盖每个header/trailer边界截断、deflate中途截断、CRC/ISIZE错误、空输入、尾随垃圾、两个members以及大于单次`uInt`的分块输入；失败不得返回partial output。当前不新增压缩样本。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1548,6 +1560,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认HTTP/1 server不要求唯一合法Host，也不解析absolute-form effective authority，歧义请求会进入handler，记录为`HTTP1-008`；未新增Host报文。
 - 2026-08-06：确认HTTP/1 receiver用%S+代替token/value octet校验，sender把header原样拼接，CRLF可注入控制字段/空行，记录为`HTTP1-009`；未构造injection报文。
 - 2026-08-06：确认HTTP/1 request/status-line parser未锚定、版本字符类含`|`且status不限3位，method白名单又先于语法/能力判断，记录为`HTTP1-010`；未构造畸形start-line。
+- 2026-08-06：确认gzip inflate以output buffer是否填满代替`Z_STREAM_END`，截断、尾随或multi-member输入可被部分成功接受，记录为`COMP-001`；未生成压缩样本。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。

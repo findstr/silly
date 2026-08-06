@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（106 条）
+## 5. 已确认问题（107 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -152,6 +152,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | URL-003 | P2 | relative URL resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect target偏离RFC3986。 |
 | HTTPC-001 | P1 | convenience client无响应body上限且自动gzip解压无output/ratio budget，恶意响应可耗尽内存。 |
 | HTTPC-002 | P1 | HTTP client无端到端deadline/cancel，DNS/connect/TLS/headers/body任一阶段都可永久挂住调用。 |
+| COMP-001 | P2 | gzip inflate不要求`Z_STREAM_END`或完整消费输入，截断/拼接流可被部分成功接受。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
