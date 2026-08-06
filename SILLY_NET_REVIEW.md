@@ -641,6 +641,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在锁保护下登记in-flight generation/cancel state；close原子标记closed并取消/关闭已建立或正在建立的transport。connect/每步handshake后及publish前复查generation与closed，失效即关闭局部socket并返回ECLOSED；socket发布也必须在同一同步边界完成，避免caller二次赋值窗口。
 - 回归测试：修复阶段在TCP connect、AUTH read和SELECT read三个yield点分别并发close，再让peer成功/失败/保持静默；断言close后命令不成功、无socket重新发布且所有fd/task最终结束。当前只说明并发时序。
 
+### REDIS-006 — P2 — RESP null 写入 Lua array 后槽位消失，合法响应无法无损表示
+
+- 状态：已确认；Lua table语义与RESP null array规范静态核对。不需要网络复现。
+- 规范：[Redis RESP specification](https://redis.io/docs/latest/develop/reference/protocol-spec/#null-elements-in-arrays)允许array中的单个元素为null bulk string；其位置属于响应语义，例如`SORT ... GET`缺失值。客户端必须保留array元素数量、顺序与null位置。
+- 位置：bulk null转换在`lualib/silly/store/redis.lua:44-53`；array元素写入在`:66-81`；pipeline扁平结果写入在`:335-348`。
+- 触发：`MGET`、`SORT ... GET`、transaction/module等返回中间或末尾`$-1`；pipeline任一command合法返回top-level null。
+- 影响：`cmd_res[i] = nil`实际删除该key，末尾null会改变/丢失长度，中间null形成Lua sparse table并使`#`/`ipairs`行为不可靠；无法区分`["a"]`、`["a", null]`等不同合法RESP。pipeline的result slot同样消失，其flat pair contract无法稳定迭代，业务可能把值错配到另一个key/command。
+- 证据：bulk handler把任意negative length返回Lua nil；array和pipeline均直接赋值，没有NULL sentinel、显式`n`字段或typed reply。Lua table不存储值为nil的entry。
+- 根因：wire protocol的first-class null被直接映射到Lua“absence”，但aggregate返回格式没有另外保存shape metadata。
+- 建议解法：定义公开且唯一的`redis.null` sentinel（或typed reply对象），array/pipeline内部一律保存sentinel并保持dense sequence；顶层命令可为兼容性选择继续返回nil，但文档须区分。pipeline最好返回每项`{ok=..., value=...}`而非含nil的flat tuple，并提供迁移策略。
+- 回归测试：修复阶段覆盖首/中/尾/全null、nested arrays、空array与null array、pipeline null/error混合；断言元素count、顺序和null identity可精确round-trip。当前仅作静态语义核对。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1623,6 +1635,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis connect、AUTH/SELECT、command/pipeline与reader queue均无deadline/cancel，一个slow peer可挂住整个client，记录为`REDIS-003`；未运行slow peer。
 - 2026-08-06：确认Redis RESP line/bulk/array count与递归深度均无预算，peer可耗尽内存、CPU或stack，记录为`REDIS-004`；未生成大/深RESP。
 - 2026-08-06：确认Redis close看不到局部in-flight socket且connect/handshake完成后不复查closed，关闭对象可被复活，记录为`REDIS-005`；并发问题仅作时序说明。
+- 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
