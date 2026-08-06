@@ -175,6 +175,7 @@ gRPC 审计清单（状态：待逐条核对）：
 | GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
 | GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
 | GRPC-HANDLER-EXCEPTION-STATUS | MUST/interoperability | `lualib/silly/net/grpc/registrar.lua:80-228` | server | 偏离 | 四种 wrapper将 application handler抛出异常统一映射 INTERNAL；gRPC library-generated mapping要求 UNKNOWN | 无 handler throw status-code assertion | GRPC-016 |
+| GRPC-STATUS-SENDER | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `luaclib-src/lhttp.c:489-548` | server sender | 偏离 | application `err.code` 无类型/range/canonical校验，truthy值直接经通用字符串化写 grpc-status；可发送非法文本或error+OK | 自测仅覆盖0与合法常量 | GRPC-017 |
 
 ## 3. 基线结果
 
@@ -1014,6 +1015,18 @@ gRPC 审计清单（状态：待逐条核对）：
 - 根因：实现把“未捕获异常”按一般编程语言术语视为internal error，没有采用gRPC对application space与library space的特定划分。
 - 建议解法：普通application exception统一返回UNKNOWN并用安全编码的message/日志保留诊断；只有wrapper/decoder/transport自身的invariant failure使用INTERNAL。若要让应用选择其他code，必须通过校验后的显式status返回对象，而不是抛异常。
 - 后续回归条件：修复阶段让四种handler分别抛string/table error，断言wire status均UNKNOWN且message codec合法；另用protobuf parse/runtime invariant测试确认仍为INTERNAL。本轮不新增测试代码。
+
+### GRPC-017 — P2 — server 原样发送未校验的 application status code
+
+- 状态：已确认；gRPC canonical Status wire grammar、应用status集合与确定性 Lua→HPACK转换路径推导。本阶段只做静态 review，不新增恶意handler。
+- 规范：sender必须把grpc-status编码为无前导零的十进制整数文本；应用只应使用gRPC定义的status values。框架收到非法显式status时应拒绝或安全转换为UNKNOWN，且“返回error”不能同时以OK终止。
+- 位置：四种application error branch在 `lualib/silly/net/grpc/registrar.lua:80-228`；最终通用字符串化在 `luaclib-src/lhttp.c:489-548`。
+- 触发：handler返回`nil,{code=-1}`、float、`"00"`、`"0x0"`、table/boolean或`code.OK`等；Lua是动态语言，现有API只用注解声明integer且运行时不执行约束。
+- 影响：Silly server可生成语法非法的grpc-status，独立client应把它映射UNKNOWN；部分宽松client又可能像Silly一样把某些形式解释成其他code或OK。有error+OK时业务失败被wire声明成功，造成跨实现语义分裂。
+- 证据：所有branch使用`err.code or code.UNKNOWN`，Lua中负数、0、字符串、float、table都可到达（0也truthy）。没有`type`、integer、range或OK-with-error检查；HPACK encoder对任何值使用`luaL_tolstring`，所以非法对象不会被拒绝而是转成wire文本。
+- 根因：把application error table当作已验证的wire representation，且底层通用header sender采取宽松字符串化。
+- 建议解法：在gRPC层构造不可伪造/集中校验的Status：code必须为定义的integer non-OK值（success走独立分支），否则转UNKNOWN并记录server-side诊断；wire encoder只从validated integer生成canonical decimal，拒绝字符串/其他类型。
+- 后续回归条件：修复阶段覆盖所有定义code、0 error、负数、17+、float、numeric/non-numeric string、boolean/table/nil，断言wire永远canonical且error绝不变OK；独立client得到一致status。本轮不新增测试代码。
 
 ## 5. 正在验证的候选问题
 
