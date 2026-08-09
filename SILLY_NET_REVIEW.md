@@ -712,6 +712,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：two-pass扫描参数，先验证类型并overflow-safe计算完整payload size，再一次性reserve，之后以offset写且期间不调用可能扩容API；或把null/type arrays放独立稳定allocation/string后与values拼接。所有size乘加检查`SIZE_MAX/LUA_MAXINTEGER`。
 - 回归测试：修复阶段让第1/中间参数跨LUAL_BUFFERSIZE，后续分别为每种type/null，覆盖多次扩容与大量参数；逐byte对照官方COM_STMT_EXECUTE decoder并在ASan/UBSan下运行。当前不生成大execute。
 
+### MYSQLC-006 — P2 — row 只按 column alias 建表，重复列名被静默覆盖
+
+- 状态：已确认；column metadata到row materialization静态核对。
+- 位置：column parser只返回name/type/flags在`luaclib-src/mysql/lmysql.c:216-257`；row以name作key在`:430-470`；`compact_arrays`只声明未实现在`lualib/silly/store/mysql.lua:78-90,1138-1160`。
+- 触发：`SELECT a.id, b.id ... JOIN ...`、两个expression使用相同alias或server返回重复column labels；任一列为NULL还会表现为key缺失。
+- 影响：后解析列无提示覆盖前列，result无法恢复wire上的列数、顺序和第一个值；业务可能把另一张表的id/权限/金额当成目标列。即使调用者知道会重复，API也没有ordinal数组或完整metadata可用。
+- 证据：`parse_column_def`读取但丢弃schema/table/original column，只保存column alias；`parse_row_data_binary`逐列执行`lua_settable`，相同string key覆盖。open opts注释有`compact_arrays`，pool object不保存它且全仓只有该一处引用。
+- 根因：wire的ordered columns过早降维成name map，未定义duplicate/null保真策略；预留的array模式没有接线且unknown option不报错。
+- 建议解法：默认返回ordered row values加完整columns metadata，或同时提供`row.values`和仅在unique时生成的name map；duplicate alias可映射value list/qualified keys但不能静默覆盖。真正实现并文档化`compact_arrays`，open时拒绝未支持opts。
+- 回归测试：修复阶段覆盖两个/三个重复alias、跨table相同name、duplicate含NULL及显式alias唯一场景；断言column count/order/value全部可访问，并验证compact_arrays选项生效。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -1840,6 +1851,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL temporal codec遇非法length会返回硬编码2017时间且不推进cursor，记录为`MYSQLC-003`；未生成非法row。
 - 2026-08-09：确认MySQL未协商SESSION_TRACK时OK info应为EOF string，但codec无条件按lenenc解析，记录为`MYSQLC-004`。
 - 2026-08-09：确认MySQL prepared encoder跨luaL_Buffer扩容持有null/type裸pointer，后续参数会写旧内存并损坏wire，记录为`MYSQLC-005`；未生成大execute。
+- 2026-08-09：确认MySQL row只按alias建表且丢弃qualifier/ordinal，duplicate columns静默覆盖，compact_arrays选项未实现，记录为`MYSQLC-006`。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
