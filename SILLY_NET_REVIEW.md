@@ -923,6 +923,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供可配置且默认有界的event/byte budget；可选择阻塞stream recv以利用HTTP/2 flow control、合并只保留安全progress state，或超限时取消该watch并返回RESOURCE_EXHAUSTED。watcher实现幂等`close/cancel`和`__close`，文档要求结构化生命周期；若无法可靠在`__gc`中发送cancel，至少从client registry移除并在后台generation-safe清理。
 - 回归测试：修复阶段让一个watch不读、另一个正常读并持续写大value，监测queue/heap上界、HTTP/2 window与取消结果；覆盖显式cancel、scope close、丢引用GC和client close，确保response只释放一次。本轮不做流量压力测试。
 
+### ETCD-006 — P1 — `dialtimeout` 配置未用于连接或 RPC，故障 endpoint 可无限挂起
+
+- 状态：已确认；etcd wrapper到gRPC/TCP/TLS的配置传播静态核对。本阶段不连接blackhole endpoint。
+- 位置：参数接收与唯一用途在`lualib/silly/store/etcd.lua:325-363`；gRPC lazy channel连接在`lualib/silly/net/grpc/client/conn.lua:46-99,121-156`；unary/watch/lease调用在`lualib/silly/store/etcd.lua:188-207,245-303,379-537`。
+- 触发：用户按API传`dialtimeout=N`，endpoint在TCP connect、TLS handshake、HTTP/2初始协商、unary response或stream read阶段停止响应；也包括连接中的endpoint失效后自动重建。
+- 影响：`newclient`可返回，但首个请求或后台watch/lease task无限等待；unary调用占住业务coroutine，watch/lease无法在承诺时间内转到其他endpoint。用户以为已设置timeout而不会再加外层保护，使服务shutdown、健康检查和故障切换永久停滞。
+- 证据：etcd只把`opts.dialtimeout`存入对象，并用它计算一个从不读取的`keepalivetimeout`；调用`grpc.newclient`只传`targets`。gRPC conn options没有timeout字段，`tcp.connect/tls.connect`调用不传timeout；各etcd RPC也没有deadline参数。现有`GRPC-012`已记录gRPC通用deadline缺失，本项是etcd公开配置被静默吞掉的确定性API违约。
+- 根因：wrapper定义了timeout配置但底层channel/call abstraction没有统一absolute deadline，字段因此退化成无效状态而未在构造时拒绝。
+- 建议解法：明确拆分`dial_timeout`与每次RPC/default request timeout，并将absolute deadline贯穿DNS、connect、TLS、H2和gRPC call；watch/lease stream需有建立deadline、idle/progress policy和可取消重连backoff。底层尚未支持前应拒绝非nil配置并在文档声明无限等待，不能假装生效。
+- 回归测试：修复阶段在DNS、TCP、TLS、H2 preface、unary body、watch/lease stream各阶段停住，断言同一总预算到期、资源关闭且故障切换发生；检查0/nil/边界值语义。本轮不做blackhole重现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
