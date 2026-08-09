@@ -958,6 +958,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按stream generation验证response；未知ID记录受限日志并按协议严重性忽略或终止该stream，但必须走统一`fail_watch_stream`，原子清除current stream、通知request manager并保证所有watch可恢复/失败。created/canceled error应保留`compact_revision/cancel_reason`，不得用nil dereference替代structured error。
 - 回归测试：修复阶段覆盖负数/0/未知/已cancel/旧stream ID、created/canceled/event三类response及recv decode异常；断言无Lua异常，manager必然重连或明确关闭全部watch，所有blocked read结束。当前不新增伪造response。
 
+### ETCD-009 — P1 — etcd wrapper 无法启用 TLS 或认证，只能连接明文、未授权集群
+
+- 状态：已确认；公开配置、gRPC channel选项和etcd Auth service暴露面静态核对。本阶段不搭建secure etcd。
+- 规范/权威依据：[etcd transport security model](https://etcd.io/docs/v3.6/op-guide/security/)说明生产client-to-server通信可使用HTTPS、CA/server identity验证及client certificate authentication；etcd也提供Auth/Authenticate token机制。client library必须允许这些部署，而不应迫使用户关闭安全控制。
+- 位置：etcd唯一配置面及channel构造在`lualib/silly/store/etcd.lua:325-363`；gRPC conn实际具有但未被传入的`tls`开关在`lualib/silly/net/grpc/client/conn.lua:121-155`；生成proto含Auth/Authenticate service在`lualib/silly/store/etcd/v3/proto.lua:1828-1964`，wrapper未创建或调用它。
+- 触发：endpoint只监听HTTPS，要求受信CA/hostname、mTLS client cert或etcd username/password/token；这是常见的生产加固配置。
+- 影响：Silly client无法连接安全集群，使用者只能额外部署降级明文proxy或关闭etcd TLS/auth；若为可用性而选择后者，KV、lease和watch数据及写权限暴露给网络攻击者。即使将来只透传`tls=true`，现有`TLS-001`还表明底层不验证server identity，因此必须一并修复而不能宣称安全。
+- 证据：`newclient`类型与文档仅有endpoints/retry/timeout；它调用`grpc.newclient{targets=...}`，没有tls、CA、expected name、client cert或metadata。endpoint字符串的`https://`也会被gRPC `parse_target`作为unsupported scheme拒绝。wrapper只实例化KV/Lease/Watch service，没有Auth service和authorization metadata刷新路径。
+- 根因：etcd adapter只覆盖本地无认证开发集群的最小RPC集合，没有把transport identity和application authentication纳入client状态机，却以通用etcd client API形式公开。
+- 建议解法：支持明确的`https://` endpoint与安全默认TLS配置：系统/custom CA、SAN hostname/IP验证、可选client cert/key；实现Authenticate并在每个unary/stream携带token metadata，处理token过期的single-flight refresh且不把secret写日志。先修复底层TLS verification/custom metadata，再开放此配置；禁止静默明文回退。
+- 回归测试：修复阶段覆盖受信TLS、错误CA/SAN、mTLS缺失/正确cert、RBAC username/password、token过期与watch/lease重连刷新；抓包确认无明文、日志无credential。当前不搭建secure peer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
