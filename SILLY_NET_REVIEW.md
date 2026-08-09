@@ -770,6 +770,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在任何body read前执行per-packet与logical-message上限，设置socket buffer limit；提供max columns/rows/decoded bytes和per-query覆盖，并优先增加streaming row iterator/callback以保持常量工作集。超限将连接标broken并关闭，因为剩余response无法安全复用。
 - 回归测试：修复阶段覆盖packet limit-1/limit/limit+1、大量small rows、宽columns、multi-result累计与streaming早停；监测峰值内存并断言超限连接不归池。当前不生成大result。
 
+### MYSQL-010 — P1 — SERVER_MORE_RESULTS_EXISTS 未按新 result 解析，剩余响应污染连接池
+
+- 状态：已确认；multi-result官方状态机与query reader静态核对。本阶段不创建stored procedure。
+- 规范：[MySQL stored-program protocol](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_command_phase_sp.html)规定每个result set独立包含header/metadata/rows/terminator，terminator的`SERVER_MORE_RESULTS_EXISTS`表示下一完整result紧随；`CALL`还会有closing OK。client必须读取全部结果或丢弃连接后才能复用。
+- 位置：capability flags在`lualib/silly/store/mysql.lua:152-167,414-436`；execute response与result loop在`:898-945`；OK/EOF parsers在`luaclib-src/mysql/lmysql.c:64-135`。
+- 触发：prepared `CALL`、stored procedure/OUT parameter或其他server response产生多个result/closing OK；第一个response本身为带MORE flag的OK也可触发。
+- 影响：首个OK路径立即return且不检查`server_status`，剩余packet留在socket；row EOF带MORE时则继续用旧`cols`把下一result的column-count/OK当binary row解析。异常路径未必标broken，to-be-closed lease会把反同步connection归池，下一无关query读取上一调用的packet，造成跨请求结果错配、数据泄露和业务误提交。
+- 证据：`:910-912`只`parse_ok_packet`后return；EOF分支仅在MORE flag为0时break，为1时不重新进入“read result header/metadata”状态。返回类型也只能表达一个`ok_packet|row[]`，没有results collection/iterator。driver还宣告multi capability却没有完整consumer。
+- 根因：把MORE理解为“当前rows继续”而不是“当前logical result结束、另一个result开始”；connection归池前没有统一的response-drained invariant。
+- 建议解法：实现外层results loop，每轮解析OK/ERR或完整binary result，检查其终态status后决定继续；API返回result list/iterator，并提供显式drain。若暂不支持，不能宣告相关capability，且遇MORE必须完整discard或关闭连接。任何parser exception/未消费结果标broken。
+- 回归测试：修复阶段覆盖`CALL`返回0/1/2 result、OUT params、result+closing OK、首个OK+more及中途ERR；随后立即在同一pool发marker query，断言结果不串线。当前不创建procedure。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1763,6 +1775,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL把physical packet当完整message、拒绝zero terminator且不校验sequence，≥0xffffff payload会反同步，记录为`MYSQL-007`；未生成大payload。
 - 2026-08-09：确认MySQL global/per-connection prepared caches均无界且从不COM_STMT_CLOSE，高基数SQL可耗尽client/server资源，记录为`MYSQL-008`；未生成高基数SQL。
 - 2026-08-09：确认MySQL max_packet_size仅写握手、接收与全量result rows/columns没有累计预算，记录为`MYSQL-009`；未生成大result。
+- 2026-08-09：确认MySQL对MORE_RESULTS的OK直接返回、EOF则继续旧row parser，剩余response可污染归池连接，记录为`MYSQL-010`；未创建stored procedure。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
