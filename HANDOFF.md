@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认181项（P1 78、P2 97、P3 6）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认182项（P1 79、P2 97、P3 6）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -175,6 +175,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | REDIS-005 | P2 | close无法看到in-flight connect/handshake，晚到连接可在对象关闭后重新发布并泄漏。 |
 | REDIS-006 | P2 | RESP null映射为Lua nil后aggregate/pipeline槽位消失，合法响应无法保留长度和位置。 |
 | REDIS-007 | P2 | SUBSCRIBE后无push reader/subscription state，异步message会与后续命令response错配并无API交付。 |
+| REDIS-008 | P1 | 共享连接不隔离MULTI/WATCH会话，其他协程命令可被并入错误事务并改变EXEC结果。 |
 | MYSQLC-001 | P1 | binary result row未验证NULL bitmap长度即直接索引，截断packet可造成C越界读。 |
 | MYSQLC-002 | P2 | BIGINT UNSIGNED高半区经signed lua_Integer返回为负值，合法数据发生静默wrap。 |
 | MYSQLC-003 | P2 | 非法temporal length返回硬编码2017时间且不推进cursor，整行可被静默伪造/错位。 |
@@ -304,7 +305,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 
-当前统计为181条：P1 78、P2 97、P3 6。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 7、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4；以主报告中的编号和证据为准。
+当前统计为182条：P1 79、P2 97、P3 6。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

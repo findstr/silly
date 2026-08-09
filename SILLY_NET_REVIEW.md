@@ -936,6 +936,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供独立subscription对象/connection owner：握手后由唯一reader loop持续解析push，按channel/pattern交付并维护subscription count，只允许规范列出的订阅态命令；close/cancel/reconnect有明确语义与有界push queue。普通client应在发送SUBSCRIBE类命令前拒绝并引导使用该API，避免污染通用response队列。
 - 回归测试：修复阶段覆盖subscribe确认后message、message先于PING reply、多channel/pattern、unsubscribe至0恢复普通模式、server disconnect/reconnect及consumer背压；断言每个push与command response归属准确、队列有界。当前不运行Pub/Sub交互。
 
+### REDIS-008 — P1 — 共享连接不隔离 `MULTI/WATCH` 会话，其他协程命令可被并入错误事务
+
+- 状态：已确认；Redis connection-scoped transaction语义与client多协程共享模型的确定性时序核对。本轮不执行事务或并发barrier。
+- 规范：`MULTI`到`EXEC/DISCARD`以及相关`WATCH/UNWATCH`状态属于单条Redis连接；MULTI后收到的所有普通命令都会排入当前transaction，与发送它的本地协程无关。多调用者复用连接时，client必须把整个transaction session独占或将完整序列原子发送，不能只按单response交接reader。
+- 位置：单连接/并发队列模型在`lualib/silly/store/redis.lua:19-30,238-264`，任意动态命令每次独立write/read在`:266-303`，批量原子write入口在`:310-349`；中英文文档明确所有请求共享单连接并支持并发，见`docs/src/reference/store/redis.md:40-57,758-772,838-849`与英文同名文档。
+- 触发时序：task A调用`db:multi()`并读到OK后yield；task B调用`db:set(...)`；task A随后发送自己的命令并`exec()`。WATCH与后续读取/MULTI/EXEC跨协程交错同理。
+- 影响：task B的SET实际返回`QUEUED`并被纳入task A的EXEC结果，而B可能把它当普通成功；A的事务包含非本意副作用且结果元素数/顺序变化。WATCH条件也可保护或取消错误调用者的事务。涉及余额、锁、幂等标记等操作时，原子性与调用者隔离被直接破坏，错误不会表现为transport failure。
+- 证据：reader ownership只围绕“一次read_response”保持，命令返回后`wakeup_next_reader`立即释放；对象没有transaction owner/state/mutex。动态method无条件暴露MULTI、EXEC、DISCARD、WATCH、UNWATCH，与普通命令完全相同。发送发生在获取reader token之前，且不同API调用之间应用可正常yield；因此跨调用的连接状态不可能绑定到原协程。单个pipeline会一次write整批命令，但公开API没有要求或验证事务必须使用该形式。
+- 根因：把RESP按序response multiplexing误当成connection-level command state也可安全multiplex；client只跟踪socket/read owner，不跟踪Redis mode与logical session owner。
+- 建议解法：提供`transaction(fn)`或transaction对象，在同一owner lock下覆盖WATCH/MULTI到EXEC/DISCARD全部序列，并禁止其他命令写入该socket；取消/异常必须DISCARD或直接关闭连接，避免状态泄漏。普通动态API检测到stateful命令时应拒绝或转入显式session。若支持pipeline事务，验证MULTI/EXEC配对并以typed results保持归属。
+- 回归测试：修复阶段以可控scheduler覆盖A MULTI→B SET→A EXEC、WATCH交错、owner异常/取消、DISCARD和并发普通命令；断言B永不进入A事务、结果基数稳定、结束后连接恢复normal。当前仅记录静态交错。
+
 ### MYSQLC-001 — P1 — binary result row 未验证 NULL bitmap 长度即发生 C 越界读
 
 - 状态：已确认；C pointer与官方binary row布局静态推导。本阶段不生成截断MySQL packet。
@@ -2329,7 +2341,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为181项：P0为0，P1为78，P2为97，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 7、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
+当前滚动统计为182项：P0为0，P1为79，P2为97，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
 
 建议按依赖关系分五批修复：
 
@@ -2501,3 +2513,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认grpc.listen公开的ciphers/backlog配置在adapter重建option table时被静默丢弃，记录为`GRPC-023`；未创建listener或TLS context。
 - 2026-08-09：扩充`GRPC-012`：unary timer在openstream之后才创建，故显式timeout不覆盖DNS/TCP/TLS/H2 handshake；未连接silent endpoint。
 - 2026-08-09：确认Redis SUBSCRIBE后没有push reader/subscription state，后续message会与命令response错配且文档示例未实际订阅，记录为`REDIS-007`；未运行Pub/Sub交互。
+- 2026-08-09：确认Redis共享连接不隔离MULTI/WATCH会话，其他协程命令可被排入错误事务并改变EXEC结果，记录为`REDIS-008`；未执行事务或并发barrier。
