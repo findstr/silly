@@ -1072,6 +1072,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先决定真实API契约并修实现，再同步两种语言：timeout使用毫秒或absolute deadline的唯一命名/单位；watch返回类型写为watcher且统一`cancel/close`；lease失联行为只描述已实现且可观察的状态。文档示例加入静态类型检查及最小运行验证，CI比较公开method/option schema。
 - 回归测试：修复阶段对中英文所有etcd `lua validate` block执行doc-test，启用LuaLS unknown-member诊断；增加schema snapshot验证配置名、返回类型和method集合一致。本轮不运行示例。
 
+### DOC-002 — P3 — DNS 中英文文档把默认重试错误描述为三次递增间隔
+
+- 状态：已确认；中英文reference、配置说明与实现常量/定时路径逐项静态对照。不运行文档示例。
+- 位置：英文文档`docs/src/en/reference/net/dns.md:87-104,671-692`；中文文档`docs/src/reference/net/dns.md:87-104,671-692`；同一文档较新的配置表在两文件`:185-210`；实现位于`lualib/silly/net/dns.lua:78-80,350-390,757-807`。
+- 触发：用户按API notes或“Timeout and Retry”示例估算默认等待、配置监控阈值或选择caller timeout；同一页面的配置表又显示`attempts`默认2，形成自相矛盾契约。
+- 影响：文档声称默认重试3次、间隔依次5/10/15秒、最多等待30秒，实际共享wire request默认总共发送2次且每次固定5秒；公开caller timeout还可能先退出而后台request继续。运维会错误设置SLA、告警和上层deadline，排障时也会误判丢包次数与请求仍在后台存活的时间。
+- 证据：`conf_attempts=2`、`conf_timeout=5000`；`retry_cb`仅在`attempt<conf_attempts`时递增，`send_udp_req`每次始终`time.after(conf_timeout,...)`，没有backoff乘数。两种语言的API notes和示例仍逐字承诺3次递增，而`:194`配置表正确写默认2。
+- 根因：旧版叙述与示例未随resolver重构同步，reference没有从实现默认值生成或用静态契约检查验证，同一错误被翻译复制。
+- 建议解法：先明确`attempts`究竟表示总发送次数还是额外retry次数，并与`DNS-005/007`修复后的nameserver round和absolute deadline语义统一；随后同步中英文参数、示例、最大等待公式和caller/shared request区别。CI从单一配置schema生成默认值表，并校验文档代码块中的数值。
+- 回归测试：修复阶段以静态doc contract测试读取实现/schema默认值并核对两种语言；若保留时序示例，只验证可观测attempt序列和固定/退避策略与文字一致。当前不运行示例或计时测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1982,7 +1993,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为151项：P0为0，P1为68，P2为80，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为152项：P0为0，P1为68，P2为80，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2119,3 +2130,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS的TCP fallback connect未继承request deadline，request超时后connect task/socket仍可滞留并发布迟到连接，记录为`DNS-006`；未制造TCP黑洞或TC响应。
 - 2026-08-09：确认DNS公开timeout会在每个CNAME hop及search候选重新计时，不能限制整次lookup/resolve耗时，记录为`DNS-007`；未构造慢resolver。
 - 2026-08-09：确认DNS parser丢弃negative kind并把NXDOMAIN/NODATA均存为qtype entry，name error无法跨type命中，记录为`DNS-008`；未构造negative响应。
+- 2026-08-09：确认DNS中英文reference仍宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突，记录为`DOC-002`；未运行doc示例。
