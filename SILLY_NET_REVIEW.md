@@ -734,6 +734,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：waiter使用structured结果（lease/permit/error），close以ECLOSED完成全部pending acquire并从queue移除；connect/login各yield点和publish前复查pool generation，失效即关闭局部fd。pool跟踪connecting/checked-out operations，定义close是仅禁止新工作还是等待/取消全部工作，并在API文档明确。
 - 回归测试：修复阶段在capacity wait、TCP connect、initial handshake和auth各点并发close；断言所有pending返回closed、server未收到post-close query、无新fd/pool counter增加。当前仅说明时序。
 
+### MYSQL-007 — P2 — packet fragmentation/sequence 未实现，≥0xffffff payload 会反同步
+
+- 状态：已确认；官方packet framing与双向实现静态核对。本阶段不生成16MiB边界payload。
+- 规范：[MySQL Packet protocol](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html)规定physical payload最大`2^24-1`，达到该长度即继续读取递增sequence的后续packet，逻辑payload为该序列拼接；精确整倍数以zero-length packet结束。每个新command从sequence 0开始并逐packet递增、可wrap。
+- 位置：single-packet composer在`lualib/silly/store/mysql.lua:223-245,303-311`；reader在`:313-333`；prepared request发送在`:231-238,876-900`。
+- 触发：SQL、prepared parameter、result row、auth/metadata等逻辑payload达到或超过`0xffffff`；或peer发送duplicate/skipped/out-of-order sequence id/合法zero terminator。
+- 影响：inbound首个full-size chunk被当作完整row/packet解析，下一fragment被当作下一协议对象，导致数据截断、row错位、异常后连接可能继续复用；zero terminator被报`Empty packet`。outbound单个`I3`长度无法表示更大payload而抛错，不能与server的`max_allowed_packet`正常互操作。未校验sequence也失去检测packet丢失/插入和协议同步破坏的关键防线。
+- 证据：`read_packet`只读一次4-byte header/body并立即return，`len==0`无条件失败；它把收到的byte直接赋给`conn.packet_no`而不与expected比较。`compose_packet`和global prepare cache均用一个`<I3B...>`header，不切片也不生成终结空包。
+- 根因：实现把physical packet与logical protocol message等同，`packet_no`只用于生成下一auth包而非状态机不变量；max_packet_size只写进handshake，未驱动framing。
+- 建议解法：统一`read_message/write_message`：逐physical packet校验expected sequence、累计budget并拼接，直到length `< 0xffffff`；整倍数接受/发送空终结包。每个command显式reset sequence，认证exchange按双向连续规则处理；超过本地/negotiated budget在分配前失败并关闭连接。
+- 回归测试：修复阶段覆盖`0xfffffe/0xffffff/0x1000000/2*0xffffff`、空终结、sequence wrap/skip/duplicate，以及大SQL/BLOB/row双向互操作；当前不创建大payload。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1724,6 +1736,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL conn close归池后原Lua对象仍能操作同一fd且close不幂等，旧/新borrower可共享stream，记录为`MYSQL-004`。
 - 2026-08-09：确认MySQL COMMIT/ROLLBACK在server确认前清除本地transaction flag，ERR后仍归池，记录为`MYSQL-005`；未注入transaction failure。
 - 2026-08-09：确认MySQL pool close无参数唤醒capacity waiter后其会fall through新建连接，in-flight connect也不复查closed，记录为`MYSQL-006`；仅作并发时序说明。
+- 2026-08-09：确认MySQL把physical packet当完整message、拒绝zero terminator且不校验sequence，≥0xffffff payload会反同步，记录为`MYSQL-007`；未生成大payload。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
