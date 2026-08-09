@@ -753,6 +753,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先严格验证request/response的Connection/Upgrade token匹配；101成功时从HTTP parser/pool永久摘除socket，并通过显式`hijack/upgrade` API把连接所有权恰好一次交给新协议handler。若调用方不接管则立即关闭；收到非请求升级对应的101应标记broken并失败。server发送101后必须退出HTTP loop。
 - 回归测试：修复阶段覆盖合法upgrade接管、未请求101、缺失/不匹配Upgrade、101后立即新协议字节及stream GC；断言连接从不回H1 pool、server不再读HTTP、所有权只交接一次。当前不运行Upgrade互操作。
 
+### HTTP1-013 — P2 — Connection 未按 token list/版本解析，close 要求与 HTTP/1.0 默认关闭均可失效
+
+- 状态：已确认；RFC persistence规则与client/server复用条件的确定性静态核对。本轮不建立持久连接。
+- 规范：RFC 9110 §7.6.1将Connection定义为不区分大小写的逗号分隔connection-option列表；出现`close`表示sender将在响应后关闭。RFC 9112 §9.3规定HTTP/1.1默认持久，而HTTP/1.0只有显式`keep-alive` option时才持久。
+- 位置：request侧keepalive只做精确字符串比较在`lualib/silly/net/http/h1.lua:556-572`；client pool release再精确检查response在`:710-729`；server loop只精确检查request在`:818-890`；header重复值会成为table在`:129-149`。
+- 触发：Connection值使用合法大小写/OWS/token list，例如`keep-alive, Close`或`CLOSE`，字段重复出现，或HTTP/1.0消息没有显式`Connection: keep-alive`；client接收HTTP/1.0 fixed-length response也相同。
+- 影响：server在peer明确要求close后仍读取下一request，并对HTTP/1.0默认保持连接；client可把应关闭的socket归还pool并发送下一request。若对端已关闭会产生竞态失败；若中间层/旧server停止HTTP解析但尚未close，则请求挂起或字节落入错误协议状态。重复/列表形式还会使hop-by-hop字段处理与其他代理分叉，破坏连接边界可靠性。
+- 证据：三处逻辑都使用`header["connection"] ==/~= "close"`，不lower value、不按逗号拆token，也不支持string[]。`s.version`虽然保存response版本，pool判断从不读取它；server解析出的`ver`同样不参与持久性决策，因此1.0沿用1.1默认。
+- 根因：把语法为列表且依赖HTTP版本的连接状态压缩成单一字符串相等判断，没有共享的connection-option parser或persistence state。
+- 建议解法：合并重复字段、按逗号/OWS解析并ASCII case-fold每个合法token；presence of close始终优先。HTTP/1.1无close才可持久，HTTP/1.0必须显式keep-alive且完整framing/双方允许；非法option语法使消息失败/连接不可复用。将决定保存为stream的validated persistence状态供所有close路径共用。
+- 回归测试：修复阶段覆盖大小写、OWS、多token、重复字段、同时close+keep-alive，以及HTTP/1.0/1.1×有无CL/TE；断言server循环次数与client pool状态符合规范。当前不运行连接复用测试。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -2083,7 +2095,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为160项：P0为0，P1为72，P2为84，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 12、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为161项：P0为0，P1为72，P2为85，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 13、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2229,3 +2241,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster收到4-byte合法length即按完整body预分配，默认每连接可占128MiB且无partial deadline/global budget，记录为`CLUSTER-012`；未发送partial frame。
 - 2026-08-09：确认HTTP/1 sender把未验证method/path直接格式化进request-line，literal CRLF可注入字段或第二请求，记录为`HTTP1-011`；未发送注入内容。
 - 2026-08-09：确认HTTP/1把101仅视为final bodyless response，client可把升级连接归池且server继续HTTP parse loop，记录为`HTTP1-012`；未执行Upgrade。
+- 2026-08-09：确认HTTP/1 Connection只做精确close字符串判断且忽略version，token list/大小写/重复及HTTP/1.0默认关闭均失效，记录为`HTTP1-013`；未运行复用连接。
