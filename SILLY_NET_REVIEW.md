@@ -1273,6 +1273,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先决定稳定公共契约：推荐H1/H2 `respond(status,headers)`都返回`boolean,error`，删除虚构close参数并用`closewrite`/明确Connection语义结束；若必须保留close则两协议实现一致、定义它对body与连接/stream的精确行为。同步中英文两处重复章节及LuaLS annotation。
 - 回归测试：修复阶段以API contract test覆盖H1/H2 respond成功/stream已关闭失败、返回值形状与第三参数策略；文档示例纳入静态签名检查。当前不调用API。
 
+### DOC-004 — P3 — gRPC 中英文 reference 的所有 registrar 示例都遗漏 `service_name`
+
+- 状态：已确认；中英文reference、公开导出与唯一registrar实现的静态签名核对。本轮不运行文档示例。
+- 位置：两份文档把签名写成 `registrar:register(proto, service)`，见 `docs/src/en/reference/net/grpc.md:103-144` 与 `docs/src/reference/net/grpc.md:103-144`；两份文档各14处注册示例均为同一两参数形式。真实实现是 `lualib/silly/net/grpc/registrar.lua:264-290` 的 `M:register(proto, service_name, service_handlers)`；仓库测试使用正确三参数形式，见 `test/testgrpc.lua:55-127`。
+- 触发：按任一语言的入门、server、streaming、TLS、负载均衡等示例调用 `reg:register(proto, {Method=fn})`。
+- 影响：handler table 被绑定为 `service_name`，`service_handlers` 成为 nil；service查找不可能把descriptor name与table判等，随后构造错误文本时还会尝试拼接table并直接抛Lua类型异常。文档宣称可执行的全部server示例因此无法完成注册，用户无法按reference启动服务；真实多service proto又无法从文档得知如何选择service。
+- 证据：registrar循环只比较 `v.name == service_name`，成功后还会读取 `service_handlers[name]`，明确要求独立字符串参数。英文与中文的API参数表都只列proto/service，并且grep可见每份14个 `reg*:register(p.loaded[...], {` 调用无service名称；唯一仓库测试则传入 `"TestService"` 后再传handler table。
+- 根因：实现增加/保留了service选择参数，但reference签名、参数表与复制出的全部示例没有由LuaLS/API schema生成或通过doc-test校验；中英文文件同步复制了同一旧契约。
+- 建议解法：把公开签名统一为 `registrar:register(proto, service_name, service_handlers)`，解释service_name是proto内descriptor短名，并修复两种语言所有示例；若产品希望支持只有一个service时的两参数便利形式，也必须在实现中显式重载并在多service时拒绝歧义。错误路径先校验参数类型，避免拼接table产生二次异常。
+- 回归测试：修复阶段把两种语言所有 `lua validate` block纳入doc-test/LuaLS签名检查；覆盖正确service、未知service、单/多service proto、缺参数及错误类型，确保返回/异常信息与文档一致。当前不运行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2294,7 +2305,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为178项：P0为0，P1为78，P2为95，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 22、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为179项：P0为0，P1为78，P2为95，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 22、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
 
 建议按依赖关系分五批修复：
 
@@ -2462,3 +2473,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认gRPC client对每个target只取单个A记录并永久固定首个IPv4 endpoint，没有AAAA或同名多地址fallback，记录为`GRPC-020`；未执行DNS或连接。
 - 2026-08-09：确认gRPC client close不与in-flight newchannel共同串行，close返回后迟到建连仍可发布orphan channel并返回stream，记录为`GRPC-021`；未新增并发barrier。
 - 2026-08-09：确认gRPC TLS client/server只配置h2 ALPN却不校验最终协商结果，无ALPN或非h2会话仍进入H2状态机，记录为`GRPC-022`；未建立TLS会话。
+- 2026-08-09：确认gRPC中英文reference的API签名及每份14个registrar示例都遗漏必需service_name，照抄无法注册服务，记录为`DOC-004`；未运行文档示例。
