@@ -704,6 +704,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：查找使用`rawget`/nil不创建；只有确实要插入可复用entry时才显式创建数组。cleanup仍应删除空key，并对origin cache/key cardinality设置合理预算；所有连接建立失败路径保持pool不变。不要依赖timer弥补lookup side effect。
 - 回归测试：修复阶段以注入式resolver/connector让成千唯一origin在DNS、TCP、TLS、H2初始化各阶段失败，断言两pool key count保持0/有界；成功入池/取出/淘汰行为不变。当前不发起请求或故障注入。
 
+### HTTPC-004 — P2 — hostname 固定单次 A lookup，缺少 IPv6 与多地址连接回退
+
+- 状态：已确认；HTTP connect调用链与DNS返回集合的确定性静态核对。本轮不连接外部或合成endpoint。
+- 位置：`lualib/silly/net/http/client.lua:228-277`，其中`:238`固定调用`dns.lookup(u.host,dns.A)`并只连接一个返回值；DNS的`lookup`只取`resolve`结果首项在`lualib/silly/net/dns.lua:641-654`，而`resolve`本身可返回多条A/AAAA在`:588-640`。
+- 触发：URL hostname仅有AAAA记录，或同时有多个A/AAAA而首个IPv4地址不可达、后续地址可达；显式IP literal不需要触发DNS，因此不受同一路径影响。
+- 影响：IPv6-only origin必然在A查询阶段失败；多地址origin不会在首地址connect/TLS失败后尝试其他候选，造成单点地址故障放大、双栈互操作失败和明显高于常规HTTP client的连接失败率。redirect到此类origin同样失败。
+- 证据：connect在pool miss后只保存一个`ip`，构造一次`join_addr`，随后只调用一次`tcp.connect`或`tls.connect`；失败立即return。代码没有AAAA查询、A/AAAA候选合并、逐地址attempt或Happy Eyeballs调度。DNS模块已有AAAA常量与多结果`resolve`，但HTTP client没有使用。
+- 根因：HTTP transport把“解析hostname”建模成返回单个IPv4字符串，而非带共同deadline的地址候选连接过程。
+- 建议解法：解析A与AAAA候选并在同一absolute deadline/取消上下文内执行RFC 8305风格的地址排序与错峰连接，首个成功者胜出并关闭其余attempt；至少也应顺序尝试全部解析结果。TLS SNI/证书hostname始终保留原host，错误结果聚合而不是只暴露首地址错误，并与`HTTPC-002`的总deadline一起设计。
+- 回归测试：修复阶段用注入式resolver/connector覆盖AAAA-only、A-only、双栈首地址失败后成功、全部失败、慢首地址/快次地址、literal IPv4/IPv6及redirect；断言地址尝试共享一个deadline、输家资源释放且SNI仍为hostname。当前不执行DNS或连接。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -2129,7 +2140,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为164项：P0为0，P1为72，P2为88，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 3、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为165项：P0为0，P1为72，P2为89，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2279,3 +2290,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 closewrite吞掉write失败且不在response wait前验证fixed-length完整，已知不完整request可造成双方永久等待，记录为`HTTP1-014`；未发送长度不一致消息。
 - 2026-08-09：确认HTTP/1 server无interim response状态，Expect双方可互等；client又把首个102/103误作final，记录为`HTTP1-015`；未运行100-continue交互。
 - 2026-08-09：确认HTTP client pool lookup会为每个origin写入H1/H2空表，DNS/connect失败不回滚且无timer清理，记录为`HTTPC-003`；未发起高基数请求。
+- 2026-08-09：确认HTTP client只取单个A记录且没有AAAA/多地址connect fallback，IPv6-only与首地址故障origin不可用，记录为`HTTPC-004`；未执行DNS或连接。
