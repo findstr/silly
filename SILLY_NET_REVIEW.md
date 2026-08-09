@@ -729,6 +729,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：对完整行做长度受限、逐字段且全字符串匹配的parser；只接受精确HTTP-version grammar与三位status，request separator要求SP并拒绝额外octet。先区分malformed(400)、valid but unsupported(501)，再让router决定known method对resource的405；client遇非法status-line必须标记连接broken。
 - 回归测试：修复阶段覆盖leading/trailing junk、HTAB/多SP、empty target、`HTTP/1|1`、多位version/status及合法extension method；验证400/501/route policy分类和client不复用broken连接。当前不新增畸形网络输入。
 
+### HTTP1-011 — P1 — outbound method/request-target 未校验，literal CRLF 可注入额外请求字节
+
+- 状态：已确认；URL→client→HTTP/1 request-line的确定性字符串拼接静态核对。本轮不发送注入请求。
+- 规范：RFC 9112 §3要求sender生成严格的`method SP request-target SP HTTP-version CRLF`，method必须为token且各组件不能含whitespace/CTL；RFC 9110 §7.1要求HTTP target URI排除fragment并形成相应request-target。sender不得把调用方字符串当作已验证wire语法。
+- 位置：request-line模板与无校验格式化在`lualib/silly/net/http/h1.lua:66,556-601`；URL parser原样保留path octet在`lualib/silly/net/http/url.lua:60-80`；高层client直传method/path在`lualib/silly/net/http/client.lua:282-317`。
+- 触发：调用`client:request`或底层stream request时，method/path含SP、HTAB、CR、LF、NUL或其他CTL；例如不可信URL的path含literal CRLF。URL parser只按scheme/authority分段，不拒绝这些octet。
+- 影响：HTTP/1 sender会把CRLF直接写进request-line，使攻击者提前结束target并注入Host、Content-Length、Transfer-Encoding等字段、空行/body，甚至在持久连接中追加第二条request。经proxy/pool发送时可形成request smuggling、cache poisoning、credential错配或对同origin下一请求的响应队列污染；非法method/target也会让不同recipient产生分歧。HTTP/2为二进制header问题且已有`H2-018`，不能缓解协商到H1的路径。
+- 证据：`format(request_line,method,path)`是request的第一段输出，前后没有任何validator；`request_url`仅检查stream创建成功便调用`stream:request(method,u.path,header)`。现有`HTTP1-009`只检查field name/value，`HTTP1-010`只覆盖接收start-line，均不阻止本地出站组件注入。
+- 根因：API把语义字符串直接当作协议语法片段，收发校验未共享；URL模型也没有“合法URI reference”与“已验证HTTP request-target”之间的类型边界。
+- 建议解法：写入sendbuf前原子验证全部组件：method逐octet符合`tchar`且非空；request-target拒绝SP/HTAB/CR/LF/NUL/CTL并按method/context验证origin/absolute/authority/asterisk form；URL入口同时拒绝URI不允许的原始控制字符。验证失败必须保证零字节写入、stream不可复用状态明确；不要用percent-encode CRLF来掩盖已非法输入。
+- 回归测试：修复阶段枚举method/target的0..31与127 octet、SP/HTAB、CRLF组合、合法扩展method、CONNECT authority和OPTIONS `*`；断言非法输入在任何flush前失败且peer收不到字节，合法目标wire保持精确。当前不发送注入内容。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -2059,7 +2071,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为158项：P0为0，P1为71，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为159项：P0为0，P1为72，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 11、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2203,3 +2215,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster hostname路径硬编码单次A lookup，无AAAA或多地址connect fallback，记录为`CLUSTER-010`；未执行解析或连接。
 - 2026-08-09：确认cluster完整帧ring与handler并发无count/byte/admission上限，单个2MiB read可放大为约十万排队帧/慢task，记录为`CLUSTER-011`；未发送burst。
 - 2026-08-09：确认cluster收到4-byte合法length即按完整body预分配，默认每连接可占128MiB且无partial deadline/global budget，记录为`CLUSTER-012`；未发送partial frame。
+- 2026-08-09：确认HTTP/1 sender把未验证method/path直接格式化进request-line，literal CRLF可注入字段或第二请求，记录为`HTTP1-011`；未发送注入内容。
