@@ -722,6 +722,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：仅在成功OK且必要server-status确认后标记transaction ended；COMMIT/ROLLBACK任何ERR、codec异常或未知response都将连接标dirty并物理关闭，除非实现明确且成功的reset/change-user清理。自动rollback必须检查结果，绝不能把失败连接归池；公开错误仍返回给caller。
 - 回归测试：修复阶段让COMMIT/ROLLBACK分别返回ERR、断线、malformed OK和超时，覆盖显式与auto rollback；断言连接不入idle/不交waiter、open_count释放，下一query使用新connection且看不到旧transaction。当前只作路径推导。
 
+### MYSQL-006 — P2 — pool close 唤醒的 waiter 会继续新建连接，关闭后仍可执行 SQL
+
+- 状态：已确认；close/acquire interleaving静态推导。属于并发时序问题，本阶段不强行复现。
+- 契约：`docs/src/reference/store/mysql.md:106-113`声明pool关闭后不可再使用，所有等待连接的coroutine应被唤醒并收到错误。
+- 位置：capacity wait与fallthrough在`lualib/silly/store/mysql.lua:1038-1079`；`pool_close`在`:1117-1136`；query只在进入`conn_new`前检查closed在`:1173-1189`。
+- 触发：max-open已满时request在`task.wait()`，另一个task调用`pool:close()`；或request正在TCP connect/login期间pool被关闭。
+- 影响：被close唤醒的waiter收到nil后继续增加`open_count`、建立TCP、认证并执行原SQL；in-flight connect/login也不复查closed。关闭动作因此不是barrier，shutdown后仍能访问数据库、创建凭据连接和产生副作用，且close调用者无法等待这些操作收敛。
+- 证据：`pool_close`对waiter执行`task.wakeup(co)`不传error；`conn_new`的`if conn then return conn end`之后没有else/closed检查，直接进入create分支。`tcp_connect/_mysql_login`后也没有检查`pool.is_closed`；pool_query的唯一检查发生在等待之前。
+- 根因：acquire结果以`nil`同时表示“被close取消”和“现在可自行建连”，缺少明确capacity permit/cancel状态；pool没有generation/in-flight registry与close barrier。
+- 建议解法：waiter使用structured结果（lease/permit/error），close以ECLOSED完成全部pending acquire并从queue移除；connect/login各yield点和publish前复查pool generation，失效即关闭局部fd。pool跟踪connecting/checked-out operations，定义close是仅禁止新工作还是等待/取消全部工作，并在API文档明确。
+- 回归测试：修复阶段在capacity wait、TCP connect、initial handshake和auth各点并发close；断言所有pending返回closed、server未收到post-close query、无新fd/pool counter增加。当前仅说明时序。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1711,6 +1723,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
 - 2026-08-09：确认MySQL conn close归池后原Lua对象仍能操作同一fd且close不幂等，旧/新borrower可共享stream，记录为`MYSQL-004`。
 - 2026-08-09：确认MySQL COMMIT/ROLLBACK在server确认前清除本地transaction flag，ERR后仍归池，记录为`MYSQL-005`；未注入transaction failure。
+- 2026-08-09：确认MySQL pool close无参数唤醒capacity waiter后其会fall through新建连接，in-flight connect也不复查closed，记录为`MYSQL-006`；仅作并发时序说明。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
