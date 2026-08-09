@@ -115,6 +115,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9112-6.1-TECL-CLOSE | MUST | `lualib/silly/net/http/h1.lua:129-168,818-890` | server | 偏离 | `read_header` 在 TE+CL 共存时删除 CL 并继续；请求处理后仅在解析/handler 错误或 `Connection: close` 时断开，没有记录 TE+CL 并强制关闭 | Test 68 只验证按 chunked 返回 200，未验证响应后关闭 | HTTP1-001 |
 | RFC9112-6.2-TECL-SEND | MUST NOT | `lualib/silly/net/http/h1.lua:342-365,387-438,562-577,761-798` | client/server sender | 偏离 | writer原样输出TE与CL；因CL优先，正文又按固定长度直写而不生成chunk framing | 无sender拒绝TE+CL及零字节输出覆盖 | HTTP1-016 |
 | RFC9110-15.3.6-205-NO-CONTENT | MUST NOT | `lualib/silly/net/http/h1.lua:94-100,524-552,761-770` | client/server | 偏离 | bodyless判定漏掉205；server可发送content，client对无framing的合法205改为读到EOF | 无205 response覆盖 | HTTP1-017 |
+| RFC9110-6.4.1-NO-CONTENT-H2 | MUST NOT | `lualib/silly/net/http/h2.lua:938-1025,1177-1204,1446-1497` | client/server | 偏离 | H2只跳过部分Content-Length校验，仍允许并接收HEAD/204/205/304的DATA content | 无H2 no-content DATA覆盖 | H2-031 |
 | RFC9112-6.3-CL-LIST | MUST | `lualib/silly/net/http/h1.lua:129-149,512-553,818-848` | client/server | 偏离 | 重复字段被保存为 Lua table，单字段逗号列表保留为字符串；两条路径最终都直接交给 `tonumber`，无法接受全部值合法且相同的列表 | Test 72 只覆盖不同值必须拒绝，未覆盖相同值或 `5, 5` | HTTP1-002 |
 | RFC9112-6.1/6.3/7-TE-LIST | MUST | `lualib/silly/net/http/h1.lua:129-168,512-553,818-848` | client/server | 偏离 | framing 只在字段值精确等于小写单值 `chunked` 时生效；未解析大小写不敏感的 coding 列表，也未判断最后一个 coding | 现有测试只覆盖精确小写单值 `chunked` | HTTP1-003 |
 | RFC9112-7.1/7.1.1-CHUNK-EXT | MUST | `lualib/silly/net/http/h1.lua:174-204` | client/server | 偏离 | parser 只匹配行首十六进制数字，完全忽略该数字到换行之间的剩余字节；缺少分号、非法 token/quoted-string 或任意尾随垃圾均绕过 chunk-size/chunk-ext ABNF | Test 73 只覆盖两个合法扩展；Test 74/75 只覆盖合法 chunk-size | HTTP1-004 |
@@ -1952,6 +1953,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：flush检查`ok,err`；失败后原子标记channel terminal、禁止再排队、保留首个错误、关闭transport并通过统一teardown唤醒active/open/write waiters。若API继续采用fire-and-forget batching，应明确返回值只表示accepted，并保证任何后续wait/read立即观察失败；需要发送确认的closewrite/flush提供可等待结果。flow-control credit与local state要么在transport accepted后commit，要么失败时整channel终止，不能静默继续。
 - 回归测试：修复阶段在header、partial DATA、END_STREAM、RST/GOAWAY及WINDOW_UPDATE batch分别注入TCP/TLS write失败，断言首个错误传播、所有waiter恰好结束、buffer/queue/stream清零且channel不归池；正常合并写仍只flush一次。当前不注入发送失败。
 
+### H2-031 — P2 — HEAD/204/205/304 的禁止正文语义未约束 DATA 收发
+
+- 状态：已确认；response semantics、DATA handler与sender API的确定性静态核对。本轮不发送no-content response。
+- 规范：RFC 9110 §6.4.1规定HEAD response以及1xx、204、205、304 response不包含content；RFC 9113 §8.1.1要求违反message语义的response视为malformed，并按stream error处理。CONNECT成功后的DATA是tunnel，不属于本条禁止集合。
+- 位置：client只跳过长度校验的predicate在`lualib/silly/net/http/h2.lua:1446-1497`；共享DATA接收在`:1177-1204`；server/public发送在`:938-1025`，其中没有method/status body permission。
+- 触发：server在HEAD response或status 204/205/304的final HEADERS之后发送非空DATA；反向方向上，Silly handler对这些response调用`write(data)`或`closewrite(data)`。
+- 影响：client接受规范定义的malformed response、持续flow-control并把禁止的bytes作为body交给应用；缓存、代理或业务代码若按HTTP语义忽略body，会与Silly读取结果分叉。Silly server也能主动生成严格peer应reset的response，造成互操作失败。H2 stream framing避免了H1式下一响应字节错位，但不能使消息语义违规变成合法。
+- 证据：client predicate只决定是否设置`s.recvexpect`，没有保存`content_allowed=false`；随后`frame_data`对所有open stream无条件append并累计bytes。server `S.respond`只保存status/header，`S.write/closewrite`只检查localstate/credit，完全不读取`s.method/s.status`。205甚至不在现有predicate中。
+- 根因：把“无需验证Content-Length”误当成完整的no-content处理，且response semantic state没有由HEADERS阶段传播到DATA sender/recipient。
+- 建议解法：final response headers后计算不可变的message mode：normal-content、no-content或CONNECT-tunnel。no-content模式收到非空DATA时仅reset对应stream(PROTOCOL_ERROR)，sender在任何frame写出前拒绝非空data；205纳入集合。允许合法HEAD/304的表示元数据Content-Length但不把它当待收bytes，204/1xx按各自field限制处理；CONNECT tunnel保持DATA可用。
+- 回归测试：修复阶段覆盖H1/H2角色矩阵中的HEAD、204、205、304、1xx与成功CONNECT，分别测试HEADERS END、空DATA END、非空DATA和Content-Length元数据；禁止content只失败对应stream，CONNECT tunnel仍双向传输。当前不发送no-content response。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2221,7 +2234,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为172项：P0为0，P1为76，P2为91，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 30、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为173项：P0为0，P1为76，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2379,3 +2392,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/2 remote GOAWAY/EOF不结束openwaitq，优雅GOAWAY后唤醒还会泄漏reserved streamcount，记录为`H2-028`；未建立满载连接。
 - 2026-08-09：确认HTTP/2在connection window为0时，每个stream WINDOW_UPDATE都会重复入队同一blocked writer并永久增持引用，记录为`H2-029`；未发送flow-control frame。
 - 2026-08-09：确认HTTP/2 batch flush丢弃TCP/TLS write失败并清空frames，stream API仍按成功推进状态，记录为`H2-030`；未注入发送失败。
+- 2026-08-09：确认HTTP/2未限制HEAD/204/205/304的DATA content，client接受并交付且server可主动生成malformed response，记录为`H2-031`；未发送no-content response。
