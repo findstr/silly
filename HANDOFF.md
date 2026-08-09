@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认172项（P1 76、P2 91、P3 5）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认173项（P1 76、P2 92、P3 5）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -243,6 +243,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | WS-006 | P2 | text message 与 Close reason 的收发均不验证 UTF-8。 |
 | WS-007 | P2 | Close payload/status 与 CLOSING handshake 没有状态机，主动 close 立即断 TCP。 |
 | WS-008 | P1 | client masking key 与 handshake nonce 使用 time-seeded、小空间弱随机源。 |
+| WS-009 | P2 | client hostname固定单次A lookup且只连首地址，IPv6-only或首地址故障服务不可用。 |
 | H2-001 | P2 | HTTP/2 client 接受 server 非法发送的 `SETTINGS_ENABLE_PUSH=1`，未触发 `PROTOCOL_ERROR`。 |
 | H2-002 | P2 | 通用 frame reader 把非 padding frame 的 unused 0x08 当成 PADDED，改写 payload 或错误断连。 |
 | H2-003 | P1 | HTTP/2 接收方不维护 connection/stream receive window，超额 DATA 仍被缓存。 |
@@ -295,7 +296,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为172条：P1 76、P2 91、P3 5。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3；以主报告中的编号和证据为准。
+当前统计为173条：P1 76、P2 92、P3 5。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 9、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

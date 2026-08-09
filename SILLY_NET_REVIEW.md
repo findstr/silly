@@ -132,6 +132,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC6455-5.5.1/7-CLOSE-STATE | MUST/SHOULD | `lualib/silly/net/websocket.lua:139-223`; `docs/src/reference/net/websocket.md:160-224` | client/server | 偏离 | 没有 close payload/status 校验或 CLOSING 状态；Close 后仍可写 data，`sock:close()` 发帧后立即断 TCP、不等待 peer Close | Test 1/3 只覆盖空 Close；双方调用 close 的时序没有断言 clean handshake | WS-007 |
 | RFC6455-5.5.2-PING | MUST | `lualib/silly/net/websocket.lua:139-213`; `docs/src/reference/net/websocket.md:160-197` | application endpoint | 契约明确 | read 把 ping 及 payload 交给应用，文档示例要求立即回同 payload pong；属于显式应用层责任，不单独作为库缺陷 | Test 3 覆盖手动 ping/pong | — |
 | RFC6455-4.1/5.3-MASK-ENTROPY | MUST | `lualib/silly/net/websocket.lua:104-127,292-320`; `luaclib-src/crypto/lutils.c:15-23`; `src/engine.c:125-151` | client | 偏离 | mask/key 由 time-seeded 非密码学 PRNG 的小写字母生成；每帧 mask 仅 26^4 种且后续序列可预测，不是强熵 32-bit value | 正常测试只验证 mask 方向和解码结果，不检查熵、取值空间或可预测性 | WS-008 |
+| RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/websocket.lua:292-323`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | hostname 固定单次 A lookup 且只连接首个 IPv4 地址，没有 AAAA 或多地址 fallback | 单地址正常连接无法覆盖 IPv6-only、首候选失败或双栈竞速 | WS-009 |
 | RFC6455-FRAME-WRITE-ATOMICITY | safety | `lualib/silly/net/websocket.lua:104-127,179-213`; `lualib/silly/net/tcp.lua:307-315`; `src/flipbuf.h:30-51`; `src/socket.c:1614-1659` | client/server | 符合 | 单次 frame 先组装为完整 string，再以一个 TCP send op 入带锁队列；Lua 路径不 yield，未发现并发调用导致帧内交错 | 现有 50-client stress 不是同 socket 并发，但静态原子边界成立 | — |
 | RFC9113-6.5.2-ENABLE-PUSH-ROLE | MUST | `lualib/silly/net/http/h2.lua:1211-1278,1500-1537,1651-1710` | client recipient | 偏离 | client/server 共用 `frame_settings`；收到值 1 时只设 `ch.enablepush=true`，没有识别发送方是 server 并发送 `PROTOCOL_ERROR`。server 发送值 0 符合 RFC，不属于偏离 | 现有测试只覆盖双方发送值 0，没有 server→client 值 1 | H2-001 |
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
@@ -1584,6 +1585,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：将 `randomkey` 改为操作系统 CSPRNG 或 OpenSSL `RAND_bytes`，返回任意 octet；失败必须显式传播，不能降级到 `rand/random`。mask 每帧独立读取 4 bytes，handshake 每连接独立读取 16 bytes。通用 crypto API 名称也应避免把弱随机实现暴露给其他安全用途。
 - 后续回归条件：修复阶段用可注入 RNG 验证每帧都会请求新的 4 bytes、handshake 请求 16 bytes、失败停止发送；统计测试只作辅助，核心断言是调用 CSPRNG 且不做 `%26`/time seed。并检查 fork/Windows/macOS 的实现。本轮不新增测试代码。
 
+### WS-009 — P2 — client hostname 固定单次 A lookup，缺少 IPv6 与多地址回退
+
+- 状态：已确认；WebSocket 独立 connect 路径与 DNS 返回集合的确定性静态核对。本轮不执行 DNS 或连接。
+- 位置：`lualib/silly/net/websocket.lua:292-323`，其中固定 `dns.lookup(u.host, dns.A)` 并只构造一个 endpoint；DNS `lookup` 只取首结果在 `lualib/silly/net/dns.lua:641-654`，`resolve` 可返回多条 A/AAAA 在 `:588-640`。
+- 触发：`ws://` 或 `wss://` hostname 只有 AAAA，或有多个 A/AAAA 但首个 IPv4 地址不可达、后续地址健康；直接 IP literal 不走同一 DNS 分支。
+- 影响：IPv6-only WebSocket 服务无法连接，多地址服务在单一地址故障时也没有故障转移；TLS/HTTP Upgrade 尚未开始就返回失败。长连接常依赖 DNS 负载均衡与滚动迁移，固定首 A 会把局部故障放大为完整会话不可用，重试仍可能反复选择同一答案首项。
+- 证据：connect 只保存一个 `ip`，执行一次 `join_addr` 以及一次 `tcp.connect` 或 `tls.connect`，任一步失败立即 return。文件没有 AAAA 查询、`dns.resolve` 候选循环、family 排序或 Happy Eyeballs；与 HTTP client/cluster 是三份独立实现，不能由其修复自动覆盖。
+- 根因：WebSocket transport 把 hostname 解析建模为单个 IPv4 字符串，而不是带共同 deadline 与取消的地址候选连接过程。
+- 建议解法：抽取 HTTP/WS/gRPC/cluster 共用的 endpoint resolver+dialer：收集 A/AAAA，按 RFC 8305 排序/错峰或至少顺序尝试全部候选，共享 absolute deadline 并关闭输家。WSS 始终用原 hostname 做 SNI/证书验证，错误聚合保留各地址诊断；literal 保持单候选。
+- 后续回归条件：修复阶段用注入式 resolver/connector 覆盖 AAAA-only、A-only、双栈/多 A 首地址失败后成功、全部失败、慢首/快次及 IPv4/IPv6 literal；断言候选共享 deadline、资源释放且 WSS hostname 不被 IP 替换。当前不执行 DNS 或连接。
+
 ### H2-001 — P2 — client 接受 server 非法启用 PUSH 的 SETTINGS
 
 - 状态：已确认；RFC 9113 与确定性角色/分支推导。本阶段只做静态 review，不新增复现代码。
@@ -2221,7 +2233,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为172项：P0为0，P1为76，P2为91，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为173项：P0为0，P1为76，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 9、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2383,3 +2395,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：撤回`HPACK-003`：当前`http2_table.h`的code/length数组均只有256项，不含EOS leaf，`i=256`截断前提不存在；原证据误读表规模，统计相应减一。
 - 2026-08-09：扩充`H2-017`：完整响应后RST若在对象回收前到达会覆盖成功结果，回收后到达则因nil lookup被误判idle并GOAWAY；未新增计数或发送frame。
 - 2026-08-09：扩充`H2-023`：server处理CL1+HEADERS END时会在未发布对象上GOAWAY/清count，随后仍发布并fork handler，收尾可使streamcount为负；未新增计数或发送frame。
+- 2026-08-09：确认WebSocket client独立连接路径只取单个A记录且没有AAAA/多地址fallback，记录为`WS-009`；未执行DNS或连接。
