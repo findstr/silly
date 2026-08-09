@@ -1309,6 +1309,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把公开签名统一为 `registrar:register(proto, service_name, service_handlers)`，解释service_name是proto内descriptor短名，并修复两种语言所有示例；若产品希望支持只有一个service时的两参数便利形式，也必须在实现中显式重载并在多service时拒绝歧义。错误路径先校验参数类型，避免拼接table产生二次异常。
 - 回归测试：修复阶段把两种语言所有 `lua validate` block纳入doc-test/LuaLS签名检查；覆盖正确service、未知service、单/多service proto、缺参数及错误类型，确保返回/异常信息与文档一致。当前不运行示例。
 
+### DOC-005 — P3 — Redis pipeline 示例使用不存在的输出参数，`select` 提示契约也未实现
+
+- 状态：已确认；中英文reference与公开Lua签名/返回路径逐项静态核对。本轮不运行文档示例或Redis命令。
+- 位置：错误pipeline示例位于`docs/src/reference/store/redis.md:518-548`与`docs/src/en/reference/store/redis.md:518-548`；`select`契约在两文件`:221-231`。实现分别是`lualib/silly/store/redis.lua:176-178,310-349`。
+- 触发：照抄“批量操作”示例，先声明`local results={}`，再调用`db:pipeline(requests, results)`并遍历原table；或调用已废弃`db:select(dbid)`期待文档所述的迁移提示。
+- 影响：Lua静默忽略pipeline第二实参，真实结果作为第一个返回值被示例丢弃，局部`results`保持空table，示例的验证循环根本不执行，形成假成功并教会用户错误API。`select`确实抛错，但只得到通用`assertion failed!`，没有文档承诺的“应在redis.new指定db”诊断，迁移和排障信息丢失。
+- 证据：`redis:pipeline`只声明/读取`req`并自行创建`local results={}`返回，从不接受out table；同页前面的API参考示例正确使用`local results,err=db:pipeline(...)`，页面自身矛盾。`redis:select`写成`assert(not "please specify the db when redis.new")`：字符串truthy、`not`后恒false，而message没有作为assert第二参数传入。
+- 根因：用例来自旧的out-parameter API形态且未纳入doc-test；废弃method又把`assert(condition,message)`误写成对message取反，文档没有与实际error text核对。
+- 建议解法：两种语言统一改为接收pipeline返回值并断言err；若不支持out table就从全部示例移除该形式。`select`改为`error("please specify ...",2)`或`assert(false,"...")`并统一大小写/措辞；更推荐返回明确deprecation error。所有`lua validate`块进入CI执行或至少做LuaLS调用签名检查。
+- 回归测试：修复阶段运行双语Redis validate块，断言pipeline示例实际遍历预期result；直接检查select错误包含迁移提示且stack level指向caller。当前不执行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2341,7 +2352,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为182项：P0为0，P1为79，P2为97，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
+当前滚动统计为183项：P0为0，P1为79，P2为97，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2514,3 +2525,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`GRPC-012`：unary timer在openstream之后才创建，故显式timeout不覆盖DNS/TCP/TLS/H2 handshake；未连接silent endpoint。
 - 2026-08-09：确认Redis SUBSCRIBE后没有push reader/subscription state，后续message会与命令response错配且文档示例未实际订阅，记录为`REDIS-007`；未运行Pub/Sub交互。
 - 2026-08-09：确认Redis共享连接不隔离MULTI/WATCH会话，其他协程命令可被排入错误事务并改变EXEC结果，记录为`REDIS-008`；未执行事务或并发barrier。
+- 2026-08-09：确认Redis中英文pipeline示例使用实现不存在的out参数且select提示写成恒失败无message的assert，记录为`DOC-005`；未运行文档示例。
