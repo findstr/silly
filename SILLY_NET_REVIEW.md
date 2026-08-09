@@ -1919,6 +1919,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：server wrapper以protected call执行handler，并在所有返回/异常路径进入单一finally：若尚未发送final response，可选择受控500或RST_STREAM(INTERNAL_ERROR)；终止pending read/write，随后幂等close并归还quota。记录错误时带stream/request context但限制日志；cleanup自身失败也不能跳过map/count释放。不要让一个stream异常升级为connection failure。
 - 回归测试：修复阶段让handler在读body前后、respond后、write pending及closewrite中分别抛错，覆盖同连接超过并发上限次数；断言每次peer都收到明确终止、`streams/streamcount/buffer/waiter`回到基线、后续正常stream成功且每项资源只释放一次。当前不触发业务异常。
 
+### H2-028 — P1 — remote GOAWAY/EOF 不结束 open-stream waiters，并可泄漏预留计数
+
+- 状态：已确认；open wait queue、GOAWAY/dispatch teardown及reservation计数的确定性静态核对。本轮不建立满载连接。
+- 位置：wait/pending reservation在`lualib/silly/net/http/h2.lua:613-675`；本地主动close唯一queue drain在`:679-696`；remote/error GOAWAY与clear在`:563-610,1351-1360`，dispatch EOF cleanup在`:1420-1440`；stream close唤醒在`:1042-1079`。
+- 触发：channel达到peer的`SETTINGS_MAX_CONCURRENT_STREAMS`（也可为0），额外coroutine阻塞于`openstream`；随后peer发送GOAWAY、连接关闭/读取失败或本地因协议错误发送GOAWAY。优雅GOAWAY后已有stream正常close是第二条触发分支。
+- 影响：error GOAWAY/EOF清理active streams却不唤醒`openwaitq`，所有等待者永久挂起；已收到remote GOAWAY时再调用`C.close`因`ch.goaway`提前return也无法补救。优雅GOAWAY后，active stream close会由`channel_wakeupopen`先增加reserved `streamcount`再唤醒；waiter发现`ch.goaway`直接返回错误但不回滚reservation，使channel即使没有真实stream也可能永远保持非零count、TCP和pool state不能回收。
+- 证据：只有`C.close`显式pop/wakeup openwaitq；`channel_clearstream`仅遍历`ch.streams`并设`streamcount=0`。`frame_goaway`只置boolean。正常close的`channel_wakeupopen`在唤醒前执行`ch.streamcount += count`，而`openstream`醒后在goaway/id-exhausted两条return前没有decrement；且`C.close`首句在goaway时直接返回。
+- 根因：并发slot reservation没有以waiter token建模，queue生命周期也没有纳入channel统一终止；“已收到GOAWAY”状态既阻止新stream，又意外阻止显式cleanup。
+- 建议解法：建立幂等`fail_open_waiters(err)`并从remote/local GOAWAY、EOF、protocol error和close全部调用；waiter reservation以显式token在成功publish stream时commit，任何错误/cancel路径rollback。不要在唤醒前把匿名数量永久计入`streamcount`；channel close条件应基于实际published streams，已goaway也必须允许完成queue drain。
+- 回归测试：修复阶段覆盖max=0/1、多个waiter、remote NO_ERROR/error GOAWAY、EOF、本地protocol error、GOAWAY后active stream完成及显式close；所有waiter必须恰好一次返回，`streamcount/queue/map`归零、连接释放且无重复slot。当前不建立满载连接。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2188,7 +2199,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为169项：P0为0，P1为74，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 27、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为170项：P0为0，P1为75，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 28、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2343,3 +2354,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 bodyless response集合遗漏205，client可在合法keepalive 205上等待EOF且server可发送违规content，记录为`HTTP1-017`；未发送205响应。
 - 2026-08-09：确认HTTP中英文文档承诺不存在的respond close参数，且H1/H2实际返回契约不一致，记录为`DOC-003`；未调用HTTP API。
 - 2026-08-09：确认HTTP/2 server handler异常会绕过closewrite/close，stream map与并发配额永久滞留，记录为`H2-027`；未触发业务异常。
+- 2026-08-09：确认HTTP/2 remote GOAWAY/EOF不结束openwaitq，优雅GOAWAY后唤醒还会泄漏reserved streamcount，记录为`H2-028`；未建立满载连接。
