@@ -946,6 +946,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：建立纯函数request builder：先校验key与互斥option，再分别计算明确的key/range_end；排序target/order独立映射并验证enum，按etcd规则要求range。禁止依赖`pairs`顺序，未知/冲突option返回参数错误，且不修改调用方table。
 - 回归测试：修复阶段覆盖empty/nonempty fromkey、prefix全0xff边界、五种target×三种order、invalid enum及prefix+fromkey冲突；抓取wire并与官方Go client输出/真实server结果逐项比较。当前不新增测试代码。
 
+### ETCD-008 — P2 — unknown/late watch ID 触发 nil dereference，并永久停掉整条 watch manager
+
+- 状态：已确认；multiplexed watch dispatch与task异常收尾静态推导。本阶段不伪造WatchResponse。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)说明同一watch stream以watch_id复用多个watch；client必须把response与已登记watch安全关联，对未知、失败创建或旧generation响应不能解引用不存在的本地对象。
+- 位置：watch_id lookup与无条件使用在`lualib/silly/store/etcd.lua:213-243`；request manager只依赖recv正常push EOS来重连在`:245-303`；task异常处理在`lualib/silly/task.lua:47-64`。
+- 触发：peer发送未登记watch_id的created/canceled/event response；也包括server/proxy bug、create conflict/error使用特殊ID，或stream切换/cancel边界出现late response而本地entry已移除。
+- 影响：`w.outch`或`w.createreq`索引nil抛Lua异常，recv task立即终止；异常路径不会执行函数末尾的`c.watchreqc:push(EOS)`，request task仍认为stream有效并阻塞等下一条本地request。该client上所有watch从此不再接收或自动重连，调用方read无限等待且没有统一错误通知。
+- 证据：代码在`local w=watchers[watchid]`后不检查w；canceled branch和event branch都立即索引它。EOS push不是protected/finally，只有read loop正常break才执行；task框架仅记录异常并关闭coroutine，不知道该stream及所有watchers需要失败/重连。
+- 根因：把remote watch_id当作可信table key，并把关键control-plane cleanup放在普通函数尾部而非幂等finally/owner状态机。
+- 建议解法：按stream generation验证response；未知ID记录受限日志并按协议严重性忽略或终止该stream，但必须走统一`fail_watch_stream`，原子清除current stream、通知request manager并保证所有watch可恢复/失败。created/canceled error应保留`compact_revision/cancel_reason`，不得用nil dereference替代structured error。
+- 回归测试：修复阶段覆盖负数/0/未知/已cancel/旧stream ID、created/canceled/event三类response及recv decode异常；断言无Lua异常，manager必然重连或明确关闭全部watch，所有blocked read结束。当前不新增伪造response。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
