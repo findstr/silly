@@ -447,6 +447,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先生成有序且去重的候选列表：trailing-dot只含absolute；否则dots>=ndots为`absolute→search...`，dots<ndots为`search...→absolute`。每个候选在编码前重新验证总长/label，保留清晰的最终错误与整体deadline，缓存key使用canonical absolute name。
 - 回归测试：修复阶段以记录query-name顺序的resolver覆盖0/1/多search、`ndots=0/1/2/15`、无点/等阈值/高于阈值、尾随点、空search和NXDOMAIN/timeout组合；断言候选顺序、次数、最终cache key与系统resolver一致。当前不创建或运行resolver。
 
+### DNS-005 — P2 — retry rounds 固定在单一 nameserver，健康备用服务器不会在同次查询接管
+
+- 状态：已确认；nameserver选择、request状态与retry callback的确定性控制流静态核对。本轮不制造resolver超时或发送查询。
+- 兼容依据：`resolv.conf`的`nameserver`列表用于在当前服务器无响应时依次尝试其他服务器，`attempts`表示在放弃前遍历服务器列表的轮数；参见 [resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html)。项目文档也把`nameservers`描述为列表、把`attempts`描述为retry rounds（`docs/src/en/reference/net/dns.md:185-210`）。
+- 位置：每次`resolve`只选择一次server在`lualib/silly/net/dns.lua:589-627`；request永久保存该server在`:433-455`；timeout retry与UDP发送在`:350-392`；failcount只在整项请求结束时更新在`:175-200`。
+- 触发：配置至少两个nameserver，当前最低`failcount`的首选服务器丢包、不可达或无响应，而列表中的后续服务器可正常回答；这是主/备DNS维护、网络分区与单节点故障的常见场景。
+- 影响：当前lookup会把全部`conf_attempts`耗在同一故障服务器上并最终返回timeout，健康备用服务器完全没有机会回答；只有随后发起的另一项查询才可能因前一项结束后增加的`failcount`选择备用服务器。关键的首次解析因此无谓失败并承受全部重试延迟，多个调用共享同一inflight时会一起失败。
+- 证据：`resolve`在进入`resolve_r`前只设置一个局部`server`；`query`复制为`request.server`。`retry_cb`只增加`req.attempt`后再次调用`send_udp_req(req)`，后者始终读取同一个`req.server`，没有nameserver index或轮次推进逻辑。`finish_req`直到所有attempt结束才修改该服务器的`failcount`，不能帮助当前请求故障转移。
+- 根因：实现把attempt建模为“对选定服务器重复发送”，并把多服务器列表仅用于跨查询的粗粒度failcount选择；没有把resolver的attempt round与nameserver traversal组合成单次查询状态机。
+- 建议解法：request保存当前server index与round，每次超时按配置顺序推进到下一nameserver，遍历一轮后才增加attempt round；每个server使用自己的connection/cache provenance，同时以调用的absolute deadline限制总体等待。即时send/connect失败也应推进而非直接终止；成功后再更新健康度，且不得让一个调用的短timeout破坏共享request的其他waiter。
+- 回归测试：修复阶段用可控resolver覆盖首个丢包/第二个成功、首个send失败、全部失败、第二轮首个恢复、并发共享inflight和不同caller timeout；断言单次查询按server/round顺序推进并在健康备用服务器返回时成功。当前不创建或运行resolver。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -1936,7 +1948,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为147项：P0为0，P1为68，P2为76，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 4、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为148项：P0为0，P1为68，P2为77，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 5、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2069,3 +2081,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认UDP对象不保存bind/connect模式，bound缺destination仍返回成功后静默丢包，connected显式destination又被忽略，记录为`UDP-001`；未发送datagram。
 - 2026-08-09：确认TLS listen先发布TCP listener再构造ctx，证书/key/cipher失败会泄漏listener并留下解引用nil的accept回调，记录为`TLS-007`；未加载损坏证书。
 - 2026-08-09：确认DNS无条件先查absolute且用ndots决定是否完全跳过search，低点数顺序、高点数fallback和trailing-dot语义均偏离系统resolver，记录为`DNS-004`；未发查询。
+- 2026-08-09：确认DNS每项request固定单一server，全部attempt不会遍历nameserver列表，健康备用resolver只能影响后续查询，记录为`DNS-005`；未制造超时或发查询。
