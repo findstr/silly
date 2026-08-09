@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计已收口；当前确认196项（P1 83、P2 105、P3 8），计划范围内无未归档候选。按用户要求，第二轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计已收口；继续审阅远端`cluster`分支后当前确认197项（P1 83、P2 105、P3 9），计划范围内无未归档候选。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -116,7 +116,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（196 条）
+## 5. 已确认问题（197 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -160,6 +160,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-010 | P2 | hostname硬编码单次A lookup，无AAAA或多地址connect fallback，IPv6-only/首地址故障时不可用。 |
 | CLUSTER-011 | P1 | 完整frame ring与handler并发无count/byte上限，单个2MiB read可放大为约十万排队帧/慢task。 |
 | CLUSTER-012 | P1 | 仅收4-byte length便预分配完整body，默认每连接可占128MiB且无partial deadline/global budget。 |
+| CLUSTER-013 | P3 | cluster随机分片测试把期望值当作`assert`错误消息，从未比较重组packet，完整性检查恒通过。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
 | URL-002 | P2 | URL显式port绕过supported-scheme校验，HTTP/WS consumer对未知scheme回落明文TCP并发起连接。 |
@@ -319,7 +320,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 
-当前统计为196条：P1 83、P2 105、P3 8。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
+当前统计为197条：P1 83、P2 105、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 13、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

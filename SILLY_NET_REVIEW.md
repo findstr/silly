@@ -645,6 +645,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为partial frames设置严格的per-connection/global reserved-byte预算和absolute progress deadline；采用分段/增量buffer，至少避免在body到达前提交完整物理内存。reservation失败立即关闭该peer并限速日志，connection admission也计入预算；hardlimit保持合理默认且设置不可越过的安全cap。
 - 回归测试：修复阶段以parser级可控clock/allocation accounting覆盖header-only、每次少量progress、多连接预算竞争、deadline边界、close/reconfigure释放和合法最大frame；断言reserved/committed bytes有界且超时后归零。当前不发送partial frame或做内存压力。
 
+### CLUSTER-013 — P3 — 随机分片测试的完整性断言没有比较实际值与期望值
+
+- 状态：已确认；Lua `assert` 调用语义与测试辅助函数的确定性静态核对。`master`与远端`cluster`分支均存在；本轮不运行测试。
+- 位置：`test/testcluster.lua:59-74`的`randompush`分片与末尾断言；远端`cluster`分支提交`0f2c8773842edb818c1aac74ade3f975d1cbd068`中对应位置为`:59-75`。
+- 触发：`randompush`辅助函数未来因边界修改而漏掉、重复或重排某段，但每次`justpush`仍返回成功；现有代码本来想在所有分片送入后验证重新拼接结果。
+- 影响：`assert(table.concat(buf), pk)`只检查第一个参数是否truthy，第二个参数只是失败时的错误消息。Lua字符串（包括空字符串）恒为truthy，因此它不会比较拼接数据与原packet；parser的随机分片用例会在辅助函数生成错误输入时继续运行，可能把测试helper错误误认为parser行为，或漏掉预期的分片覆盖。该项不直接改变生产cluster实现，严重度定为P3。
+- 证据：正确比较应形成布尔条件，例如`assert(table.concat(buf) == pk)`或使用`testaux.asserteq(table.concat(buf), pk, ...)`；当前表达式没有`==`，且`pk`只作为`assert`的第二实参。该写法在共同祖先`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`、`master`和`cluster`分支中完全相同。
+- 根因：把`assert(value, message)`误写成了预期的`assert(actual == expected)`/`asserteq(actual, expected)`；测试没有自证其随机切片辅助函数保持原始字节序列。
+- 建议解法：改用`testaux.asserteq(table.concat(buf), pk, "Test X.Y: random fragments reconstruct packet")`，并按`CLAUDE.md`补齐case/assert编号；另外用确定性边界切片覆盖1-byte header/body边界、最后1 byte与多帧粘包，随机分片只作为补充。
+- 回归测试：修复阶段先给helper注入一个只在测试内生效的漏字节/重复字节变体，确认新断言必然失败，再恢复helper并运行cluster parser用例；本轮只记录静态缺口，不修改或执行测试。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2499,7 +2510,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为196项：P0为0，P1为83，P2为105，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为197项：P0为0，P1为83，P2为105，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 13、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2691,3 +2702,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP client close可与在途DNS/TCP/TLS/H2建连交错，返回后迟到连接仍发布到H1/H2 pool并继续request，记录为`HTTPC-005`；未建立连接或运行barrier。
 - 2026-08-09：确认TLS reload先原地污染保存配置再构造ctx，失败会assert且留下旧ctx与新坏conf的混合状态，记录为`TLS-008`；未加载损坏配置。
 - 2026-08-09：第二轮纯静态查漏收口；主报告与HANDOFF自动核对均为196项（P1 83、P2 105、P3 8），编号唯一、索引与模块统计一致，当前范围无未归档候选。
+- 2026-08-09：继续审阅远端`cluster`分支时确认`testcluster.lua`随机分片完整性断言从未执行相等比较，且同一缺口也存在于`master`，记录为`CLUSTER-013`；仍未运行测试或新增重现代码。
