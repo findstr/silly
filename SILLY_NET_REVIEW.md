@@ -470,6 +470,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为每项request维护absolute deadline，把剩余预算传入`tcp.connect(...,{timeout=remaining})`及TCP reads；在持锁/建连前后和每次write前核对request generation。连接成功后先确认至少仍有live request需要它，再原子发布并启动recv loop；request结束或reconfigure时取消/关闭尚未完成的专用connect，避免旧task继续写包。若共享单一TCP连接，应由独立的per-server连接管理器拥有connect及pending队列，而不是由某一request的fallback task拥有。
 - 回归测试：修复阶段覆盖TC后TCP黑洞、连接恰在deadline前后完成、caller timeout短于共享request、重复TC、多request等待同一server lock及reconfigure；断言deadline后无pending connect/task/socket、不会发布迟到连接或发送已结束request。当前不运行这些场景。
 
+### DNS-007 — P2 — public timeout 在每个 CNAME/search 候选上重新计时，无法限制整次解析耗时
+
+- 状态：已确认；公开参数契约与递归/search调用链的确定性静态核对。本轮不构造慢resolver或长CNAME链。
+- 位置：API把timeout描述为一次lookup/resolve的query timeout在`docs/src/en/reference/net/dns.md:85-150`；每次`query`独立创建caller timer在`lualib/silly/net/dns.lua:424-475`；CNAME递归原样复用完整timeout在`:547-571`；初始名与每个search suffix又各自调用`resolve_r(...,timeout,...)`在`:585-640`。
+- 触发：响应给出只含CNAME而目标名需要另查，或配置一个/多个search suffix且前面的候选超时/失败；每一步都可以接近调用方传入的timeout才结束。CNAME深度上限为100，search list在程序配置和resolv.conf parser中没有数量上限。
+- 影响：调用`dns.lookup(name,type,5000)`不能保证约5秒内返回：两跳CNAME可消耗约10秒，初始名加多个search候选可线性乘大，组合时进一步放大。依赖该参数实现请求SLA、shutdown或资源上限的上层会被长期阻塞；每一阶段的inflight waiter/timer也随之延长存活。
+- 证据：`query`对每次wire query执行`time.after(timeout, query_timer, trans)`；`resolve_r`递归时未减去已耗时间，`resolve`的search loop也给每个候选传入同一原始值。代码没有记录入口时间、absolute deadline或remaining budget。内部`conf_timeout/conf_attempts`只控制共享wire request，不构成公开调用的总deadline。
+- 根因：timeout被建模为“当前query wait上限”，但公开入口及调用者把它暴露为整项解析参数；递归与候选搜索之间没有统一的operation context。
+- 建议解法：入口把timeout一次转换为monotonic absolute deadline；每次cache miss、CNAME递归、search候选、nameserver轮转及TCP fallback都传递同一deadline并只等待`max(0, deadline-now)`。到期后把当前caller从共享request安全移除而不伤害其他deadline更长的waiter，并返回一致的`ETIMEDOUT`；另将内部每attempt上限取配置值与剩余预算的较小者。
+- 回归测试：修复阶段覆盖多跳CNAME、多个search候选及二者组合，让每步在预算边缘响应；断言总wall time不超过单一deadline容差、cache hit不额外耗时、短deadline caller退出不取消长deadline caller。当前不运行慢响应场景。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -1959,7 +1970,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为149项：P0为0，P1为68，P2为78，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 6、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为150项：P0为0，P1为68，P2为79，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 7、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2094,3 +2105,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS无条件先查absolute且用ndots决定是否完全跳过search，低点数顺序、高点数fallback和trailing-dot语义均偏离系统resolver，记录为`DNS-004`；未发查询。
 - 2026-08-09：确认DNS每项request固定单一server，全部attempt不会遍历nameserver列表，健康备用resolver只能影响后续查询，记录为`DNS-005`；未制造超时或发查询。
 - 2026-08-09：确认DNS的TCP fallback connect未继承request deadline，request超时后connect task/socket仍可滞留并发布迟到连接，记录为`DNS-006`；未制造TCP黑洞或TC响应。
+- 2026-08-09：确认DNS公开timeout会在每个CNAME hop及search候选重新计时，不能限制整次lookup/resolve耗时，记录为`DNS-007`；未构造慢resolver。
