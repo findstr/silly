@@ -181,6 +181,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-HANDLER-EXCEPTION-STATUS | MUST/interoperability | `lualib/silly/net/grpc/registrar.lua:80-228` | server | 偏离 | 四种 wrapper将 application handler抛出异常统一映射 INTERNAL；gRPC library-generated mapping要求 UNKNOWN | 无 handler throw status-code assertion | GRPC-016 |
 | GRPC-STATUS-SENDER | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `luaclib-src/lhttp.c:489-548` | server sender | 偏离 | application `err.code` 无类型/range/canonical校验，truthy值直接经通用字符串化写 grpc-status；可发送非法文本或error+OK | 自测仅覆盖0与合法常量 | GRPC-017 |
 | GRPC-REQUEST-EOS-DATA | MUST | `lualib/silly/net/grpc/client/service.lua:65-70,215-257`; `lualib/silly/net/http/h2.lua:992-1025` | streaming client sender | 偏离 | client/bidi零消息closewrite时pending request header直接带END_STREAM；未发送gRPC要求的空DATA+END_STREAM | tests的client/bidi均先write至少一条 | GRPC-018 |
+| GRPC-CLEARTEXT-SCHEME | transport/API | `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/http/h2.lua:231-262,456-467,1730-1739` | plaintext server | 偏离 | cleartext gRPC listener仍把H2 channel/stream scheme写死为https，与收到的`:scheme: http`及实际TCP安全属性矛盾 | 现有handler不检查stream.scheme，明文自测无法暴露 | GRPC-019 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
@@ -2216,6 +2217,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：streaming call建立时先发送不带END_STREAM的request HEADERS，或提供gRPC-specific close-request API，确保即使零messages也发送empty DATA+END_STREAM；不要改变普通HTTP/2 API对HEADERS END_STREAM的合法优化。
 - 后续回归条件：修复阶段抓取client-stream/bidi的0/1/N消息frame序列：initial HEADERS永不END_STREAM，最后必为DATA+END_STREAM（零消息时length 0）；独立server正常完成零消息call。本轮不新增测试代码。
 
+### GRPC-019 — P2 — plaintext server 把应用 stream 的 scheme 错标为 `https`
+
+- 状态：已确认；listener transport 分支、H2 channel 初始化与 stream 字段传播的确定性静态核对。本轮不启动明文 server。
+- 位置：gRPC 明文/TLS 分支在 `lualib/silly/net/grpc/server.lua:38-55`；H2 server 固定 scheme 在 `lualib/silly/net/http/h2.lua:1730-1739`，channel 与 stream 传播在 `:231-262,456-467`；公开的可选 `tls` 配置见 `docs/src/en/reference/net/grpc.md:146-190` 和中文同名文档。
+- 触发：使用默认或显式 `tls=false` 的 `grpc.listen` 接收正常 cleartext HTTP/2 gRPC request；本库 plaintext client会正确发送 `:scheme: http`。
+- 影响：业务 handler/middleware 观察到 `stream.scheme == "https"`，可把未经TLS保护的请求误判为安全连接，进而生成错误的 `https://` absolute URL、设置仅安全通道应有的属性，或绕过依赖 transport scheme 的重定向/鉴权策略。同时 header 中 peer 提供的 `:scheme` 仍是 `http`，一个 stream 内出现两个互相矛盾的 scheme 来源。
+- 证据：`grpc.listen` 在 `not conf.tls` 时明确调用 `tcp.listen`，但 TCP/TLS 两条 accept path 都无参数调用 `h2.httpd(handler, conn)`。`h2.httpd` 无条件执行 `newchannel("https", conn, "")`，`channel_newstream` 再赋值 `scheme = ch.scheme`。相反，plaintext client 以 `opts.tls and "https" or "http"` 建 channel 并由 H2 sender生成对应 `:scheme`，所以默认 client/server组合即可确定产生 `header[":scheme"]="http"` 与 `stream.scheme="https"` 的矛盾。
+- 根因：H2 server helper 假定所有调用都来自 TLS ALPN，没有从 listener transport 接收 scheme；gRPC 又复用了它来承载 prior-knowledge cleartext HTTP/2。
+- 建议解法：让 `h2.httpd(handler, conn, scheme)` 显式接收由 listener 确定的 transport scheme，gRPC plaintext传 `http`、TLS传 `https`；避免信任 peer `:scheme` 来推断实际安全属性。通用 HTTP listener的H2 TLS分支也应显式传值，去掉 helper 内硬编码。
+- 后续回归条件：修复阶段分别建立明文与TLS listener，向两者发送匹配的 `:scheme`，断言handler看到的transport scheme为 `http`/`https` 且与连接类型一致；另覆盖peer伪造相反`:scheme`时的validation/应用可见值，不允许伪造字段提升安全属性。当前不启动server或发送请求。
+
 ## 5. 候选问题收口
 
 本轮没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。
@@ -2245,7 +2257,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为174项：P0为0，P1为77，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为175项：P0为0，P1为77，P2为93，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 19、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2409,3 +2421,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`H2-023`：server处理CL1+HEADERS END时会在未发布对象上GOAWAY/清count，随后仍发布并fork handler，收尾可使streamcount为负；未新增计数或发送frame。
 - 2026-08-09：确认WebSocket client独立连接路径只取单个A记录且没有AAAA/多地址fallback，记录为`WS-009`；未执行DNS或连接。
 - 2026-08-09：确认WebSocket client的DNS/TCP/TLS/Upgrade opening handshake没有端到端deadline或取消入口，记录为`WS-010`；未连接silent peer。
+- 2026-08-09：确认plaintext gRPC listener仍把H2 channel与应用stream scheme固定标成https，记录为`GRPC-019`；未启动server。
