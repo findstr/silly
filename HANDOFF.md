@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认167项（P1 73、P2 90、P3 4）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认168项（P1 73、P2 90、P3 5）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -203,6 +203,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-009 | P1 | etcd wrapper无TLS、CA/client cert或token认证入口，只能连接明文未授权集群。 |
 | DOC-001 | P3 | etcd中英文文档的timeout、keepalive失联和watch close契约均与实际API不符。 |
 | DOC-002 | P3 | DNS中英文文档宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突。 |
+| DOC-003 | P3 | HTTP中英文文档虚构respond close参数，且统一返回承诺与H1 nil/H2 boolean实现不符。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -290,7 +291,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为167条：P1 73、P2 90、P3 4。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2；以主报告中的编号和证据为准。
+当前统计为168条：P1 73、P2 90、P3 5。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

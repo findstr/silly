@@ -1256,6 +1256,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先明确`attempts`究竟表示总发送次数还是额外retry次数，并与`DNS-005/007`修复后的nameserver round和absolute deadline语义统一；随后同步中英文参数、示例、最大等待公式和caller/shared request区别。CI从单一配置schema生成默认值表，并校验文档代码块中的数值。
 - 回归测试：修复阶段以静态doc contract测试读取实现/schema默认值并核对两种语言；若保留时序示例，只验证可观测attempt序列和固定/退避策略与文字一致。当前不运行示例或计时测试。
 
+### DOC-003 — P3 — HTTP 中英文文档虚构 `respond` 的 close 参数并统一承诺布尔返回
+
+- 状态：已确认；中英文reference与H1/H2方法签名/返回路径逐项静态对照。本轮不调用HTTP API。
+- 位置：中文文档两处契约在`docs/src/reference/net/http.md:128-138,442-450`；英文文档在`docs/src/en/reference/net/http.md:131-141`；H1实现为`lualib/silly/net/http/h1.lua:758-771`，H2实现为`lualib/silly/net/http/h2.lua:949-961`。
+- 触发：应用按文档调用`stream:respond(status,headers,true)`期待不发送正文并立即关闭，或统一检查`local ok,err=stream:respond(...)`。
+- 影响：Lua会静默丢弃第三参数，H1继续按header/body与keepalive状态运行；H2同样没有close语义。H1成功路径又返回nil，按文档检查`if not ok`会把每次成功误判成失败，而H2返回true，导致相同server handler在ALPN协议不同后出现分叉行为。调用方可能重复响应、执行错误补偿或错误地依赖连接已关闭。
+- 证据：两份reference都列出可选`close:boolean`并承诺成功true/失败false+error；H1签名只有三个Lua形参（含self）且末尾无return，H2也只接收status/header但会返回boolean。两实现均由独立`closewrite`结束发送，H1持久性由Connection/version路径决定而非被忽略的实参。
+- 根因：文档把不同协议stream的API理想化成统一接口，但没有以LuaLS签名/实现作为生成或审查来源，旧参数与返回契约残留。
+- 建议解法：先决定稳定公共契约：推荐H1/H2 `respond(status,headers)`都返回`boolean,error`，删除虚构close参数并用`closewrite`/明确Connection语义结束；若必须保留close则两协议实现一致、定义它对body与连接/stream的精确行为。同步中英文两处重复章节及LuaLS annotation。
+- 回归测试：修复阶段以API contract test覆盖H1/H2 respond成功/stream已关闭失败、返回值形状与第三参数策略；文档示例纳入静态签名检查。当前不调用API。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2166,7 +2177,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为167项：P0为0，P1为73，P2为90，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为168项：P0为0，P1为73，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2319,3 +2330,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP client只取单个A记录且没有AAAA/多地址connect fallback，IPv6-only与首地址故障origin不可用，记录为`HTTPC-004`；未执行DNS或连接。
 - 2026-08-09：确认HTTP/1 sender会原样发送TE+CL并因CL优先而直写未分块正文，形成wire framing歧义，记录为`HTTP1-016`；未生成或发送歧义报文。
 - 2026-08-09：确认HTTP/1 bodyless response集合遗漏205，client可在合法keepalive 205上等待EOF且server可发送违规content，记录为`HTTP1-017`；未发送205响应。
+- 2026-08-09：确认HTTP中英文文档承诺不存在的respond close参数，且H1/H2实际返回契约不一致，记录为`DOC-003`；未调用HTTP API。
