@@ -1379,16 +1379,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：EOS携带`{stream,generation,error}`，manager仅在消息匹配当前generation时执行failover；旧recv发现自己不再current时只做本地收尾。更稳妥的是让单一session owner管理recv/send，替换前先标旧generation canceled并显式等待其退出；统一幂等`fail_watch_stream`处理close、通知与checkpoint。
 - 回归测试：修复阶段控制旧recv分别在新stream发布前/queue clear前/clear后/首个event后返回，断言迟到EOS不会关闭新stream，当前generation失败仍恰好触发一次重连；覆盖连续两代旧task和client close。当前仅记录竞态，不建立barrier。
 
-### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
+### DOC-001 — P3 — etcd 中英文文档的构造、timeout、watch 与 lease 契约多处偏离实现
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
-- 位置：中文文档`docs/src/reference/store/etcd.md:53-86,550-610`；英文文档`docs/src/en/reference/store/etcd.md:53-86,550-610`；实际实现`lualib/silly/store/etcd.lua:325-363,539-622`。
-- 触发：用户按文档配置`timeout=5`，依赖keepalive超时自动移除lease，或按所有watch示例在结束时调用`stream:close()`。
-- 影响：timeout被完全忽略且调用仍可永久挂起；keepalive deadline从未检查、stream不会按文档自动关闭；watch返回的是只有`read/cancel`的watcher而非gRPC stream，调用`stream:close()`会抛“attempt to call a nil value”。中英文大量示例重复这一错误，使正常照抄文档的应用出现异常或错误的故障安全假设。
-- 证据：文档参数名为`timeout`且单位秒，代码注解/读取名为`dialtimeout`，后者本身又未下传（ETCD-006）；文档明确描述`keepalivetimeout`触发drop/close，但实现只写`deadline`从不读；watcher metatable只定义`read`和`cancel`，文档的返回类型、注意事项及示例统一使用`stream:close()`。
-- 根因：reference从早期/预期API生成后未以可执行示例和LuaLS导出面做一致性检查，且中英文复制使同一错误同步扩散。
-- 建议解法：先决定真实API契约并修实现，再同步两种语言：timeout使用毫秒或absolute deadline的唯一命名/单位；watch返回类型写为watcher且统一`cancel/close`；lease失联行为只描述已实现且可观察的状态。文档示例加入静态类型检查及最小运行验证，CI比较公开method/option schema。
-- 回归测试：修复阶段对中英文所有etcd `lua validate` block执行doc-test，启用LuaLS unknown-member诊断；增加schema snapshot验证配置名、返回类型和method集合一致。本轮不运行示例。
+- 位置：双语构造与概念说明在`docs/src/reference/store/etcd.md:34-86`和英文同名文档；中文grant/revoke/keepalive在`:340-414,550-566`、英文对应段落；watch说明及示例在中文`:583-654`和英文`:593-664`并在后文重复。实际实现位于`lualib/silly/store/etcd.lua:325-363,477-622`。
+- 触发：用户按文档配置`timeout=5`、按“grant后自动保活”假设不调用`keepalive(id)`、依赖keepalive超时自动移除lease，或按watch示例调用`stream:close()`；构造失败时又只用异常捕获而不检查第二返回值。
+- 影响：timeout被完全忽略且调用仍可永久挂起；grant所得lease根本不会续租并可能连同业务key意外过期，revoke与自动保活的关系也被错误描述。keepalive deadline从未检查、stream不会按文档自动关闭；中文把持续注册API误称为“手动发送一次”，与英文和实现均冲突。watch返回的是只有`read/cancel`的watcher而非gRPC stream，调用`stream:close()`会抛“attempt to call a nil value”。newclient的DNS/target失败返回`nil,err`而非抛出，照文档写法可把nil client继续传下去。中英文大量示例重复这些错误，使照抄应用出现异常或错误的故障安全假设。
+- 证据：文档参数名为`timeout`且单位秒，代码注解/读取名为`dialtimeout`，后者本身又未下传（ETCD-006）。双语概念页和grant段都宣称创建lease自动fork keepalive，但`M.grant`只返回LeaseGrant响应，唯一登记/启动点是显式`M.keepalive`。文档描述`keepalivetimeout`触发drop/close，实现只写`deadline`从不读。watcher metatable只定义`read/cancel`，示例统一使用不存在的`close`。`newclient`在grpc构造失败时明确`return nil,err`，与“Failure: Throws”相反。
+- 根因：reference混合了早期/预期API和两种不同keepalive设计，未以可执行示例、LuaLS导出面或method dataflow做一致性检查；中英文复制又使部分错误同步扩散、部分语义彼此分叉。
+- 建议解法：先决定真实API契约并修实现，再同步两种语言：构造统一返回`client?,error?`或明确抛错；timeout使用毫秒或absolute deadline的唯一命名/单位；明确grant是否自动注册keepalive，若需显式调用则所有概念/示例都展示它；keepalive描述为持续注册并提供可观察失联/取消；watch返回类型写为watcher且统一`cancel/close`。文档示例加入静态类型检查及最小运行验证，CI比较公开method/option schema。
+- 回归测试：修复阶段对中英文所有etcd `lua validate` block执行doc-test，启用LuaLS unknown-member和未检查nil诊断；增加schema snapshot验证配置名、返回值、method集合及grant→keepalive调用序列一致。本轮不运行示例。
 
 ### DOC-002 — P3 — DNS 中英文文档把默认重试错误描述为三次递增间隔
 
@@ -2653,3 +2653,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认etcd client关闭后watch仍忽略control-channel push失败并返回成功对象，其read channel没有producer或close路径而永久等待，记录为`ETCD-013`；未执行生命周期交错。
 - 2026-08-09：确认旧etcd watch recv在新stream发布后仍可发送无generation的迟到EOS，manager会误关当前健康stream并再次重连，记录为`ETCD-014`；未注入write failure或调度barrier。
 - 2026-08-09：扩充`ETCD-012`：LeaseTimeToLive与LeaseLeases完全绕过client retry，和六个手写loop共同形成不一致的重试契约；未调用RPC。
+- 2026-08-09：扩充`DOC-001`：双语文档错误宣称grant/revoke自动管理keepalive且newclient失败抛异常，中文还把持续keepalive注册误写成单次发送；未运行文档示例。

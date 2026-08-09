@@ -213,7 +213,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-012 | P2 | retry被当作总attempt数、零值跳过RPC，ttl/leases又完全绕过该client级配置。 |
 | ETCD-013 | P2 | client关闭后watch仍返回成功对象，其control enqueue已失败且read channel会永久等待。 |
 | ETCD-014 | P2 | 旧watch recv的无generation迟到EOS可关闭已发布的新stream并触发额外重连。 |
-| DOC-001 | P3 | etcd中英文文档的timeout、keepalive失联和watch close契约均与实际API不符。 |
+| DOC-001 | P3 | etcd双语文档的构造返回、timeout、自动keepalive、失联处理和watch close均偏离API。 |
 | DOC-002 | P3 | DNS中英文文档宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突。 |
 | DOC-003 | P3 | HTTP中英文文档虚构respond close参数，且统一返回承诺与H1 nil/H2 boolean实现不符。 |
 | DOC-004 | P3 | gRPC中英文reference的签名和每份14个registrar示例均遗漏必需service_name，照抄无法注册服务。 |
