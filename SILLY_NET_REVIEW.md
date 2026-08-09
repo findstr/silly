@@ -1018,6 +1018,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：默认返回ordered row values加完整columns metadata，或同时提供`row.values`和仅在unique时生成的name map；duplicate alias可映射value list/qualified keys但不能静默覆盖。真正实现并文档化`compact_arrays`，open时拒绝未支持opts。
 - 回归测试：修复阶段覆盖两个/三个重复alias、跨table相同name、duplicate含NULL及显式alias唯一场景；断言column count/order/value全部可访问，并验证compact_arrays选项生效。
 
+### MYSQLC-007 — P1 — 8-byte lenenc 经 signed/unchecked cursor arithmetic 可绕过边界并越界读
+
+- 状态：已确认；native lenenc返回类型、size_t cursor运算与所有string消费者的静态算术核对。本轮不构造packet或运行sanitizer。
+- 规范：MySQL length-encoded integer的`0xfe`分支携带unsigned 64-bit值；parser必须先验证该值可由本地size类型表示，再以`len <= remaining`的减法式检查约束每次cursor推进。不得先做`pos+len`或把unsigned长度塞入signed整数后继续指针运算。
+- 位置：uint64/lenenc reader在`luaclib-src/mysql/binary.h:107-124,160-195`；unchecked column-definition cursor在`luaclib-src/mysql/lmysql.c:216-257`；addition-based checks在OK/ERR/string field路径`:64-109,156-214,343-427`。
+- 触发：peer在OK info、ERR progress info、column definition任一lenenc string或binary row string字段声明高位64-bit长度（例如大于`LUA_MAXINTEGER`），或选择使`size_t pos + converted len`发生wrap的值；packet本身可很短。
+- 影响：长度先变成负的`lua_Integer`，与`size_t`运算时再转为巨大unsigned并可能回绕；`if (len + pos > total)`因此不能保证范围。随后`lua_pushlstring(data+pos,len)`把负值转换为巨大`size_t`，或column parser在多次`pos += len`后从错误地址读取fixed fields，造成native越界读、进程崩溃、巨额allocation尝试或把相邻内存作为Lua string暴露。异常未必在安全检查处触发。
+- 证据：`binary_read_uint64le`声明返回`lua_Integer`，直接return `uint64_t`组合值；`binary_read_lenenc`继续沿用该signed类型。三个consumer明确使用`len + chk.pos > chk.len`，而column parser六次`chk.pos += len`均未先检查remaining。底层fixed-width checks同样使用`chk.pos + N > chk.len`，一旦pos已wrap便不能恢复不变量。现有MYSQLC-002只记录合法UNSIGNED BIGINT应用值wrap，不覆盖长度驱动的pointer安全后果。
+- 根因：协议中的unsigned length、Lua application integer和native memory size共用一个`lua_Integer`返回类型；cursor helper没有封装checked advance/slice，调用者各自使用易溢出的加法。
+- 建议解法：lenenc decoder返回`uint64_t`加明确null/status；每个长度用途先检查`value <= SIZE_MAX`和本地配置上限，再用`value <= chk.len - chk.pos`，仅在成立后推进。提供`binary_read_slice`统一返回pointer/size并禁止调用者直接修改pos；fixed-width检查也改为subtraction形式。应用整数若超Lua范围用string/decimal或显式overflow error。
+- 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`、使pos刚好/差1/wrap的值，并逐一经过OK、ERR、column及各string field；ASan/UBSan下只能得到structured protocol error，无大allocation/OOB。当前不生成lenenc输入。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -2376,7 +2388,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为185项：P0为0，P1为79，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 14、ETCD 9、DOC 5。
+当前滚动统计为186项：P0为0，P1为80，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 14、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2552,3 +2564,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认Redis中英文pipeline示例使用实现不存在的out参数且select提示写成恒失败无message的assert，记录为`DOC-005`；未运行文档示例。
 - 2026-08-09：确认MySQL COM_PING response无条件进入OK decoder，合法ERR可被误报为健康或触发codec异常，记录为`MYSQL-013`；未发送PING。
 - 2026-08-09：确认MySQL BEGIN/COMMIT/ROLLBACK把任意非ERR packet当成功并提交本地transaction状态，记录为`MYSQL-014`；未发送transaction命令。
+- 2026-08-09：确认MySQL native lenenc把unsigned64长度塞入signed Lua integer且consumer使用可wrap的pos+len/unchecked advance，可绕过边界进入OOB read，记录为`MYSQLC-007`；未构造packet。
