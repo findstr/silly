@@ -934,6 +934,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：明确拆分`dial_timeout`与每次RPC/default request timeout，并将absolute deadline贯穿DNS、connect、TLS、H2和gRPC call；watch/lease stream需有建立deadline、idle/progress policy和可取消重连backoff。底层尚未支持前应拒绝非nil配置并在文档声明无限等待，不能假装生效。
 - 回归测试：修复阶段在DNS、TCP、TLS、H2 preface、unary body、watch/lease stream各阶段停住，断言同一总预算到期、资源关闭且故障切换发生；检查0/nil/边界值语义。本轮不做blackhole重现。
 
+### ETCD-007 — P2 — range option 适配器丢失合法 `fromkey`/非 KEY 排序语义
+
+- 状态：已确认；官方option契约、wire range语义与确定性table转换静态核对。不需要启动etcd。
+- 规范/权威依据：[官方 clientv3 API](https://pkg.go.dev/go.etcd.io/etcd/client/v3)定义WithFromKey返回所有byte-compare大于等于起始key的项，WithSort允许KEY/VERSION/CREATE/MOD/VALUE配合NONE/ASCEND/DESCEND；etcd protobuf注释规定`range_end='\0'`表示无上界。
+- 位置：option转换在`lualib/silly/store/etcd.lua:53-141`；get/delete/watch复用它在`:414-449,568-579`；公开文档在`docs/src/reference/store/etcd.md:145-168,228-244`。
+- 触发：调用`get/delete/watch{key='',fromkey=true}`；或range get使用`sort_target='VERSION'|'CREATE'|'MOD'|'VALUE'`并指定ASCEND/DESCEND。
+- 影响：空key fromkey只把key改为NUL却不设置range_end，server执行精确NUL key查询而非全key range，通常静默返回空；任何非KEY排序都会丢弃用户order并使用proto默认NONE，结果顺序与请求不符。分页、选latest revision、批量清理和全量同步可能漏数据或选错记录而无error。
+- 证据：`opt_fromkey`在empty branch设置`options.key=no_prefix_end`后立即return，只有non-empty branch才写`range_end=no_prefix_end`。`opt_options`只在target为KEY时读取`options.sort_order`，其他target的local `sort_order`保持nil，随后`sort_order_num[nil]`赋nil并由protobuf encoder省略。函数还不验证prefix/fromkey互斥，`apply_options`用`pairs`执行冲突转换，使结果依赖table遍历顺序。
+- 根因：option helper通过原地、稀疏修改用户table模拟官方typed OpOption，却没有先规范化、校验组合并生成完整wire request。
+- 建议解法：建立纯函数request builder：先校验key与互斥option，再分别计算明确的key/range_end；排序target/order独立映射并验证enum，按etcd规则要求range。禁止依赖`pairs`顺序，未知/冲突option返回参数错误，且不修改调用方table。
+- 回归测试：修复阶段覆盖empty/nonempty fromkey、prefix全0xff边界、五种target×三种order、invalid enum及prefix+fromkey冲突；抓取wire并与官方Go client输出/真实server结果逐项比较。当前不新增测试代码。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
