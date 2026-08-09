@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（127 条）
+## 5. 已确认问题（128 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -162,6 +162,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQLC-001 | P1 | binary result row未验证NULL bitmap长度即直接索引，截断packet可造成C越界读。 |
 | MYSQLC-002 | P2 | BIGINT UNSIGNED高半区经signed lua_Integer返回为负值，合法数据发生静默wrap。 |
 | MYSQLC-003 | P2 | 非法temporal length返回硬编码2017时间且不推进cursor，整行可被静默伪造/错位。 |
+| MYSQLC-004 | P2 | 未协商SESSION_TRACK时仍把OK info按lenenc解析，正常成功响应可抛错或失真。 |
 | MYSQL-001 | P1 | idle/lifetime淘汰连接不递减open_count，受限pool可永久假满并挂住请求。 |
 | MYSQL-002 | P1 | driver无TLS/server identity且full-auth信任peer临时RSA key，MITM可读取流量并取得密码。 |
 | MYSQL-003 | P1 | connect/auth/query/pool wait均无deadline/cancel，现有connect_timeout选项被静默忽略。 |

@@ -689,6 +689,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：仅接受该field type允许的精确length，先验证对应byte数再读取；任何其他length立即返回structured codec error并使上层connection fatal。另验证month/day/time/microsecond协议范围，避免产生规范外字符串。
 - 回归测试：修复阶段枚举0..255 length，合法forms检查边界值，其余必须失败且不返回partial row/硬编码值；随后marker query必须使用新连接。当前不生成非法row。
 
+### MYSQLC-004 — P2 — 未协商 SESSION_TRACK 时仍把 OK info 当 lenenc string
+
+- 状态：已确认；capability flags与官方OK grammar静态核对。
+- 规范：[MySQL OK_Packet](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html)规定：协商`CLIENT_SESSION_TRACK`时info为`string<lenenc>`并可能跟session state；未协商时info是packet剩余的`string<EOF>`。
+- 位置：client flags在`lualib/silly/store/mysql.lua:414-436`，没有SESSION_TRACK；OK parser在`luaclib-src/mysql/lmysql.c:64-109`；误导性unit fixture在`test/testmysql.lua:25-49`。
+- 触发：MySQL/MariaDB在OK固定字段后返回非空human-readable info，而连接未协商CLIENT_SESSION_TRACK；常见DML可能包含rows matched/changed信息。
+- 影响：info首个ASCII byte被解释为长度，通常因长度大于剩余packet而抛codec异常，也可能只返回错误长度的后缀并静默丢首字符。正常成功SQL因此被报告失败；结合`MYSQL-011`，异常后的connection还可能被错误归池。
+- 证据：client capability没有`0x00800000 CLIENT_SESSION_TRACK`；parser只要有剩余就调用`binary_read_lenenc`再复制该长度。unit test人为在`hello`前加入`0x05`，验证的是SESSION_TRACK形态，却没有相应capability context参数。
+- 根因：C API不接收negotiated capabilities，无法选择packet variant，测试把一种variant当成无条件格式。
+- 建议解法：parser显式接收capabilities/status flags；未协商时复制全部remaining bytes，协商时严格解析info及可选session-state并完整消费。测试分别建立两种capability fixture，driver只解析自己实际宣告的格式。
+- 回归测试：覆盖无SESSION_TRACK的空/ASCII/binary info，以及SESSION_TRACK的info、state-changed、截断state；与MySQL 8/MariaDB实际UPDATE互操作并断言message完整。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -1803,6 +1815,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
 - 2026-08-09：确认MySQL BIGINT UNSIGNED通过signed lua_Integer返回，合法高半区值wrap为负数，记录为`MYSQLC-002`。
 - 2026-08-09：确认MySQL temporal codec遇非法length会返回硬编码2017时间且不推进cursor，记录为`MYSQLC-003`；未生成非法row。
+- 2026-08-09：确认MySQL未协商SESSION_TRACK时OK info应为EOF string，但codec无条件按lenenc解析，记录为`MYSQLC-004`。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
