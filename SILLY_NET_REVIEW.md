@@ -114,6 +114,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 |---|---|---|---|---|---|---|---|
 | RFC9112-6.1-TECL-CLOSE | MUST | `lualib/silly/net/http/h1.lua:129-168,818-890` | server | 偏离 | `read_header` 在 TE+CL 共存时删除 CL 并继续；请求处理后仅在解析/handler 错误或 `Connection: close` 时断开，没有记录 TE+CL 并强制关闭 | Test 68 只验证按 chunked 返回 200，未验证响应后关闭 | HTTP1-001 |
 | RFC9112-6.2-TECL-SEND | MUST NOT | `lualib/silly/net/http/h1.lua:342-365,387-438,562-577,761-798` | client/server sender | 偏离 | writer原样输出TE与CL；因CL优先，正文又按固定长度直写而不生成chunk framing | 无sender拒绝TE+CL及零字节输出覆盖 | HTTP1-016 |
+| RFC9110-15.3.6-205-NO-CONTENT | MUST NOT | `lualib/silly/net/http/h1.lua:94-100,524-552,761-770` | client/server | 偏离 | bodyless判定漏掉205；server可发送content，client对无framing的合法205改为读到EOF | 无205 response覆盖 | HTTP1-017 |
 | RFC9112-6.3-CL-LIST | MUST | `lualib/silly/net/http/h1.lua:129-149,512-553,818-848` | client/server | 偏离 | 重复字段被保存为 Lua table，单字段逗号列表保留为字符串；两条路径最终都直接交给 `tonumber`，无法接受全部值合法且相同的列表 | Test 72 只覆盖不同值必须拒绝，未覆盖相同值或 `5, 5` | HTTP1-002 |
 | RFC9112-6.1/6.3/7-TE-LIST | MUST | `lualib/silly/net/http/h1.lua:129-168,512-553,818-848` | client/server | 偏离 | framing 只在字段值精确等于小写单值 `chunked` 时生效；未解析大小写不敏感的 coding 列表，也未判断最后一个 coding | 现有测试只覆盖精确小写单值 `chunked` | HTTP1-003 |
 | RFC9112-7.1/7.1.1-CHUNK-EXT | MUST | `lualib/silly/net/http/h1.lua:174-204` | client/server | 偏离 | parser 只匹配行首十六进制数字，完全忽略该数字到换行之间的剩余字节；缺少分号、非法 token/quoted-string 或任意尾随垃圾均绕过 chunk-size/chunk-ext ABNF | Test 73 只覆盖两个合法扩展；Test 74/75 只覆盖合法 chunk-size | HTTP1-004 |
@@ -822,6 +823,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：framing选择只更新内部`writeexpect`，没有把wire header集合、body encoder与RFC mutual-exclusion invariant作为一个原子构建步骤。
 - 建议解法：在写request/status line之前规范化并验证全部framing字段；TE与CL共存立即返回错误且保证零字节输出，或由受信任的高层API明确选择一种并删除另一种。解析TE coding list后让header、encoder、结束标记共享同一不可变framing mode；client/server均复用此validator，错误连接不得归池。
 - 回归测试：修复阶段覆盖client/server×CL+`chunked`/其他TE/重复字段/大小写，以及单独CL和单独chunked正常路径；冲突必须在任何socket write前失败，合法chunked必须含正确size与last-chunk。当前不生成或发送TE+CL消息。
+
+### HTTP1-017 — P2 — `205 Reset Content` 被当成有正文响应，合法 keepalive response 可永久等待
+
+- 状态：已确认；bodyless predicate及收发framing分支的确定性静态核对。本轮不发送205响应。
+- 规范：RFC 9110 §15.3.6规定server不得在205 response中生成content；它的message在header section结束处终止。参见 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.3.6)。
+- 位置：共同bodyless predicate在`lualib/silly/net/http/h1.lua:94-100`；client response framing在`:524-552`；server respond body许可在`:761-770`；无deadline高层读取另见`HTTPC-002`。
+- 触发：外部HTTP/1.1 server返回合法`205 Reset Content`，不含Content-Length/Transfer-Encoding并保持连接；反向方向上，Silly handler对205调用`write/closewrite(data)`。
+- 影响：client把205判为可带body，因没有CL/TE而选择`readexpect="eof"`，`readall()`等待连接关闭；正常keepalive server不会关闭，调用可无限挂起且连接无法复用。Silly server则可输出规范禁止的content，peer可能忽略这些字节并把它们解释为下一条响应的开头，造成持久连接desynchronization。
+- 证据：`bodyless_response`只列HEAD、204、304、全部1xx与成功CONNECT，没有205。client的非bodyless且无CL/精确chunked分支固定选择EOF framing；server把同一predicate取反为`allowbody=true`，不会删除CL/TE并允许正文发送。
+- 根因：无正文status集合不完整，并被client framing与server send permission共同复用，单个遗漏同时破坏两个方向。
+- 建议解法：将205加入无content语义；server在写任何header前拒绝/移除会声明或发送content的配置，并让write失败；client在205 header结束时立即标EOF且不消费后续字节。用共享、按规范版本审计的response-semantics函数统一H1/H2，同时保持HEAD/304的Content-Length元数据规则。
+- 回归测试：修复阶段覆盖205有无CL0、保持/关闭连接、后续同连接200 response及server尝试写body；client必须立即完成并正确解析下一response，server不得输出content。当前不发送205响应。
 
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
@@ -2153,7 +2166,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为166项：P0为0，P1为73，P2为89，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 16、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为167项：P0为0，P1为73，P2为90，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2305,3 +2318,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP client pool lookup会为每个origin写入H1/H2空表，DNS/connect失败不回滚且无timer清理，记录为`HTTPC-003`；未发起高基数请求。
 - 2026-08-09：确认HTTP client只取单个A记录且没有AAAA/多地址connect fallback，IPv6-only与首地址故障origin不可用，记录为`HTTPC-004`；未执行DNS或连接。
 - 2026-08-09：确认HTTP/1 sender会原样发送TE+CL并因CL优先而直写未分块正文，形成wire framing歧义，记录为`HTTP1-016`；未生成或发送歧义报文。
+- 2026-08-09：确认HTTP/1 bodyless response集合遗漏205，client可在合法keepalive 205上等待EOF且server可发送违规content，记录为`HTTP1-017`；未发送205响应。
