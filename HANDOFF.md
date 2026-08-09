@@ -290,7 +290,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-009 | P1 | client 忽略 HTTP status/Content-Type，缺 grpc-status 时不执行标准 HTTP→gRPC status mapping。 |
 | GRPC-010 | P1 | client 用通用 `tonumber` 解析 grpc-status，非法数字文本可被接受成 OK或返回 nil status。 |
 | GRPC-011 | P2 | grpc-message 未做 UTF-8 percent codec，server可发非法字段且 client返回编码文本/丢失 Trailers-Only message。 |
-| GRPC-012 | P1 | streaming timeout 实际无效，deadline 不写 grpc-timeout、不由 server执行或暴露给 handler。 |
+| GRPC-012 | P1 | unary timeout不覆盖DNS/dial/H2 handshake，streaming timeout无效，deadline也不传播或由server执行。 |
 | GRPC-013 | P1 | RST_STREAM/连接失败只保留文本，client不按标准映射 CANCELLED/INTERNAL/UNAVAILABLE等 status。 |
 | GRPC-014 | P1 | 无 package proto的 method path 被拼成 `/nil.Service/Method`，无法与独立 gRPC peer互操作。 |
 | GRPC-015 | P1 | client response protobuf/envelope解析错误可被 peer的 OK trailer覆盖，stream最终错误地报告成功。 |

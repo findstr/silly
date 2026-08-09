@@ -174,7 +174,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-HTTP-STATUS-FALLBACK | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:38-81,134-176`; `lualib/silly/net/http/h2.lua:1463-1487` | client recipient | 偏离 | transport 保存 HTTP status/header，但 gRPC client 不检查 status 或 Content-Type；缺 grpc-status 时不按标准表映射 HTTP错误 | 无 proxy/non-gRPC HTTP response 测试 | GRPC-009 |
 | GRPC-STATUS-SYNTAX | MUST | `lualib/silly/net/grpc/client/service.lua:38-53,164-174` | client recipient | 偏离 | `tonumber` 接受空白/符号/hex/指数/小数/前导零；非法形式可成为 OK，parse failure 可返回 nil而非 UNKNOWN | 只覆盖本库生成的 canonical integer status | GRPC-010 |
 | GRPC-STATUS-MESSAGE-CODEC | MUST | `lualib/silly/net/grpc/server.lua:8-27`; `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/grpc/client/service.lua:38-53,164-173` | client/server | 偏离 | server 原样发送 message，不做 UTF-8 percent encoding；client原样返回且 unary Trailers-Only 不从 initial header 取 message | 自测错误文本仅简单 ASCII，未覆盖 `%`/Unicode/control/Trailers-Only message | GRPC-011 |
-| GRPC-DEADLINE | API/protocol | `lualib/silly/net/grpc/client/service.lua:12-32,134-257`; `lualib/silly/net/grpc/server.lua`; `lualib/silly/net/grpc/registrar.lua`; `docs/src/en/reference/net/grpc.md:343-397,521-530` | client/server | 偏离 | 仅 unary 有本地 timer；server-stream timer建立后立即取消，另两种无参数，stream read忽略 timeout；不发/收 grpc-timeout且 handler不可观察 deadline | Test 6 只覆盖 unary 本地超时 | GRPC-012 |
+| GRPC-DEADLINE | API/protocol | `lualib/silly/net/grpc/client/conn.lua:49-79,127-155`; `lualib/silly/net/grpc/client/service.lua:12-32,134-257`; `lualib/silly/net/grpc/server.lua`; `lualib/silly/net/grpc/registrar.lua`; `docs/src/en/reference/net/grpc.md:343-397,521-530` | client/server | 偏离 | unary timer在openstream/dial之后才启动；server-stream timer建立后立即取消，另两种无参数，stream read忽略 timeout；不发/收grpc-timeout且handler不可观察deadline | Test 6只覆盖已有连接上的unary response wait | GRPC-012 |
 | GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
 | GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
 | GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
@@ -2148,17 +2148,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：实现共享的 gRPC percent encoder/decoder：server验证/编码 UTF-8 bytes并至少转义 `%`、控制及非允许字节；client容错解码有效 `%HH`且保留非法片段。message与status必须从同一个最终 field section读取，避免混配。
 - 后续回归条件：修复阶段覆盖空格、`%`、ASCII边界、中文/emoji、CR/LF/NUL、合法大小写 hex、孤立/短/非 hex `%`，以及普通 trailer/Trailers-Only；严格 peer接受 server输出，client不因坏编码抛错。本轮不新增测试代码。
 
-### GRPC-012 — P1 — streaming timeout 无效且 deadline 不传播/执行
+### GRPC-012 — P1 — deadline 不覆盖建连，streaming timeout 无效且 server 不执行
 
 - 状态：已确认；公开 API 文档、gRPC timeout grammar/deadline 行为与确定性 timer/header/handler 路径推导。本阶段只做静态 review，不新增慢调用测试。
 - 规范：未配置 deadline 时无限等待是允许的；但应用显式设置后，client应在期限到达时以 DEADLINE_EXCEEDED结束 call，server应收到剩余 timeout并在到期时取消 call。wire 上用最多 8 位正整数加单位的 `grpc-timeout` 表达。Silly 文档也承诺 unary/stream method timeout及 `stream:read([timeout])`。
-- 位置：timer及四种 client constructor在 `lualib/silly/net/grpc/client/service.lua:12-32,134-257`；server没有 deadline逻辑，见 `lualib/silly/net/grpc/server.lua` 与 `registrar.lua`；承诺的 API在 `docs/src/en/reference/net/grpc.md:343-397,521-530,1426-1455`。
-- 触发：为 server-streaming call传 timeout后在已返回 stream上等待慢响应；为 client/bidi streaming method或其 `stream:read(timeout)`设置 timeout；或让 unary server handler在 client本地 timeout/RST后继续执行。
-- 影响：streaming call可越过调用方期限无限等待，资源和业务工作持续占用；server不知道 deadline且 unary handler没有 cancellation context，会在 client已经 DEADLINE_EXCEEDED后继续产生副作用。跨服务调用也无法扣除已耗时并传播剩余期限。
-- 证据：unary唯一用 timer覆盖 readbody/readall，但从不把 timeout加入 request headers。server-streaming建立 timer后只执行 request/write，随即在返回 stream对象前删除并 cancel timer，之后的 `read`不受保护。client/bidi constructors不接受 timeout；所有 `stream_read`函数签名只取 self并调用无 timeout的 `readbody`。server从未读取 `grpc-timeout`，wrapper也不向 handler暴露 deadline/cancel状态。
+- 位置：target解析与lazy channel建立在 `lualib/silly/net/grpc/client/conn.lua:49-79,127-155`；timer及四种 client constructor在 `lualib/silly/net/grpc/client/service.lua:12-32,134-257`；server没有 deadline逻辑，见 `lualib/silly/net/grpc/server.lua` 与 `registrar.lua`；承诺的 API在 `docs/src/en/reference/net/grpc.md:343-397,521-530,1426-1455`。
+- 触发：首次unary call带timeout但TCP/TLS/H2 handshake保持silent；为server-streaming call传timeout后在已返回stream上等待慢响应；为client/bidi streaming method或其`stream:read(timeout)`设置timeout；或让unary server handler在client本地timeout/RST后继续执行。
+- 影响：显式unary timeout也无法约束连接建立，可能尚未发出RPC就无限等待；streaming call可越过调用方期限持续占用资源。server不知道deadline且handler没有cancellation context，会在client已经DEADLINE_EXCEEDED后继续产生副作用；跨服务调用无法扣除已耗时并传播剩余期限。
+- 证据：`conn.new`在service/call存在前同步DNS；每次首次channel的`openstream`可等待TCP、TLS与H2 handshake。unary先执行`self._conn:openstream()`，成功返回后才`time.after(timeout,...)`，因此timer不覆盖dial。随后它只覆盖readbody/readall且从不把timeout加入request headers。server-streaming同样在openstream后建timer，并在返回stream对象前删除/cancel，后续read不受保护。client/bidi constructors不接受timeout；所有`stream_read`只调用无timeout的`readbody`。server从未读取`grpc-timeout`，wrapper也不向handler暴露deadline/cancel状态。
 - 根因：timeout作为围绕同步 unary调用的临时 coroutine timer实现，没有成为 call state；stream对象、wire metadata与server context之间没有deadline所有权。
-- 建议解法：创建统一 call context，在首次 HEADERS发送前把用户期限转换为 canonical grpc-timeout，并让本地 timer覆盖到最终 status；streaming对象持有/cancel同一 timer。server严格解析 timeout、计算本地 deadline、到期取消 stream并向 handler暴露可查询 cancellation；下游传播时扣除 elapsed time。
-- 后续回归条件：修复阶段覆盖所有四种 RPC、header各单位/8位边界/非法值、deadline在建连/写/首响应/中途消息/最终 trailer前到期，以及 client cancel后server停止工作；文档示例与实际签名一致。本轮不新增测试代码。
+- 建议解法：在call入口、任何openstream/dial之前计算统一absolute deadline并创建call context，把剩余预算贯穿resolver、所有地址尝试、TCP、TLS、H2 handshake、写入与最终status；首次HEADERS发送前编码canonical grpc-timeout，streaming对象持有/cancel同一timer。server严格解析timeout、计算本地deadline、到期取消stream并向handler暴露可查询cancellation；下游传播时扣除elapsed time。另提供独立default dial timeout，但总call deadline始终取更早者。
+- 后续回归条件：修复阶段覆盖所有四种RPC、header各单位/8位边界/非法值、deadline在DNS/TCP/TLS/H2 handshake/写/首响应/中途消息/最终trailer前到期，以及client cancel后server停止工作；断言同一absolute预算不按阶段重置，文档示例与实际签名一致。本轮不新增测试代码。
 
 ### GRPC-013 — P1 — RST_STREAM 与连接失败不映射为标准 gRPC status
 
@@ -2487,3 +2487,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认gRPC TLS client/server只配置h2 ALPN却不校验最终协商结果，无ALPN或非h2会话仍进入H2状态机，记录为`GRPC-022`；未建立TLS会话。
 - 2026-08-09：确认gRPC中英文reference的API签名及每份14个registrar示例都遗漏必需service_name，照抄无法注册服务，记录为`DOC-004`；未运行文档示例。
 - 2026-08-09：确认grpc.listen公开的ciphers/backlog配置在adapter重建option table时被静默丢弃，记录为`GRPC-023`；未创建listener或TLS context。
+- 2026-08-09：扩充`GRPC-012`：unary timer在openstream之后才创建，故显式timeout不覆盖DNS/TCP/TLS/H2 handshake；未连接silent endpoint。
