@@ -806,6 +806,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：实现外层results loop，每轮解析OK/ERR或完整binary result，检查其终态status后决定继续；API返回result list/iterator，并提供显式drain。若暂不支持，不能宣告相关capability，且遇MORE必须完整discard或关闭连接。任何parser exception/未消费结果标broken。
 - 回归测试：修复阶段覆盖`CALL`返回0/1/2 result、OUT params、result+closing OK、首个OK+more及中途ERR；随后立即在同一pool发marker query，断言结果不串线。当前不创建procedure。
 
+### MYSQL-011 — P1 — codec/unpack 异常绕过 broken cleanup，login 泄漏容量、query 归池坏连接
+
+- 状态：已确认；Lua exception unwinding与connection lifecycle静态推导。本阶段不发送畸形handshake/result。
+- 位置：`read_packet/_mysql_login`与大量`strunpack`在`lualib/silly/store/mysql.lua:313-774`；C codec调用在`:776-945`；`conn_close`归池条件在`:985-1014`；`conn_new` login在`:1048-1079`；pool query的`<close>`在`:1173-1189`。
+- 触发：peer发送截断handshake/auth/prepare metadata、非法lenenc/column/binary row或任何令C codec/`string.unpack`抛Lua error的packet，而不是底层read返回nil。
+- 影响：login阶段异常从`_mysql_login`直接穿出，`conn_new`已增加open_count且创建fd，但不会执行`conn_close`；最终`__gc`至多关闭fd、不递减open_count，受限pool可永久假满。query阶段异常触发lease的`__close`，但codec没有设置`conn.is_broken`，所以反同步socket被交给waiter/idle，下一请求读取残余旧response，造成结果串线和重复异常。
+- 证据：parser APIs以`luaL_error/error`报告bounds/format问题，调用点无`pcall/xpcall`或finally标broken。只有`read_packet` I/O nil和write failure显式设置broken；`cmt.__gc`只close fd，不更新pool counter。`conn_close`默认把`is_broken=false`连接复用。
+- 根因：error model混用return-value与exception，但资源/health transition只覆盖前者；缺少“开始解析peer response后，任意非成功退出都fatal”的统一guard。
+- 建议解法：在connect/login/query最外层使用protected cleanup guard：创建后立即登记connecting资源，任意异常原子标broken、物理关闭、递减capacity并转换成structured ERR；只有完整消费且验证终态后commit健康状态。C codec可改为`nil,error`，但仍需finally防守应用/runtime异常。
+- 回归测试：修复阶段在每个handshake/prepare/column/row字段边界截断并触发各codec error，断言无异常越出public API、fd/open_count恢复、连接不入idle，后续query新建干净连接。当前不生成畸形packet。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1802,6 +1813,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL global/per-connection prepared caches均无界且从不COM_STMT_CLOSE，高基数SQL可耗尽client/server资源，记录为`MYSQL-008`；未生成高基数SQL。
 - 2026-08-09：确认MySQL max_packet_size仅写握手、接收与全量result rows/columns没有累计预算，记录为`MYSQL-009`；未生成大result。
 - 2026-08-09：确认MySQL对MORE_RESULTS的OK直接返回、EOF则继续旧row parser，剩余response可污染归池连接，记录为`MYSQL-010`；未创建stored procedure。
+- 2026-08-09：确认MySQL codec/unpack异常不进入统一fatal cleanup，login泄漏open_count、query把反同步连接归池，记录为`MYSQL-011`；未发送畸形packet。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
