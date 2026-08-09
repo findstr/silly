@@ -741,6 +741,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：写入sendbuf前原子验证全部组件：method逐octet符合`tchar`且非空；request-target拒绝SP/HTAB/CR/LF/NUL/CTL并按method/context验证origin/absolute/authority/asterisk form；URL入口同时拒绝URI不允许的原始控制字符。验证失败必须保证零字节写入、stream不可复用状态明确；不要用percent-encode CRLF来掩盖已非法输入。
 - 回归测试：修复阶段枚举method/target的0..31与127 octet、SP/HTAB、CRLF组合、合法扩展method、CONNECT authority和OPTIONS `*`；断言非法输入在任何flush前失败且peer收不到字节，合法目标wire保持精确。当前不发送注入内容。
 
+### HTTP1-012 — P2 — `101 Switching Protocols` 后连接仍进入 HTTP keepalive/reuse 路径
+
+- 状态：已确认；101终态、client pool release与server loop的确定性静态核对。本轮不执行Upgrade握手。
+- 规范：RFC 9110 §7.8规定101表示连接已经切换到响应Upgrade字段指定的协议，server发送101后即继续使用新协议；HTTP client也必须按新协议处理，不能再把该连接当普通HTTP/1持久连接复用。
+- 位置：client把101视为final在`lualib/silly/net/http/h1.lua:604-627`；bodyless framing在`:94-100,512-553`；pool release条件在`:710-729`；server响应后继续HTTP循环在`:758-798,818-890`。
+- 触发：合法Upgrade请求获得101，或peer对普通请求发送未验证的101；response没有`Connection: close`，request也保持默认keepalive。新协议字节可在101后立即到达。
+- 影响：client将101设为无body/eof，stream close时既不是CONNECT、eof-delimited也没有close token，因而把已切换协议的socket放回H1 pool；下一HTTP请求会写入新协议连接，并把对端的新协议数据误作status-line/header。server侧`respond(101)`后同样回到`conn:read("\n")`解析HTTP。结果是协议状态混淆、请求失败、残留字节污染后续response边界及连接资源泄漏。
+- 证据：`client_waitresponse`的终止条件显式为`status>=200 or status==101`；`bodyless_response`把所有1xx设为无body。`h1c.close`的broken表达式没有`status==101`或upgrade状态；`httpd`结束handler后只看stream completeness和request `Connection: close`，没有101分支或hijack ownership transfer。
+- 根因：实现只把101当作特殊的“最终无body status”，没有把它建模为transport ownership/协议状态转换。
+- 建议解法：先严格验证request/response的Connection/Upgrade token匹配；101成功时从HTTP parser/pool永久摘除socket，并通过显式`hijack/upgrade` API把连接所有权恰好一次交给新协议handler。若调用方不接管则立即关闭；收到非请求升级对应的101应标记broken并失败。server发送101后必须退出HTTP loop。
+- 回归测试：修复阶段覆盖合法upgrade接管、未请求101、缺失/不匹配Upgrade、101后立即新协议字节及stream GC；断言连接从不回H1 pool、server不再读HTTP、所有权只交接一次。当前不运行Upgrade互操作。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -2071,7 +2083,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为159项：P0为0，P1为72，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 11、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为160项：P0为0，P1为72，P2为84，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 12、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2216,3 +2228,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster完整帧ring与handler并发无count/byte/admission上限，单个2MiB read可放大为约十万排队帧/慢task，记录为`CLUSTER-011`；未发送burst。
 - 2026-08-09：确认cluster收到4-byte合法length即按完整body预分配，默认每连接可占128MiB且无partial deadline/global budget，记录为`CLUSTER-012`；未发送partial frame。
 - 2026-08-09：确认HTTP/1 sender把未验证method/path直接格式化进request-line，literal CRLF可注入字段或第二请求，记录为`HTTP1-011`；未发送注入内容。
+- 2026-08-09：确认HTTP/1把101仅视为final bodyless response，client可把升级连接归池且server继续HTTP parse loop，记录为`HTTP1-012`；未执行Upgrade。
