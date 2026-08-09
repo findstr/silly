@@ -911,6 +911,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：checked地将TTL秒转成毫秒，使用monotonic clock和合理jitter，在发送时立即设置下一次/in-flight期限，收到response再按server TTL校准；对TTL<=0移除并通知调用方，对超时/断流采用有上限backoff和lease-lost callback。避免所有lease在同一tick同步爆发。
 - 回归测试：修复阶段用虚拟clock覆盖TTL 1/2/3/60/3600、response立即/延迟/丢失和多lease jitter；断言发送频率单位正确、每lease至多一个in-flight、失联可见且无同步风暴。本轮不做压力重现。
 
+### ETCD-005 — P1 — watch 输出使用无界队列，慢/弃用 consumer 可耗尽进程内存
+
+- 状态：已确认；watch receive、channel queue和consumer生命周期静态核对。本阶段不生成高速watch事件。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)把watch定义为持续的server-streaming event source；client必须为consumer速度与持续输入之间定义背压、上限或可见的取消策略，不能让网络peer决定无限驻留内存。
+- 位置：每个watch创建channel在`lualib/silly/store/etcd.lua:568-600`，recv无条件push在`:213-240`；channel queue在`lualib/silly/sync/channel.lua:20-49`，只有显式read才pop在`:52-73`。
+- 触发：应用读取watch慢于key更新速率、暂时停止读取但忘记cancel，或创建watch后丢弃返回对象；server继续发送合法event responses。
+- 影响：recv task持续解码并把每个response及其events/value strings保存在Lua queue，没有条数、字节或时间预算，也不会通过HTTP/2 flow control向server施加per-consumer背压。单个高频prefix watch即可持续增长heap直至OOM；多个watch共享stream时，一个无人消费的watch不会阻塞recv，因而能在其他watch看似正常时隐蔽积累。
+- 证据：`channel.push`在没有blocked reader时直接`qpush`，API没有capacity参数或push-wait；`watch_recv_task`忽略push返回值且从不检查queue length/bytes。watcher只在显式`cancel()`、server canceled或整个client close时关闭，Lua metatable没有`__gc/__close`，而`c.watchers[id]=w`又保持强引用，使丢弃对象也无法GC触发清理。
+- 根因：用通用unbounded MPSC channel桥接network stream和application stream，却未给长期watch建立ownership与backpressure contract。
+- 建议解法：提供可配置且默认有界的event/byte budget；可选择阻塞stream recv以利用HTTP/2 flow control、合并只保留安全progress state，或超限时取消该watch并返回RESOURCE_EXHAUSTED。watcher实现幂等`close/cancel`和`__close`，文档要求结构化生命周期；若无法可靠在`__gc`中发送cancel，至少从client registry移除并在后台generation-safe清理。
+- 回归测试：修复阶段让一个watch不读、另一个正常读并持续写大value，监测queue/heap上界、HTTP/2 window与取消结果；覆盖显式cancel、scope close、丢引用GC和client close，确保response只释放一次。本轮不做流量压力测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
