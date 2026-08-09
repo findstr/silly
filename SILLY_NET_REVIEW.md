@@ -1030,16 +1030,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：lenenc decoder返回`uint64_t`加明确null/status；每个长度用途先检查`value <= SIZE_MAX`和本地配置上限，再用`value <= chk.len - chk.pos`，仅在成立后推进。提供`binary_read_slice`统一返回pointer/size并禁止调用者直接修改pos；fixed-width检查也改为subtraction形式。应用整数若超Lua范围用string/decimal或显式overflow error。
 - 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`、使pos刚好/差1/wrap的值，并逐一经过OK、ERR、column及各string field；ASan/UBSan下只能得到structured protocol error，无大allocation/OOB。当前不生成lenenc输入。
 
-### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
+### MYSQL-001 — P1 — idle/lifetime/GC 销毁连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
-- 位置：取连接时淘汰expired idle在`lualib/silly/store/mysql.lua:1018-1037`；max-open判断/等待在`:1038-1047`；周期清理在`:1082-1115`；只有普通物理close递减在`:1008-1013`。
-- 触发：配置`max_open_conns > 0`并同时配置`max_lifetime`或`max_idle_time`，让曾返回pool的连接被`conn_new`或`pool_clear`判定过期关闭；之后请求新连接。
-- 影响：每淘汰一个fd，`open_count`仍保留幽灵连接。计数达到max后，新调用会进入`task.wait()`，但不存在相应checked-out连接可归还并唤醒它；请求永久挂起。重复过期还能让统计与真实资源长期分叉，形成确定性pool不可用。
-- 证据：`:1035`和`:1104`调用`tcp_close`并置`conn.fd=nil`，均无`pool.open_count = ... - 1`；max-open分支只依据该计数。`conn_close`物理关闭路径才递减，淘汰路径未复用它。
+- 位置：取连接时淘汰expired idle在`lualib/silly/store/mysql.lua:1018-1037`；max-open判断/等待在`:1038-1047`；周期清理在`:1082-1115`；leaked lease的GC在`:1235-1245`；只有普通物理close递减在`:1008-1013`。
+- 触发：配置`max_open_conns > 0`并让idle连接因`max_lifetime/max_idle_time`被`conn_new/pool_clear`淘汰；或应用丢失一个未close的checked-out transaction conn，使`cmt.__gc`回收它；之后请求新连接。
+- 影响：每个被这些路径关闭的fd仍在`open_count`保留幽灵连接。计数达到max后，新调用进入`task.wait()`，但不存在相应checked-out连接可归还并唤醒它；请求永久挂起。GC路径本意是回收leak，却只修复OS fd、不修复pool capacity，使一次应用lease遗漏永久毒化pool。
+- 证据：`:1035`、`:1104`与`:1243`都调用`tcp_close`并置`conn.fd=nil`，均无`pool.open_count = ... - 1`；GC甚至已能通过`conn.pool`访问owner但没有更新。max-open只依据该计数。只有`conn_close`普通物理关闭路径递减，其他销毁未复用它。
 - 根因：连接物理销毁散落在多个分支，计数更新不是统一的原子/invariant操作；pool没有assert `open_count == idle + checked_out + connecting`。
 - 建议解法：集中`destroy_conn(pool, conn)`并幂等更新fd、open_count、statement state及waiter调度；所有过期、broken、login失败、pool close路径复用。更稳妥地显式跟踪idle/in-use/connecting集合，并在每次状态转换校验计数；销毁释放capacity后应立即唤醒/授权最早waiter创建连接。
-- 回归测试：修复阶段用max_open=1/2覆盖checkout时过期与timer清理、idle/lifetime同时命中及连续多轮；每轮断言真实fd数、open_count与队列一致，清理后新query不会等待。当前仅静态验证。
+- 回归测试：修复阶段用max_open=1/2覆盖checkout时过期、timer清理、idle/lifetime同时命中、未close lease GC及连续多轮；每轮断言真实fd数、open_count与队列一致，销毁后新query不会等待，并验证waiter按MYSQL-016获得permit。当前仅静态验证。
 
 ### MYSQL-002 — P1 — 不支持 TLS/server identity，full-auth 接受未认证 peer 提供的 RSA key
 
@@ -2591,3 +2591,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL metadata/row loops只识别EOF而不识别ERR，native row decoder又不验证0x00 header，错误包可被解析成列或业务row，记录为`MYSQL-015`；未构造packet。
 - 2026-08-09：扩充`MYSQLC-003`：binary TIME未限定0/8/12长度，非法值会跨列读取或留下尾字节；未构造row。
 - 2026-08-09：确认MySQL broken connection释放open_count后不唤醒capacity waiter，受限pool已有请求可永久等待，记录为`MYSQL-016`；未注入I/O失败或运行barrier。
+- 2026-08-09：扩充`MYSQL-001`：checked-out conn的GC只关闭fd、不递减pool.open_count，与idle/lifetime淘汰同样制造幽灵容量。

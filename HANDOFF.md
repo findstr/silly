@@ -183,7 +183,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQLC-005 | P1 | prepared encoder跨luaL_Buffer扩容持有旧null/type pointer，合法大参数可损坏wire/内存。 |
 | MYSQLC-006 | P2 | row只按column alias建表且无ordinal模式，duplicate columns会静默覆盖。 |
 | MYSQLC-007 | P1 | unsigned64 lenenc经signed/可wrap cursor运算可绕过边界并进入native OOB read。 |
-| MYSQL-001 | P1 | idle/lifetime淘汰连接不递减open_count，受限pool可永久假满并挂住请求。 |
+| MYSQL-001 | P1 | idle/lifetime淘汰及leaked lease GC均不递减open_count，受限pool可永久假满。 |
 | MYSQL-002 | P1 | driver无TLS/server identity且full-auth信任peer临时RSA key，MITM可读取流量并取得密码。 |
 | MYSQL-003 | P1 | connect/auth/query/pool wait均无deadline/cancel，现有connect_timeout选项被静默忽略。 |
 | MYSQL-004 | P1 | conn归池后旧对象仍可操作且close不幂等，可让多个borrower并发共享同一MySQL stream。 |
