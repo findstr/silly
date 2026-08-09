@@ -829,6 +829,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在connect/login/query最外层使用protected cleanup guard：创建后立即登记connecting资源，任意异常原子标broken、物理关闭、递减capacity并转换成structured ERR；只有完整消费且验证终态后commit健康状态。C codec可改为`nil,error`，但仍需finally防守应用/runtime异常。
 - 回归测试：修复阶段在每个handshake/prepare/column/row字段边界截断并触发各codec error，断言无异常越出public API、fd/open_count恢复、连接不入idle，后续query新建干净连接。当前不生成畸形packet。
 
+### MYSQL-012 — P2 — handshake auth seed 用错 capability 且固定读取 12 bytes
+
+- 状态：已确认；HandshakeV10 layout与parser静态核对。
+- 规范：[MySQL HandshakeV10](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_connection_phase_packets_protocol_handshake_v10.html)按`auth_plugin_data_len`定义part-2长度；[MariaDB connection protocol](https://mariadb.com/docs/server/reference/clientserver-protocol/1-connecting/connection)明确part 2由`CLIENT_SECURE_CONNECTION`控制，而`PLUGIN_AUTH_LENENC_CLIENT_DATA`控制的是client handshake response中auth data的长度编码。
+- 位置：capability constants在`lualib/silly/store/mysql.lua:152-167`；initial handshake解析在`:359-403`；client response flag/format在`:414-465`。
+- 触发：server支持SECURE_CONNECTION/PLUGIN_AUTH但不支持PLUGIN_AUTH_LENENC_CLIENT_DATA，或auth plugin data长度不是代码假定的20-byte seed/12-byte part 2；合法旧版、代理或其他auth plugin可出现。
+- 影响：driver遗漏part 2而用8-byte seed计算native/caching token，或从seed中间解析plugin name，导致合法server认证失败；固定offset还可能把NUL/plugin name切错并触发unpack异常。对未知plugin代码又默认计算mysql_native token却宣告原plugin，进一步制造不一致握手。
+- 证据：`:373`以`CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA`决定是否读取server seed part 2；内部`local len = 12`完全忽略已解析的`auth_plugin_data_len`和SECURE_CONNECTION。之后若PLUGIN_AUTH存在便从该假定offset读取NUL string。
+- 根因：把server handshake字段presence、client response encoding和具体plugin seed长度合并成一个MySQL-8特例。
+- 建议解法：按negotiated capability逐字段、remaining length和advertised auth length解析HandshakeV10；part 2长度使用规范公式并安全处理terminating NUL，再把完整plugin data交给plugin-specific handler。client flags取双方intersection，未知plugin明确拒绝或走实现的auth-switch机制。
+- 回归测试：修复阶段构造SECURE/PLUGIN_AUTH/LENENC三flag组合及auth length 0/9/20/21/其他plugin，分别与MySQL 5.7/8和MariaDB代理互操作；当前不新增handshake fixture。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1827,6 +1839,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL max_packet_size仅写握手、接收与全量result rows/columns没有累计预算，记录为`MYSQL-009`；未生成大result。
 - 2026-08-09：确认MySQL对MORE_RESULTS的OK直接返回、EOF则继续旧row parser，剩余response可污染归池连接，记录为`MYSQL-010`；未创建stored procedure。
 - 2026-08-09：确认MySQL codec/unpack异常不进入统一fatal cleanup，login泄漏open_count、query把反同步连接归池，记录为`MYSQL-011`；未发送畸形packet。
+- 2026-08-09：确认MySQL handshake用CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA决定server seed part 2且固定12 bytes，记录为`MYSQL-012`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
