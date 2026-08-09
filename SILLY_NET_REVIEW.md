@@ -1908,6 +1908,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client table显式处理 PUSH_PROMISE；在本实现始终广告/确认 push=0 的前提下直接 connection PROTOCOL_ERROR。若将来支持 push，则必须解析 promised id、保持 HPACK、校验 associated/promised stream state、authority/safe/cacheable fields和 concurrency，并为 application提供明确接受/拒绝机制。
 - 后续回归条件：修复阶段在 ACK 前/后发送 PUSH_PROMISE，覆盖 stream id 0、invalid promised id、incremental HPACK 与后续 indexed response；当前 disabled模式断言 ACK 后统一 GOAWAY(PROTOCOL_ERROR)，绝不静默继续。本轮不新增测试代码。
 
+### H2-027 — P1 — server handler 异常绕过 stream 收尾，永久泄漏并发配额
+
+- 状态：已确认；handler task、异常框架与stream close bookkeeping的确定性静态核对。本轮不触发业务异常。
+- 位置：server handler wrapper在`lualib/silly/net/http/h2.lua:1549-1558`，stream发布/fork在`:1621-1632`；唯一正常配额归还位于`S.close`的`:1042-1079`；task异常处理只记录并关闭coroutine在`lualib/silly/task.lua:47-64`。
+- 触发：任意HTTP/2 request使业务handler抛Lua error，例如路由代码处理特定输入时异常；同一连接连续触发，默认本地并发额度为100。
+- 影响：异常后的stream没有response END_STREAM或RST，peer request永久等待；对象继续被`ch.streams[id]`强引用，`ch.streamcount`不递减，request/body/header buffer与状态也无法释放。重复约100次后该连接永久达到并发上限，后续合法request被REFUSED_STREAM；大量连接可把应用级异常放大为持续内存/task/连接可用性问题。
+- 证据：`server_handler`直接调用`ch.handler(s)`，其后的`s:closewrite()`和`s:close()`不是protected/finally。`task_resume`遇到error仅log、`coroutine.close`并删除task metadata，不认识H2 stream；参数`s`也不是Lua to-be-closed local，`stream_mt.__close`不会自动执行。stream仍在channel map中，唯一`streamcount--`位于未到达的`S.close`。
+- 根因：协议资源所有权交给裸application callback，但cleanup依赖callback正常返回；task异常边界与H2 stream生命周期之间没有幂等的finally适配层。
+- 建议解法：server wrapper以protected call执行handler，并在所有返回/异常路径进入单一finally：若尚未发送final response，可选择受控500或RST_STREAM(INTERNAL_ERROR)；终止pending read/write，随后幂等close并归还quota。记录错误时带stream/request context但限制日志；cleanup自身失败也不能跳过map/count释放。不要让一个stream异常升级为connection failure。
+- 回归测试：修复阶段让handler在读body前后、respond后、write pending及closewrite中分别抛错，覆盖同连接超过并发上限次数；断言每次peer都收到明确终止、`streams/streamcount/buffer/waiter`回到基线、后续正常stream成功且每项资源只释放一次。当前不触发业务异常。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2177,7 +2188,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为168项：P0为0，P1为73，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为169项：P0为0，P1为74，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 27、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2331,3 +2342,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 sender会原样发送TE+CL并因CL优先而直写未分块正文，形成wire framing歧义，记录为`HTTP1-016`；未生成或发送歧义报文。
 - 2026-08-09：确认HTTP/1 bodyless response集合遗漏205，client可在合法keepalive 205上等待EOF且server可发送违规content，记录为`HTTP1-017`；未发送205响应。
 - 2026-08-09：确认HTTP中英文文档承诺不存在的respond close参数，且H1/H2实际返回契约不一致，记录为`DOC-003`；未调用HTTP API。
+- 2026-08-09：确认HTTP/2 server handler异常会绕过closewrite/close，stream map与并发配额永久滞留，记录为`H2-027`；未触发业务异常。
