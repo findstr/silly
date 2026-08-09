@@ -408,6 +408,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先完整构造并验证TLS ctx，再调用`net.tcplisten`；若transport仍可能在后续初始化失败，使用受保护的cleanup guard保证任何异常都关闭fd并删除callback。`new_server_ctx`应返回`nil,error`给`M.listen`而非assert，让公开API保持声明的`listener?, error`契约。accept入口对缺失listener也必须关闭accepted fd而非解引用nil。
 - 回归测试：修复阶段覆盖malformed cert/key、mismatch、invalid cipher和native ctx失败；断言返回`nil,error`而非抛出，端口可立即重新bind，fd/slot/callback恢复基线。另覆盖失败窗口内的late accept，必须关闭accepted fd且无二次异常。当前不创建这些配置复现。
 
+### TLS-008 — P2 — reload 先污染保存配置再构造 ctx，失败时抛异常且无法事务回滚
+
+- 状态：已确认；reload table更新顺序、ctx构造错误路径与双语API契约静态核对。本轮不加载损坏证书或cipher。
+- 位置：`listener.reload`与`new_server_ctx`在`lualib/silly/net/tls.lua:326-397`；公开返回契约及示例在`docs/src/reference/net/tls.md:392-438`和英文同名文档。
+- 触发：对活动listener调用`reload(conf)`，其中新cert/key不匹配、PEM损坏、cipher/ALPN无效或native ctx构造失败；也包括只覆盖部分字段的增量reload。
+- 影响：调用不会按文档返回`false,err`，而是由`assert(c,err)`抛出Lua异常。更重要的是，代码已把conf字段原地写入`l.conf`，但`l.ctx`仍是旧的可用context，形成“运行旧策略、保存新/坏配置”的混合状态；调用方捕获异常后若以`reload()`重试或只修正一个字段，其余已污染字段会再次参与构造，可能长期无法完成证书轮换。监控若只检查返回值分支甚至记录不到reload失败。
+- 证据：reload先取`old_conf=l.conf`并以`for k,v in pairs(conf) do old_conf[k]=v end`直接提交修改，然后才调用`l.ctx=new_server_ctx(old_conf)`。helper内`ctx.server`失败不是返回给reload，而是`assert`非局部退出；因此赋值到`l.ctx`未发生、对old_conf的修改却无法撤销。双语reference和两处示例都使用`local ok,err=listener:reload(...)`及if/else失败分支，该分支对配置错误不可达。
+- 根因：配置更新和runtime资源替换没有copy-build-commit事务；内部helper用异常表达普通配置错误，与公开result API冲突，也绕过了rollback。
+- 建议解法：从当前conf深/受控复制出candidate，合并并完整校验；`new_server_ctx`返回`ctx?,err?`而非assert。只有candidate ctx成功后才原子替换`l.ctx/l.conf`，失败返回`false,err`且旧ctx/旧conf保持完全不变。敏感错误不泄露key内容，并与TLS-002一起让旧ctx由在途连接保活到安全释放。
+- 回归测试：修复阶段覆盖坏PEM、key mismatch、invalid cipher/ALPN、部分更新失败后修复重试及无参reload；断言无异常、旧连接/新连接策略明确、失败后conf深度相等、下一次合法reload成功。当前只做控制流核对。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2488,7 +2499,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为195项：P0为0，P1为83，P2为104，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为196项：P0为0，P1为83，P2为105，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2678,3 +2689,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`DOC-001`：双语文档错误宣称grant/revoke自动管理keepalive且newclient失败抛异常，中文还把持续keepalive注册误写成单次发送；未运行文档示例。
 - 2026-08-09：确认etcd双语“事务性操作”示例只执行独立get/put且wrapper没有txn方法，无法提供标题承诺的原子多键更新，记录为`DOC-006`；未运行示例或并发writer。
 - 2026-08-09：确认HTTP client close可与在途DNS/TCP/TLS/H2建连交错，返回后迟到连接仍发布到H1/H2 pool并继续request，记录为`HTTPC-005`；未建立连接或运行barrier。
+- 2026-08-09：确认TLS reload先原地污染保存配置再构造ctx，失败会assert且留下旧ctx与新坏conf的混合状态，记录为`TLS-008`；未加载损坏配置。
