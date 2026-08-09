@@ -899,6 +899,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每个watch维护独立的confirmed revision：created response用`header.revision+1`建立初始恢复点，progress response在语义安全时推进；普通非fragmented response完整处理后推进到header/最后event之后。若支持fragment，先缓冲/交付同revision所有fragment并只在final fragment后commit checkpoint；否则禁止该option。重连始终使用已commit的inclusive revision，并在compaction时显式失败而非跳过。
 - 回归测试：修复阶段在created后首事件前、progress后、filter-only revision后及每个fragment边界断流，重连后按revision/key序列核对无gap/dup；另覆盖compaction和重复response。当前仅记录静态时序。
 
+### ETCD-004 — P1 — lease TTL 秒值被当作毫秒调度，keepalive 可形成集群请求风暴
+
+- 状态：已确认；官方TTL单位、Silly clock单位和发送循环静态核对。不运行长TTL/多lease压力测试。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)明确LeaseGrant/LeaseKeepAlive response的TTL单位均为秒；client通常只需在TTL到期前按其一部分间隔续租。
+- 位置：response调度在`lualib/silly/store/etcd.lua:143-159`；500ms发送loop在`:161-186`；初始keepalive state在`:539-555`；`time.now`毫秒来源在`lualib/silly/time.lua:18-26`和`src/timer.c:218-227,366-381`。
+- 触发：对任意有效lease调用`keepalive`；server返回TTL=60时，代码设置next=now+20，含义实际是20毫秒而非20秒。TTL=1或2时整数除法得到0，response一到便再次到期。
+- 影响：sender每500ms扫描一次，因next几乎总已到期而对每个lease约每秒发送2次请求；TTL越长，相对放大越严重，例如3600秒lease预期约20分钟一次却变成约0.5秒一次。大量client/lease会给etcd leader、gRPC stream和本进程CPU/带宽制造持续请求风暴，反而降低协调集群可用性。
+- 证据：`time.now()`建立在毫秒monotonic clock上，`sleep`/常量也以毫秒为单位；`lease_recv_keepalive`却直接执行`now+resp.TTL`和`now+resp.TTL//3`，没有乘1000。发送成功后也不预先推进`nextkeepalive`，所以response稍慢时同一lease仍会每个500ms tick重复发送；`deadline`写入后从未被读取，不能抑制过期/失联项。
+- 根因：wire API的seconds domain未经显式转换进入内部millisecond scheduler，并且keepalive state没有in-flight/backoff/deadline状态机。
+- 建议解法：checked地将TTL秒转成毫秒，使用monotonic clock和合理jitter，在发送时立即设置下一次/in-flight期限，收到response再按server TTL校准；对TTL<=0移除并通知调用方，对超时/断流采用有上限backoff和lease-lost callback。避免所有lease在同一tick同步爆发。
+- 回归测试：修复阶段用虚拟clock覆盖TTL 1/2/3/60/3600、response立即/延迟/丢失和多lease jitter；断言发送频率单位正确、每lease至多一个in-flight、失联可见且无同步风暴。本轮不做压力重现。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
