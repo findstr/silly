@@ -1335,6 +1335,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为每次keepalive stream建立generation-scoped session，recv或send任一侧失败都原子标记该generation关闭、显式close stream并唤醒/结束另一侧；只有当前generation可更新共享状态。重连前完成旧session收尾，`client:close()`取消并等待唯一owner；发送调度与ETCD-004一并改为单owner、单lease至多一个in-flight。
 - 回归测试：修复阶段覆盖read-first failure、write-first failure、空keepalive集合、多个lease及连续多次重连；以task/stream计数和记录的lease ID断言任意时刻只有一个generation sender、旧stream均关闭、无重复发送且close后全部task退出。当前不执行断链测试。
 
+### ETCD-011 — P2 — watch 公开的 `wait`/`limit` 参数被 protobuf 静默丢弃
+
+- 状态：已确认；LuaLS公开签名、watch request构造、protobuf descriptor与encoder unknown-field行为静态核对。不建立watch stream。
+- 位置：公开参数注解及原table直传在`lualib/silly/store/etcd.lua:557-600`；WatchCreateRequest字段集合在`lualib/silly/store/etcd/v3/proto.lua:2316-2361`；protobuf table encoder忽略未知key在`luaclib-src/pb.c:1737-1756`。
+- 触发：调用方根据IDE/LuaLS签名传`wait=true`，或传`limit=N`期望watch在特定变化前等待/最多交付N个event；请求其余字段合法。
+- 影响：API正常返回watcher且没有参数错误，但wire上两个字段均不存在。`wait`不改变本来就由`read()`阻塞的stream语义，`limit`也不会在N个event后cancel或停止交付；依赖有限事件数做资源控制、一次性观察或业务收尾的调用会无限存活，并可进一步暴露ETCD-005的无界队列风险。
+- 证据：`M.watch`只转换prefix/filter并写入watch_id，随后把同一req作为`create_request`发送；代码从不读取、删除或实现`wait/limit`。官方WatchCreateRequest仅有key、range_end、start_revision、progress_notify、filters、prev_kv、watch_id、fragment；descriptor不存在wait/limit，通用encoder对查不到field的table key直接跳过。中英文reference也未列这两个选项，说明源码类型契约与文档/wire三者分叉。
+- 根因：把其他KV/watch封装曾使用的便利参数留在公开注解中，却没有显式API schema、request builder或unknown-option验证来阻止无效字段进入protobuf table。
+- 建议解法：若无明确兼容需求，从签名删除`wait/limit`并对未知字段fail fast；若保留便利能力，定义精确本地语义：watch创建本身始终异步，`limit`由watcher在完整event边界计数并generation-safe cancel，错误/compaction是否计数需文档化。不要伪造非标准wire字段，并与ETCD-002一起改为新建request而非原地复用caller table。
+- 回归测试：修复阶段对公开watch option逐字段抓取编码table/wire，断言所有接受字段都生效、未知字段返回参数错误；若实现limit，覆盖单response多event、fragment、cancel竞态和0/负值。当前只做schema静态比对。
+
 ### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2422,7 +2433,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为189项：P0为0，P1为82，P2为100，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 10、DOC 5。
+当前滚动统计为190项：P0为0，P1为82，P2为101，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 11、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2604,3 +2615,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL broken connection释放open_count后不唤醒capacity waiter，受限pool已有请求可永久等待，记录为`MYSQL-016`；未注入I/O失败或运行barrier。
 - 2026-08-09：扩充`MYSQL-001`：checked-out conn的GC只关闭fd、不递减pool.open_count，与idle/lifetime淘汰同样制造幽灵容量。
 - 2026-08-09：确认etcd LeaseKeepAlive读失败重连时不关闭旧stream或取消旧sender，每轮会再fork发送task且close只覆盖最新stream，记录为`ETCD-010`；未执行断链或并发测试。
+- 2026-08-09：确认etcd watch公开注解中的wait/limit不属于WatchCreateRequest且实现从不消费，编码时被静默丢弃，记录为`ETCD-011`；未建立watch stream。
