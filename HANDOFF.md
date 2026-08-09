@@ -266,7 +266,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 统计口径为141条：P1 68、P2 70、P3 3。模块分布为CORE 6、NET 2、SOCK 12、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
-## 6. 可直接复现的两个问题
+## 6. 已保存的三个重现资产
 
 ### SOCK-003：退出时待发 payload 泄漏
 
@@ -289,6 +289,10 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 ```
 
 关键结果：连续 8 次连接 `255.255.255.255:9`，均立即 errno 101 (`ENETUNREACH`)；`metrics.openfds()` 从 8 增到 16，delta=8。复现脚本以 exit 0 表示成功观察到泄漏。
+
+### SOCK-005：`socket_stat` close/reuse 竞争
+
+脚本：`review-repros/socket_stat_close_race.lua`。普通ASan/UBSan轮次可能正常退出；已有TSAN轮次确认fd/type两条竞争并触发`ntop`断言，详见主报告`SOCK-005`。按用户要求，本轮收口不再重跑。
 
 ## 7. 已定位的重要实现位置
 
@@ -324,7 +328,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 每个issue建议一个修复提交；提交前先把主报告对应条目标为“修复中”，实现后补测试和验证结果，再标为“已修复”。不要一次性改完整层级，否则回归和回滚难以定位。
 
-仍保留的动态资产只有第6节两个既有重现。其余每条主报告末尾已经写明修复阶段回归条件；用户重新授权前不要创建/运行畸形输入、并发barrier或fault injection。
+仍保留的动态资产只有第6节三个既有重现。其余每条主报告末尾已经写明修复阶段回归条件；用户重新授权前不要创建/运行畸形输入、并发barrier或fault injection。
 
 ## 9. RFC/协议审计基线
 
@@ -369,6 +373,7 @@ Silly net首轮全量静态审计已经完成。先完整读取HANDOFF.md和SILL
 SILLY_NET_REVIEW.md
 HANDOFF.md
 review-repros/socket_exit_pending_wlist.lua
+review-repros/socket_stat_close_race.lua
 review-repros/tcp_immediate_connect_fd_leak.lua
 silly/  # 最新审计源码工作副本
 ```
