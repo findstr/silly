@@ -746,6 +746,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：统一`read_message/write_message`：逐physical packet校验expected sequence、累计budget并拼接，直到length `< 0xffffff`；整倍数接受/发送空终结包。每个command显式reset sequence，认证exchange按双向连续规则处理；超过本地/negotiated budget在分配前失败并关闭连接。
 - 回归测试：修复阶段覆盖`0xfffffe/0xffffff/0x1000000/2*0xffffff`、空终结、sequence wrap/skip/duplicate，以及大SQL/BLOB/row双向互操作；当前不创建大payload。
 
+### MYSQL-008 — P1 — client/server prepared statement cache 无界且从不 COM_STMT_CLOSE
+
+- 状态：已确认；cache ownership与server resource静态核对。本阶段不生成高基数SQL。
+- 规范：[MySQL DEALLOCATE PREPARE](https://dev.mysql.com/doc/refman/8.4/en/deallocate-prepare.html)说明未释放statement会触及全局`max_prepared_stmt_count`；[server variable](https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_max_prepared_stmt_count)明确该限制用于防止大量prepare耗尽server内存。
+- 位置：进程级`prepare_pkt_cache`在`lualib/silly/store/mysql.lua:223-238`；per-connection`stmt_cache`创建在`:1057-1073`；query按原始SQL永久缓存在`:876-889`；`COM_STMT_CLOSE`只定义在`:139`，无发送调用。
+- 触发：应用把literal值、动态表/列名、注释或其他高基数字符串拼进SQL，持续调用`query`；多连接pool会在每条physical connection上各prepare一次。
+- 影响：global cache永久保留每个SQL key及完整packet副本，所有connection cache又保留SQL key、metadata和statement id；server端每个session保留对应prepared object，累计可达到全局上限，使本应用及其他client无法再prepare。默认connection lifetime和cache size均无限，形成长期进程/数据库内存DoS。
+- 证据：两张cache都是普通强引用table，无size/TTL/LRU；cache miss无条件COM_STMT_PREPARE并写`cache[sql]=stmt`。除断开整个TCP外没有COM_STMT_CLOSE发送，`COM_STMT_RESET`也未用于eviction。
+- 根因：性能cache没有资源策略，把每个精确SQL字符串当作永久模板；global wire-packet memoization和server statement生命周期互相独立却都无界。
+- 建议解法：默认限制每连接statement count/bytes并采用LRU；evict时发送COM_STMT_CLOSE（它无response）后移除metadata，连接关闭统一清cache。删除global full-packet strong cache或改为严格有界weak/LRU；提供metrics。文档要求值使用placeholder，但不能把安全完全交给caller。
+- 回归测试：修复阶段在max cache N下执行N+k条不同SQL，验证client内存稳定、server Prepared_stmt_count回落、evicted SQL可重新prepare且statement id不误用；多连接与schema invalidation也覆盖。当前不生成高基数SQL。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1737,6 +1749,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL COMMIT/ROLLBACK在server确认前清除本地transaction flag，ERR后仍归池，记录为`MYSQL-005`；未注入transaction failure。
 - 2026-08-09：确认MySQL pool close无参数唤醒capacity waiter后其会fall through新建连接，in-flight connect也不复查closed，记录为`MYSQL-006`；仅作并发时序说明。
 - 2026-08-09：确认MySQL把physical packet当完整message、拒绝zero terminator且不校验sequence，≥0xffffff payload会反同步，记录为`MYSQL-007`；未生成大payload。
+- 2026-08-09：确认MySQL global/per-connection prepared caches均无界且从不COM_STMT_CLOSE，高基数SQL可耗尽client/server资源，记录为`MYSQL-008`；未生成高基数SQL。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
