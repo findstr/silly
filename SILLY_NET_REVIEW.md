@@ -765,6 +765,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：合并重复字段、按逗号/OWS解析并ASCII case-fold每个合法token；presence of close始终优先。HTTP/1.1无close才可持久，HTTP/1.0必须显式keep-alive且完整framing/双方允许；非法option语法使消息失败/连接不可复用。将决定保存为stream的validated persistence状态供所有close路径共用。
 - 回归测试：修复阶段覆盖大小写、OWS、多token、重复字段、同时close+keep-alive，以及HTTP/1.0/1.1×有无CL/TE；断言server循环次数与client pool状态符合规范。当前不运行连接复用测试。
 
+### HTTP1-014 — P2 — `closewrite(data)` 吞掉 write/Content-Length 错误，可发送永久不完整的 message
+
+- 状态：已确认；write/flush/closewrite返回值与client/server完成检查的确定性静态核对。本轮不发送长度不一致消息。
+- 位置：`write`的长度校验及flush在`lualib/silly/net/http/h1.lua:367-419`；`close_write`忽略返回值在`:421-438`；client wrapper无返回且直接标closed在`:684-703`；server只在handler结束后检查在`:790-798,872-890`；高层client忽略closewrite结果在`lualib/silly/net/http/client.lua:351-360`。
+- 触发：显式Content-Length小于/大于`closewrite(data)`累计body，bodyless状态仍传data，或flush时socket write失败。直接stream API允许调用方自设header；高层未来任何header/body归一化遗漏也会进入同一路径。
+- 影响：超长/不允许的data使`write`返回false但`close_write`仍flush header并把stream标成writeclosed；不足长度则直接发送partial body而没有终止chunk/连接。client随后等待response，server依据Content-Length等待永远不会到达的剩余字节，双方在无总deadline时可永久挂起。socket发送失败也只能稍后从`s.err`间接发现，调用`closewrite`本身始终看似成功；server侧会事后断连接但无法让handler知道response被截断。
+- 证据：`:425-427`裸调用`write(s,data)`不接收`ok,err`；`:428-437`无条件flush。`h1c.closewrite`没有return语句并无条件`s.writeclosed=true`。完整性检查`check_close_error`只在stream close/server handler返回后执行，client在`:635-681`等待response前不调用它，无法阻止已知不完整request。
+- 根因：closewrite被当作best-effort finalizer而非可失败的状态转换，发送错误、framing invariant和资源终止没有统一的原子finish函数。
+- 建议解法：`closewrite`返回`boolean,error`并传播`write/flush`失败；在写任何final bytes和进入response wait前验证fixed-length累计值恰好相等。失败时将stream标broken、关闭H1连接且禁止归池，不能发送一个已知不完整message；server handler也必须收到失败。高层client必须检查结果并立即返回。
+- 回归测试：修复阶段覆盖CL精确/少1/多1、分多次write后close、bodyless data、chunked final write以及socket write失败；断言错误同步返回、对端不会无限等、连接不复用且错误只完成一次。当前不发送长度不一致消息。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -2095,7 +2106,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为161项：P0为0，P1为72，P2为85，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 13、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为162项：P0为0，P1为72，P2为86，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 14、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2242,3 +2253,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 sender把未验证method/path直接格式化进request-line，literal CRLF可注入字段或第二请求，记录为`HTTP1-011`；未发送注入内容。
 - 2026-08-09：确认HTTP/1把101仅视为final bodyless response，client可把升级连接归池且server继续HTTP parse loop，记录为`HTTP1-012`；未执行Upgrade。
 - 2026-08-09：确认HTTP/1 Connection只做精确close字符串判断且忽略version，token list/大小写/重复及HTTP/1.0默认关闭均失效，记录为`HTTP1-013`；未运行复用连接。
+- 2026-08-09：确认HTTP/1 closewrite吞掉write失败且不在response wait前验证fixed-length完整，已知不完整request可造成双方永久等待，记录为`HTTP1-014`；未发送长度不一致消息。
