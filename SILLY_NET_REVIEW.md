@@ -1206,6 +1206,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：实现显式result state machine：每个read先统一识别ERR并终止，metadata只接受合法ColumnDefinition和规定terminator，row phase只接受0x00 binary row及合法terminator/ERR；未知type标protocol-fatal并关闭。所有native parser验证header/type，完整response验证后才允许lease归池。
 - 回归测试：修复阶段在首response、每个column位置、metadata terminator前后、首/中/末row注入合法ERR及未知type；断言ERR结构化返回、绝不生成row、连接按同步状态关闭/不归池，随后marker query不串线。当前不注入packet。
 
+### MYSQL-016 — P1 — broken connection 释放 capacity 后不唤醒 waiter，受限 pool 可永久停住
+
+- 状态：已确认；max-open acquire queue、broken return与capacity accounting的确定性静态时序。本轮不注入I/O失败或运行并发barrier。
+- 位置：capacity wait在`lualib/silly/store/mysql.lua:1016-1055`；healthy handoff与broken physical close在`:985-1014`；query lease自动归还在`:1173-1189`。
+- 触发时序：配置`max_open_conns=1`；task A取得唯一connection执行query，task B进入`waiting_for_conn`并`task.wait()`；A发生read/write failure使`conn.is_broken=true`，scope收尾调用`conn_close(A)`。
+- 影响：broken fd和`open_count`被正确释放到0，但B永远没有被唤醒去创建替代connection；若没有第三个新请求，B永久挂起。即使第三个请求C后来看到count=0并成功建连，B也要等C归还后才可能取得connection，形成违反队列顺序的饥饿和无谓延迟。单次连接故障可令已有业务请求停滞。
+- 证据：`conn_close`只有在`not pool.is_closed and not conn.is_broken`的healthy分支才检查`waiting_for_conn`并wake一个coroutine；broken/closed分支直接`open_count=open_count-1`、关闭fd后return，没有把“可创建一个新连接”的permit交给waiter。`conn_new` waiter没有timer或其他自唤醒机制，pool_clear也只处理idle数组。
+- 根因：wait queue只支持把现成healthy connection直接handoff，不支持capacity释放事件；计数递减、fd销毁和waiter调度没有由统一pool state transition维护。
+- 建议解法：任何物理销毁导致`open_count`下降后，若pool仍开放且有waiter，应以structured capacity permit唤醒最早waiter，让其在generation/closed复查后创建connection；或由pool内单一acquire scheduler统一决定handoff/新建。使用FIFO、可取消waiter，并避免多次释放同一permit造成超max。
+- 回归测试：修复阶段以max_open=1/2覆盖唯一checked-out连接在write/read/login/expiry时销毁且已有1/N waiters；断言最早waiter立即获得create permit、open_count不超限、其余队列可继续推进，并覆盖pool close竞态。当前仅记录时序。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2400,7 +2411,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为187项：P0为0，P1为81，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 15、ETCD 9、DOC 5。
+当前滚动统计为188项：P0为0，P1为82，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2579,3 +2590,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL native lenenc把unsigned64长度塞入signed Lua integer且consumer使用可wrap的pos+len/unchecked advance，可绕过边界进入OOB read，记录为`MYSQLC-007`；未构造packet。
 - 2026-08-09：确认MySQL metadata/row loops只识别EOF而不识别ERR，native row decoder又不验证0x00 header，错误包可被解析成列或业务row，记录为`MYSQL-015`；未构造packet。
 - 2026-08-09：扩充`MYSQLC-003`：binary TIME未限定0/8/12长度，非法值会跨列读取或留下尾字节；未构造row。
+- 2026-08-09：确认MySQL broken connection释放open_count后不唤醒capacity waiter，受限pool已有请求可永久等待，记录为`MYSQL-016`；未注入I/O失败或运行barrier。
