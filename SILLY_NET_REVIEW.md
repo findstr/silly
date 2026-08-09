@@ -614,6 +614,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按connection与global同时限制queued frame count、queued bytes和active handlers；达到高水位立即暂停该fd读取，降到低水位再恢复，超过hard queue cap时以明确错误关闭违规peer。parser应流式交付到有界队列而非先展开整批；dispatcher用固定worker/信号量，保证close/cancel能释放排队项并保持每peer所需顺序/公平性。
 - 回归测试：修复阶段用内存中的frame计数/调度器边界覆盖单个2MiB chunk、连续chunks、慢handler、多peer公平性与close时排队回收；断言active/queued/bytes不越配置水位、read pause/resume配对、无task线性爆炸。当前不构造burst或运行压力测试。
 
+### CLUSTER-012 — P1 — 仅收到 4-byte length 即预分配完整 body，无 partial deadline 或 aggregate budget
+
+- 状态：已确认；frame allocation时点、per-fd incomplete ownership与连接生命周期的确定性静态核对。本轮不发送partial frame或建立慢连接。
+- 位置：默认hardlimit与incomplete结构在`luaclib-src/lcluster.c:11-14,40-61`；length完成后立即整块分配在`:219-279`；partial只在close/ctx GC释放在`:302-311,508-531`；cluster无读/帧timeout和aggregate配置在`lualib/silly/net/cluster.lua:311-329`。
+- 触发：peer只发送一个host-order 4-byte合法length（默认可声明128MiB），不发送body或极慢发送；对多个accepted连接重复。无需先通过业务unmarshal/call，也不要求超过hardlimit。
+- 影响：parser在第4个字节到达时立即`malloc(psize+1)`，默认单连接可占约128MiB并无限等待余下body；少量慢连接即可耗尽进程内存或触发allocator abort，且没有global/per-peer partial bytes、连接数联动或progress deadline。softlimit只在完整发送pack时告警，接收预分配路径不提供保护；把hardlimit调大进一步放大风险。
+- 证据：`push_once`在`hdr_off==4 && buff==NULL`时验证仅`psize<=hardlimit`，随即分配完整长度，再把已到数据复制进去并把node挂入hash；后续没有timer/timestamp。只有收到socket close走`c.clear`或整个ctx GC才释放，正常保持连接时可永久保留。与`CLUSTER-004`不同，本项无需主动close且关注分配策略/总预算，而非teardown遗漏。
+- 根因：length-prefixed parser把对端声明长度当作可信的即时allocation尺寸，并只设置单帧上限；没有增量buffer、资源预留器或slow-frame状态机。
+- 建议解法：为partial frames设置严格的per-connection/global reserved-byte预算和absolute progress deadline；采用分段/增量buffer，至少避免在body到达前提交完整物理内存。reservation失败立即关闭该peer并限速日志，connection admission也计入预算；hardlimit保持合理默认且设置不可越过的安全cap。
+- 回归测试：修复阶段以parser级可控clock/allocation accounting覆盖header-only、每次少量progress、多连接预算竞争、deadline边界、close/reconfigure释放和合法最大frame；断言reserved/committed bytes有界且超时后归零。当前不发送partial frame或做内存压力。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2048,7 +2059,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为157项：P0为0，P1为70，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 11、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为158项：P0为0，P1为71，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2191,3 +2202,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster.send发送普通request且wire无one-way标志，正常handler response会变成unmatched ACK，记录为`CLUSTER-009`；未发送消息。
 - 2026-08-09：确认cluster hostname路径硬编码单次A lookup，无AAAA或多地址connect fallback，记录为`CLUSTER-010`；未执行解析或连接。
 - 2026-08-09：确认cluster完整帧ring与handler并发无count/byte/admission上限，单个2MiB read可放大为约十万排队帧/慢task，记录为`CLUSTER-011`；未发送burst。
+- 2026-08-09：确认cluster收到4-byte合法length即按完整body预分配，默认每连接可占128MiB且无partial deadline/global budget，记录为`CLUSTER-012`；未发送partial frame。
