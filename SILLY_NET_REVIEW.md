@@ -863,6 +863,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按negotiated capability逐字段、remaining length和advertised auth length解析HandshakeV10；part 2长度使用规范公式并安全处理terminating NUL，再把完整plugin data交给plugin-specific handler。client flags取双方intersection，未知plugin明确拒绝或走实现的auth-switch机制。
 - 回归测试：修复阶段构造SECURE/PLUGIN_AUTH/LENENC三flag组合及auth length 0/9/20/21/其他plugin，分别与MySQL 5.7/8和MariaDB代理互操作；当前不新增handshake fixture。
 
+### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
+
+- 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)说明Put会创建新的store revision，LeaseGrant在ID为0时由server选择ID，Revoke会删除绑定key；这类mutation的response丢失并不证明请求未执行，client不能把任意错误都视作安全重放信号。
+- 位置：无条件retry loops在`lualib/silly/store/etcd.lua:379-512`，覆盖Put、DeleteRange、Compact、LeaseGrant和LeaseRevoke；配置说明在`docs/src/reference/store/etcd.md:53-63`。
+- 触发：server完成mutation并提交Raft revision后，response在返回client前因连接断开、RST/GOAWAY、client-side parse failure或deadline边界而丢失；任一调用只要得到nil便立即重发相同RPC，且不检查gRPC status、请求类型或是否已经到达server。
+- 影响：Put可产生额外revision/version和重复watch事件；Delete第二次返回0并丢失第一次的deleted/prev_kvs语义；ID=0的LeaseGrant可创建多个不同lease却只向调用方暴露最后一个，形成孤儿lease及其资源；其他mutation也会把“结果未知”伪装成单次成功/最终失败。调用方无法知道实际提交次数，破坏etcd用于协调和状态机的线性化业务语义。
+- 证据：五个method都以`for i=1,self.retry`调用RPC，唯一成功判据是`res`非nil，任何`err`内容均不分类；失败后甚至在最后一次attempt之后仍sleep。请求没有idempotency token、Txn compare guard或固定Lease ID补偿，driver也不返回ambiguous-commit标记。
+- 根因：把“重新建立可用transport”与“重放一个可能已执行的application operation”合并成通用retry模板，没有定义per-method retry safety和gRPC failure stage。
+- 建议解法：默认只自动重试可证明未送达的调用以及安全read；mutation遇到可能已送达的transport failure应返回结构化`outcome_unknown`。需要自动恢复时由调用方使用Txn compare/version guard、稳定Lease ID或业务idempotency key，并仅对明确retryable status按deadline/backoff重试；移除最后一次失败后的sleep并验证retry>=1。
+- 回归测试：修复阶段在Put/Delete/Compact/Grant/Revoke的“发送前、server apply前、apply后response前”三个边界断链，记录revision/watch/lease数量；只有未送达请求可透明重试，模糊提交返回可判定错误，guarded mutation最多生效一次。本轮不做故障注入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
