@@ -699,6 +699,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：明确connect/auth/read/query/acquire timeout默认值，并允许per-operation absolute deadline/cancel；跨所有packet和multi-result使用同一剩余预算。超时后将connection标broken并物理关闭，唤醒capacity waiter；尚未取得连接的waiter可独立移除。open时拒绝unknown opts，避免安全配置静默失效。
 - 回归测试：修复阶段分别停在connect、initial handshake、auth key、header/body、query、pool wait，验证elapsed上界、取消、close协同与capacity恢复；新增断言`connect_timeout`确实传到transport。当前不运行slow peer。
 
+### MYSQL-004 — P1 — conn:close 后原对象仍可用且可重复归池，破坏 connection lease 隔离
+
+- 状态：已确认；pool handoff与公开conn API静态推导。不依赖并发动态复现。
+- 契约：`docs/src/reference/store/mysql.md:486-495`明确`conn:close()`归还连接后对象不可再使用；pool必须保证同一physical MySQL stream任一时刻只有一个有效borrower，release应幂等。
+- 位置：公开connection methods/metatable在`lualib/silly/store/mysql.lua:1224-1246`；`conn_close`归还idle/waiter在`:985-1014`；`conn_new`直接返回同一对象在`:1018-1079`。
+- 触发：事务连接调用`close()`后保留引用并再次`query/ping/commit/close`；或把带`<close>`的变量手动close，scope退出时`__close`再次执行。连接可能已被pool交给另一个等待者。
+- 影响：旧borrower与新borrower可同时向同一fd发送prepared statement并竞争读取response，造成响应错配、事务/用户数据串线、协议反同步和连接崩溃；重复close可把同一conn对象多次加入idle数组或同时交给多个waiter，之后即使守规调用者也会并发复用。`open_count`还可能被重复物理关闭减成错误值。
+- 证据：归池分支不修改`conn.fd`、不设置released/lease id，也不更换caller看到的对象；所有methods只使用`self.fd`，没有checkout校验。`conn_close`无幂等guard，第二次会再次执行rollback/handoff/idle append。
+- 根因：pool内部physical connection对象同时充当可外泄的lease handle，release没有撤销caller capability；对象状态只表示protocol health，不表示ownership generation。
+- 建议解法：分离internal connection与每次checkout的新lease wrapper；wrapper持generation并在每个method校验active，close原子置inactive且幂等，再把internal conn归池。若保留单对象设计，至少维护checked_out/token并确保旧引用无法与新owner共享，但新wrapper更清晰。handoff使用FIFO并为waiter生成新lease。
+- 回归测试：修复阶段覆盖close后每个method、double close、manual close加`<close>`、归池后旧/新引用并发，以及两个idle槽重复同对象检查；断言旧handle只返回closed error、wire上始终单owner且open_count不变。当前仅静态核对。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1686,6 +1698,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
+- 2026-08-09：确认MySQL conn close归池后原Lua对象仍能操作同一fd且close不幂等，旧/新borrower可共享stream，记录为`MYSQL-004`。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
