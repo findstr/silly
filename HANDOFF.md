@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：20个阶段的首轮全量静态审计已完成；共确认141项（P1 68、P2 70、P3 3），无遗留候选。按用户要求，新重现/故障注入/独立peer互操作留到修复阶段。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认142项（P1 68、P2 71、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -116,7 +116,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（141 条）
+## 5. 已确认问题（142 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -198,6 +198,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-010 | P2 | rw_enable先改state再忽略sp_ctrl失败，可使发送永久stall或残留事件CPU busy-loop。 |
 | SOCK-011 | P1 | 任意sockaddr string仅靠assert进入fixed stack op/ntop，可导致abort、stack overflow或OOB read。 |
 | SOCK-012 | P1 | TCP/TLS默认buffer与UDP packet stash无资源上限，慢消费时远端输入可持续耗尽内存。 |
+| SOCK-013 | P2 | nonblocking设置失败只写日志，blocking fd仍进入poller并可能挂死唯一socket线程。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -264,7 +265,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-统计口径为141条：P1 68、P2 70、P3 3。模块分布为CORE 6、NET 2、SOCK 12、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
+当前统计为142条：P1 68、P2 71、P3 3。模块分布为CORE 6、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

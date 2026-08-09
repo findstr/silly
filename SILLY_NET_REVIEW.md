@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：首轮全量静态审计完成；修复阶段动态验证矩阵待执行
+> 状态：首轮全量静态审计完成；第二轮纯静态查漏进行中
 > 审计日期：2026-08-06 至 2026-08-09
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -1111,6 +1111,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为listener/connect/bind提供安全且可配置的默认高/低水位与hard cap；TCP/TLS达到高水位暂停read、低水位恢复，超过hard cap明确关闭/报错。UDP同时限制stash bytes和packet count，配置drop-new/drop-old/error策略并暴露drop metrics；补充worker/per-socket在途消息预算，避免Lua层限流生效前已有大量payload排队。
 - 回归测试：修复阶段分别覆盖TCP、TLS及UDP在handler阻塞/不读取时持续输入；断言内存与packet count有界、TCP/TLS能按水位恢复、UDP按配置丢弃并计数、close会释放stash。当前按要求不新增压力触发。
 
+### SOCK-013 — P2 — 设置 nonblocking 失败只写日志，blocking fd 仍进入事件循环
+
+- 状态：已确认；Unix/Windows wrapper与四类socket创建路径静态推导。本轮纯静态审查，不注入`fcntl/ioctlsocket`失败。
+- 位置：Unix `nonblock`在`src/unix/unix.c:15-31`，Windows版本在`src/win/win.c:14-27`，共同声明为void在`src/unix/unix.h:31-33`、`src/win/win.h:69-73`；调用点在`src/socket.c:809-848,1279-1311,1356-1394,1456-1493`及UDP connect对应路径。
+- 触发：`fcntl(F_GETFL/F_SETFL)`或`ioctlsocket(FIONBIO)`因EINTR、无效/已关闭descriptor、平台资源或driver错误而失败；macOS/Windows accept总走该wrapper，listen、UDP、outbound connect也依赖它。
+- 影响：caller看不到失败并继续pool_alloc、poll registration或同步`connect`。blocking listener/connection/UDP fd在ready状态变化、竞争或部分数据场景下可让accept/recv/send/connect阻塞唯一socket thread；该线程一旦停住，所有连接的I/O、close和新操作都停止。对象状态仍宣称polling，Lua侧没有可见错误。
+- 证据：两平台函数返回void，失败分支只`log_error`后return；所有调用点均无验证。`dolisten/socket_udp_bind`随后直接返回成功，`exec_accept`继续登记accepted fd，`op_tcp_connect`紧接着调用connect；底层syscall因此可能采用blocking语义。Linux accept4路径避免accepted-fd这一支，但listen、UDP和outbound socket仍受影响。
+- 根因：nonblocking被当作best-effort性能选项，而事件驱动状态机实际上要求它是注册前不可违反的不变量。
+- 建议解法：让wrapper返回0/-errno，并处理EINTR重试；每个创建/accept路径必须在失败时关闭fd、回滚pool/op状态并向对应caller报告明确错误，只有成功设置nonblocking后才能发布sid或加入poller。可优先使用`socket(...SOCK_NONBLOCK)`/`accept4`的原子创建形式并保留可靠fallback。
+- 回归测试：修复阶段分别在Unix F_GETFL、F_SETFL及Windows FIONBIO失败点做可控注入，覆盖listen/accept/TCP connect/UDP bind/connect；断言fd关闭、slot/计数回滚、socket thread继续处理marker连接且无double-close。当前不运行注入。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1869,7 +1880,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-首轮静态审计共确认141项：P0为0，P1为68，P2为70，P3为3。模块分布：CORE 6、NET 2、SOCK 12、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为142项：P0为0，P1为68，P2为71，P3为3。模块分布：CORE 6、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -1996,3 +2007,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认 client 在 ENABLE_PUSH=0 获 ACK 后仍因缺少 handler 静默忽略 PUSH_PROMISE并跳过 HPACK，记录为 `H2-026`。
 - 2026-08-09：完成etcd v3静态审查，确认mutation模糊重试、watch revision/重连/背压、lease单位、timeout、range option、unknown watch ID与安全连接共9项；另记录中英文API文档契约偏差1项。
 - 2026-08-09：按用户要求未新增或运行重现、畸形输入和故障注入；首轮全量静态审计收口为141项（P1 68、P2 70、P3 3），无遗留候选，形成五批修复路线。
+- 2026-08-09：开始第二轮纯静态查漏；平台层确认nonblocking设置失败不回传、blocking fd仍会进入事件循环，记录为`SOCK-013`。本轮不注入syscall失败。
