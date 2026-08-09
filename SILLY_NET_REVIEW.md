@@ -559,6 +559,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义版本化wire format，所有u32/u64固定network(big-endian)或明确little-endian并用逐字段codec，禁止raw struct serialization；为旧同端序部署提供显式版本协商/迁移，而非启发式猜端序。同步更正文档的长度、顺序、limit语义。
 - 回归测试：修复阶段使用固定golden byte vectors验证encode/decode，与独立实现互操作；通过字节交换模拟big-endian，覆盖length/session ACK/cmd/traceid及协议版本拒绝。当前不运行big-endian peer。
 
+### CLUSTER-007 — P2 — accept 回调参数错位，incoming peer 的 `remoteaddr` 实际是 listener id
+
+- 状态：已确认；底层event callback ABI与cluster adapter函数形参逐项静态核对。不建立监听连接。
+- 位置：net accept事件以`(fd,listenid,addr)`恢复callback在`lualib/silly/net.lua:168-178`；cluster callback只接收`(fd,addr)`并写入peer在`lualib/silly/net/cluster.lua:147-163`；公开契约在`docs/src/en/reference/net/cluster.md:64-75,81-85`及中文对应位置。
+- 触发：任意客户端连接`cluster.listen`创建的listener；Lua调用多余实参会被静默丢弃，因此不会立即抛错。
+- 影响：`peer.remoteaddr`保存第二实参`listenid`（socket id整数），真实第三实参客户端endpoint被丢弃。accept/call/close回调若用remoteaddr做日志、allowlist、租户映射、限流或连接追踪，会记录/判断listener自身id而非远端身份；多个客户端还可能得到同一错误值。文档和类型注解均承诺string，使问题容易传播到业务层。
+- 证据：`task_resume(t,fd,listenid,addr)`明确传三个业务参数；cluster的`function(fd,addr)`把第二个位置直接赋给`remoteaddr`。现有`test/testcluster.lua:359-377`只断言`accept_addr ~= nil`，socket id满足该断言，未验证string类型或与真实endpoint一致。
+- 根因：net accept ABI增加/保留listener id后，cluster adapter仍沿用二参数签名；Lua宽松实参数量掩盖了接口漂移，测试又只检查存在性。
+- 建议解法：改为`accept=function(fd,listenid,addr)`并把第三参写入`remoteaddr`；若业务需要同时暴露listener，显式保存受验证的listener handle/id而非复用地址字段。为event callback定义共享类型/adapter，避免各模块手写位置参数继续漂移。
+- 回归测试：修复阶段从IPv4/IPv6客户端连接两个listener，断言`remoteaddr`为可解析endpoint string、不同客户端值独立，listener id单独可用且不会进入地址字段；把当前非nil断言提升为类型和值断言。当前不运行连接测试。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -1993,7 +2004,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为152项：P0为0，P1为68，P2为80，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为153项：P0为0，P1为68，P2为81，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 7、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2131,3 +2142,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS公开timeout会在每个CNAME hop及search候选重新计时，不能限制整次lookup/resolve耗时，记录为`DNS-007`；未构造慢resolver。
 - 2026-08-09：确认DNS parser丢弃negative kind并把NXDOMAIN/NODATA均存为qtype entry，name error无法跨type命中，记录为`DNS-008`；未构造negative响应。
 - 2026-08-09：确认DNS中英文reference仍宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突，记录为`DOC-002`；未运行doc示例。
+- 2026-08-09：确认cluster accept adapter少接listener id参数，导致incoming peer.remoteaddr保存listener sid并丢弃真实endpoint，记录为`CLUSTER-007`；未建立连接。

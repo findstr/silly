@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认152项（P1 68、P2 80、P3 4）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认153项（P1 68、P2 81、P3 4）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -153,6 +153,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-004 | P2 | cluster主动close不清C parser的per-fd incomplete buffer，默认单块可滞留至128MiB。 |
 | CLUSTER-005 | P1 | 合法UINT32_MAX hardlimit使receive psize+1及send 4+body回绕，进入小分配/大copy内存破坏。 |
 | CLUSTER-006 | P2 | cluster wire直接复制native整数/struct，大小端不同节点无法互操作且文档格式也与实现不符。 |
+| CLUSTER-007 | P2 | accept adapter参数错位，incoming peer.remoteaddr实际保存listener sid而非客户端endpoint。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
 | URL-002 | P2 | URL显式port绕过supported-scheme校验，HTTP/WS consumer对未知scheme回落明文TCP并发起连接。 |
@@ -275,7 +276,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为152条：P1 68、P2 80、P3 4。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2；以主报告中的编号和证据为准。
+当前统计为153条：P1 68、P2 81、P3 4。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 7、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
