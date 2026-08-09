@@ -1349,13 +1349,13 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 ### ETCD-012 — P2 — `retry` 被当作总 attempt 数，零值会跳过 RPC 并返回 `nil, nil`
 
 - 状态：已确认；中英文配置契约与六个unary retry loop静态核对。不调用RPC或等待重试计时。
-- 位置：配置读取在`lualib/silly/store/etcd.lua:325-349`，Put/Range/DeleteRange/Compact/LeaseGrant/LeaseRevoke循环在`:379-512`；契约见`docs/src/reference/store/etcd.md:45-63`及英文同名文档。
-- 触发：设置`retry=0`表达“首次请求失败后不重试”，或设置任意N并按文档期望一次初始attempt加N次retry；负数和非整数也未被构造器拒绝。
-- 影响：零值时`for i=1,0`完全不进入RPC，method直接返回初始的`nil,nil`，调用方既没有响应也没有错误可诊断；默认5与配置N均少一次实际尝试。每次最终失败后代码还无条件sleep，使已经决定返回的调用额外延迟`retry_sleep`。读写、压缩和lease API因此具有不一致且边界不可用的可靠性/时延契约。
-- 证据：Lua中0为truthy，所以`opts.retry or 5`保留0；六个method都以`for i=1,self.retry`直接控制总RPC调用数，而文档两种语言均写“请求失败时的重试次数”。循环body只在成功时break/return，失败后不判断是否还有下一轮便sleep；没有范围/type校验，也没有在零轮后合成错误。
-- 根因：配置名按“额外retry”设计，循环变量却按“attempt budget”实现，且构造器没有把边界值规范化；retry模板也未区分attempt后的backoff与return。
-- 建议解法：先定义并固定契约。按现有文档应校验`retry`为非负整数，执行一次初始请求并至多额外N次；仅在确实还有下一attempt时sleep。若改用`max_attempts`，应要求至少1并迁移/弃用旧名。所有最终失败必须返回最后一个结构化错误；mutation仍受ETCD-001约束，不能因此扩大盲重试范围。
-- 回归测试：修复阶段以fake service计数覆盖retry=0/1/5、首轮成功、中途成功、全部失败、负数/小数/错误类型；断言attempt数、sleep数、最终error和mutation retry policy。当前只记录控制流。
+- 位置：配置读取在`lualib/silly/store/etcd.lua:325-349`，Put/Range/DeleteRange/Compact/LeaseGrant/LeaseRevoke循环在`:379-512`，完全绕过retry的LeaseTimeToLive/LeaseLeases在`:514-537`；契约见`docs/src/reference/store/etcd.md:45-63`及英文同名文档。
+- 触发：设置`retry=0`表达“首次请求失败后不重试”，或设置任意N并按文档期望一次初始attempt加N次retry；负数和非整数也未被构造器拒绝。另一条路径是调用`ttl()`或`leases()`遇到本可恢复的首次transport failure。
+- 影响：零值时`for i=1,0`完全不进入RPC，method直接返回初始的`nil,nil`，调用方既没有响应也没有错误可诊断；默认5与配置N均少一次实际尝试。每次最终失败后代码还无条件sleep，使已经决定返回的调用额外延迟`retry_sleep`。此外两个只读lease查询始终只尝试一次，即使配置了retry；同一client的读API因此具有不同且未公开的可靠性。读写、压缩和lease API整体形成边界不可用的重试/时延契约。
+- 证据：Lua中0为truthy，所以`opts.retry or 5`保留0；六个method都以`for i=1,self.retry`直接控制总RPC调用数，而`ttl/leases`直接return底层service调用。文档两种语言均把它描述为client级“请求失败时的重试次数”，未列method例外。循环body只在成功时break/return，失败后不判断是否还有下一轮便sleep；没有范围/type校验，也没有在零轮后合成错误。
+- 根因：配置名按“额外retry”设计，循环变量却按“attempt budget”实现，且构造器没有把边界值规范化；各method手写retry导致覆盖漂移，模板也未区分attempt后的backoff与return。
+- 建议解法：先定义并固定契约。按现有文档应校验`retry`为非负整数，执行一次初始请求并至多额外N次；仅在确实还有下一attempt时sleep。若改用`max_attempts`，应要求至少1并迁移/弃用旧名。由共享的method-aware helper覆盖所有安全read并分类status；所有最终失败必须返回最后一个结构化错误。mutation仍受ETCD-001约束，不能因此扩大盲重试范围。
+- 回归测试：修复阶段以fake service计数覆盖全部八个unary method及retry=0/1/5、首轮成功、中途成功、全部失败、负数/小数/错误类型；断言attempt数、sleep数、最终error和mutation retry policy，并确保ttl/leases不再成为例外。当前只记录控制流。
 
 ### ETCD-013 — P2 — client 关闭后 `watch()` 仍报告成功，返回的 watcher 会永久等待
 
@@ -2652,3 +2652,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认etcd retry按总attempt而非文档所述额外重试实现，retry=0会跳过RPC并返回nil,nil且最终失败后仍sleep，记录为`ETCD-012`；未调用RPC。
 - 2026-08-09：确认etcd client关闭后watch仍忽略control-channel push失败并返回成功对象，其read channel没有producer或close路径而永久等待，记录为`ETCD-013`；未执行生命周期交错。
 - 2026-08-09：确认旧etcd watch recv在新stream发布后仍可发送无generation的迟到EOS，manager会误关当前健康stream并再次重连，记录为`ETCD-014`；未注入write failure或调度barrier。
+- 2026-08-09：扩充`ETCD-012`：LeaseTimeToLive与LeaseLeases完全绕过client retry，和六个手写loop共同形成不一致的重试契约；未调用RPC。

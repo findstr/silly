@@ -210,7 +210,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-009 | P1 | etcd wrapper无TLS、CA/client cert或token认证入口，只能连接明文未授权集群。 |
 | ETCD-010 | P2 | lease keepalive重连不关闭旧stream或取消旧sender，可累积重复发送循环与资源。 |
 | ETCD-011 | P2 | watch公开签名中的wait/limit不属于wire schema且实现不消费，编码时被静默丢弃。 |
-| ETCD-012 | P2 | retry被当作总attempt数，零值会跳过RPC返回nil,nil且每个配置均少一次文档承诺的重试。 |
+| ETCD-012 | P2 | retry被当作总attempt数、零值跳过RPC，ttl/leases又完全绕过该client级配置。 |
 | ETCD-013 | P2 | client关闭后watch仍返回成功对象，其control enqueue已失败且read channel会永久等待。 |
 | ETCD-014 | P2 | 旧watch recv的无generation迟到EOS可关闭已发布的新stream并触发额外重连。 |
 | DOC-001 | P3 | etcd中英文文档的timeout、keepalive失联和watch close契约均与实际API不符。 |
