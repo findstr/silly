@@ -688,6 +688,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：实现MySQL规范SSLRequest后、发送credential前的TLS upgrade，提供DISABLED/REQUIRED/VERIFY_CA/VERIFY_IDENTITY（安全默认至少REQUIRED，生产推荐VERIFY_IDENTITY）、trust store、SNI/hostname和mTLS配置；复用修复后的TLS验证能力。非TLS full-auth只在显式允许且server public key已预配置/pinned时发送密码，默认拒绝运行时未认证key retrieval。
 - 回归测试：修复阶段与MySQL 8/MariaDB分别覆盖require_secure_transport、CA/hostname正确与错误、mTLS、TLS downgrade；用不同临时RSA key确认pin失败且client不发送可解密credential。当前不建立MITM。
 
+### MYSQL-003 — P1 — connect/auth/query/pool wait 无 deadline，connect_timeout 选项被静默忽略
+
+- 状态：已确认；配置读取与所有blocking路径静态核对。本阶段不运行slow MySQL peer。
+- 位置：声明的open opts在`lualib/silly/store/mysql.lua:78-90`；packet read在`:303-332`；连接/认证在`:339-774,1018-1079`；pool capacity wait在`:1038-1047`；pool配置构造在`:1138-1160`。
+- 触发：TCP connect长期不完成、server只发送partial handshake/auth/packet、查询永久执行，或max-open耗尽且checked-out连接永不归还；现有调用即使传`connect_timeout`也无效。
+- 影响：调用task无限挂起；受限pool的waiter无界保留且无取消，慢查询占满连接后所有业务级联阻塞。pool close只能唤醒capacity waiters，无法中断正在connect、auth或query的checked-out连接，服务shutdown也可能无法收敛。
+- 证据：`pool_open`不读取任何timeout字段，`conn_new`调用`tcp_connect(pool.addr)`不传opts，`read_packet`两次`tcp_read`均无timeout，`task.wait()`无timer。`test/testmysql.lua:489-502`传`connect_timeout=1`，但目标是本机拒绝端口，测试只接受immediate `connection refused`，未验证elapsed deadline或silent peer。
+- 根因：driver没有absolute deadline/cancel模型，现有pool lifecycle参数只管理idle/lifetime，不管理单次operation；无效配置也未被schema校验拒绝。
+- 建议解法：明确connect/auth/read/query/acquire timeout默认值，并允许per-operation absolute deadline/cancel；跨所有packet和multi-result使用同一剩余预算。超时后将connection标broken并物理关闭，唤醒capacity waiter；尚未取得连接的waiter可独立移除。open时拒绝unknown opts，避免安全配置静默失效。
+- 回归测试：修复阶段分别停在connect、initial handshake、auth key、header/body、query、pool wait，验证elapsed上界、取消、close协同与capacity恢复；新增断言`connect_timeout`确实传到transport。当前不运行slow peer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1674,6 +1685,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
+- 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
