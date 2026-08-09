@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认145项（P1 68、P2 74、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认146项（P1 68、P2 75、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -116,7 +116,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（145 条）
+## 5. 已确认问题（146 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -138,6 +138,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | TLS-004 | P2 | TLS正常close只断TCP、从不发送close_notify，peer无法获得authenticated EOF。 |
 | TLS-005 | P1 | TLS server在业务accept前无期限等待ClientHello，空连接可永久占用fd/SSL/task。 |
 | TLS-006 | P2 | TLS server显式允许TLS1.1、client不设minimum，版本安全基线依赖环境并偏离RFC8996。 |
+| TLS-007 | P2 | TLS listener先于ctx发布，证书/key/cipher配置失败会泄漏listener并留下失效accept回调。 |
 | DNS-001 | P2 | CNAME/SRV/SOA解析可跨越声明RDLENGTH借用后续字节，A/AAAA也接受非精确长度。 |
 | DNS-002 | P1 | DNS response三section被抹平且CLASS丢失，无关低trust记录可覆盖任意名字的既有cache。 |
 | DNS-003 | P1 | DNS新名字TXID恒从1递增且每server长期复用单一UDP source port，伪响应entropy显著不足。 |
@@ -268,7 +269,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为145条：P1 68、P2 74、P3 3。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
+当前统计为146条：P1 68、P2 75、P3 3。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

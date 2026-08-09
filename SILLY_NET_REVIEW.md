@@ -388,6 +388,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client/server默认明确设置minimum TLS 1.2并检查API返回值；可选`min_version/max_version`只接受受支持、安全的枚举，任何legacy override需显式风险开关和告警。分别配置TLS≤1.2 cipher list与TLS1.3 ciphersuites，并在启动时记录最终policy。
 - 回归测试：修复阶段用TLS 1.0/1.1-only peer断言client/server均拒绝，TLS 1.2/1.3成功；覆盖不同OpenSSL major与系统security-level，显式配置错误必须启动失败而非静默回退。当前不启用legacy互操作。
 
+### TLS-007 — P2 — listener 在 TLS context 创建前已发布，配置失败会泄漏并留下失效 accept 回调
+
+- 状态：已确认；Lua语句顺序、低层listener注册与ctx错误行为静态推导。本轮不加载故意损坏的证书。
+- 位置：`net.tcplisten`成功后安装callback在`lualib/silly/net.lua:55-86`；TLS listener创建顺序在`lualib/silly/net/tls.lua:326-365`；accept回调解引用listener在`:209-224`；native证书/key/cipher失败返回在`luaclib-src/ltls.c:256-368,398-456`。
+- 触发：地址listen成功后，`ctx.server`因证书PEM、private key、key mismatch、cipher配置或SSL_CTX创建失败返回`nil,error`；`new_server_ctx`随即`assert(c,err)`抛出。证书内容部署错误是普通配置失败，不要求远端输入。
+- 影响：已注册的TCP listener没有进入`listener_pool`，也没有执行`net.close`，持续占用OS fd、C socket slot和三张net callback表。端口保持监听但调用方只看到Lua异常；若peer随后连接，通用ACCEPT仍调用TLS EVENT，后者对nil `listener_pool[listenid]`读取`lc.ctx`再次异常，accepted连接也无法建立所有权并可能形成孤儿slot。重试listen还会遇到地址已占用。
+- 证据：`M.listen`先执行可yield且完成注册的`net.tcplisten`，只有成功返回fd后才调用`new_server_ctx`；该helper用assert把所有native配置错误升级为非局部Lua异常。唯一构造`new_listener`和保存`listener_pool[fd]`发生在ctx成功之后，两个函数之间没有`pcall`、to-be-closed guard或失败清理。
+- 根因：资源获取顺序与异常安全不匹配：可失败的纯配置构造放在外部可见listener发布之后，且没有统一rollback owner。
+- 建议解法：先完整构造并验证TLS ctx，再调用`net.tcplisten`；若transport仍可能在后续初始化失败，使用受保护的cleanup guard保证任何异常都关闭fd并删除callback。`new_server_ctx`应返回`nil,error`给`M.listen`而非assert，让公开API保持声明的`listener?, error`契约。accept入口对缺失listener也必须关闭accepted fd而非解引用nil。
+- 回归测试：修复阶段覆盖malformed cert/key、mismatch、invalid cipher和native ctx失败；断言返回`nil,error`而非抛出，端口可立即重新bind，fd/slot/callback恢复基线。另覆盖失败窗口内的late accept，必须关闭accepted fd且无二次异常。当前不创建这些配置复现。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -1913,7 +1924,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为145项：P0为0，P1为68，P2为74，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为146项：P0为0，P1为68，P2为75，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2044,3 +2055,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认socket/timer共用flip buffer以signed 32-bit计数并无检查倍增，积压接近表示上限时可进入UB、错误realloc或越界copy，记录为`CORE-007`；未制造大队列或运行内存压力复现。
 - 2026-08-09：确认worker在sid校验后直接设置slot closing，旧close可跨越socket-thread free/reuse把状态写入新generation，记录为`SOCK-014`；未新增并发barrier。
 - 2026-08-09：确认UDP对象不保存bind/connect模式，bound缺destination仍返回成功后静默丢包，connected显式destination又被忽略，记录为`UDP-001`；未发送datagram。
+- 2026-08-09：确认TLS listen先发布TCP listener再构造ctx，证书/key/cipher失败会泄漏listener并留下解引用nil的accept回调，记录为`TLS-007`；未加载损坏证书。
