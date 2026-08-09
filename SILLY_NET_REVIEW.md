@@ -1368,6 +1368,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：入口先检查closed并返回`nil,"client closed"`，再以同一generation/lifecycle锁原子完成enqueue与registry发布；必须检查channel push结果，失败时关闭outch、撤销registry并返回错误。close应阻止新的admission后再关闭manager和已登记watch，并等待owner收尾；watchco退出时清空句柄以便状态可诊断。
 - 回归测试：修复阶段覆盖close前/后watch、watch与close交错、首次watch和已有manager两种状态；断言失败立即可见、没有watcher发布/registry残留/blocked read，并覆盖重复close/cancel。当前不运行生命周期交错。
 
+### ETCD-014 — P2 — 旧 watch recv 的迟到 EOS 可关闭新 generation stream
+
+- 状态：已确认；watch读写task分离、stream替换与无generation控制消息的静态竞态推导。本阶段不注入write failure或调度barrier。
+- 位置：全局EOS sentinel与recv尾部push在`lualib/silly/store/etcd.lua:209-244`；manager关闭、重连、发布新stream及消费EOS在`:245-303`。
+- 触发时序：watch manager向旧stream写create/cancel失败，主动close旧stream并开始重连；旧recv task因此从阻塞read返回nil，但在新stream写入`c.watchstream`、manager执行queue clear之后才恢复并push全局EOS。
+- 影响：manager无法判断EOS来自哪个stream，会把当前的新stream关闭并再次重连；多个旧recv迟到时可连续击落健康generation，造成watch事件窗口扩大、重复创建/取消、额外task/连接 churn，并放大ETCD-003的恢复gap。极端调度或持续控制流量下watch可长时间抖动而无法稳定交付。
+- 证据：`EOS`是所有stream共用的空table，不携带stream/generation。recv在read失败后不检查`stream==c.watchstream`便无条件`c.watchreqc:push(EOS)`；仅收到正常response后才做一次stale-stream比较。manager的EOS分支操作其局部变量`stream`（此时可为新generation），直接close/nil/goto reconnect。重连时的`watchreqc:clear()`只能删除已经排队的旧EOS，无法阻止clear之后才到达的迟到消息。
+- 根因：stream failure事件没有owner identity，读写两侧也没有generation-scoped cancellation/join；用共享channel singleton表示“某个stream结束”破坏了重连前后的因果关联。
+- 建议解法：EOS携带`{stream,generation,error}`，manager仅在消息匹配当前generation时执行failover；旧recv发现自己不再current时只做本地收尾。更稳妥的是让单一session owner管理recv/send，替换前先标旧generation canceled并显式等待其退出；统一幂等`fail_watch_stream`处理close、通知与checkpoint。
+- 回归测试：修复阶段控制旧recv分别在新stream发布前/queue clear前/clear后/首个event后返回，断言迟到EOS不会关闭新stream，当前generation失败仍恰好触发一次重连；覆盖连续两代旧task和client close。当前仅记录竞态，不建立barrier。
+
 ### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2455,7 +2466,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为192项：P0为0，P1为82，P2为103，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 13、DOC 5。
+当前滚动统计为193项：P0为0，P1为82，P2为104，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2640,3 +2651,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认etcd watch公开注解中的wait/limit不属于WatchCreateRequest且实现从不消费，编码时被静默丢弃，记录为`ETCD-011`；未建立watch stream。
 - 2026-08-09：确认etcd retry按总attempt而非文档所述额外重试实现，retry=0会跳过RPC并返回nil,nil且最终失败后仍sleep，记录为`ETCD-012`；未调用RPC。
 - 2026-08-09：确认etcd client关闭后watch仍忽略control-channel push失败并返回成功对象，其read channel没有producer或close路径而永久等待，记录为`ETCD-013`；未执行生命周期交错。
+- 2026-08-09：确认旧etcd watch recv在新stream发布后仍可发送无generation的迟到EOS，manager会误关当前健康stream并再次重连，记录为`ETCD-014`；未注入write failure或调度barrier。
