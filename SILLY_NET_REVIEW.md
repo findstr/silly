@@ -1170,6 +1170,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：建立统一command-response dispatcher，首字节为ERR时调用`parse_err_packet`并返回nil,error，只有OK才调用OK parser，其他type作为protocol error并标broken。native各typed parser也应验证discriminator，形成第二道防线；health check只有完整合法OK才算成功。
 - 回归测试：修复阶段覆盖正常OK、多个合法ERR长度/errno/SQLSTATE、截断ERR及未知首字节；断言ERR永不返回OK、协议异常连接不归池、普通server ERR若响应完整可按明确策略决定是否保持同步。当前不发PING。
 
+### MYSQL-014 — P2 — transaction control 把任意非 ERR packet 当作成功响应
+
+- 状态：已确认；BEGIN/COMMIT/ROLLBACK response discriminator与本地transaction/pool状态的确定性静态核对。本轮不发送transaction命令或构造packet。
+- 规范：COM_QUERY `BEGIN/COMMIT/ROLLBACK` 的命令终局必须按首字节明确区分OK和ERR；任何EOF、LOCAL_INFILE、resultset header或未知类型都不能证明事务状态已转换，必须作为protocol error并丢弃/重置连接。typed packet decoder不能替代上层discriminator。
+- 位置：BEGIN response在`lualib/silly/store/mysql.lua:1191-1221`；COMMIT/ROLLBACK共用实现在`:948-983`；OK/ERR/EOF/LOCAL constants在`:145-150`，native OK parser不验证首字节见`luaclib-src/mysql/lmysql.c:64-109`。
+- 触发：server/proxy在事务控制命令后返回首字节不是OK也不是ERR的packet；也可由先前response未排空/连接反同步导致当前read取得上一命令的metadata、row或terminator。
+- 影响：BEGIN路径直接把连接标为in-transaction并返回给应用，packet若代表resultset还会留下后续metadata/rows，使第一条query读取旧response。COMMIT/ROLLBACK路径已提前把本地状态标为ended，再把任意非ERR送进宽松OK decoder，可能构造假OK或抛异常。连接可带未知事务状态/残余响应归池，造成跨请求结果和transaction串线。
+- 证据：`pool_begin`只写`if first==ERR`，否则不要求`first==OK`、不调用`parse_ok_packet`，直接`conn.is_autocommit=false; return conn`。close-transaction函数同样只特判ERR，所有其他类型均`return parse_ok_packet(data),nil`；C decoder跳过而不校验discriminator。MYSQL-005已覆盖合法ERR前过早改flag，本项覆盖非ERR/非OK类型被错误接受的另一条路径。
+- 根因：command handlers以“不是已知错误”代替“收到并完整验证唯一成功终态”，而typed native decoder缺少自校验，使协议状态提交不是fail-closed。
+- 建议解法：共享严格dispatcher：只有首字节OK且OK packet完整、capability一致时才提交本地transaction transition；ERR返回结构化错误；其他类型一律protocol-fatal、标broken并物理关闭。状态更新必须发生在validator成功后，自动rollback仍需检查结果。
+- 回归测试：修复阶段对BEGIN/COMMIT/ROLLBACK分别覆盖OK、ERR、EOF、LOCAL_INFILE、resultset header、未知byte、截断/尾随OK；只有合法OK改变本地状态，其余连接均不归池。当前不发送控制命令。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2364,7 +2376,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为184项：P0为0，P1为79，P2为98，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 13、ETCD 9、DOC 5。
+当前滚动统计为185项：P0为0，P1为79，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 14、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2539,3 +2551,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认Redis共享连接不隔离MULTI/WATCH会话，其他协程命令可被排入错误事务并改变EXEC结果，记录为`REDIS-008`；未执行事务或并发barrier。
 - 2026-08-09：确认Redis中英文pipeline示例使用实现不存在的out参数且select提示写成恒失败无message的assert，记录为`DOC-005`；未运行文档示例。
 - 2026-08-09：确认MySQL COM_PING response无条件进入OK decoder，合法ERR可被误报为健康或触发codec异常，记录为`MYSQL-013`；未发送PING。
+- 2026-08-09：确认MySQL BEGIN/COMMIT/ROLLBACK把任意非ERR packet当成功并提交本地transaction状态，记录为`MYSQL-014`；未发送transaction命令。
