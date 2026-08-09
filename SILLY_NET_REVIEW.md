@@ -665,6 +665,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用overflow-safe计算null_bytes，在保存slice前验证`null_bytes <= chk.len - chk.pos`；最好新增`binary_read_slice`统一返回受界限约束的pointer/length。拒绝非`0x00`row header，解析所有非null值后还应按协议决定是否要求完整消费packet；任何codec error使连接fatal。
 - 回归测试：修复阶段按column_count 1/6/7/8/9等bitmap边界截断每一个byte，并覆盖空values、全部null和尾随数据；在ASan/UBSan下断言只返回protocol error且无越界。当前不新增packet样本。
 
+### MYSQLC-002 — P2 — BIGINT UNSIGNED 经 signed lua_Integer 返回为负值
+
+- 状态：已确认；C integer conversion与Lua数值范围静态核对。不需要网络复现。
+- 规范：MySQL binary protocol的`MYSQL_TYPE_LONGLONG`配合UNSIGNED flag表示完整64-bit unsigned范围；client不能把`2^63..2^64-1`静默解释为负的signed值，无法原生表示时应返回decimal string/typed value或显式范围错误。
+- 位置：`binary_read_uint64le`在`luaclib-src/mysql/binary.h:107-119`；unsigned LONGLONG dispatch在`luaclib-src/mysql/lmysql.c:343-383`；现有边界测试在`test/testmysql.lua:9-23,128-365`。
+- 触发：prepared SELECT返回值大于`9223372036854775807`的`BIGINT UNSIGNED`，包括常见id/bitmask/counter最大值。
+- 影响：值发生模2^64符号wrap，例如`18446744073709551615`返回`-1`；应用可能进行错误的排序、权限bit判断、游标/主键续查和账务计算，写回时又作为signed LONGLONG发送，造成不可逆数据错误。
+- 证据：reader构造`uint64_t`后以`lua_Integer`返回；parse_field在UNSIGNED分支直接`lua_pushinteger`。64-bit Lua integer只有signed范围，代码没有range check或alternate representation。测试中的`0xFFFFFFFFFFFFFFFF`在Lua同样解释为`-1`，未比较真实decimal语义。
+- 根因：wire unsigned domain被强制映射到较窄的signed native domain，类型签名隐藏了不可表示区间。
+- 建议解法：若值<=LUA_MAXINTEGER可返回integer；否则默认返回精确decimal string或`mysql.uint64` typed userdata/table，并在文档稳定约定。提供显式lossy-number opt-in也必须标注；parameter side增加相同typed value编码能力。
+- 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`及round-trip parameter，分别验证signed与unsigned column；测试用decimal string/byte pattern建立期望，不能再用会wrap的Lua hex literal。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -1766,6 +1778,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认Redis close看不到局部in-flight socket且connect/handshake完成后不复查closed，关闭对象可被复活，记录为`REDIS-005`；并发问题仅作时序说明。
 - 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
+- 2026-08-09：确认MySQL BIGINT UNSIGNED通过signed lua_Integer返回，合法高半区值wrap为负数，记录为`MYSQLC-002`。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
