@@ -1434,6 +1434,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：两种语言统一改为接收pipeline返回值并断言err；若不支持out table就从全部示例移除该形式。`select`改为`error("please specify ...",2)`或`assert(false,"...")`并统一大小写/措辞；更推荐返回明确deprecation error。所有`lua validate`块进入CI执行或至少做LuaLS调用签名检查。
 - 回归测试：修复阶段运行双语Redis validate块，断言pipeline示例实际遍历预期result；直接检查select错误包含迁移提示且stack level指向caller。当前不执行示例。
 
+### DOC-006 — P3 — etcd “事务性操作”示例实际是四个独立 RPC，并不原子
+
+- 状态：已确认；双语示例、wrapper公开method集合与生成KV service静态核对。不运行示例或并发writer。
+- 位置：中文示例在`docs/src/reference/store/etcd.md:947-1002`，英文对应在`docs/src/en/reference/store/etcd.md:957-1012`；wrapper method集合在`lualib/silly/store/etcd.lua:379-604`；底层proto的真实Txn RPC在`lualib/silly/store/etcd/v3/proto.lua:1616-1626`。
+- 触发：用户照“事务性操作”“原子性的多键操作”示例实现计数器或需要all-or-nothing的多键更新；期间存在另一client写入、任一步RPC失败或进程退出。
+- 影响：两个get和两个put各自独立提交，compare与revision没有绑定；并发writer可造成lost update，第二个put失败时只更新第一个key，读到的两值也可能来自不同revision。示例在输出“Counters incremented”时仍可能已破坏多键不变量，而用户因标题和说明相信获得了etcd transaction保证。
+- 证据：示例虽然注明“需要通过底层gRPC客户端”，实际只调用wrapper的`get/put`，没有取得底层service、没有构造Compare/TxnRequest，也没有调用`KV.Txn`。`etcd.lua`创建`self.kv`但公开M没有txn方法；生成proto明确存在Txn RPC，证明示例遗漏的正是原子server operation而非等价封装。
+- 根因：文档把顺序执行多个普通操作误称为事务，示例标题/叙述没有经过原子性语义审查；wrapper对proto能力的覆盖也没有生成式API清单或明确unsupported说明。
+- 建议解法：删除“原子”声明或正式公开`client:txn{compare,success,failure}`并让示例使用单个Txn RPC，以mod_revision/version compare防止lost update；若暂不封装，提供准确的底层service访问方式和完整TxnRequest示例，并突出返回`succeeded`及失败分支。不要用client-side read-modify-write冒充事务。
+- 回归测试：修复阶段doc-test捕获发出的RPC method并断言示例只调用一次KV/Txn；语义回归覆盖compare成功/失败、并发writer、第二操作非法及transport ambiguity，验证同revision/all-or-nothing。当前只核对文本与method表。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2466,7 +2477,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为193项：P0为0，P1为82，P2为104，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 5。
+当前滚动统计为194项：P0为0，P1为82，P2为104，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2654,3 +2665,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认旧etcd watch recv在新stream发布后仍可发送无generation的迟到EOS，manager会误关当前健康stream并再次重连，记录为`ETCD-014`；未注入write failure或调度barrier。
 - 2026-08-09：扩充`ETCD-012`：LeaseTimeToLive与LeaseLeases完全绕过client retry，和六个手写loop共同形成不一致的重试契约；未调用RPC。
 - 2026-08-09：扩充`DOC-001`：双语文档错误宣称grant/revoke自动管理keepalive且newclient失败抛异常，中文还把持续keepalive注册误写成单次发送；未运行文档示例。
+- 2026-08-09：确认etcd双语“事务性操作”示例只执行独立get/put且wrapper没有txn方法，无法提供标题承诺的原子多键更新，记录为`DOC-006`；未运行示例或并发writer。
