@@ -677,6 +677,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：若值<=LUA_MAXINTEGER可返回integer；否则默认返回精确decimal string或`mysql.uint64` typed userdata/table，并在文档稳定约定。提供显式lossy-number opt-in也必须标注；parameter side增加相同typed value编码能力。
 - 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`及round-trip parameter，分别验证signed与unsigned column；测试用decimal string/byte pattern建立期望，不能再用会wrap的Lua hex literal。
 
+### MYSQLC-003 — P2 — 非法 temporal length 返回硬编码 2017 时间并使后续列错位
+
+- 状态：已确认；codec switch静态核对。本阶段不生成非法temporal row。
+- 规范：MySQL binary DATE/DATETIME/TIMESTAMP value只有协议定义的0/4/7/11-byte forms；未知length必须作为protocol error，不能合成与wire无关的成功值，也不能在未知边界继续解析同一row。
+- 位置：`parse_timestamp`在`luaclib-src/mysql/lmysql.c:259-304`；DATE/TIMESTAMP/DATETIME dispatch在`:394-400`。
+- 触发：binary result row中temporal value的length prefix为1、2、3、5、6、8、9、10或大于11；截断/反同步packet也可能使当前位置出现这些值。
+- 影响：driver向应用返回固定`2017-09-09 20:08:09`，可能被当作真实审计、过期、账务或调度时间；default分支没有消费声明的剩余value bytes，下一column从错误offset解析，造成整行字段错配或迟发异常。连接错误状态也不会由C API自动标记。
+- 证据：switch default直接`lua_pushliteral(..., "2017-09-09 20:08:09")`并return；没有`binary_error`、length-specific剩余检查或cursor advance，且DATE路径也会返回含time的该字符串。
+- 根因：开发期placeholder被留在production parser，错误恢复策略试图继续产出row而没有可信的resynchronization boundary。
+- 建议解法：仅接受该field type允许的精确length，先验证对应byte数再读取；任何其他length立即返回structured codec error并使上层connection fatal。另验证month/day/time/microsecond协议范围，避免产生规范外字符串。
+- 回归测试：修复阶段枚举0..255 length，合法forms检查边界值，其余必须失败且不返回partial row/硬编码值；随后marker query必须使用新连接。当前不生成非法row。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -1779,6 +1791,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认RESP array/pipeline把wire null直接赋为Lua nil，槽位与尾部长度消失，合法响应不能无损表示，记录为`REDIS-006`。
 - 2026-08-06：确认MySQL binary row在确认NULL bitmap完整前保存裸pointer并逐bit访问，截断packet可造成C越界读，记录为`MYSQLC-001`；未生成packet。
 - 2026-08-09：确认MySQL BIGINT UNSIGNED通过signed lua_Integer返回，合法高半区值wrap为负数，记录为`MYSQLC-002`。
+- 2026-08-09：确认MySQL temporal codec遇非法length会返回硬编码2017时间且不推进cursor，记录为`MYSQLC-003`；未生成非法row。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
