@@ -603,6 +603,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：DNS/addr层返回有序A+AAAA候选，并在同一absolute deadline下实现RFC 8305风格的受控Happy Eyeballs或至少顺序故障转移；每个失败地址保留诊断，成功地址可按TTL/健康度缓存但不能永久钉死。直接literal继续保持单候选。
 - 回归测试：修复阶段覆盖AAAA-only、A-only、双栈首选成功/失败、多A首个拒绝后次个成功、总deadline和全部失败诊断；用静态可控resolver/connector验证候选顺序。当前不运行解析或连接。
 
+### CLUSTER-011 — P1 — 完整帧队列与 handler 并发均无上限，单个读批次可放大成海量 task
+
+- 状态：已确认；socket read batch、C parser queue与Lua dispatcher fork时序的确定性静态核对。本轮不发送frame burst或运行压力测试。
+- 位置：TCP read buffer为2MiB在`src/silly_conf.h:50`及`src/socket.c:997-1024`；C queue初始/扩容及整批push在`luaclib-src/lcluster.c:12-15,53-61,149-187,219-300`；Lua先fork下一个process再执行可yield handler在`lualib/silly/net/cluster.lua:64-113`；配置仅有per-frame limits在`:311-329`。
+- 触发：一个已连接peer在单个或连续TCP read批次中发送大量最小合法request frame，业务`unmarshal/call`发生异步等待或处理速度低于输入；最小request仅含4-byte length与16-byte request header，甚至无需业务payload。
+- 影响：`c.push`在返回Lua前先解析完整2MiB chunk并为每帧分配body、扩张全局ring，可一次积累约十万帧；随后每个`process`在调用可能yield的handler前先`task.fork(process)`，形成近似每个阻塞request一个task，没有per-peer/global admission、read pause或队列byte cap。单个peer可快速耗尽内存/CPU、扩大trace/log/response队列并拖垮同一worker上的所有业务；128MiB hardlimit对此无效，因为它只检查单帧大小。
+- 证据：`push`的do/while会消费整块data，`push_complete`在ring满时每次增加2048槽且无max count/bytes；`EVENT.data`只在全部push完成后调用一次`process()`。`process`弹出一帧后立即fork successor，再进入`pcall(call,...)`；若handler yield，successor继续对下一帧重复此过程。cluster没有调用`net.readenable`或任何semaphore/concurrency配置。
+- 根因：frame size限制被误当作完整的资源边界，parser、dispatcher和业务执行之间没有带水位的有界队列及所有权反馈；通过fork维持并发却没有配套admission control。
+- 建议解法：按connection与global同时限制queued frame count、queued bytes和active handlers；达到高水位立即暂停该fd读取，降到低水位再恢复，超过hard queue cap时以明确错误关闭违规peer。parser应流式交付到有界队列而非先展开整批；dispatcher用固定worker/信号量，保证close/cancel能释放排队项并保持每peer所需顺序/公平性。
+- 回归测试：修复阶段用内存中的frame计数/调度器边界覆盖单个2MiB chunk、连续chunks、慢handler、多peer公平性与close时排队回收；断言active/queued/bytes不越配置水位、read pause/resume配对、无task线性爆炸。当前不构造burst或运行压力测试。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2037,7 +2048,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为156项：P0为0，P1为69，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 10、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为157项：P0为0，P1为70，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 11、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2179,3 +2190,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster timeout只覆盖send后的response wait，lazy DNS/TCP connect不继承预算且TCP无timer，记录为`CLUSTER-008`；未连接黑洞endpoint。
 - 2026-08-09：确认cluster.send发送普通request且wire无one-way标志，正常handler response会变成unmatched ACK，记录为`CLUSTER-009`；未发送消息。
 - 2026-08-09：确认cluster hostname路径硬编码单次A lookup，无AAAA或多地址connect fallback，记录为`CLUSTER-010`；未执行解析或连接。
+- 2026-08-09：确认cluster完整帧ring与handler并发无count/byte/admission上限，单个2MiB read可放大为约十万排队帧/慢task，记录为`CLUSTER-011`；未发送burst。
