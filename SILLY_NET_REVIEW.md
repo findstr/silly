@@ -113,6 +113,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | SPEC-ID | 等级 | 实现位置 | 角色 | 结论 | 证据 | 现有测试 | 问题编号 |
 |---|---|---|---|---|---|---|---|
 | RFC9112-6.1-TECL-CLOSE | MUST | `lualib/silly/net/http/h1.lua:129-168,818-890` | server | 偏离 | `read_header` 在 TE+CL 共存时删除 CL 并继续；请求处理后仅在解析/handler 错误或 `Connection: close` 时断开，没有记录 TE+CL 并强制关闭 | Test 68 只验证按 chunked 返回 200，未验证响应后关闭 | HTTP1-001 |
+| RFC9112-6.2-TECL-SEND | MUST NOT | `lualib/silly/net/http/h1.lua:342-365,387-438,562-577,761-798` | client/server sender | 偏离 | writer原样输出TE与CL；因CL优先，正文又按固定长度直写而不生成chunk framing | 无sender拒绝TE+CL及零字节输出覆盖 | HTTP1-016 |
 | RFC9112-6.3-CL-LIST | MUST | `lualib/silly/net/http/h1.lua:129-149,512-553,818-848` | client/server | 偏离 | 重复字段被保存为 Lua table，单字段逗号列表保留为字符串；两条路径最终都直接交给 `tonumber`，无法接受全部值合法且相同的列表 | Test 72 只覆盖不同值必须拒绝，未覆盖相同值或 `5, 5` | HTTP1-002 |
 | RFC9112-6.1/6.3/7-TE-LIST | MUST | `lualib/silly/net/http/h1.lua:129-168,512-553,818-848` | client/server | 偏离 | framing 只在字段值精确等于小写单值 `chunked` 时生效；未解析大小写不敏感的 coding 列表，也未判断最后一个 coding | 现有测试只覆盖精确小写单值 `chunked` | HTTP1-003 |
 | RFC9112-7.1/7.1.1-CHUNK-EXT | MUST | `lualib/silly/net/http/h1.lua:174-204` | client/server | 偏离 | parser 只匹配行首十六进制数字，完全忽略该数字到换行之间的剩余字节；缺少分号、非法 token/quoted-string 或任意尾随垃圾均绕过 chunk-size/chunk-ext ABNF | Test 73 只覆盖两个合法扩展；Test 74/75 只覆盖合法 chunk-size | HTTP1-004 |
@@ -809,6 +810,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：实现把每个stream建模为恰好一组response headers，没有“0..N informational + 1 final”的HTTP响应序列；Expect又被作为request发送前的单次特例叠加。
 - 建议解法：建立统一response state machine：client循环消费任意合法1xx，101单独升级，100授权发送content，其余informational暴露callback/忽略后继续；final才锁定headers/body framing。server提供只发送1xx且不关闭write state的`inform` API，并在策略允许时自动/显式发送100；若拒绝则发送final、关闭或安全drain request body。
 - 回归测试：修复阶段覆盖100→200、103→100→200、多个103→final、417无100、Expect timeout，以及server handler读取body/先验证后拒绝；断言无互等、final headers不被1xx覆盖且连接边界正确。当前不运行100-continue互操作。
+
+### HTTP1-016 — P1 — sender 可生成 TE+CL 冲突且正文编码与 `chunked` 声明不一致
+
+- 状态：已确认；共享writer的header选择与body编码路径确定性静态核对。本轮不构造或发送歧义报文。
+- 规范：RFC 9112 §6.2规定sender不得在任何含Transfer-Encoding的message中发送Content-Length；TE+CL是已知request smuggling/response splitting信号，发送前必须消除歧义。参见 [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.2)。
+- 位置：共享`flush_header`在`lualib/silly/net/http/h1.lua:342-365`；body编码与结束在`:387-438`；client request入口在`:562-577`；server respond入口在`:761-798`。
+- 触发：client request header或server response header同时含`content-length`与`transfer-encoding`，包括TE值为`chunked`；这些公开API接受调用方header table，proxy/gateway常会转发或合并外部字段。
+- 影响：wire中同时出现两套边界声明。更严重的是writer因Content-Length分支优先，把`writeexpect`设为数字，之后正文按固定长度原样输出，即使同时声明`Transfer-Encoding: chunked`也没有chunk-size或last-chunk。不同proxy/server按TE或CL划界时会把同一字节流拆成不同message，形成request smuggling、response splitting、cache poisoning或连接 desynchronization；纯endpoint也会收到确定性畸形消息。
+- 证据：`flush_header`先读取CL，只有`elseif`才检查TE，之后`compose_header`仍序列化原header的两字段。`write`仅在`writeexpect=="chunked"`时加chunk framing；CL存在使该条件永远为false。client与server共享这条路径，入口均未在任何字节写出前拒绝冲突。
+- 根因：framing选择只更新内部`writeexpect`，没有把wire header集合、body encoder与RFC mutual-exclusion invariant作为一个原子构建步骤。
+- 建议解法：在写request/status line之前规范化并验证全部framing字段；TE与CL共存立即返回错误且保证零字节输出，或由受信任的高层API明确选择一种并删除另一种。解析TE coding list后让header、encoder、结束标记共享同一不可变framing mode；client/server均复用此validator，错误连接不得归池。
+- 回归测试：修复阶段覆盖client/server×CL+`chunked`/其他TE/重复字段/大小写，以及单独CL和单独chunked正常路径；冲突必须在任何socket write前失败，合法chunked必须含正确size与last-chunk。当前不生成或发送TE+CL消息。
 
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
@@ -2140,7 +2153,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为165项：P0为0，P1为72，P2为89，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为166项：P0为0，P1为73，P2为89，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 16、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2291,3 +2304,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 server无interim response状态，Expect双方可互等；client又把首个102/103误作final，记录为`HTTP1-015`；未运行100-continue交互。
 - 2026-08-09：确认HTTP client pool lookup会为每个origin写入H1/H2空表，DNS/connect失败不回滚且无timer清理，记录为`HTTPC-003`；未发起高基数请求。
 - 2026-08-09：确认HTTP client只取单个A记录且没有AAAA/多地址connect fallback，IPv6-only与首地址故障origin不可用，记录为`HTTPC-004`；未执行DNS或连接。
+- 2026-08-09：确认HTTP/1 sender会原样发送TE+CL并因CL优先而直写未分块正文，形成wire framing歧义，记录为`HTTP1-016`；未生成或发送歧义报文。
