@@ -746,17 +746,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：仅在成功OK且必要server-status确认后标记transaction ended；COMMIT/ROLLBACK任何ERR、codec异常或未知response都将连接标dirty并物理关闭，除非实现明确且成功的reset/change-user清理。自动rollback必须检查结果，绝不能把失败连接归池；公开错误仍返回给caller。
 - 回归测试：修复阶段让COMMIT/ROLLBACK分别返回ERR、断线、malformed OK和超时，覆盖显式与auto rollback；断言连接不入idle/不交waiter、open_count释放，下一query使用新connection且看不到旧transaction。当前只作路径推导。
 
-### MYSQL-006 — P2 — pool close 唤醒的 waiter 会继续新建连接，关闭后仍可执行 SQL
+### MYSQL-006 — P2 — conn_new 不执行 closed 状态，pool 关闭后仍可新建连接并执行 SQL
 
-- 状态：已确认；close/acquire interleaving静态推导。属于并发时序问题，本阶段不强行复现。
+- 状态：已确认；含确定性公开API路径及close/acquire interleaving静态推导。并发部分本阶段不强行复现。
 - 契约：`docs/src/reference/store/mysql.md:106-113`声明pool关闭后不可再使用，所有等待连接的coroutine应被唤醒并收到错误。
-- 位置：capacity wait与fallthrough在`lualib/silly/store/mysql.lua:1038-1079`；`pool_close`在`:1117-1136`；query只在进入`conn_new`前检查closed在`:1173-1189`。
-- 触发：max-open已满时request在`task.wait()`，另一个task调用`pool:close()`；或request正在TCP connect/login期间pool被关闭。
-- 影响：被close唤醒的waiter收到nil后继续增加`open_count`、建立TCP、认证并执行原SQL；in-flight connect/login也不复查closed。关闭动作因此不是barrier，shutdown后仍能访问数据库、创建凭据连接和产生副作用，且close调用者无法等待这些操作收敛。
-- 证据：`pool_close`对waiter执行`task.wakeup(co)`不传error；`conn_new`的`if conn then return conn end`之后没有else/closed检查，直接进入create分支。`tcp_connect/_mysql_login`后也没有检查`pool.is_closed`；pool_query的唯一检查发生在等待之前。
+- 位置：capacity wait与fallthrough在`lualib/silly/store/mysql.lua:1038-1079`；`pool_close`在`:1117-1136`；query只在进入`conn_new`前检查closed在`:1173-1189`；`pool_ping/pool_begin`在`:1163-1171,1191-1221`。
+- 触发：确定性地在`pool:close()`后调用`pool:ping()`或`pool:begin()`；也可在max-open waiter、TCP connect或login期间由另一个task关闭pool。
+- 影响：closed pool仍增加`open_count`、建立TCP和认证；`begin()`还发送BEGIN并返回可继续`query/commit`的connection。被close唤醒的waiter同样可执行原SQL，in-flight操作也继续。关闭动作不是barrier，shutdown后仍能访问数据库、创建凭据连接和产生副作用，且close调用者无法等待这些操作收敛。
+- 证据：`pool_ping`和`pool_begin`不检查`self.is_closed`即调用`conn_new`，后者自身也从不检查。并发路径中`pool_close`对waiter执行无参数`task.wakeup(co)`；`if conn then return conn end`之后直接进入create分支。`tcp_connect/_mysql_login`后也没有closed复查；只有`pool_query`入口有一次检查。
 - 根因：acquire结果以`nil`同时表示“被close取消”和“现在可自行建连”，缺少明确capacity permit/cancel状态；pool没有generation/in-flight registry与close barrier。
 - 建议解法：waiter使用structured结果（lease/permit/error），close以ECLOSED完成全部pending acquire并从queue移除；connect/login各yield点和publish前复查pool generation，失效即关闭局部fd。pool跟踪connecting/checked-out operations，定义close是仅禁止新工作还是等待/取消全部工作，并在API文档明确。
-- 回归测试：修复阶段在capacity wait、TCP connect、initial handshake和auth各点并发close；断言所有pending返回closed、server未收到post-close query、无新fd/pool counter增加。当前仅说明时序。
+- 回归测试：修复阶段先确定性覆盖close后的ping/begin及returned conn methods，再在capacity wait、TCP connect、initial handshake和auth各点并发close；断言全部返回closed、server未收到post-close command、无新fd/pool counter增加。并发部分当前仅说明时序。
 
 ### MYSQL-007 — P2 — packet fragmentation/sequence 未实现，≥0xffffff payload 会反同步
 
@@ -1808,7 +1808,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
 - 2026-08-09：确认MySQL conn close归池后原Lua对象仍能操作同一fd且close不幂等，旧/新borrower可共享stream，记录为`MYSQL-004`。
 - 2026-08-09：确认MySQL COMMIT/ROLLBACK在server确认前清除本地transaction flag，ERR后仍归池，记录为`MYSQL-005`；未注入transaction failure。
-- 2026-08-09：确认MySQL pool close无参数唤醒capacity waiter后其会fall through新建连接，in-flight connect也不复查closed，记录为`MYSQL-006`；仅作并发时序说明。
+- 2026-08-09：确认MySQL conn_new从不检查closed：close后ping/begin可确定性新建连接，capacity waiter/in-flight connect也会继续，记录为`MYSQL-006`；并发部分仅作时序说明。
 - 2026-08-09：确认MySQL把physical packet当完整message、拒绝zero terminator且不校验sequence，≥0xffffff payload会反同步，记录为`MYSQL-007`；未生成大payload。
 - 2026-08-09：确认MySQL global/per-connection prepared caches均无界且从不COM_STMT_CLOSE，高基数SQL可耗尽client/server资源，记录为`MYSQL-008`；未生成高基数SQL。
 - 2026-08-09：确认MySQL max_packet_size仅写握手、接收与全量result rows/columns没有累计预算，记录为`MYSQL-009`；未生成大result。

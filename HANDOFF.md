@@ -167,7 +167,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQL-003 | P1 | connect/auth/query/pool wait均无deadline/cancel，现有connect_timeout选项被静默忽略。 |
 | MYSQL-004 | P1 | conn归池后旧对象仍可操作且close不幂等，可让多个borrower并发共享同一MySQL stream。 |
 | MYSQL-005 | P1 | COMMIT/ROLLBACK失败仍清除transaction flag并归池，后续borrower可继承未知事务状态。 |
-| MYSQL-006 | P2 | pool close唤醒的waiter会fall through新建连接，关闭后仍可认证并执行SQL。 |
+| MYSQL-006 | P2 | conn_new不执行closed状态，close后ping/begin及被唤醒waiter仍可新建连接并执行SQL。 |
 | MYSQL-007 | P2 | MySQL packet fragmentation/sequence未实现，≥0xffffff payload与zero terminator会反同步。 |
 | MYSQL-008 | P1 | global/per-connection prepared caches无界且从不COM_STMT_CLOSE，可耗尽client/server资源。 |
 | MYSQL-009 | P1 | max_packet_size只写入握手且result全量累计无总预算，大响应可耗尽内存。 |
