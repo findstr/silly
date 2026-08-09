@@ -117,7 +117,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（140 条）
+## 5. 已确认问题（141 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -186,6 +186,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-007 | P2 | range option适配器漏设空fromkey的range_end，并丢弃非KEY排序的order。 |
 | ETCD-008 | P2 | unknown或late watch_id会nil dereference，recv异常又不触发EOS，整条watch manager永久停止。 |
 | ETCD-009 | P1 | etcd wrapper无TLS、CA/client cert或token认证入口，只能连接明文未授权集群。 |
+| DOC-001 | P3 | etcd中英文文档的timeout、keepalive失联和watch close契约均与实际API不符。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |

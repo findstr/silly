@@ -970,6 +970,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：支持明确的`https://` endpoint与安全默认TLS配置：系统/custom CA、SAN hostname/IP验证、可选client cert/key；实现Authenticate并在每个unary/stream携带token metadata，处理token过期的single-flight refresh且不把secret写日志。先修复底层TLS verification/custom metadata，再开放此配置；禁止静默明文回退。
 - 回归测试：修复阶段覆盖受信TLS、错误CA/SAN、mTLS缺失/正确cert、RBAC username/password、token过期与watch/lease重连刷新；抓包确认无明文、日志无credential。当前不搭建secure peer。
 
+### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
+
+- 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
+- 位置：中文文档`docs/src/reference/store/etcd.md:53-86,550-610`；英文文档`docs/src/en/reference/store/etcd.md:53-86,550-610`；实际实现`lualib/silly/store/etcd.lua:325-363,539-622`。
+- 触发：用户按文档配置`timeout=5`，依赖keepalive超时自动移除lease，或按所有watch示例在结束时调用`stream:close()`。
+- 影响：timeout被完全忽略且调用仍可永久挂起；keepalive deadline从未检查、stream不会按文档自动关闭；watch返回的是只有`read/cancel`的watcher而非gRPC stream，调用`stream:close()`会抛“attempt to call a nil value”。中英文大量示例重复这一错误，使正常照抄文档的应用出现异常或错误的故障安全假设。
+- 证据：文档参数名为`timeout`且单位秒，代码注解/读取名为`dialtimeout`，后者本身又未下传（ETCD-006）；文档明确描述`keepalivetimeout`触发drop/close，但实现只写`deadline`从不读；watcher metatable只定义`read`和`cancel`，文档的返回类型、注意事项及示例统一使用`stream:close()`。
+- 根因：reference从早期/预期API生成后未以可执行示例和LuaLS导出面做一致性检查，且中英文复制使同一错误同步扩散。
+- 建议解法：先决定真实API契约并修实现，再同步两种语言：timeout使用毫秒或absolute deadline的唯一命名/单位；watch返回类型写为watcher且统一`cancel/close`；lease失联行为只描述已实现且可观察的状态。文档示例加入静态类型检查及最小运行验证，CI比较公开method/option schema。
+- 回归测试：修复阶段对中英文所有etcd `lua validate` block执行doc-test，启用LuaLS unknown-member诊断；增加schema snapshot验证配置名、返回类型和method集合一致。本轮不运行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
