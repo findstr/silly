@@ -182,6 +182,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-STATUS-SENDER | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `luaclib-src/lhttp.c:489-548` | server sender | 偏离 | application `err.code` 无类型/range/canonical校验，truthy值直接经通用字符串化写 grpc-status；可发送非法文本或error+OK | 自测仅覆盖0与合法常量 | GRPC-017 |
 | GRPC-REQUEST-EOS-DATA | MUST | `lualib/silly/net/grpc/client/service.lua:65-70,215-257`; `lualib/silly/net/http/h2.lua:992-1025` | streaming client sender | 偏离 | client/bidi零消息closewrite时pending request header直接带END_STREAM；未发送gRPC要求的空DATA+END_STREAM | tests的client/bidi均先write至少一条 | GRPC-018 |
 | GRPC-CLEARTEXT-SCHEME | transport/API | `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/http/h2.lua:231-262,456-467,1730-1739` | plaintext server | 偏离 | cleartext gRPC listener仍把H2 channel/stream scheme写死为https，与收到的`:scheme: http`及实际TCP安全属性矛盾 | 现有handler不检查stream.scheme，明文自测无法暴露 | GRPC-019 |
+| RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/grpc/client/conn.lua:16-29,49-79,127-155`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | 每个target固定单次A lookup并永久只保存首个IPv4 endpoint，无AAAA或同名多地址fallback | 单地址/IPv4本机自测不能覆盖AAAA-only或首地址故障 | GRPC-020 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
@@ -2228,6 +2229,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让 `h2.httpd(handler, conn, scheme)` 显式接收由 listener 确定的 transport scheme，gRPC plaintext传 `http`、TLS传 `https`；避免信任 peer `:scheme` 来推断实际安全属性。通用 HTTP listener的H2 TLS分支也应显式传值，去掉 helper 内硬编码。
 - 后续回归条件：修复阶段分别建立明文与TLS listener，向两者发送匹配的 `:scheme`，断言handler看到的transport scheme为 `http`/`https` 且与连接类型一致；另覆盖peer伪造相反`:scheme`时的validation/应用可见值，不允许伪造字段提升安全属性。当前不启动server或发送请求。
 
+### GRPC-020 — P2 — client target 固定单次 A lookup，缺少 IPv6 与同名多地址回退
+
+- 状态：已确认；gRPC client 自有 target resolver/channel dial 路径与 DNS API 的确定性静态核对。本轮不执行 DNS 或连接。
+- 位置：target parse、DNS 与 endpoint 固化在 `lualib/silly/net/grpc/client/conn.lua:16-29,127-155`，单 endpoint dial在 `:49-79`；`dns.lookup` 只返回首项、`resolve` 可返回集合，见 `lualib/silly/net/dns.lua:588-654`。
+- 触发：`dns:///host:port` 或 passthrough hostname 只有 AAAA，或同名有多个 A/AAAA 而首个 IPv4 地址不可达、其余候选健康；直接 IPv4/IPv6 literal 是单候选，不受 hostname 查询分支影响。
+- 影响：IPv6-only gRPC 服务完全无法创建 client；多地址服务遇单机故障、滚动迁移或 DNS 负载均衡时，没有在任何 RPC bytes 发出前尝试安全的备用地址。endpoint 一经构造只保存首个解析 IP，后续 channel 重连仍持续拨同一地址，局部故障可长期表现为整个 target 不可用。
+- 证据：`conn.new` 对每个 target 固定调用一次 `dns.lookup(host, dns.A)`，随后只保存一个 `addr = join_addr(ip, port)`，丢弃 hostname 的地址集合。`newchannel` 对选中 endpoint 只执行一次 `tcp.connect` 或 `tls.connect`，失败立即返回；没有 AAAA、`dns.resolve`、候选列表、family排序/错峰或逐候选拨号。TLS hostname另存用于SNI，但不改变地址选择。
+- 根因：target resolver 把 hostname 映射为构造时冻结的单个 IPv4 socket address，而不是可刷新、可返回多个地址的 gRPC resolver result；channel dialer也只接受单 endpoint。
+- 建议解法：使用与 HTTP/WS/cluster 共用的双栈 resolver+dialer，保留 logical authority/hostname与地址候选集合；按 RFC 8305错峰或至少顺序尝试所有候选，并以同一 absolute dial deadline限制。TLS SNI/证书验证继续使用原hostname，不能被候选IP替换；连接成功后记录chosen address但不得永久丢弃其他候选。
+- 后续回归条件：修复阶段注入AAAA-only、A-only、双栈/多A首地址失败后成功、全部失败、慢首/快次和IPv4/IPv6 literal；断言fallback发生在发送RPC前、候选共享deadline、输家关闭且authority/SNI保持logical target。当前不解析或连接外部endpoint。
+
 ## 5. 候选问题收口
 
 本轮没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。
@@ -2257,7 +2269,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为175项：P0为0，P1为77，P2为93，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 19、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为176项：P0为0，P1为77，P2为94，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 20、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2422,3 +2434,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认WebSocket client独立连接路径只取单个A记录且没有AAAA/多地址fallback，记录为`WS-009`；未执行DNS或连接。
 - 2026-08-09：确认WebSocket client的DNS/TCP/TLS/Upgrade opening handshake没有端到端deadline或取消入口，记录为`WS-010`；未连接silent peer。
 - 2026-08-09：确认plaintext gRPC listener仍把H2 channel与应用stream scheme固定标成https，记录为`GRPC-019`；未启动server。
+- 2026-08-09：确认gRPC client对每个target只取单个A记录并永久固定首个IPv4 endpoint，没有AAAA或同名多地址fallback，记录为`GRPC-020`；未执行DNS或连接。
