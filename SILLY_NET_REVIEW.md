@@ -887,6 +887,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：构造新的WatchCreateRequest，把公开`revision`严格校验并映射到`start_revision`；也可把API改名为`start_revision`并保留有弃用期的alias。拒绝同时提供两者或任何不属于公开schema的字段，避免继续静默丢配置；不要原地修改调用方table。
 - 回归测试：修复阶段先写revision N、再产生N/N+1事件后创建`revision=N` watch，断言首个事件从N开始；覆盖0、已compact revision、future revision、alias冲突和未知字段，并抓取create request验证wire字段。当前不新增测试代码。
 
+### ETCD-003 — P1 — watch 重连 checkpoint 不完整，断线窗口或 fragmented revision 会漏事件
+
+- 状态：已确认；etcd watch恢复语义与recv/recreate状态机静态推导。本阶段不人为断开watch stream。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)说明`start_revision`是inclusive恢复点；未设置时从create response header revision之后开始，`progress_notify`专用于让client从近期已知revision恢复。协议还以`WatchResponse.fragment`标记同一大revision被拆成多条response，client必须在完整revision后才能越过它。
+- 位置：response checkpoint更新在`lualib/silly/store/etcd.lua:213-243`；断线后按保存的`createreq`重建在`:245-303`；created/progress/fragment字段在`lualib/silly/store/etcd/v3/proto.lua:2316-2410`。
+- 触发：watch以默认start_revision=0创建，尚未收到普通event时stream断开；或启用filter/progress_notify、期间只有被过滤事件/空progress response后断开。另一条路径是request启用`fragment=true`，收到同一revision的前一fragment后、后续fragment到达前断线。
+- 影响：第一类重连仍发送0，new stream再次从“now”开始，原stream创建到重连之间的事件可永久缺失；fragment路径在第一块后立即保存`last mod_revision+1`，重连会跳过同revision尚未交付的其余块。watch仍继续输出后续事件且不报告gap，调用方无法察觉本地cache/协调状态已经不完整。
+- 证据：`watch_recv_task`对`res.created`完全不处理，对无event的progress response也不更新revision；它只在普通response有event时取最后一个`mod_revision+1`。代码从不读取`res.header.revision`或`res.fragment`。reconnect枚举watcher并原样重发该mutable`createreq`，所以0或过早+1直接成为新的恢复点。
+- 根因：把“最后看到某个event”当作完整watch delivery checkpoint，没有实现created/progress确认和revision fragmentation的提交边界。
+- 建议解法：每个watch维护独立的confirmed revision：created response用`header.revision+1`建立初始恢复点，progress response在语义安全时推进；普通非fragmented response完整处理后推进到header/最后event之后。若支持fragment，先缓冲/交付同revision所有fragment并只在final fragment后commit checkpoint；否则禁止该option。重连始终使用已commit的inclusive revision，并在compaction时显式失败而非跳过。
+- 回归测试：修复阶段在created后首事件前、progress后、filter-only revision后及每个fragment边界断流，重连后按revision/key序列核对无gap/dup；另覆盖compaction和重复response。当前仅记录静态时序。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
