@@ -161,7 +161,6 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
 | RFC9113-6.6/8.4-PUSH-DISABLED | MUST | `lualib/silly/net/http/h2.lua:1500-1547` | client recipient | 偏离 | client 广告 ENABLE_PUSH=0 并获 ACK 后仍静默忽略 PUSH_PROMISE；未报 PROTOCOL_ERROR且未处理 HPACK/stream state | 现有测试没有 disabled-push violation | H2-026 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
-| RFC7541-5.2-HUFFMAN-EOS | MUST | `luaclib-src/lhttp.c:33-43,62-94,135-172,215-225`; `luaclib-src/http2_table.h` | HPACK decoder | 偏离 | EOS symbol 256 经 `uint8_t sym` 截断为 0，decoder 命中 leaf 后无 EOS guard并输出 NUL；本应 decoding error | 现有 Huffman tests 没有 literal 中显式 EOS | HPACK-003 |
 | GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
 | GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
 | GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
@@ -1977,18 +1976,6 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让 decoder 返回 `{ok, value}`，使用明确宽度无符号类型；在每个 octet 前检查 shift、乘法/加法和每用途 maximum，并要求遇到 continuation=0 才成功。string length 用 `size_t` 且以 `len <= (size_t)(e-p)` 做 subtraction-based bounds check，绝不先构造可能越界的 `p+len`；任何超值、超长或未终止编码返回 decoding error/HTTP2 `COMPRESSION_ERROR`。
 - 后续回归条件：修复阶段覆盖各 prefix 的最大合法值、跨 32/64-bit 边界、过多零 continuation、过多 0xFF、未终止、non-minimal 但未溢出的合法整数，以及 string/index/table-size 三种用途；ASan/UBSan 下零告警并确认下一连接/stream 的错误作用域。本轮不新增测试代码。
 
-### HPACK-003 — P2 — Huffman EOS symbol 被截断并解码成 NUL
-
-- 状态：已确认；RFC 7541、生成表规模与确定性 C 类型转换推导。本阶段只做静态 review，不新增触发代码。
-- 规范：RFC 7541 §5.2 要求 Huffman string 中出现 EOS symbol 必须作为 decoding error；只有末尾不超过 7 bits、且为 EOS code 最高位前缀的残余 bits 才能作为 padding 丢弃。EOS 不能作为普通 octet 输出。
-- 位置：Huffman node/root 类型在 `luaclib-src/lhttp.c:33-43`，建树在 `:62-94,215-225`，decode 在 `:135-172`；257-entry code/length 表在 `luaclib-src/http2_table.h`。
-- 触发：peer 在 HPACK Huffman-encoded field name/value 中编码完整 EOS code（symbol index 256），并提供合法的剩余 byte padding使 string 到 octet boundary。
-- 影响：decoder 不返回 compression error，而是向 Lua header string 追加 byte `0x00`。结合 HTTP/2 field validator 对通用 name/value syntax 的缺口，NUL 可进入 path、metadata或应用 header map；Lua 长度感知字符串与下游 C API/日志/代理若采用 NUL-terminated 解释，可能产生截断和验证/使用差异。即使没有下游利用，也明确接受了 HPACK 必须拒绝的压缩输入。
-- 证据：规范 Huffman table 包含 257 entries，最后一个是 EOS；`create_huffman_tree` 遍历整个数组并把 index `i` 传给 `add_node(..., uint8_t sym, ...)`。当 i=256 时 C 转换得到 0，存入同为 `uint8_t` 的 `node.sym`。`huffman_decode` 命中任何 leaf 都无条件 `luaL_addchar(buf, n->sym)`，没有 EOS 标志或 symbol==256 分支，因此输出 NUL。末尾 `sbits/mask` 只检查 padding，不能识别已经消费的 EOS leaf。
-- 根因：node representation 只为 byte alphabet 预留 8 bits，未为 HPACK 的第 257 个 sentinel symbol建模；decoder 又把所有 leaf 统一当作可输出 byte。
-- 建议解法：将 symbol 类型扩为至少 9-bit/`uint16_t`，保留 EOS=256；decoder 命中 EOS leaf 立即返回 decoding error，不输出字符。padding 继续只通过残余 bit 长度≤7且全为 EOS 前缀来接受，不能把完整 EOS 与 padding合并处理。
-- 后续回归条件：修复阶段覆盖完整 EOS 位于开头/中间/末尾、EOS 后更多 symbol、1..7-bit 合法全 1 padding、8+bit padding、非全 1 padding，以及全部 RFC Huffman examples；断言 EOS 统一导致 HTTP/2 `COMPRESSION_ERROR` 且无 NUL 输出。本轮不新增测试代码。
-
 ### GRPC-001 — P1 — client 把所有请求的 `:authority` 编码为字面量 `nil`
 
 - 状态：已确认；gRPC over HTTP/2 调用定义、RFC 9113 request pseudo-header 语义与确定性参数/转换路径推导。本阶段只做静态 review，不新增触发代码。
@@ -2234,7 +2221,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为173项：P0为0，P1为76，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为172项：P0为0，P1为76，P2为91，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2393,3 +2380,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/2在connection window为0时，每个stream WINDOW_UPDATE都会重复入队同一blocked writer并永久增持引用，记录为`H2-029`；未发送flow-control frame。
 - 2026-08-09：确认HTTP/2 batch flush丢弃TCP/TLS write失败并清空frames，stream API仍按成功推进状态，记录为`H2-030`；未注入发送失败。
 - 2026-08-09：确认HTTP/2未限制HEAD/204/205/304的DATA content，client接受并交付且server可主动生成malformed response，记录为`H2-031`；未发送no-content response。
+- 2026-08-09：撤回`HPACK-003`：当前`http2_table.h`的code/length数组均只有256项，不含EOS leaf，`i=256`截断前提不存在；原证据误读表规模，统计相应减一。

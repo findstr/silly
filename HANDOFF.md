@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认173项（P1 76、P2 92、P3 5）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认172项（P1 76、P2 91、P3 5）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -276,7 +276,6 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-030 | P2 | batch frame flush丢弃TCP/TLS write失败并清空buffer，stream API仍按成功推进状态。 |
 | H2-031 | P2 | HEAD/204/205/304的DATA content未被禁止，client接受交付且server可主动生成malformed response。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
-| HPACK-003 | P2 | Huffman EOS symbol 256 被截断为 0 并作为 NUL 输出，而非 decoding error。 |
 | GRPC-001 | P1 | client 创建 HTTP/2 channel 时漏传 target authority，所有请求把 `:authority` 编码成字面量 `nil`。 |
 | GRPC-002 | P2 | unary 与三种 streaming client request 都缺少 gRPC Call-Definition 要求的 `te: trailers`。 |
 | GRPC-003 | P2 | server 只按 path 路由，不校验 POST、gRPC Content-Type 或 TE，非 gRPC请求也不返回 HTTP 415。 |
@@ -296,7 +295,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为173条：P1 76、P2 92、P3 5。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3；以主报告中的编号和证据为准。
+当前统计为172条：P1 76、P2 91、P3 5。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
