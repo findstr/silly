@@ -481,6 +481,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：入口把timeout一次转换为monotonic absolute deadline；每次cache miss、CNAME递归、search候选、nameserver轮转及TCP fallback都传递同一deadline并只等待`max(0, deadline-now)`。到期后把当前caller从共享request安全移除而不伤害其他deadline更长的waiter，并返回一致的`ETIMEDOUT`；另将内部每attempt上限取配置值与剩余预算的较小者。
 - 回归测试：修复阶段覆盖多跳CNAME、多个search候选及二者组合，让每步在预算边缘响应；断言总wall time不超过单一deadline容差、cache hit不额外耗时、短deadline caller退出不取消长deadline caller。当前不运行慢响应场景。
 
+### DNS-008 — P2 — NXDOMAIN 与 NODATA provenance 被抹平，name error 被错误地按 qtype 缓存
+
+- 状态：已确认；RFC negative caching key与C parser→Lua cache结构的确定性静态核对。本轮不发送NXDOMAIN/NODATA响应。
+- 规范：[RFC 2308 §5](https://www.rfc-editor.org/rfc/rfc2308.html)区分NXDOMAIN与NODATA：NXDOMAIN cache entry绑定`<QNAME,QCLASS>`，对该名字的所有type生效；NODATA才绑定`<QNAME,QTYPE,QCLASS>`。两者必须保留response type以便正确查找和重传。
+- 位置：C parser读取但不向Lua返回RCODE在`luaclib-src/ldns.c:516-592`；SOA和无SOA的NXDOMAIN都被映射为当前qtype record在`:288-298,407-438,471-509,587-590`；Lua cache固定按`name→qtype`组织和查找在`lualib/silly/net/dns.lua:32-45,99-126,478-514`。
+- 触发：对某名字的A查询收到权威NXDOMAIN，随后在negative TTL内查询同名AAAA、SRV或其他支持类型；并发或上游状态不一致时，不同qtype也可能分别收到互相冲突的name existence结果。
+- 影响：已确认不存在的名字仍按每个qtype重复访问网络，放大NXDOMAIN流量、延迟和上游压力；更重要的是resolver无法维持“该名字不存在”的一致cache语义，后续另一type的positive/伪造回答可与仍有效的NXDOMAIN并存。反向若简单共享当前type-negative又会错误地把NODATA扩大为整名不存在，因此现有返回结构无法在Lua层正确修补。
+- 证据：`lanswer`局部变量`rcode`只用于允许0/3和决定无record时是否创建默认negative RR，五个返回值中不含rcode/negative kind。`parse_rr_soa`无论RCODE为何都把SOA owner改成question name、rtype改成question qtype；`try_create_rr`及`lookup_server`只能命中当前qtype，没有name-level NXDOMAIN entry或CLASS维度。
+- 根因：wire parser把negative answer降格成“没有rdata的普通qtype RR”，丢失了NXDOMAIN/NODATA分类与authority provenance；cache schema随之无法表达RFC要求的不同key。
+- 建议解法：parser明确返回rcode、answer/authority section与经校验的SOA negative TTL；cache分别建模name-level NXDOMAIN和type-level NODATA并保留CLASS=IN。positive answer写入前按RFC规则使冲突negative entry失效，negative命中时保持CNAME语义；不得把additional/unrelated SOA当negative proof。
+- 回归测试：修复阶段覆盖A-NXDOMAIN后AAAA/SRV均不发包、A-NODATA后AAAA仍可查询、NXDOMAIN+CNAME、无SOA默认策略、TTL到期、positive/negative替换与不同CLASS；断言query计数和cache冲突规则。当前不构造响应。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -1970,7 +1982,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为150项：P0为0，P1为68，P2为79，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 7、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为151项：P0为0，P1为68，P2为80，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2106,3 +2118,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS每项request固定单一server，全部attempt不会遍历nameserver列表，健康备用resolver只能影响后续查询，记录为`DNS-005`；未制造超时或发查询。
 - 2026-08-09：确认DNS的TCP fallback connect未继承request deadline，request超时后connect task/socket仍可滞留并发布迟到连接，记录为`DNS-006`；未制造TCP黑洞或TC响应。
 - 2026-08-09：确认DNS公开timeout会在每个CNAME hop及search候选重新计时，不能限制整次lookup/resolve耗时，记录为`DNS-007`；未构造慢resolver。
+- 2026-08-09：确认DNS parser丢弃negative kind并把NXDOMAIN/NODATA均存为qtype entry，name error无法跨type命中，记录为`DNS-008`；未构造negative响应。
