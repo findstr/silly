@@ -1,7 +1,7 @@
 # Silly `net` 全量审计记录
 
-> 状态：进行中
-> 审计日期：2026-08-06
+> 状态：首轮全量静态审计完成；修复阶段动态验证矩阵待执行
+> 审计日期：2026-08-06 至 2026-08-09
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
 > 审计基线：`d1aef7ffd8439340dfd957a49fccba3fbf133055`（2026-07-19）
@@ -43,7 +43,7 @@
 19. 增加故障注入、连接风暴、慢读写、大帧、资源上限、TSAN/ASan/UBSan 和跨平台静态检查。
 20. 核对 LuaLS API 注解、`silly.errno`/`string?` 契约、文档与示例，输出按优先级排序的修复路线。
 
-完成标准：每个范围都至少包含静态调用链、正常/失败状态机、所有权表、现有测试缺口、针对性动态验证；最终问题按 P0→P3 排序，不能把未验证疑点写成已确认缺陷。
+原完成标准包含针对性动态验证；2026-08-06 用户明确要求停止新增重现代码和故障注入，改为优先完成静态review。因此本轮完成口径调整为：所有范围完成静态调用链、正常/失败状态机、所有权、资源上限、现有测试缺口及协议依据审查；已有动态证据保留，新的畸形输入、并发barrier、独立peer互操作和版本矩阵列入修复阶段。不能把仍依赖未验证前提的疑点写成已确认缺陷。
 
 ### 2.1 HTTP / WebSocket / gRPC 规范符合性矩阵
 
@@ -59,7 +59,7 @@
 - WebSocket：[RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html)；HTTP/2 Extended CONNECT 仅在实现支持时检查 [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html)。
 - gRPC 没有单一 IETF RFC；以官方 [gRPC over HTTP/2 protocol](https://grpc.github.io/grpc/core/md_doc__p_r_o_t_o_c_o_l-_h_t_t_p2.html) 为应用协议基线，同时强制满足 RFC 9110/9113/7541 的底层要求。
 
-HTTP/1 审计清单（状态：进行中；消息体长度优先级已开始逐条核对）：
+HTTP/1 审计清单（状态：首轮静态核对完成；修复阶段补独立peer与畸形输入）：
 
 - start-line/field 的 octet parsing、CRLF、bare CR/LF、前导空行、非法 whitespace、obs-fold。
 - method 大小写、四种 request-target、空 path、Host 缺失/重复/非法、absolute-form 权威信息。
@@ -71,7 +71,7 @@ HTTP/1 审计清单（状态：进行中；消息体长度优先级已开始逐�
 - Expect: 100-continue、interim responses、Upgrade、WebSocket 切换后的剩余 buffer 所有权。
 - 发送端也必须生成规范报文；不能只检查 parser 的宽容度。
 
-HTTP/2 + HPACK 审计清单（状态：进行中；SETTINGS 角色与方向性已开始逐条核对）：
+HTTP/2 + HPACK 审计清单（状态：首轮静态核对完成；修复阶段补独立peer与畸形输入）：
 
 - client connection preface、首个 SETTINGS、ACK payload、设置值范围与重复设置。
 - 9-byte frame header、length/stream-id/reserved bit、MAX_FRAME_SIZE、未知 frame、固定长度 frame。
@@ -83,7 +83,7 @@ HTTP/2 + HPACK 审计清单（状态：进行中；SETTINGS 角色与方向性�
 - HPACK integer/Huffman 解码溢出、EOS/填充校验、索引 0/越界、动态表更新位置与上限、COMPRESSION_ERROR。
 - 限制解压后 header list、动态表、并发流、待处理 body，防止内存/CPU 放大。
 
-WebSocket 审计清单（状态：待逐条核对）：
+WebSocket 审计清单（状态：首轮静态核对完成；修复阶段补独立peer与畸形输入）：
 
 - HTTP/1.1 GET upgrade、Upgrade/Connection token 列表及大小写、version 13、key 必须解码为 16 bytes、Accept 计算。
 - Origin、subprotocol 必须来自客户端候选、extension 协商；未协商 RSV 位必须拒绝。
@@ -1840,14 +1840,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：streaming call建立时先发送不带END_STREAM的request HEADERS，或提供gRPC-specific close-request API，确保即使零messages也发送empty DATA+END_STREAM；不要改变普通HTTP/2 API对HEADERS END_STREAM的合法优化。
 - 后续回归条件：修复阶段抓取client-stream/bidi的0/1/N消息frame序列：initial HEADERS永不END_STREAM，最后必为DATA+END_STREAM（零消息时length 0）；独立server正常完成零消息call。本轮不新增测试代码。
 
-## 5. 正在验证的候选问题
+## 5. 候选问题收口
 
-### CAND-SOCK-002 — `wlbytes` 可记到已经复用的新 socket slot
-
-- 位置：`src/socket.c:1614-1639`、`:1663-1686`、`:1757-1767`。
-- 观察：worker 通过 sid 验证后，socket thread 仍可 free/reuse slot；随后 worker 对 slot 的原子 `wlbytes` 加值。旧 sid 的 op 被丢弃并释放 payload，却无法安全回滚已经落在新 socket 上的计数。
-- 待验证：用精确 barrier 让 close/free/accept-reuse 发生在 sid check 与计数之间。
-- 预期解法：把 per-socket accounting 移到 socket thread 在 sid 验证之后执行；如必须让 worker 立即可见，需要 generation-safe 的计数方案或完整 seqlock，不能仅依赖原子整数。
+本轮没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。
 
 ## 6. 已排除项
 
@@ -1860,7 +1855,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 7. TSAN 动态证据摘要
 
-隔离构建参数：`-DSILLY_TEST -O1 -fsanitize=thread -fno-omit-frame-pointer`，运行完整 `testtcp2`。业务断言 30 组全部通过，但进程以 TSAN 告警状态退出，共报告 5 组竞争：
+隔离构建参数：`-DSILLY_TEST -O1 -fsanitize=thread -fno-omit-frame-pointer`，运行完整 `testtcp2`。业务断言30组全部通过，但进程以TSAN告警状态退出；基线报告5组竞争，后续定向`socket_stat`检查又报告2组，共7组：
 
 1. `engine.c:76` 写 `workerstatus` vs `engine.c:45` 读。
 2. `queue.c:91` 读 `size` vs `queue.c:67` 写。
@@ -1872,15 +1867,19 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 因此“普通测试通过”与“并发实现没有 UB”是两个不同结论；后续并发模块将继续同时看功能结果和 sanitizer 结果。
 
-## 8. 修复顺序（滚动更新）
+## 8. 最终统计与修复路线
 
-当前建议顺序：
+首轮静态审计共确认141项：P0为0，P1为68，P2为70，P3为3。模块分布：CORE 6、NET 2、SOCK 12、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
-1. 先统一 engine 的 mutex/atomic predicate 协议，并修正 thread creation/rollback。
-2. 修复 queue 的所有同步，再复跑 TSAN；避免在有底层竞争时判断上层并发现象。
-3. 修复 shutdown 的 owned buffer 清理与 socket slot accounting。
-4. 修复 UDP 队列计数和错误可见性。
-5. 再进入 Lua net/TCP/UDP/TLS 与高层协议修复，避免上层测试被核心竞态干扰。
+建议按依赖关系分五批修复：
+
+1. 内存安全和generation所有权：优先`SOCK-006/008/009/011`、`MYSQLC-001/005`、`HPACK-002`、`TLS-002`、`CLUSTER-005`；任何上层互操作测试都应在这些路径稳定后进行。
+2. 安全身份与输入边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、`HTTP1-007/008/009`、`WS-001/002/005/008`、`H2-003/013/019/025`、`GRPC-005`、`ETCD-005/009`。
+3. transport状态机和取消：统一socket/engine同步后处理HTTP/1 framing、HTTP/2 stream/flow-control/GOAWAY、TLS shutdown、gRPC status/deadline，以及Redis/MySQL/etcd贯穿DNS→connect→handshake→request→body的absolute deadline。
+4. driver数据正确性：Redis parser/null与connection generation；MySQL pool lease/transaction/multi-result/packet codec；etcd mutation ambiguity、watch revision checkpoint和lease scheduler。
+5. 互操作与文档：用Go/OpenSSL/Redis/MySQL 8/MariaDB/etcd官方client-server矩阵验证，执行RFC畸形输入与sanitizer；最后同步LuaLS、中英文reference和所有示例。
+
+修复阶段的最低门槛是：每项有独立回归、ASan/UBSan/TSAN适用项清零、资源上限可配置且有安全默认、跨连接/stream错误不污染其他请求；协议项必须至少与一个独立实现双向互操作。
 
 ## 9. 审计日志
 
@@ -1995,3 +1994,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认 client 的 local-RST tombstone 超过 100 被淘汰后，late HEADERS 在 HPACK 解码前直接 GOAWAY，记录为 `H2-024`。
 - 2026-08-06：确认 HTTP/2 preface/SETTINGS/ACK/frame/header-block reads 全部无 progress deadline且配置无入口，记录为 `H2-025`。
 - 2026-08-06：确认 client 在 ENABLE_PUSH=0 获 ACK 后仍因缺少 handler 静默忽略 PUSH_PROMISE并跳过 HPACK，记录为 `H2-026`。
+- 2026-08-09：完成etcd v3静态审查，确认mutation模糊重试、watch revision/重连/背压、lease单位、timeout、range option、unknown watch ID与安全连接共9项；另记录中英文API文档契约偏差1项。
+- 2026-08-09：按用户要求未新增或运行重现、畸形输入和故障注入；首轮全量静态审计收口为141项（P1 68、P2 70、P3 3），无遗留候选，形成五批修复路线。

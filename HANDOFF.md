@@ -1,21 +1,20 @@
 # Silly `net` 全量审计交接文档
 
-> 更新时间：2026-08-06（Asia/Shanghai）
-> 用途：让新的 Codex 会话无需重新摸索，直接从第 4 阶段继续审计。
-> 当前结论：审计尚未完成；20 个阶段中已完成 1–3，阶段 4（核心 engine/worker/queue/timer/socket）进行中。
+> 更新时间：2026-08-09（Asia/Shanghai）
+> 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
+> 当前结论：20个阶段的首轮全量静态审计已完成；共确认141项（P1 68、P2 70、P3 3），无遗留候选。按用户要求，新重现/故障注入/独立peer互操作留到修复阶段。
 
 ## 1. 用户目标与工作方式
 
-用户要求：进入 `silly`，先制定长计划，然后逐个 review `net` 相关模块，特别是 HTTP、WebSocket、gRPC、Redis driver、MySQL driver；除现有测试外，还要按 RFC/官方协议逐项检查 HTTP、WebSocket、gRPC 的规范符合性；全部问题和解法必须持续记录。允许读取、运行、拉取最新代码，必要时可以重新 clone。
+用户要求：进入`silly`逐个review网络栈，特别是HTTP、WebSocket、gRPC、Redis、MySQL与etcd；按RFC/官方协议检查兼容性；全部问题、解法和后续回归持续记录。审计过程中用户进一步要求停止新增重现代码和故障注入，改为先完成静态review。
 
 用户希望会话自主持续工作，不要在发完进度后停住。新会话应遵循：
 
-1. 先读本交接文档和主报告，但不要重做已经完成的基线。
-2. 立即执行下一项检查；进度说明之后必须紧跟实际工具调用。
-3. 持续更新 `SILLY_NET_REVIEW.md`，确认一条记一条，疑点不得冒充已确认问题。
-4. 当前任务是审计和记录，不要未经用户另行授权直接修改 Silly 源码。
-5. 每个模块至少覆盖静态调用链、状态机、所有权、失败路径、并发、资源限制、现有测试缺口和针对性动态验证。
-6. HTTP/WebSocket/gRPC 的普通测试通过不代表规范符合；必须建立逐条 MUST/MUST NOT 证据表。
+1. 先读本交接文档和主报告，不重做已完成的首轮审计。
+2. 当前分支只含报告与既有重现资产，没有Silly源码修复；开始修复前由用户选择issue/批次。
+3. 每项修复独立提交，补对应回归并更新主报告状态；保留所有用户改动。
+4. HTTP/WebSocket/gRPC的普通测试通过不代表规范符合，回归必须同时检查wire与独立peer。
+5. 未经用户重新授权，不新增高风险畸形输入、并发barrier或故障注入。
 
 ## 2. 路径、Git 与工作区状态
 
@@ -24,23 +23,23 @@
 - 主审计报告：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly/SILLY_NET_REVIEW.md`
 - 复现脚本目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly/review-repros`
 - 上游：`https://github.com/findstr/silly.git`
-- 分支：`master`，跟踪 `origin/master`
-- 当前 HEAD：`d1aef7ffd8439340dfd957a49fccba3fbf133055`
+- 审计分支：`codex/silly-net-review`
+- 审计基线（`master`）：`d1aef7ffd8439340dfd957a49fccba3fbf133055`
 - 提交时间：`2026-07-19 16:09:32 +0800`
 - 提交标题：`ci: fix lcov 2.5 coverage capture`
 - 上次执行 `git pull --ff-only` 的结果：`Already up to date`
-- Silly 仓库上次检查为干净：`## master...origin/master`
+- Silly仓库最终收口前检查为干净；当前HEAD以`git log -1`为准。
 
-新会话开始时先做只读核对，再联网拉取：
+新会话开始时先做只读核对；不要在审计分支直接pull/merge新master：
 
 ```bash
 cd /home/findstrx/Documents/Codex/2026-08-06-remote/silly
-git -C silly status --short --branch
-git -C silly log -1 --format='%H%n%ci%n%s'
-git -C silly pull --ff-only
+git status --short --branch
+git log -1 --format='%H%n%ci%n%s'
+git merge-base HEAD master
 ```
 
-如果拉取后 HEAD 改变，必须在报告中记录旧/新提交，判断已确认问题是否仍存在，再继续；不要把用户已有变更覆盖掉。
+若用户要求同步新master，应先只读fetch/比较并在独立分支rebase或merge；记录新基线后重新核对受影响issue，不覆盖用户改动。
 
 环境里登录 shell 找不到普通 `rg` 时可使用：
 
@@ -57,25 +56,25 @@ git -C silly pull --ff-only
 | 1 | 上游提交、仓库状态、构建参数、模块清单 | 已完成 |
 | 2 | ASan/UBSan/coverage 与 TSAN 基线 | 已完成 |
 | 3 | 全部现有网络相关基线测试 | 已完成 |
-| 4 | engine/worker/message/queue/timer/socket C 核心 | 进行中 |
-| 5 | `net.lua` 与 C/Lua 边界 | 待做 |
-| 6 | TCP | 待做 |
-| 7 | UDP | 待做 |
-| 8 | TLS | 待做 |
-| 9 | addr/DNS/cluster | 待做 |
-| 10 | HTTP 公共层 | 待做 |
-| 11 | HTTP/1 + RFC 9110/9112/3986 | 待做 |
-| 12 | HTTP/2 + HPACK + RFC 9113/7541 | 待做 |
-| 13 | HTTP client/server 聚合与 Go 互操作 | 待做 |
-| 14 | WebSocket + RFC 6455/8441 | 待做 |
-| 15 | gRPC over HTTP/2 | 首轮静态协议审查完成；修复阶段待独立peer互操作 |
-| 16 | Redis driver | 待做 |
-| 17 | MySQL C codec | 待做 |
-| 18 | MySQL Lua driver | 待做 |
-| 19 | etcd、跨模块取消/超时、故障注入/sanitizer | 待做 |
-| 20 | 文档/API 契约与最终优先级报告 | 待做 |
+| 4 | engine/worker/message/queue/timer/socket C 核心 | 首轮完成 |
+| 5 | `net.lua` 与 C/Lua 边界 | 首轮完成 |
+| 6 | TCP | 首轮完成 |
+| 7 | UDP | 首轮完成 |
+| 8 | TLS | 首轮完成 |
+| 9 | addr/DNS/cluster | 首轮完成 |
+| 10 | HTTP 公共层 | 首轮完成 |
+| 11 | HTTP/1 + RFC 9110/9112/3986 | 首轮完成 |
+| 12 | HTTP/2 + HPACK + RFC 9113/7541 | 首轮完成 |
+| 13 | HTTP client/server 聚合与互操作设计 | 静态完成；独立peer回归待修复阶段 |
+| 14 | WebSocket + RFC 6455/8441 | 首轮完成 |
+| 15 | gRPC over HTTP/2 | 首轮完成；独立peer回归待修复阶段 |
+| 16 | Redis driver | 首轮完成 |
+| 17 | MySQL C codec | 首轮完成 |
+| 18 | MySQL Lua driver | 首轮完成 |
+| 19 | etcd、跨模块取消/超时 | 静态完成；故障注入按用户要求延期 |
+| 20 | 文档/API 契约与最终优先级报告 | 已完成 |
 
-不要把阶段 4 标记完成，至少还需完成下面第 8 节列出的 socket 核心候选验证。
+原socket候选均已收口：`CAND-SOCK-002`升级为`SOCK-007`，`CAND-SOCK-003`升级为`SOCK-005`，UDP截断候选排除为`REJECT-SOCK-001`。主报告第5节没有遗留候选。
 
 ## 4. 已跑测试和动态基线
 
@@ -97,7 +96,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 这些运行均未报告 ASan/UBSan 错误，最终 `netstat=0`、`leak memory size=0`。临时 Redis/MariaDB 容器已停止并移除；不要误删环境中不属于本任务的 Docker 资源。
 
-仍需补：MySQL 8、MariaDB 10.6、Go HTTP 互操作/畸形输入、协议 fuzz/fault injection、Windows/macOS 行为。
+修复阶段验证矩阵：MySQL 8、MariaDB 10.6、Go/OpenSSL/官方etcd独立peer、协议畸形输入、fuzz/fault injection及Windows/macOS行为。按用户要求，本轮收口时没有新增或运行这些重现。
 
 ### TSAN
 
@@ -107,7 +106,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 /tmp/silly-tsan-review.HHFlk0/silly
 ```
 
-它使用 `-DSILLY_TEST -O1 -fsanitize=thread -fno-omit-frame-pointer` 构建。`testtcp2` 的 30 组业务断言全部完成，但进程因 5 组 TSAN 告警以 66 退出：
+它使用`-DSILLY_TEST -O1 -fsanitize=thread -fno-omit-frame-pointer`构建。`testtcp2`的30组业务断言全部完成，但进程因5组TSAN告警以66退出；后续定向`socket_stat`检查另确认fd/type两组竞争（主报告第7节共列7组）：
 
 1. `engine.c:76` 的 `workerstatus` 写 vs `engine.c:45` 读。
 2. `queue.c:91` 的 `size` 读 vs `queue.c:67` 写。
@@ -265,7 +264,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-统计口径为 78 条：5 个 CORE + 11 个 SOCK + 7 个 HTTP/1 + 8 个 WebSocket + 26 个 HTTP/2 + 3 个 HPACK + 18 个 gRPC；以主报告中的编号和证据为准。
+统计口径为141条：P1 68、P2 70、P3 3。模块分布为CORE 6、NET 2、SOCK 12、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
 ## 6. 可直接复现的两个问题
 
@@ -313,42 +312,19 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 - `src/socket.c:2019-2064`：`socket_stat` 直接跨线程读 fd/type，并忽略 name syscall 错误。
 - `src/silly_conf.h:49-50`：`TCP_READ_BUF_SIZE` 为 2 MiB。
 
-## 8. 下一步：从这里立即继续
+## 8. 下一步：进入修复阶段
 
-> 2026-08-06 当前工作方式更新：用户要求暂停新增复现代码和动态故障注入，先完成 HTTP、WebSocket、gRPC 的 RFC/协议静态 review。并发候选若没有现成精确 barrier，只记录静态时序和“无独立动态复现”，不要为了复现而修改源码。
+首轮审计已经完成，不需要用户再提醒“继续review”。下一会话应让用户选择修复批次；若用户授权从最高风险开始，建议按以下依赖顺序：
 
-### 8.0 已完成：gRPC protocol 首轮静态 review
+1. 内存安全与生命周期：`SOCK-006/008/009/011`、`MYSQLC-001/005`、`HPACK-002`、`TLS-002`、`CLUSTER-005`。
+2. 身份认证与资源边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、HTTP/WS/H2/gRPC输入上限、`ETCD-005/009`。
+3. transport状态机与deadline：engine/queue同步、HTTP framing/HTTP2流控、TLS shutdown、gRPC status/deadline，以及Redis/MySQL/etcd统一absolute deadline。
+4. driver正确性：Redis parser/null/generation，MySQL pool/transaction/multi-result/codec，etcd mutation ambiguity/watch checkpoint/lease scheduler。
+5. 独立peer互操作、版本矩阵、sanitizer与中英文文档同步。
 
-HTTP/1 framing 首轮已确认 `HTTP1-001` 至 `HTTP1-007`；WebSocket 首轮已确认 `WS-001` 至 `WS-008`；HTTP/2 已确认 `H2-001` 至 `H2-026`，HPACK 已确认 `HPACK-001` 至 `HPACK-003`；gRPC 首轮已确认 `GRPC-001` 至 `GRPC-018`。gRPC基础length-prefix重组与正常response trailer符合；custom metadata记为可选能力/API缺口。按用户要求本阶段没有新增畸形输入或独立peer复现。
+每个issue建议一个修复提交；提交前先把主报告对应条目标为“修复中”，实现后补测试和验证结果，再标为“已修复”。不要一次性改完整层级，否则回归和回滚难以定位。
 
-当前立即转回阶段4 socket core候选，以静态所有权/并发时序为主；没有精确barrier的竞争明确标注“无独立动态复现”。
-
-### 8.1 第一优先：验证 `socket_stat` close/reuse 竞争
-
-候选 `CAND-SOCK-003`：`socket_stat` 违反 `socket.c` 自身的并发规则。它从 worker 线程读取普通 `fd/type`，第二次 sid 校验不能形成生命周期保护；然后对可能已经关闭或复用的 fd 调用 `getsockname/getpeername`，并忽略返回值。
-
-下一动作应是用 `apply_patch` 在工作区（不要放进 Silly repo）新建：
-
-```text
-review-repros/socket_stat_close_race.lua
-```
-
-测试思路：循环创建 `127.0.0.1:0` listener；使用测试 debug control 延迟 socket op；排入 close；恢复并 kick socket thread；同时对旧 sid 高频调用 `metrics.socketstat(sid)`；快速创建新 listener 促使 slot/fd 复用。先跑主 ASan build，再跑隔离 TSAN build。若 TSAN 报告 fd/type/sid 竞争或 ASan/断言/错误地址，即升级为已确认问题并记录原始堆栈。
-
-推荐预期解法：让 socket thread 通过 command/message 生成一致 snapshot，或者实现真正的 per-slot lock/seqlock + generation protocol；所有 `getsockname/getpeername` 必须检查返回值。
-
-### 8.2 已纠正的误报
-
-原 `CAND-SOCK-004 — UDP 大报文可能被静默截断` 已在主报告改记为 `REJECT-SOCK-001`：当前固定接收 buffer 为 2 MiB，而合法 IPv4/IPv6 UDP datagram 最大尺寸小于约 64 KiB，因此不会因该 buffer 截断。除非未来缩小 buffer 或加入平台特定的非标准超大 UDP/GSO 接收接口，否则无需继续追查。
-
-### 8.3 后续 socket 核心候选（尚未确认）
-
-本轮conversion候选已完成：timer delta窄化是可达可靠性缺陷，记录为`CORE-006`；`queue_push`的`size_t→int`只有在超过`INT_MAX`条在途消息后影响过载诊断，现实中通常先耗尽内存，暂列构建卫生而不单列问题。API仍应改回`size_t`以消除不必要的截断。
-
-原send-length与late-accounting两项已由静态完整调用链确认并记录为`SOCK-006`/`SOCK-007`；本阶段不新增大长度或并发barrier动态复现。
-默认TCP/TLS/UDP接收stash已确认无上限并记录为`SOCK-012`；本阶段不新增流量压力复现。
-
-阶段 4 完成前，再审阅 `src/socket_poll_*`、pool/flipbuf、所有 `free_socket` 调用点和 stop/exit ownership table，跑一次严格 warnings 静态检查并把结论入报告。
+仍保留的动态资产只有第6节两个既有重现。其余每条主报告末尾已经写明修复阶段回归条件；用户重新授权前不要创建/运行畸形输入、并发barrier或fault injection。
 
 ## 9. RFC/协议审计基线
 
@@ -384,7 +360,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-继续 Silly net 全量审计。先完整读取工作区 HANDOFF.md 和 SILLY_NET_REVIEW.md；核对 silly 仓库状态并 git pull --ff-only。不要重跑已完成的普通基线，直接从阶段 4 的 socket_stat close/reuse 竞争复现开始。确认一项就把问题、证据、解法和回归测试追加到 SILLY_NET_REVIEW.md。阶段 4 完成后按计划依次 review net.lua、TCP、UDP、TLS、DNS/cluster、HTTP 公共层、HTTP/1、HTTP/2/HPACK、HTTP 聚合与互操作、WebSocket、gRPC、Redis、MySQL C、MySQL Lua、etcd/故障注入、文档/API。HTTP/WebSocket/gRPC 必须逐条对照 RFC/官方协议。除非真正需要用户授权或遇到无法绕过的阻塞，不要在状态回复后暂停；持续执行并持续记录。当前任务只审计和记录，不修改 Silly 源码。
+Silly net首轮全量静态审计已经完成。先完整读取HANDOFF.md和SILLY_NET_REVIEW.md，核对当前分支与干净状态，不要重做基线或继续寻找新问题。根据用户选择的issue/修复批次工作：先定位报告条目和依赖，修改源码并补该条回归，执行适用的ASan/UBSan/TSAN与独立peer验证，更新报告状态后独立提交。保留用户改动；未经重新授权，不新增或运行畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单
@@ -396,3 +372,5 @@ review-repros/socket_exit_pending_wlist.lua
 review-repros/tcp_immediate_connect_fd_leak.lua
 silly/  # 最新审计源码工作副本
 ```
+
+审计分支：`codex/silly-net-review`；基线master：`d1aef7ffd8439340dfd957a49fccba3fbf133055`。首轮只提交报告与既有重现资产，没有修改Silly生产源码，也没有push远端。
