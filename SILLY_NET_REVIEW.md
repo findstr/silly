@@ -570,6 +570,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：改为`accept=function(fd,listenid,addr)`并把第三参写入`remoteaddr`；若业务需要同时暴露listener，显式保存受验证的listener handle/id而非复用地址字段。为event callback定义共享类型/adapter，避免各模块手写位置参数继续漂移。
 - 回归测试：修复阶段从IPv4/IPv6客户端连接两个listener，断言`remoteaddr`为可解析endpoint string、不同客户端值独立，listener id单独可用且不会进入地址字段；把当前非nil断言提升为类型和值断言。当前不运行连接测试。
 
+### CLUSTER-008 — P1 — RPC timeout 在 connect/send 之后才启动，黑洞 endpoint 可让 call 永久等待
+
+- 状态：已确认；cluster公开timeout、lazy connect及底层timer传递路径的确定性静态核对。本轮不连接黑洞endpoint。
+- 位置：配置timeout在`lualib/silly/net/cluster.lua:311-329`；lazy DNS/TCP connect在`:179-218`；timer仅由`waitfor`创建在`:251-272`；调用顺序在`:274-305`；底层TCP仅在显式传参时定时在`lualib/silly/net.lua:89-140`。
+- 触发：首次call/send或断线后的自动重连进入DNS慢响应、TCP SYN被静默丢弃、connect事件迟迟不返回；即使`cluster.serve{timeout=1000}`也相同。marshal和send之前的其他yield同样不在预算内。
+- 影响：业务coroutine可远超配置timeout，TCP connect路径没有参数时可等到操作系统级超时；服务shutdown、上游故障切换、请求SLA及容量隔离均失效。并发请求虽由per-peer mutex串行建连，但其余调用会一起阻塞在锁后，单个故障endpoint可积累大量task并占住socket/pending connect资源。
+- 证据：`callx`先执行`connect(peer)`，其中`dns.lookup`不传cluster剩余预算且`tcp_connect(addr,EVENT)`的timeout实参缺失；随后marshal、构造frame和`tcp_send`，最后才调用`waitfor`并执行`after(expire,...)`。因此配置值完全不参与DNS/connect，且底层`connect_wrap`在timeout为nil时直接`task_wait()`无timer。
+- 根因：timeout被实现成“已发送request的response wait timer”，却作为整个RPC的唯一timeout配置公开；lazy connection state没有dial deadline或可取消operation context。
+- 建议解法：在`cluster.call/send`入口计算absolute deadline并把remaining预算贯穿mutex acquire、DNS、TCP connect、send admission和response wait；另允许独立`dial_timeout`但总RPC deadline始终取更早者。到期必须按peer generation关闭pending connect、从mutex wait queue安全移除、完成对应pending且不影响新generation；错误要区分dial与response timeout但保持公开opaque contract。
+- 回归测试：修复阶段分别在mutex、DNS、TCP connect、send queue和response阶段停住，配置短deadline并断言总耗时受同一预算约束、socket/task/timer清零；覆盖多个caller共享connect且deadline不同、close与connect timeout相邻。当前不运行blackhole或时序场景。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2004,7 +2015,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为153项：P0为0，P1为68，P2为81，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 7、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为154项：P0为0，P1为69，P2为81，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 8、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2143,3 +2154,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS parser丢弃negative kind并把NXDOMAIN/NODATA均存为qtype entry，name error无法跨type命中，记录为`DNS-008`；未构造negative响应。
 - 2026-08-09：确认DNS中英文reference仍宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突，记录为`DOC-002`；未运行doc示例。
 - 2026-08-09：确认cluster accept adapter少接listener id参数，导致incoming peer.remoteaddr保存listener sid并丢弃真实endpoint，记录为`CLUSTER-007`；未建立连接。
+- 2026-08-09：确认cluster timeout只覆盖send后的response wait，lazy DNS/TCP connect不继承预算且TCP无timer，记录为`CLUSTER-008`；未连接黑洞endpoint。
