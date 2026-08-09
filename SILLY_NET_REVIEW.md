@@ -1941,6 +1941,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每个stream最多持有一个connection-wait membership，以`in_writewaitq`标志或intrusive set保证去重；pop/close/reset/goaway时原子清标志并移除/惰性跳过。stream WINDOW_UPDATE在connection window<=0时只更新数字，不重复排队；connection WINDOW_UPDATE按公平策略遍历唯一blocked streams。另保留small-frame rate budget作为纵深防御。
 - 回归测试：修复阶段在connection window=0时对一个/多个blocked streams送大量合法stream updates，断言queue size不超过blocked stream数、内存有界；再补connection credit验证公平发送、无丢唤醒，并覆盖reset/close/GOAWAY清理。当前不发送flow-control frame。
 
+### H2-030 — P2 — 异步 frame flush 丢弃 transport write failure，stream API 仍报告成功
+
+- 状态：已确认；H2 batching task与TCP/TLS write返回契约的确定性静态核对。本轮不注入发送失败。
+- 位置：唯一batch flush在`lualib/silly/net/http/h2.lua:498-519`，排队fork在`:521-530`；header/data/closewrite先更新状态并排队在`:704-738,805-838,938-1025`；TCP/TLS明确返回`boolean,error`在`lualib/silly/net/tcp.lua:306-315`与`lualib/silly/net/tls.lua:452-460`。
+- 触发：底层socket已关闭/变成stale generation，TLS `SSL_write`或ciphertext flush失败，或任意transport writer返回false；此时H2已有待发request/response/DATA/END_STREAM/RST/WINDOW_UPDATE。
+- 影响：所有frame从`sendbuf`删除，channel、stream state与flow-control credit却按已发送推进；`write/closewrite/respond`已返回成功或继续等待peer response/credit。peer永远没收到相应边界时，请求、response及blocked coroutine可悬挂，连接还可能被pool视作可用直到独立read路径碰巧发现失败；原始errno完全丢失，排障只能看到后续模糊goaway/EOF。
+- 证据：`:514`裸调用`conn:write(sendbuf)`不保存两个返回值，`:516-518`无条件清buffer；没有设置`ch.goaway`、关闭conn、调用`channel_clearstream`或唤醒open/read/write waiters。上游`channel_write`只是fork flush且无completion，`stream_writewait`在credit充足时入队后立即返回true并扣减窗口。
+- 根因：batching把“加入本地sendbuf”当作发送成功，却没有为异步transport completion建立channel-level failure latch与所有waiter的统一终止路径。
+- 建议解法：flush检查`ok,err`；失败后原子标记channel terminal、禁止再排队、保留首个错误、关闭transport并通过统一teardown唤醒active/open/write waiters。若API继续采用fire-and-forget batching，应明确返回值只表示accepted，并保证任何后续wait/read立即观察失败；需要发送确认的closewrite/flush提供可等待结果。flow-control credit与local state要么在transport accepted后commit，要么失败时整channel终止，不能静默继续。
+- 回归测试：修复阶段在header、partial DATA、END_STREAM、RST/GOAWAY及WINDOW_UPDATE batch分别注入TCP/TLS write失败，断言首个错误传播、所有waiter恰好结束、buffer/queue/stream清零且channel不归池；正常合并写仍只flush一次。当前不注入发送失败。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2210,7 +2221,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为171项：P0为0，P1为76，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 29、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为172项：P0为0，P1为76，P2为91，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 30、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2367,3 +2378,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/2 server handler异常会绕过closewrite/close，stream map与并发配额永久滞留，记录为`H2-027`；未触发业务异常。
 - 2026-08-09：确认HTTP/2 remote GOAWAY/EOF不结束openwaitq，优雅GOAWAY后唤醒还会泄漏reserved streamcount，记录为`H2-028`；未建立满载连接。
 - 2026-08-09：确认HTTP/2在connection window为0时，每个stream WINDOW_UPDATE都会重复入队同一blocked writer并永久增持引用，记录为`H2-029`；未发送flow-control frame。
+- 2026-08-09：确认HTTP/2 batch flush丢弃TCP/TLS write失败并清空frames，stream API仍按成功推进状态，记录为`H2-030`；未注入发送失败。
