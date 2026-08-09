@@ -184,6 +184,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-CLEARTEXT-SCHEME | transport/API | `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/http/h2.lua:231-262,456-467,1730-1739` | plaintext server | 偏离 | cleartext gRPC listener仍把H2 channel/stream scheme写死为https，与收到的`:scheme: http`及实际TCP安全属性矛盾 | 现有handler不检查stream.scheme，明文自测无法暴露 | GRPC-019 |
 | RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/grpc/client/conn.lua:16-29,49-79,127-155`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | 每个target固定单次A lookup并永久只保存首个IPv4 endpoint，无AAAA或同名多地址fallback | 单地址/IPv4本机自测不能覆盖AAAA-only或首地址故障 | GRPC-020 |
 | GRPC-CLIENT-CLOSE-LIFECYCLE | safety/concurrency | `lualib/silly/net/grpc/client/conn.lua:44-117` | client | 偏离 | close不与in-flight newchannel共锁；close返回后迟到建连仍可向已摘除endpoint发布channel并返回stream | 普通串行close无法覆盖connect yield窗口 | GRPC-021 |
+| GRPC-TLS-ALPN-H2 | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/tls.lua:198-204,250-258,464-466`; `lualib/silly/net/http/client.lua:243-279` | TLS client/server | 偏离 | 双方只配置h2 ALPN但不核对最终选择；无ALPN/非h2会话仍直接进入H2 handshake/parser | 同库双方总提议h2，不能覆盖legacy/misconfigured TLS peer | GRPC-022 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
@@ -2252,6 +2253,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为 conn 引入 generation/cancellation context，并让 endpoint 建连的提交阶段在同一锁下核对 owner仍开放且generation未变；close先标记closed/递增generation并取消在途dial，再按endpoint lock收集和关闭所有已发布/刚完成channel。迟到成功必须由建连task自己关闭，绝不发布或返回stream。
 - 后续回归条件：修复阶段用可控 connector 在 TCP、TLS、H2 handshake和发布前分别暂停，与 close 交错；断言close返回后所有openstream均失败、迟到socket/channel关闭、endpoint不可重新发布且无dispatch task遗留。另覆盖多个caller共享一次dial与重复close。当前仅记录静态时序。
 
+### GRPC-022 — P2 — TLS client/server 不验证 ALPN 最终选择为 `h2`
+
+- 状态：已确认；gRPC TLS accept/dial、TLS握手结果与HTTP/2入口的确定性静态核对。本轮不建立TLS会话。
+- 规范：gRPC over TLS 的HTTP/2连接通过ALPN协商 `h2`；没有协商出 `h2` 时不能假定对端使用HTTP/2并继续发送client preface或把收到字节交给H2 parser。仅在ClientHello/ServerHello配置协议列表不等于已验证negotiated protocol。
+- 位置：client dial在 `lualib/silly/net/grpc/client/conn.lua:49-79`，server accept在 `lualib/silly/net/grpc/server.lua:38-55`；TLS层保存/暴露选择结果在 `lualib/silly/net/tls.lua:198-204,250-258,464-466`；正确读取ALPN后分流的HTTP client对照在 `lualib/silly/net/http/client.lua:243-279`。
+- 触发：TLS gRPC client连接到不支持ALPN、忽略client ALPN或没有选择`h2`的server；或gRPC TLS listener被不发送ALPN/未协商`h2`的client连接。TLS本身仍可能成功。
+- 影响：client在未确认协议后立即发送HTTP/2 connection preface，server则立即等待同一preface/SETTINGS；legacy或配置错误peer看到意外明文协议字节，Silly侧可能长时间等待、产生模糊handshake错误或把其他应用协议字节作为H2处理。严格gRPC互操作要求的TLS协议选择边界没有执行，诊断也无法明确指出ALPN mismatch。
+- 证据：两端都把 `ALPN_PROTOS={"h2"}` 传给TLS，但成功返回后从不调用现有 `conn:alpnproto()`。client无条件 `h2.newchannel(scheme, conn)`，server两种transport的共用accept无条件 `h2.httpd(handler, conn)`。TLS握手代码会把协商结果保存为 `s.alpn` 并公开getter；HTTP client正是用该getter只有在等于`h2`时进入H2，否则选择H1，说明gRPC遗漏的是调用层校验。
+- 根因：把“本端只advertise h2”误当成“握手一定select h2”，没有在TLS transport与H2状态机之间建立显式admission check。
+- 建议解法：TLS client成功后要求 `conn:alpnproto()=="h2"`，否则立即关闭并返回结构化ALPN错误；TLS server accept同样在调用H2前检查并关闭未协商h2的连接。明文prior-knowledge路径不做ALPN检查。将检查封装为gRPC TLS transport helper，避免client/server再次分叉。
+- 后续回归条件：修复阶段覆盖协商h2、无ALPN、server不选择、选择非h2和TLS握手失败；client/server两侧均断言只有h2进入H2 parser，其他情况立即关闭且无channel/stream/task残留。当前不运行TLS互操作。
+
 ## 5. 候选问题收口
 
 本轮没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。
@@ -2281,7 +2294,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为177项：P0为0，P1为78，P2为94，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 21、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为178项：P0为0，P1为78，P2为95，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 22、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2448,3 +2461,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认plaintext gRPC listener仍把H2 channel与应用stream scheme固定标成https，记录为`GRPC-019`；未启动server。
 - 2026-08-09：确认gRPC client对每个target只取单个A记录并永久固定首个IPv4 endpoint，没有AAAA或同名多地址fallback，记录为`GRPC-020`；未执行DNS或连接。
 - 2026-08-09：确认gRPC client close不与in-flight newchannel共同串行，close返回后迟到建连仍可发布orphan channel并返回stream，记录为`GRPC-021`；未新增并发barrier。
+- 2026-08-09：确认gRPC TLS client/server只配置h2 ALPN却不校验最终协商结果，无ALPN或非h2会话仍进入H2状态机，记录为`GRPC-022`；未建立TLS会话。
