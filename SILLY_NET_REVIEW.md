@@ -274,6 +274,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用`uint64_t`计算delta/ticks/tickstep，只在最终sleep已证明为`0..TIMER_RESOLUTION`时转int；显式处理rewind。为大delta实现有界fast-forward/cascade策略，在保持32位jiffies wrap语义下直接定位并触发到期节点，或每轮设catch-up预算且保证过期timer最终及时交付，不能用signed溢出截断时间。
 - 回归测试：修复阶段注入可控clock，覆盖resolution边界、`INT_MAX`前后、`UINT32_MAX`前后、49.7天倍数、rewind和jiffies wrap；assert/NDEBUG均不崩溃、不出现数十亿循环，已到期timer恰好触发一次，未来timer保持正确相对顺序。当前不新增长暂停复现。
 
+### CORE-007 — P2 — flip buffer 的 32 位有符号容量扩展可溢出并破坏内存
+
+- 状态：已确认；整数类型、扩容表达式与两个生产/消费路径静态推导。本轮不堆积大队列、不运行内存压力复现。
+- 位置：通用数组的字段和扩容在`src/array.h:10-35`；双槽带锁封装在`src/flipbuf.h:9-51`；socket operation生产/消费在`src/socket.c:1730-1804`及各公开异步API；timer command生产/消费在`src/timer.c:300-339,475-499,542-547`。
+- 触发：socket线程或timer线程长期停滞，而应用侧继续排队足够多的send/close/read-enable/timer命令，使单个writing slot接近`INT32_MAX` bytes。这个条件可由本地调用压力触发；远端事件只能间接延长消费者停滞，本报告不把它表述为独立远程攻击面。
+- 影响：`a->size + size`、`a->cap * 2`和循环内`new_cap *= 2`均在signed `int`域执行且无检查。超过表示范围后属于C未定义行为；典型结果是负capacity被转成巨大`size_t`交给`mem_realloc`、扩容判断失效后继续`memcpy`越界，或扩容循环不终止，导致崩溃、挂死或heap破坏。
+- 证据：`struct array`把`cap/size`定义为`int32_t`，`array_write`的输入与临时`new_cap`又是`int`；它先执行可能溢出的加法和倍增，再把结果隐式转换给接受`size_t`的allocator。`flipbuf_write`只有mutex互斥，没有总量上限、backpressure或checked arithmetic；socket op附带的payload不在buffer内，因此大量固定尺寸op仍可持续推高该数组。
+- 根因：把可累计的字节计数当作小型容器的signed整数，并默认consumer总能及时清空；增长算法没有表示上限或队列预算。
+- 建议解法：将size/cap/write length统一为`size_t`，在加法和倍增前检查`SIZE_MAX`与项目硬上限；达到可配置的pending-op预算时返回明确错误或施加backpressure。allocator失败也必须保留原pointer并向caller传播，不能继续copy。
+- 回归测试：修复阶段用小型可配置cap或allocator stub覆盖恰好满、加一、倍增越界、hard-limit和allocation failure；分别验证socket/timer caller得到有限错误且已有命令仍可安全消费。当前不生成或运行这些压力条件。
+
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
 - 状态：已确认；worker消息顺序、callback table生命周期与socket ownership的确定性推导。本阶段不新增accept/close barrier复现。
@@ -1880,7 +1891,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为142项：P0为0，P1为68，P2为71，P3为3。模块分布：CORE 6、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为143项：P0为0，P1为68，P2为72，P3为3。模块分布：CORE 7、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2008,3 +2019,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：完成etcd v3静态审查，确认mutation模糊重试、watch revision/重连/背压、lease单位、timeout、range option、unknown watch ID与安全连接共9项；另记录中英文API文档契约偏差1项。
 - 2026-08-09：按用户要求未新增或运行重现、畸形输入和故障注入；首轮全量静态审计收口为141项（P1 68、P2 70、P3 3），无遗留候选，形成五批修复路线。
 - 2026-08-09：开始第二轮纯静态查漏；平台层确认nonblocking设置失败不回传、blocking fd仍会进入事件循环，记录为`SOCK-013`。本轮不注入syscall失败。
+- 2026-08-09：确认socket/timer共用flip buffer以signed 32-bit计数并无检查倍增，积压接近表示上限时可进入UB、错误realloc或越界copy，记录为`CORE-007`；未制造大队列或运行内存压力复现。

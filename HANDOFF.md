@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认142项（P1 68、P2 71、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认143项（P1 68、P2 72、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -116,7 +116,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（142 条）
+## 5. 已确认问题（143 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -128,6 +128,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CORE-004 | P1 | `pthread_create` 只检查 `err < 0`，漏掉 POSIX 的正错误码，失败回滚不可靠。 |
 | CORE-005 | P3 | `worker.maxmsg` 诊断阈值跨线程普通读写；TSAN 实证。 |
 | CORE-006 | P2 | timer把64位毫秒delta窄化为int，长暂停/时钟跳变可崩溃、错时或产生巨量catch-up循环。 |
+| CORE-007 | P2 | socket/timer命令flip buffer以signed 32-bit扩容且无溢出/总量检查，极端积压可触发UB、错误realloc或越界copy。 |
 | NET-001 | P2 | listener close与已排队ACCEPT竞态时只assert，不关闭已注册的accepted fd，形成孤儿连接。 |
 | NET-002 | P2 | raw data callback异常时C message已放弃payload ownership，task错误路径不会释放，形成可重复内存泄漏。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
@@ -265,7 +266,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为142条：P1 68、P2 71、P3 3。模块分布为CORE 6、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
+当前统计为143条：P1 68、P2 72、P3 3。模块分布为CORE 7、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
