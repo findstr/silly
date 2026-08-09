@@ -1194,6 +1194,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：共享严格dispatcher：只有首字节OK且OK packet完整、capability一致时才提交本地transaction transition；ERR返回结构化错误；其他类型一律protocol-fatal、标broken并物理关闭。状态更新必须发生在validator成功后，自动rollback仍需检查结果。
 - 回归测试：修复阶段对BEGIN/COMMIT/ROLLBACK分别覆盖OK、ERR、EOF、LOCAL_INFILE、resultset header、未知byte、截断/尾随OK；只有合法OK改变本地状态，其余连接均不归池。当前不发送控制命令。
 
+### MYSQL-015 — P1 — result metadata/row loops 不识别 ERR，错误包可被解析为列或业务数据
+
+- 状态：已确认；prepared-result packet phase、Lua discriminator与native row header处理的确定性静态核对。本轮不构造result/ERR packet。
+- 规范：MySQL command/resultset各阶段允许的packet类型必须按phase和首字节分派；ERR(`0xff`)表示当前command失败并终止结果，不能进入ColumnDefinition或Binary Protocol Resultset Row decoder。binary row还必须验证首字节header为`0x00`，而不是盲目跳过任意byte。
+- 位置：column-definition循环在`lualib/silly/store/mysql.lua:776-797`，execute首响应与row循环在`:898-945`；native binary row入口在`luaclib-src/mysql/lmysql.c:430-470`，column decoder在`:216-257`。
+- 触发：server/proxy在metadata或row phase返回ERR；或连接已因MYSQL-010等未排空response而让当前loop读到上一command的ERR/其他packet。恶意peer也可构造以0xff开头、后续字节恰能满足当前columns的payload。
+- 影响：metadata ERR被送进column parser并通常抛异常，随后触发MYSQL-011的坏连接清理问题；row-phase ERR则被当binary row，decoder跳过0xff后把errno/SQLSTATE/message字节解释成NULL bitmap和字段，可能向应用返回伪造业务row。若解析后遇EOF，query甚至可报告成功并把connection归池；否则异常/残余packet造成跨请求结果串线。
+- 证据：`recv_col_def_packet`只有`if first==EOF then break`，其余一律`parse_column_def(data)`；row loop同样只有EOF分支，其余一律`parse_row_data_binary(data,cols)`。C row decoder在`:439-444`仅`chk.pos += 1`，从不检查被跳过的byte是0x00。只有execute的第一个packet在进入resultset前检查ERR，后续phase没有同样dispatcher。
+- 根因：result consumer把“非terminator”视作目标数据packet，没有为每个phase声明完整allowlist；native typed decoders也不验证discriminator，无法防守调用层遗漏。
+- 建议解法：实现显式result state machine：每个read先统一识别ERR并终止，metadata只接受合法ColumnDefinition和规定terminator，row phase只接受0x00 binary row及合法terminator/ERR；未知type标protocol-fatal并关闭。所有native parser验证header/type，完整response验证后才允许lease归池。
+- 回归测试：修复阶段在首response、每个column位置、metadata terminator前后、首/中/末row注入合法ERR及未知type；断言ERR结构化返回、绝不生成row、连接按同步状态关闭/不归池，随后marker query不串线。当前不注入packet。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2388,7 +2400,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为186项：P0为0，P1为80，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 14、ETCD 9、DOC 5。
+当前滚动统计为187项：P0为0，P1为81，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 15、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2565,3 +2577,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL COM_PING response无条件进入OK decoder，合法ERR可被误报为健康或触发codec异常，记录为`MYSQL-013`；未发送PING。
 - 2026-08-09：确认MySQL BEGIN/COMMIT/ROLLBACK把任意非ERR packet当成功并提交本地transaction状态，记录为`MYSQL-014`；未发送transaction命令。
 - 2026-08-09：确认MySQL native lenenc把unsigned64长度塞入signed Lua integer且consumer使用可wrap的pos+len/unchecked advance，可绕过边界进入OOB read，记录为`MYSQLC-007`；未构造packet。
+- 2026-08-09：确认MySQL metadata/row loops只识别EOF而不识别ERR，native row decoder又不验证0x00 header，错误包可被解析成列或业务row，记录为`MYSQL-015`；未构造packet。
