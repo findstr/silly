@@ -693,6 +693,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供request context/deadline并从入口计算一次absolute deadline，向DNS、TCP、TLS、H1/H2每次等待传播remaining time；redirect共享原deadline与预算。到期时H1关闭连接、H2发送RST_STREAM(CANCEL)并清pending，所有timer/stream恰好释放一次；另提供显式cancel handle且与timeout/response竞态安全。
 - 回归测试：修复阶段在DNS、connect、ClientHello、header、chunk、H2 frame/body和redirect各阶段停滞，断言同一absolute deadline内返回、资源清零且其他H2 streams不受影响。当前不运行slow peer。
 
+### HTTPC-003 — P2 — connection lookup 为每个失败 origin 永久创建两张空 pool entry
+
+- 状态：已确认；pool metatable、lookup失败与cleanup timer启动条件的确定性静态核对。本轮不发起高基数URL请求。
+- 位置：自动创建entry的pool metatable在`lualib/silly/net/http/client.lua:75-85`；每次lookup读取H2/H1 key在`:183-204`；DNS/connect失败直接返回在`:228-254`；timer只在成功release/channel创建后启动在`:154-180,262-280`，cleanup在`:87-152`。
+- 触发：复用一个长寿命client请求大量不同`scheme/host/port`组合，尤其每个host都DNS失败、connect失败或在生成可池化connection前失败；URL可来自crawler、proxy、webhook等外部输入。
+- 影响：每个新origin仅执行一次查找就分别在`h2pool`和`h1pool`留下空Lua table，失败路径不删除，且没有alive entry时cleanup timer根本不运行。唯一host数量可无界增长，持续占用key字符串、hash slot和两个table，最终增加GC/CPU与内存直到client显式close或进程退出；请求本身失败也不会回收。
+- 证据：`pool_mt.__index`无条件创建、写回并返回`entries={}`；`find_conn`依次索引两个pool。后续`dns.lookup/tcp.connect/tls.connect/h2.newchannel`任一步失败都直接return，没有按key清除空entry。`ensure_timer`只在H1 release成功入池或H2 channel成功创建时调用，所以全失败工作负载没有扫描机会。
+- 根因：read lookup被赋予隐式mutation，用“访问即创建”简化成功路径，却没有给失败transaction配套rollback或全局key cardinality策略。
+- 建议解法：查找使用`rawget`/nil不创建；只有确实要插入可复用entry时才显式创建数组。cleanup仍应删除空key，并对origin cache/key cardinality设置合理预算；所有连接建立失败路径保持pool不变。不要依赖timer弥补lookup side effect。
+- 回归测试：修复阶段以注入式resolver/connector让成千唯一origin在DNS、TCP、TLS、H2初始化各阶段失败，断言两pool key count保持0/有界；成功入池/取出/淘汰行为不变。当前不发起请求或故障注入。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -2118,7 +2129,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为163项：P0为0，P1为72，P2为87，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为164项：P0为0，P1为72，P2为88，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 3、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2267,3 +2278,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1 Connection只做精确close字符串判断且忽略version，token list/大小写/重复及HTTP/1.0默认关闭均失效，记录为`HTTP1-013`；未运行复用连接。
 - 2026-08-09：确认HTTP/1 closewrite吞掉write失败且不在response wait前验证fixed-length完整，已知不完整request可造成双方永久等待，记录为`HTTP1-014`；未发送长度不一致消息。
 - 2026-08-09：确认HTTP/1 server无interim response状态，Expect双方可互等；client又把首个102/103误作final，记录为`HTTP1-015`；未运行100-continue交互。
+- 2026-08-09：确认HTTP client pool lookup会为每个origin写入H1/H2空表，DNS/connect失败不回滚且无timer清理，记录为`HTTPC-003`；未发起高基数请求。
