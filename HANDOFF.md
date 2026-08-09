@@ -1,8 +1,8 @@
 # Silly `net` 全量审计交接文档
 
 > 更新时间：2026-08-09（Asia/Shanghai）
-> 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认196项（P1 83、P2 105、P3 8）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
+> 当前结论：两轮全量纯静态审计已收口；当前确认196项（P1 83、P2 105、P3 8），计划范围内无未归档候选。按用户要求，第二轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -56,21 +56,21 @@ git merge-base HEAD master
 | 1 | 上游提交、仓库状态、构建参数、模块清单 | 已完成 |
 | 2 | ASan/UBSan/coverage 与 TSAN 基线 | 已完成 |
 | 3 | 全部现有网络相关基线测试 | 已完成 |
-| 4 | engine/worker/message/queue/timer/socket C 核心 | 首轮完成 |
-| 5 | `net.lua` 与 C/Lua 边界 | 首轮完成 |
-| 6 | TCP | 首轮完成 |
-| 7 | UDP | 首轮完成 |
-| 8 | TLS | 首轮完成 |
-| 9 | addr/DNS/cluster | 首轮完成 |
-| 10 | HTTP 公共层 | 首轮完成 |
-| 11 | HTTP/1 + RFC 9110/9112/3986 | 首轮完成 |
-| 12 | HTTP/2 + HPACK + RFC 9113/7541 | 首轮完成 |
+| 4 | engine/worker/message/queue/timer/socket C 核心 | 两轮静态复核完成 |
+| 5 | `net.lua` 与 C/Lua 边界 | 两轮静态复核完成 |
+| 6 | TCP | 两轮静态复核完成 |
+| 7 | UDP | 两轮静态复核完成 |
+| 8 | TLS | 两轮静态复核完成 |
+| 9 | addr/DNS/cluster | 两轮静态复核完成 |
+| 10 | HTTP 公共层 | 两轮静态复核完成 |
+| 11 | HTTP/1 + RFC 9110/9112/3986 | 两轮静态复核完成 |
+| 12 | HTTP/2 + HPACK + RFC 9113/7541 | 两轮静态复核完成 |
 | 13 | HTTP client/server 聚合与互操作设计 | 静态完成；独立peer回归待修复阶段 |
-| 14 | WebSocket + RFC 6455/8441 | 首轮完成 |
-| 15 | gRPC over HTTP/2 | 首轮完成；独立peer回归待修复阶段 |
-| 16 | Redis driver | 首轮完成 |
-| 17 | MySQL C codec | 首轮完成 |
-| 18 | MySQL Lua driver | 首轮完成 |
+| 14 | WebSocket + RFC 6455/8441 | 两轮静态复核完成 |
+| 15 | gRPC over HTTP/2 | 两轮静态复核完成；独立peer回归待修复阶段 |
+| 16 | Redis driver | 两轮静态复核完成 |
+| 17 | MySQL C codec | 两轮静态复核完成 |
+| 18 | MySQL Lua driver | 两轮静态复核完成 |
 | 19 | etcd、跨模块取消/超时 | 静态完成；故障注入按用户要求延期 |
 | 20 | 文档/API 契约与最终优先级报告 | 已完成 |
 
@@ -373,7 +373,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ## 8. 下一步：进入修复阶段
 
-首轮审计已经完成，不需要用户再提醒“继续review”。下一会话应让用户选择修复批次；若用户授权从最高风险开始，建议按以下依赖顺序：
+两轮静态审计已经完成，不需要用户再提醒“继续review”。下一会话应让用户选择修复批次；若用户授权从最高风险开始，建议按以下依赖顺序：
 
 1. 内存安全与生命周期：`SOCK-006/008/009/011`、`MYSQLC-001/005`、`HPACK-002`、`TLS-002`、`CLUSTER-005`。
 2. 身份认证与资源边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、HTTP/WS/H2/gRPC输入上限、`ETCD-005/009`。
@@ -419,7 +419,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-Silly net首轮全量静态审计已经完成。先完整读取HANDOFF.md和SILLY_NET_REVIEW.md，核对当前分支与干净状态，不要重做基线或继续寻找新问题。根据用户选择的issue/修复批次工作：先定位报告条目和依赖，修改源码并补该条回归，执行适用的ASan/UBSan/TSAN与独立peer验证，更新报告状态后独立提交。保留用户改动；未经重新授权，不新增或运行畸形输入、并发barrier和fault injection。
+Silly net两轮全量纯静态审计已经完成，当前范围无未归档候选。先完整读取HANDOFF.md和SILLY_NET_REVIEW.md，核对当前分支与干净状态，不要重做基线。根据用户选择的issue/修复批次工作：先定位报告条目和依赖，修改源码并补该条回归，执行适用的ASan/UBSan/TSAN与独立peer验证，更新报告状态后独立提交。保留用户改动；未经重新授权，不新增或运行畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单
