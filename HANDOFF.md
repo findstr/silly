@@ -116,6 +116,13 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
+### 4.1 `cluster` 分支专项复核
+
+- 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
+- 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
+- 既有13项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
+- 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
+
 ## 5. 已确认问题（197 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
