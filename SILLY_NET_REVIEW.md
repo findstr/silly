@@ -776,6 +776,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：`closewrite`返回`boolean,error`并传播`write/flush`失败；在写任何final bytes和进入response wait前验证fixed-length累计值恰好相等。失败时将stream标broken、关闭H1连接且禁止归池，不能发送一个已知不完整message；server handler也必须收到失败。高层client必须检查结果并立即返回。
 - 回归测试：修复阶段覆盖CL精确/少1/多1、分多次write后close、bodyless data、chunked final write以及socket write失败；断言错误同步返回、对端不会无限等、连接不复用且错误只完成一次。当前不发送长度不一致消息。
 
+### HTTP1-015 — P2 — Expect/1xx 状态机不能发送 interim response，且 client 把 102/103 误作 final
+
+- 状态：已确认；Expect request路径、informational response循环与server单response状态的确定性静态核对。本轮不执行100-continue交互。
+- 规范：RFC 9110 §10.1.1允许server在检查headers后发送100 Continue，再读取content并发送最终响应；client在收到100前不得发送等待中的content，但收到其他informational response（如103）也不能把它当final，必须继续等待100或最终status。最终响应可代替100并终止上传。
+- 位置：client Expect分支只读取一次response在`lualib/silly/net/http/h1.lua:556-601`；普通client loop才会跳过1xx在`:604-627`；server handler只有单一`respond/closewrite`状态在`:758-798,818-890`；高层request不传Expect wait timeout在`lualib/silly/net/http/client.lua:282-301`。
+- 触发：Silly client向Silly server发送`Expect: 100-continue`且handler需要读取body；或任意server先返回102/103再返回100/final。高层client传Expect header时第四个timeout为nil。
+- 影响：Silly server在handler前不会自动发送100，handler读body时与尚未上传的client永久互等；handler若调用`respond(100)`，同一stream随即进入普通close/write完成路径，无法重置后再发送最终response。client若先收到102/103，会执行`status~=100`分支，将`hasresponse/writeclosed=true`并把它作为最终结果，后续真正response残留并污染连接复用。没有Expect timeout时挂起无期限。
+- 证据：server read headers后直接创建stream并`pcall(handler,stream)`，没有Expect token解析或interim API。`h1s.respond`每次都向同一sendbuf写status-line且没有informational state。client Expect路径只调用一次`waitresponse`; 除精确100外的所有status都走`:594-596`final分支，而正常`client_waitresponse`的1xx loop被`hasresponse=true`绕过。
+- 根因：实现把每个stream建模为恰好一组response headers，没有“0..N informational + 1 final”的HTTP响应序列；Expect又被作为request发送前的单次特例叠加。
+- 建议解法：建立统一response state machine：client循环消费任意合法1xx，101单独升级，100授权发送content，其余informational暴露callback/忽略后继续；final才锁定headers/body framing。server提供只发送1xx且不关闭write state的`inform` API，并在策略允许时自动/显式发送100；若拒绝则发送final、关闭或安全drain request body。
+- 回归测试：修复阶段覆盖100→200、103→100→200、多个103→final、417无100、Expect timeout，以及server handler读取body/先验证后拒绝；断言无互等、final headers不被1xx覆盖且连接边界正确。当前不运行100-continue互操作。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -2106,7 +2118,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为162项：P0为0，P1为72，P2为86，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 14、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为163项：P0为0，P1为72，P2为87，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 2、HTTP1 15、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2254,3 +2266,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/1把101仅视为final bodyless response，client可把升级连接归池且server继续HTTP parse loop，记录为`HTTP1-012`；未执行Upgrade。
 - 2026-08-09：确认HTTP/1 Connection只做精确close字符串判断且忽略version，token list/大小写/重复及HTTP/1.0默认关闭均失效，记录为`HTTP1-013`；未运行复用连接。
 - 2026-08-09：确认HTTP/1 closewrite吞掉write失败且不在response wait前验证fixed-length完整，已知不完整request可造成双方永久等待，记录为`HTTP1-014`；未发送长度不一致消息。
+- 2026-08-09：确认HTTP/1 server无interim response状态，Expect双方可互等；client又把首个102/103误作final，记录为`HTTP1-015`；未运行100-continue交互。
