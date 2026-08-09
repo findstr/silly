@@ -156,7 +156,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
 | RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
 | RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
-| RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,880-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission 非事务：部分拒绝不记录已用 id、允许复用；invalid Content-Length 则泄漏 streamcount | 现有 malformed header tests 未检查 id reuse/长期 quota | H2-023 |
+| RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,845-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission非事务：拒绝可复用id/泄漏quota；early END长度不符在teardown后仍发布并调用handler | 现有malformed tests未检查id/quota/handler隔离 | H2-023 |
 | RFC9113-5.1/5.4.2-CLOSED-HPACK | MUST | `lualib/silly/net/http/h2.lua:1038-1080,1446-1499`; `luaclib-src/lhttp.c:692-780` | client recipient | 偏离 | local RST tombstone 固定只留 100 个；淘汰后 late HEADERS 在 HPACK 前直接 GOAWAY，未 minimally process compression state | 现有测试没有 >100 cancel 后 delayed response headers | H2-024 |
 | RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
 | RFC9113-6.6/8.4-PUSH-DISABLED | MUST | `lualib/silly/net/http/h2.lua:1500-1547` | client recipient | 偏离 | client 广告 ENABLE_PUSH=0 并获 ACK 后仍静默忽略 PUSH_PROMISE；未报 PROTOCOL_ERROR且未处理 HPACK/stream state | 现有测试没有 disabled-push violation | H2-026 |
@@ -1865,12 +1865,12 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 状态：已确认；RFC 9113 stream lifecycle 与确定性 admission/error branches 推导。本阶段只做静态 review，不新增触发代码。
 - 规范：RFC 9113 §5.1.1 规定 initial HEADERS 使 idle stream 离开 idle，stream identifier 一经使用不得复用；malformed request 按 §8.1.1 reset 后 stream 已 closed。§5.1.2 的 concurrent limit 只统计 open 或任一 half-closed streams，已经 reset/closed 或根本未建立的 stream 不得永久占用名额。
 - 位置：stream object/count fields 在 `lualib/silly/net/http/h2.lua:453-495`，`stream_reset` 在 `:880-894`，正常 close decrement 在 `:1038-1080`，server initial HEADERS admission 在 `:1562-1648`。
-- 触发：路径 A：id 1 initial HEADERS 含 invalid pseudo/forbidden field，收到 RST后在同一 id 再发送合法 request HEADERS。路径 B：连续使用递增奇数 id 发送可通过 field validator但 `content-length` 无法解析的 HEADERS，达到默认 100 次后再发合法 request。
-- 影响：路径 A 会把已 reset 的 id 再次当作新 stream并可能把第二个请求交 application，违反不可复用约束并造成请求身份/重放混淆。路径 B 每次无实际 active stream却永久增加 `streamcount`，最终所有后续合法请求均被 `REFUSED_STREAM`，单连接低成本稳定 DoS，且没有对象可 close 来归还 quota。
-- 证据：`check_req_header` 在 parity/history check 与 `laststreamid` 更新之前；失败时 `stream_reset` 查不到 `ch.streams[id]`，只写 RST，不保存 id/closed tombstone，所以相同 id仍满足 future `id > laststreamid`。相反通过该检查后代码先执行 `laststreamid=id; streamcount++`，随后才 `check_content_length`；其失败同样在 stream object创建前调用 `stream_reset`，既不存 object也不 decrement。唯一正常 decrement在 `S.close`，该路径永远不可达。
+- 触发：路径A：id 1 initial HEADERS含invalid pseudo/forbidden field，收到RST后在同一id再发送合法request。路径B：递增奇数id发送可通过field validator但`content-length`无法解析的HEADERS。路径C：合法数值`content-length: 1`与HEADERS END_STREAM并存，声明有1 byte但实际立即以0 byte结束。
+- 影响：路径A允许已reset id再次进入application，违反不可复用并造成重放混淆。路径B每次无active object却永久增加`streamcount`，约100次后合法request均REFUSED_STREAM。路径C先GOAWAY/清空连接，却随后仍发布malformed stream并fork业务handler；handler收尾会在已归零计数上再减，可能得到负`streamcount`、在terminal channel排队response并留下map/object状态。
+- 证据：`check_req_header`位于parity/history前，失败时`stream_reset`查不到object且不留history。通过后代码先`laststreamid=id; streamcount++`，再解析CL；失败不回滚。路径C创建`s`后在写入`ch.streams[id]`之前调用`stream_remoteend`；长度不符触发`channel_goaway→channel_clearstream`，因map尚无该对象只把count归0。helper不返回失败状态，caller继续执行`ch.streams[id]=s; task.fork(server_handler,s)`；其正常`S.close`又无条件`streamcount--`。
 - 根因：stream protocol transition、semantic validation、quota reservation和 object publication分散在多个不可回滚步骤；`stream_reset` 又假定 object 已存在才能更新 bookkeeping。
-- 建议解法：收到合法形状/方向的 initial HEADERS 时先原子记录 stream id 已使用/closed history，再做 message validation；quota只在决定建立 active stream 时增加，或预留后保证所有失败分支回滚。reset helper必须能对尚未发布 object 的 id记录 closed state而不泄漏计数；parity/history connection checks应先于 message semantic stream checks。
-- 后续回归条件：修复阶段覆盖 invalid pseudo→同 id重用、invalid Content-Length 连续超过 limit、even id 搭配 malformed fields、HPACK error、concurrency恰好 limit，以及失败后下一更高合法 id；断言同 id不能复用、quota无泄漏、正确 connection/stream error scope且 handler只调用一次。本轮不新增测试代码。
+- 建议解法：initial HEADERS admission采用单一transaction：先做connection级id/parity/history检查并记录id已使用，再完成message validation与END/length判定；只有确认交application时才publish object/commit quota。任何stream error写RST并保留closed history但不调用handler；任何connection error立即return且禁止后续publish。helper返回结构化状态，所有reservation都以统一rollback/finally收尾。
+- 后续回归条件：修复阶段覆盖invalid pseudo→同id重用、invalid CL超过limit、CL1+HEADERS END、even id+malformed fields、HPACK error、concurrency边界及失败后更高合法id；断言id不复用、quota/map不泄漏或负数、malformed handler调用0次且错误作用域正确。当前不发送这些HEADERS。
 
 ### H2-024 — P1 — client 淘汰 RST tombstone 后不再 minimally process late HEADERS
 
@@ -2382,3 +2382,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/2未限制HEAD/204/205/304的DATA content，client接受并交付且server可主动生成malformed response，记录为`H2-031`；未发送no-content response。
 - 2026-08-09：撤回`HPACK-003`：当前`http2_table.h`的code/length数组均只有256项，不含EOS leaf，`i=256`截断前提不存在；原证据误读表规模，统计相应减一。
 - 2026-08-09：扩充`H2-017`：完整响应后RST若在对象回收前到达会覆盖成功结果，回收后到达则因nil lookup被误判idle并GOAWAY；未新增计数或发送frame。
+- 2026-08-09：扩充`H2-023`：server处理CL1+HEADERS END时会在未发布对象上GOAWAY/清count，随后仍发布并fork handler，收尾可使streamcount为负；未新增计数或发送frame。

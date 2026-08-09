@@ -266,7 +266,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-020 | P1 | outbound field block 跨 frame 时末帧错误地再次发送 HEADERS。 |
 | H2-021 | P2 | SETTINGS initial-window overflow 被错误降级为 stream reset。 |
 | H2-022 | P2 | Content-Length mismatch 被错误升级为整连接 GOAWAY。 |
-| H2-023 | P1 | rejected initial HEADERS 可复用 stream id 或永久泄漏并发 quota。 |
+| H2-023 | P1 | initial HEADERS拒绝可复用id/泄漏quota，early-END长度失败还会在teardown后发布并调用handler。 |
 | H2-024 | P1 | client 淘汰 local-RST tombstone 后不 minimally process late HEADERS/HPACK。 |
 | H2-025 | P1 | handshake/frame/header-block reads 无 progress deadline 或配置入口。 |
 | H2-026 | P1 | client 禁用 push 后仍静默忽略 PUSH_PROMISE并跳过 HPACK。 |
