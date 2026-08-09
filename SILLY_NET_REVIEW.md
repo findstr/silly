@@ -183,6 +183,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-REQUEST-EOS-DATA | MUST | `lualib/silly/net/grpc/client/service.lua:65-70,215-257`; `lualib/silly/net/http/h2.lua:992-1025` | streaming client sender | 偏离 | client/bidi零消息closewrite时pending request header直接带END_STREAM；未发送gRPC要求的空DATA+END_STREAM | tests的client/bidi均先write至少一条 | GRPC-018 |
 | GRPC-CLEARTEXT-SCHEME | transport/API | `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/http/h2.lua:231-262,456-467,1730-1739` | plaintext server | 偏离 | cleartext gRPC listener仍把H2 channel/stream scheme写死为https，与收到的`:scheme: http`及实际TCP安全属性矛盾 | 现有handler不检查stream.scheme，明文自测无法暴露 | GRPC-019 |
 | RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/grpc/client/conn.lua:16-29,49-79,127-155`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | 每个target固定单次A lookup并永久只保存首个IPv4 endpoint，无AAAA或同名多地址fallback | 单地址/IPv4本机自测不能覆盖AAAA-only或首地址故障 | GRPC-020 |
+| GRPC-CLIENT-CLOSE-LIFECYCLE | safety/concurrency | `lualib/silly/net/grpc/client/conn.lua:44-117` | client | 偏离 | close不与in-flight newchannel共锁；close返回后迟到建连仍可向已摘除endpoint发布channel并返回stream | 普通串行close无法覆盖connect yield窗口 | GRPC-021 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
@@ -2240,6 +2241,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：使用与 HTTP/WS/cluster 共用的双栈 resolver+dialer，保留 logical authority/hostname与地址候选集合；按 RFC 8305错峰或至少顺序尝试所有候选，并以同一 absolute dial deadline限制。TLS SNI/证书验证继续使用原hostname，不能被候选IP替换；连接成功后记录chosen address但不得永久丢弃其他候选。
 - 后续回归条件：修复阶段注入AAAA-only、A-only、双栈/多A首地址失败后成功、全部失败、慢首/快次和IPv4/IPv6 literal；断言fallback发生在发送RPC前、候选共享deadline、输家关闭且authority/SNI保持logical target。当前不解析或连接外部endpoint。
 
+### GRPC-021 — P1 — `close()` 可与在途建连交错并在返回后复活 orphan channel
+
+- 状态：已确认；endpoint mutex、连接发布和 close 顺序的确定性静态时序。按用户要求不新增并发 barrier 或运行连接复现。
+- 位置：`lualib/silly/net/grpc/client/conn.lua:44-117`，尤其 `newchannel` 的 endpoint lock/发布在 `:49-79`、`openstream` 的 closed check在 `:84-100`、未取锁的 `close` 在 `:104-117`。
+- 触发时序：task A 的 `openstream` 读到 `closed=false`，进入 `newchannel` 并在 TCP/TLS/H2 handshake yield；task B 调用 `conn:close()`，设 `closed=true`、把所有 `self[k]` 置 nil，但此刻该 endpoint 尚无已发布 channel，随后 close 返回；task A 恢复后执行 `endpoint.channel=ch` 并返回 `ch:openstream()`。
+- 影响：调用方已观察到 close 完成后仍可获得并使用新 stream/RPC；新 channel 挂在已从 conn 数组摘除、仅由在途局部变量持有的 endpoint 上，后续 `conn:close()` 因 closed 标志直接返回，无法再遍历并关闭它。由此造成底层连接/dispatch task 生命周期泄漏，也破坏 shutdown 后不再接收新工作这一基本资源所有权边界。
+- 证据：`newchannel` 只用全局 `connlock:lock(endpoint)` 串行同 endpoint 的建连，但 `conn.close` 完全不获取这些锁，也没有 generation/cancel token。`openstream` 只在进入时检查一次 `self.closed`，从 yield 恢复后没有二次检查；`newchannel` 发布前同样不检查 owner 是否关闭。close 还先删除 `self[k]`，所以迟到发布的 endpoint 不再能从 owner 找回。
+- 根因：pool close与endpoint connection publication没有共同的事务边界；boolean closed只保护新入口，没有使已开始的异步dial失效。
+- 建议解法：为 conn 引入 generation/cancellation context，并让 endpoint 建连的提交阶段在同一锁下核对 owner仍开放且generation未变；close先标记closed/递增generation并取消在途dial，再按endpoint lock收集和关闭所有已发布/刚完成channel。迟到成功必须由建连task自己关闭，绝不发布或返回stream。
+- 后续回归条件：修复阶段用可控 connector 在 TCP、TLS、H2 handshake和发布前分别暂停，与 close 交错；断言close返回后所有openstream均失败、迟到socket/channel关闭、endpoint不可重新发布且无dispatch task遗留。另覆盖多个caller共享一次dial与重复close。当前仅记录静态时序。
+
 ## 5. 候选问题收口
 
 本轮没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。
@@ -2269,7 +2281,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为176项：P0为0，P1为77，P2为94，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 20、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为177项：P0为0，P1为78，P2为94，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 21、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2435,3 +2447,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认WebSocket client的DNS/TCP/TLS/Upgrade opening handshake没有端到端deadline或取消入口，记录为`WS-010`；未连接silent peer。
 - 2026-08-09：确认plaintext gRPC listener仍把H2 channel与应用stream scheme固定标成https，记录为`GRPC-019`；未启动server。
 - 2026-08-09：确认gRPC client对每个target只取单个A记录并永久固定首个IPv4 endpoint，没有AAAA或同名多地址fallback，记录为`GRPC-020`；未执行DNS或连接。
+- 2026-08-09：确认gRPC client close不与in-flight newchannel共同串行，close返回后迟到建连仍可发布orphan channel并返回stream，记录为`GRPC-021`；未新增并发barrier。
