@@ -435,6 +435,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每个UDP transaction用CSPRNG生成不可预测且当前socket内不冲突的16-bit ID，cache generation另设字段；采用RFC 5452建议的source-port randomization/安全socket pool与适当轮换，同时保持connected-source校验。接收端严格匹配source/destination endpoint、ID、完整QNAME、QCLASS=IN和QTYPE；必要时加入0x20 case randomization作为额外而非替代防线，优先支持加密resolver或DNSSEC验证。
 - 回归测试：修复阶段统计大量并发/顺序query，断言不同name首包不恒定、活动ID唯一且port按策略具有entropy；伪造错误ID/port/name/class/type均被丢弃且不改cache。当前不发送spoofed response。
 
+### DNS-004 — P2 — `ndots`/search list 查询顺序错误，绝对名与尾随点语义不兼容系统 resolver
+
+- 状态：已确认；resolver配置语义与确定性控制流静态核对。本轮不发DNS查询。
+- 规范/兼容依据：[resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html)规定：名字点数达到`ndots`时先尝试absolute query，失败后仍依次尝试search list；点数不足时先按search list尝试，均失败后再尝试absolute。以尾随点结束的名字是完整域名，只按absolute处理。
+- 位置：name规范化、首轮resolve和search fallback在`lualib/silly/net/dns.lua:585-640`；`ndots/search`解析在`:663-706,757-807`；wire name构造在`luaclib-src/ldns.c:94-159`。
+- 触发：配置search suffix并解析无点/少点短名（例如`db`、`api.dev`），或配置`ndots>1`后解析带尾随点的absolute name。常见容器环境会设置多个search domains和较高`ndots`。
+- 影响：短名先泄漏给上游absolute/root namespace并多付一次timeout；若上游DNS、网关或恶意resolver对短名返回合成地址，Silly立即接受并永不查询预期的`db.<search>`，可连接错误服务。点数达到阈值的absolute尝试失败后完全跳过search，合法内部名称解析失败；尾随点在某些`ndots`配置下又会被拼成`name..suffix`并由encoder折叠空label，错误查询另一个名字。
+- 证据：`resolve`无条件先调用`resolve_r(server, trans, name, ...)`；search loop只在`conf_ndots > dotcount(name)`时执行，因此既颠倒低点数顺序，也删除了高点数失败后的search阶段。代码没有单独识别末尾`.`；当条件成立时直接拼接`name .. "." .. suffix`，而`q_name`会跳过zero-length label。
+- 根因：把`ndots`误实现为“是否允许search”的布尔门，而不是决定absolute与search候选顺序的阈值；FQDN marker在lower/拼接前没有建模。
+- 建议解法：先生成有序且去重的候选列表：trailing-dot只含absolute；否则dots>=ndots为`absolute→search...`，dots<ndots为`search...→absolute`。每个候选在编码前重新验证总长/label，保留清晰的最终错误与整体deadline，缓存key使用canonical absolute name。
+- 回归测试：修复阶段以记录query-name顺序的resolver覆盖0/1/多search、`ndots=0/1/2/15`、无点/等阈值/高于阈值、尾随点、空search和NXDOMAIN/timeout组合；断言候选顺序、次数、最终cache key与系统resolver一致。当前不创建或运行resolver。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -1924,7 +1936,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为146项：P0为0，P1为68，P2为75，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为147项：P0为0，P1为68，P2为76，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 4、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2056,3 +2068,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认worker在sid校验后直接设置slot closing，旧close可跨越socket-thread free/reuse把状态写入新generation，记录为`SOCK-014`；未新增并发barrier。
 - 2026-08-09：确认UDP对象不保存bind/connect模式，bound缺destination仍返回成功后静默丢包，connected显式destination又被忽略，记录为`UDP-001`；未发送datagram。
 - 2026-08-09：确认TLS listen先发布TCP listener再构造ctx，证书/key/cipher失败会泄漏listener并留下解引用nil的accept回调，记录为`TLS-007`；未加载损坏证书。
+- 2026-08-09：确认DNS无条件先查absolute且用ndots决定是否完全跳过search，低点数顺序、高点数fallback和trailing-dot语义均偏离系统resolver，记录为`DNS-004`；未发查询。
