@@ -1324,6 +1324,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：支持明确的`https://` endpoint与安全默认TLS配置：系统/custom CA、SAN hostname/IP验证、可选client cert/key；实现Authenticate并在每个unary/stream携带token metadata，处理token过期的single-flight refresh且不把secret写日志。先修复底层TLS verification/custom metadata，再开放此配置；禁止静默明文回退。
 - 回归测试：修复阶段覆盖受信TLS、错误CA/SAN、mTLS缺失/正确cert、RBAC username/password、token过期与watch/lease重连刷新；抓包确认无明文、日志无credential。当前不搭建secure peer。
 
+### ETCD-010 — P2 — lease keepalive 重连遗留旧 stream/sender，可累积重复循环与资源
+
+- 状态：已确认；keepalive双向stream的创建、读取失败、发送task与client关闭路径静态核对。本阶段不人为断开连接或运行并发barrier。
+- 位置：sender生命周期在`lualib/silly/store/etcd.lua:161-186`，recv/reconnect循环在`:188-207`，client close只处理当前stream在`:606-622`。
+- 触发：LeaseKeepAlive stream的读取方向因server关闭、HTTP/2 stream error或连接故障返回nil；client仍未关闭且至少登记过一个keepalive，recv task随后建立新stream并再次fork sender。
+- 影响：旧sender没有收到generation取消信号，旧stream也没有被显式close。若旧写方向暂时未失败，旧、新sender可能同时对同一lease发送keepalive；若当前没有到期项，旧sender会每500ms永久扫描并保留旧stream引用。反复重连可线性累积task/stream，放大ETCD-004的续租流量；`client:close()`又只关闭最后写入`self.keepstream`的stream，不能可靠收敛早期generation。
+- 证据：每次`LeaseKeepAlive()`成功都会无条件`task.fork(lease_send_task,{stream=stream})`；内层read loop退出后直接sleep/reconnect，没有`stream:close()`、没有等待/取消对应sender，也没有generation比较。sender的唯一退出条件是全局`c.closed`或其自身某次write失败；没有待发送项时两者都不会发生。重连会覆盖`c.keepstream`，因此旧stream失去owner但仍被sender闭包强引用。
+- 根因：双向stream的读写两半由独立task持有，却没有以单一generation owner统一关闭、取消和join；共享`closed`只能关闭整个client，不能结束一次已经失效的stream generation。
+- 建议解法：为每次keepalive stream建立generation-scoped session，recv或send任一侧失败都原子标记该generation关闭、显式close stream并唤醒/结束另一侧；只有当前generation可更新共享状态。重连前完成旧session收尾，`client:close()`取消并等待唯一owner；发送调度与ETCD-004一并改为单owner、单lease至多一个in-flight。
+- 回归测试：修复阶段覆盖read-first failure、write-first failure、空keepalive集合、多个lease及连续多次重连；以task/stream计数和记录的lease ID断言任意时刻只有一个generation sender、旧stream均关闭、无重复发送且close后全部task退出。当前不执行断链测试。
+
 ### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2411,7 +2422,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为188项：P0为0，P1为82，P2为99，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 9、DOC 5。
+当前滚动统计为189项：P0为0，P1为82，P2为100，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 10、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2592,3 +2603,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`MYSQLC-003`：binary TIME未限定0/8/12长度，非法值会跨列读取或留下尾字节；未构造row。
 - 2026-08-09：确认MySQL broken connection释放open_count后不唤醒capacity waiter，受限pool已有请求可永久等待，记录为`MYSQL-016`；未注入I/O失败或运行barrier。
 - 2026-08-09：扩充`MYSQL-001`：checked-out conn的GC只关闭fd、不递减pool.open_count，与idle/lifetime淘汰同样制造幽灵容量。
+- 2026-08-09：确认etcd LeaseKeepAlive读失败重连时不关闭旧stream或取消旧sender，每轮会再fork发送task且close只覆盖最新stream，记录为`ETCD-010`；未执行断链或并发测试。
