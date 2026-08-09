@@ -1133,6 +1133,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让wrapper返回0/-errno，并处理EINTR重试；每个创建/accept路径必须在失败时关闭fd、回滚pool/op状态并向对应caller报告明确错误，只有成功设置nonblocking后才能发布sid或加入poller。可优先使用`socket(...SOCK_NONBLOCK)`/`accept4`的原子创建形式并保留可靠fallback。
 - 回归测试：修复阶段分别在Unix F_GETFL、F_SETFL及Windows FIONBIO失败点做可控注入，覆盖listen/accept/TCP connect/UDP bind/connect；断言fd关闭、slot/计数回滚、socket thread继续处理marker连接且无double-close。当前不运行注入。
 
+### SOCK-014 — P2 — stale close 可把 `CLOSING` 状态写入复用后的新 socket
+
+- 状态：已确认；slot发布/回收顺序与worker/socket线程交错静态推导。本轮不新增并发barrier或动态复现。
+- 位置：并发契约与state操作在`src/socket.c:26-69,85-123`；pool发布/回收在`:458-538`；worker close入口在`:1562-1588`；connect/listen失败和其他socket-thread释放路径在`:1338-1353,1397-1412,1456-1493,1544-1559`。
+- 触发：worker以old sid进入`socket_close`并通过`pool_get`，随后socket线程因pending connect/listen失败或已有操作而`free_socket/pool_free`同一slot；worker再执行`set_closing(s)`。最窄但确定的窗口是`socket_default`已经把state清零、尚未把sid写成-1时，或者slot已经以new sid复用、旧worker尚未写state时。
+- 影响：旧close op携带old sid，socket线程稍后会正确丢弃它，但提前写入slot地址的`STATE_CLOSING`没有generation标签，不会被回滚。新generation可继承closing状态；`report_close`因此直接返回而不通知Lua，读路径也可把它当EOF，导致新连接被错误终止、close事件丢失或上层任务永久等待。若写入发生在回收的其他阶段，还会与生命周期状态变更形成未定义的跨代语义。
+- 证据：文件顶部明确说明`pool_get`不锁定slot且socket线程可随时free/reuse；然而`socket_close`只在入口校验一次sid，随后直接读写共享state。`socket_default`按`state=0`、`sid=-1`顺序执行，`pool_alloc`设置fd/type并发布new sid但不会再次清空state。旧op在`op_process`的sid校验只能保护稍后的命令执行，保护不了入队前已经作用于slot的atomic state写。
+- 根因：close acceptance被拆成两个线性化点：worker先无代际保护地修改可复用slot，socket线程再按sid验证命令；atomic state保证单次读写原子，却不保证它属于同一generation。
+- 建议解法：worker入口只验证/复制sid并排队，不直接修改slot state；由socket线程在成功验证sid后原子设置closing并决定幂等close。若API必须同步返回`EXCLOSING`，使用独立的generation-tagged command/pending表，或为slot实现覆盖sid+state的锁/seqlock事务，且回收后不允许旧引用再写。
+- 回归测试：修复阶段用小pool/barrier覆盖`pool_get → old free → state clear → sid invalid → new alloc → stale set_closing`各切点，并覆盖pending TCP connect、listen失败和重复close；断言new socket state为clean、其data/close事件正常交付、old close只返回确定错误。当前不创建或运行该复现。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -1891,7 +1902,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为143项：P0为0，P1为68，P2为72，P3为3。模块分布：CORE 7、NET 2、SOCK 13、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为144项：P0为0，P1为68，P2为73，P3为3。模块分布：CORE 7、NET 2、SOCK 14、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2020,3 +2031,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：按用户要求未新增或运行重现、畸形输入和故障注入；首轮全量静态审计收口为141项（P1 68、P2 70、P3 3），无遗留候选，形成五批修复路线。
 - 2026-08-09：开始第二轮纯静态查漏；平台层确认nonblocking设置失败不回传、blocking fd仍会进入事件循环，记录为`SOCK-013`。本轮不注入syscall失败。
 - 2026-08-09：确认socket/timer共用flip buffer以signed 32-bit计数并无检查倍增，积压接近表示上限时可进入UB、错误realloc或越界copy，记录为`CORE-007`；未制造大队列或运行内存压力复现。
+- 2026-08-09：确认worker在sid校验后直接设置slot closing，旧close可跨越socket-thread free/reuse把状态写入新generation，记录为`SOCK-014`；未新增并发barrier。
