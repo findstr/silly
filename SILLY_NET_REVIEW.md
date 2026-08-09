@@ -581,6 +581,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在`cluster.call/send`入口计算absolute deadline并把remaining预算贯穿mutex acquire、DNS、TCP connect、send admission和response wait；另允许独立`dial_timeout`但总RPC deadline始终取更早者。到期必须按peer generation关闭pending connect、从mutex wait queue安全移除、完成对应pending且不影响新generation；错误要区分dial与response timeout但保持公开opaque contract。
 - 回归测试：修复阶段分别在mutex、DNS、TCP connect、send queue和response阶段停住，配置短deadline并断言总耗时受同一预算约束、socket/task/timer清零；覆盖多个caller共享connect且deadline不同、close与connect timeout相邻。当前不运行blackhole或时序场景。
 
+### CLUSTER-009 — P2 — `send` 与 `call` 使用同一 request frame，正常 handler response 会制造 unmatched ACK
+
+- 状态：已确认；public one-way路径、wire header与server response分支的确定性静态核对。不发送消息。
+- 位置：`send/call`共用`callx`与`c.request`在`lualib/silly/net/cluster.lua:274-309`；server对所有request统一调用handler并编码response在`:64-104`；request wire没有one-way字段在`luaclib-src/lcluster.c:22-34,410-449`；文档承诺send不等待response在`docs/src/en/reference/net/cluster.md:428-448`。
+- 触发：调用`cluster.send(peer,cmd,obj)`，远端正常`call` handler为该cmd返回一个非nil结果，且`marshal("response",...)`能够编码它；通用echo/统一response handler会自然满足，无需恶意peer。
+- 影响：远端发送本不需要的response，浪费序列化、带宽和队列；本地`send`在发送后立即返回且从未写`wait_pool[session]`，ACK到达必然成为unknown session，触发`CLUSTER-003`的nil wakeup异常/traceback。高频notification会稳定制造异常日志和CPU开销；若仅修unknown ACK为丢弃，冗余response与协议语义错误仍存在。
+- 证据：`callx(true)`仍先调用`c.request`分配普通session并发送完全相同frame，只在send成功后直接`return true`，不调用`waitfor`。request header只有session/cmd/traceid，无one-way bit；接收端也不知道调用来源，始终执行`call`，只要response marshal首返回值非nil就调用`c.response`并`tcp_send`。
+- 根因：one-way只作为发送端本地等待策略实现，没有进入wire contract或server dispatch context；系统错误假设业务marshal会按cmd自行返回nil，却未在API契约要求或验证。
+- 建议解法：版本化协议中增加明确one-way flag，server handler仍可执行但必须跳过response marshal/send；或定义保留session/flag并让C parser返回request kind。不能用“发送端丢弃ACK”代替，因为仍浪费远端工作与带宽。旧peer协商不支持时应拒绝one-way或提供明确legacy行为。
+- 回归测试：修复阶段让统一handler总是返回对象，分别call/send同一cmd；断言call仅一条matching ACK、send零ACK且本地无pending/unknown日志。覆盖旧协议协商、handler nil/error和高频send。当前不运行peer互操作。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2015,7 +2026,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为154项：P0为0，P1为69，P2为81，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 8、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为155项：P0为0，P1为69，P2为82，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 9、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2155,3 +2166,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认DNS中英文reference仍宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突，记录为`DOC-002`；未运行doc示例。
 - 2026-08-09：确认cluster accept adapter少接listener id参数，导致incoming peer.remoteaddr保存listener sid并丢弃真实endpoint，记录为`CLUSTER-007`；未建立连接。
 - 2026-08-09：确认cluster timeout只覆盖send后的response wait，lazy DNS/TCP connect不继承预算且TCP无timer，记录为`CLUSTER-008`；未连接黑洞endpoint。
+- 2026-08-09：确认cluster.send发送普通request且wire无one-way标志，正常handler response会变成unmatched ACK，记录为`CLUSTER-009`；未发送消息。
