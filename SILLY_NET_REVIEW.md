@@ -1357,6 +1357,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先定义并固定契约。按现有文档应校验`retry`为非负整数，执行一次初始请求并至多额外N次；仅在确实还有下一attempt时sleep。若改用`max_attempts`，应要求至少1并迁移/弃用旧名。所有最终失败必须返回最后一个结构化错误；mutation仍受ETCD-001约束，不能因此扩大盲重试范围。
 - 回归测试：修复阶段以fake service计数覆盖retry=0/1/5、首轮成功、中途成功、全部失败、负数/小数/错误类型；断言attempt数、sleep数、最终error和mutation retry policy。当前只记录控制流。
 
+### ETCD-013 — P2 — client 关闭后 `watch()` 仍报告成功，返回的 watcher 会永久等待
+
+- 状态：已确认；client close、channel push与watch manager启动路径确定性静态推导。不调用close/watch或阻塞read。
+- 位置：watch构造与未检查push结果在`lualib/silly/store/etcd.lua:557-600`，client close在`:606-622`；channel关闭后的push/pop语义在`lualib/silly/sync/channel.lua:20-73`。
+- 触发：先调用`client:close()`，再调用`client:watch(req)`并对返回对象执行`read()`；也覆盖close已发生而上层因复用对象误发起新watch的常见生命周期错误。
+- 影响：`watch()`返回非nil watcher和nil error，调用方认为创建成功；其out channel没有任何producer也未被关闭，`read()`设置waiter后永久挂起。watcher还被已关闭client的`watchers`表强引用，后续没有第二次close清理（close幂等直接return），形成对象/task泄漏并阻碍shutdown。
+- 证据：`M.watch`从不读取`self.closed`；`watchreqc`已由close设置reason，故`push({create_request=...})`返回`false,"client closed"`，但返回值被丢弃。随后代码仍把w放进watchers并返回`w,nil`。若watchco为空，新fork的manager从closed channel pop后立即退出；若已有watchco，字段不会重置也不会产生新consumer。close对watchers的遍历已经发生，后来插入的w.outch保持open，`channel.pop`因此只能进入无期限`task.wait()`。
+- 根因：watch创建没有以client lifecycle为admission gate，也没有把control-channel enqueue作为可能失败的事务步骤；对象发布、registry插入和manager ownership缺少统一成功/回滚边界。
+- 建议解法：入口先检查closed并返回`nil,"client closed"`，再以同一generation/lifecycle锁原子完成enqueue与registry发布；必须检查channel push结果，失败时关闭outch、撤销registry并返回错误。close应阻止新的admission后再关闭manager和已登记watch，并等待owner收尾；watchco退出时清空句柄以便状态可诊断。
+- 回归测试：修复阶段覆盖close前/后watch、watch与close交错、首次watch和已有manager两种状态；断言失败立即可见、没有watcher发布/registry残留/blocked read，并覆盖重复close/cancel。当前不运行生命周期交错。
+
 ### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2444,7 +2455,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为191项：P0为0，P1为82，P2为102，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 12、DOC 5。
+当前滚动统计为192项：P0为0，P1为82，P2为103，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 13、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2628,3 +2639,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认etcd LeaseKeepAlive读失败重连时不关闭旧stream或取消旧sender，每轮会再fork发送task且close只覆盖最新stream，记录为`ETCD-010`；未执行断链或并发测试。
 - 2026-08-09：确认etcd watch公开注解中的wait/limit不属于WatchCreateRequest且实现从不消费，编码时被静默丢弃，记录为`ETCD-011`；未建立watch stream。
 - 2026-08-09：确认etcd retry按总attempt而非文档所述额外重试实现，retry=0会跳过RPC并返回nil,nil且最终失败后仍sleep，记录为`ETCD-012`；未调用RPC。
+- 2026-08-09：确认etcd client关闭后watch仍忽略control-channel push失败并返回成功对象，其read channel没有producer或close路径而永久等待，记录为`ETCD-013`；未执行生命周期交错。
