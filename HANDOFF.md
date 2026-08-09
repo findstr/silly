@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认183项（P1 79、P2 97、P3 7）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认184项（P1 79、P2 98、P3 7）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -194,6 +194,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQL-010 | P1 | multi-result状态机不读取新header/metadata，剩余response可污染pool并与下一请求串线。 |
 | MYSQL-011 | P1 | codec/unpack异常绕过fatal cleanup，login泄漏pool容量、query把反同步连接归池。 |
 | MYSQL-012 | P2 | HandshakeV10 auth seed用错capability且固定12-byte part2，合法server/plugin可认证失败。 |
+| MYSQL-013 | P2 | COM_PING response无条件按OK解码，合法server ERR可被误报为健康或触发codec异常。 |
 | ETCD-001 | P1 | mutation RPC在结果未知的transport失败后无条件重放，可产生重复revision/watch事件和孤儿lease。 |
 | ETCD-002 | P1 | watch公开revision参数未映射到start_revision，承诺的历史事件回放被静默忽略。 |
 | ETCD-003 | P1 | watch重连不记录created/progress revision且忽略fragment边界，可静默漏掉断线窗口事件。 |
@@ -306,7 +307,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 
-当前统计为183条：P1 79、P2 97、P3 7。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 5；以主报告中的编号和证据为准。
+当前统计为184条：P1 79、P2 98、P3 7。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 13、ETCD 9、DOC 5；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

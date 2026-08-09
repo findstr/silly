@@ -1158,6 +1158,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按negotiated capability逐字段、remaining length和advertised auth length解析HandshakeV10；part 2长度使用规范公式并安全处理terminating NUL，再把完整plugin data交给plugin-specific handler。client flags取双方intersection，未知plugin明确拒绝或走实现的auth-switch机制。
 - 回归测试：修复阶段构造SECURE/PLUGIN_AUTH/LENENC三flag组合及auth length 0/9/20/21/其他plugin，分别与MySQL 5.7/8和MariaDB代理互操作；当前不新增handshake fixture。
 
+### MYSQL-013 — P2 — `COM_PING` 响应无条件按 OK 解码，server ERR 可被伪造成健康
+
+- 状态：已确认；COM_PING响应分支、native OK/ERR decoder与公开health-check契约的确定性静态核对。本轮不发送PING或构造server错误。
+- 规范：MySQL command response必须先按payload首字节区分OK(`0x00`)、ERR(`0xff`)及命令允许的其他类型；COM_PING通常返回OK，但server拒绝、shutdown/权限/状态错误仍必须作为ERR传播，不能用另一packet grammar解码。连接健康检查尤其不能把server error报告为成功。
+- 位置：`conn_ping`在`lualib/silly/store/mysql.lua:849-870`，pool wrapper在`:1163-1171`；native OK/ERR parser分别在`luaclib-src/mysql/lmysql.c:64-109,156-210`；中英文ping返回契约见`docs/src/reference/store/mysql.md:136-169`与英文同名文档。
+- 触发：已建立连接对COM_PING返回任意合法ERR packet，例如server处于拒绝命令状态；恶意/代理peer也可控制errno、SQLSTATE和message bytes。
+- 影响：长度与字节恰好可供OK parser消费时，driver返回伪造的`type="OK"` table和nil error，pool健康检查把明确失败的server判为可用并继续归池；其他ERR内容会被误读的lenenc info触发native exception，落入MYSQL-011的异常清理缺口。监控、startup readiness与连接选择均可得到错误结论。
+- 证据：write/read成功后`conn_ping`直接`return parse_ok_packet(data),nil`，没有读取`strbyte(data)`。C OK decoder仅跳过第一个byte，随后依次把后续数据当两个lenenc整数、status和warning，并硬编码结果`type="OK"`；它从不验证被跳过的byte。ERR decoder虽已存在，query/login分支也会先判ERR，但ping没有复用。
+- 根因：实现把“COM_PING成功时响应为OK”错误简化为“COM_PING任何response都是OK”，parser API本身又不自证packet类型，使调用点遗漏可静默变成另一种合法对象。
+- 建议解法：建立统一command-response dispatcher，首字节为ERR时调用`parse_err_packet`并返回nil,error，只有OK才调用OK parser，其他type作为protocol error并标broken。native各typed parser也应验证discriminator，形成第二道防线；health check只有完整合法OK才算成功。
+- 回归测试：修复阶段覆盖正常OK、多个合法ERR长度/errno/SQLSTATE、截断ERR及未知首字节；断言ERR永不返回OK、协议异常连接不归池、普通server ERR若响应完整可按明确策略决定是否保持同步。当前不发PING。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2352,7 +2364,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为183项：P0为0，P1为79，P2为97，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 12、ETCD 9、DOC 5。
+当前滚动统计为184项：P0为0，P1为79，P2为98，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 6、MYSQL 13、ETCD 9、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2526,3 +2538,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认Redis SUBSCRIBE后没有push reader/subscription state，后续message会与命令response错配且文档示例未实际订阅，记录为`REDIS-007`；未运行Pub/Sub交互。
 - 2026-08-09：确认Redis共享连接不隔离MULTI/WATCH会话，其他协程命令可被排入错误事务并改变EXEC结果，记录为`REDIS-008`；未执行事务或并发barrier。
 - 2026-08-09：确认Redis中英文pipeline示例使用实现不存在的out参数且select提示写成恒失败无message的assert，记录为`DOC-005`；未运行文档示例。
+- 2026-08-09：确认MySQL COM_PING response无条件进入OK decoder，合法ERR可被误报为健康或触发codec异常，记录为`MYSQL-013`；未发送PING。
