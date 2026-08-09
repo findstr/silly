@@ -1,6 +1,6 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：分支基线与既有问题复核完成；分支独有问题见第 4 节
+> 状态：两轮纯静态复核完成；确认1项分支独有问题，当前范围无未归档候选
 > 审计日期：2026-08-09
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
@@ -58,7 +58,20 @@ test/testcluster.lua
 
 ## 4. 分支独有问题
 
-分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告197项统计。完整条目会在确认后逐项追加并单独提交。
+分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告197项统计。
+
+### CLUSTER-B001 — P2 — eager `cluster.connect`没有deadline参数，黑洞dial可长期挂起
+
+- 状态：已确认；公开签名、DNS/TCP调用链与底层connect timer入口的确定性静态核对。未连接黑洞地址或运行时序测试。
+- 位置：分支`lualib/silly/net/cluster.lua:161-187`的`M.connect`；底层可选connect timer在`lualib/silly/net.lua:89-140`；公开文档在`docs/src/en/reference/net/cluster.md:120-159,312-329`及中文对应位置。
+- 触发：应用调用`cluster.connect("host:port")`，DNS解析后目标TCP SYN被防火墙静默丢弃、路由设备不返回错误，或connect completion长期不投递。直接IP endpoint无需依赖DNS即可进入该路径。
+- 影响：`cluster.connect`协程、`socket_pending[fd]`和底层socket会保留到操作系统连接超时；API没有timeout/cancel handle，应用无法用`serve.timeout`约束dial阶段，也不能先得到peer再主动close。故障切换、启动、shutdown和请求SLA可被单个黑洞endpoint拖延；并发connect会按调用数累积pending资源。
+- 证据：分支公开函数只有`M.connect(addr)`，hostname路径调用`dns.lookup(name,dns.A)`后直接执行`tcp_connect(resolved, EVENT)`。底层`connect_wrap`的第四实参才是timeout；仅当该值非nil时才注册`time_after(timeout, connect_timer, fd)`，否则直接`task_wait()`。分支文档要求connect在coroutine中调用，但没有timeout配置或取消返回值；`serve.timeout`只在`waitfor(session)`中创建response timer，且connect发生在call之前。
+- 根因：从lazy connection迁移到eager connection时消除了原`CLUSTER-008`的call-before-timer路径，但没有把dial生命周期建模为独立、可配置且可取消的operation；已有底层timeout能力没有向cluster API传递。
+- 建议解法：为`cluster.connect`增加向后兼容的options/timeout参数，在入口计算monotonic absolute deadline，并把remaining budget同时传给DNS和每个TCP候选；dial timeout/取消必须关闭对应generation的pending socket且不能让late CONNECT发布peer。若以后实现多地址fallback，所有候选共享同一总deadline而不是逐候选重置。
+- 回归测试：修复阶段用可控connector覆盖直接IP黑洞、DNS接近deadline后再dial、CONNECT恰在timeout前后完成、并发不同deadline、取消/close与late CONNECT；断言总耗时受单一预算约束、返回后`socket_pending`/fd/task/timer清零且不发布迟到peer。本轮不创建或运行这些场景。
+
+分支独有统计：1项（P2 1）。
 
 ## 5. 静态审计边界
 
@@ -67,3 +80,9 @@ test/testcluster.lua
 - 已核对底层`net` accept/connect callback ABI、connect timeout入口、task唤醒顺序和trace attach/restore语义。
 - 未运行任何代码；因此大端peer、黑洞dial、partial frame、跨peer ACK、断链竞态和资源上限仍只保留确定性静态证据，动态验证继续延期到修复阶段。
 - “未发现更多分支独有问题”只表示上述提交与调用链在当前静态范围内没有剩余可确认候选，不表示cluster或整个仓库绝对无bug。
+
+## 6. 审计记录
+
+- 2026-08-09：定位远端分支、共同祖先与7个修改文件，逐行核对Lua/C/类型/中英文文档/测试，未切换工作树。
+- 2026-08-09：完成`CLUSTER-001`至`CLUSTER-013`分支状态矩阵；确认`CLUSTER-003`修复、`CLUSTER-008`原lazy-connect路径消除。
+- 2026-08-09：确认eager `cluster.connect`没有暴露或转发底层connect timeout，记录为`CLUSTER-B001`；第二遍静态查漏后当前范围无未归档候选。

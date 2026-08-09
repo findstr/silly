@@ -221,7 +221,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 2026-08-09继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
 
-既有`CLUSTER-001`至`CLUSTER-013`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；其余状态见专项矩阵。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
+既有`CLUSTER-001`至`CLUSTER-013`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认1项只属于该分支的`CLUSTER-B001`（P2）：eager `cluster.connect`没有暴露或转发底层connect timeout。分支独有编号不计入本报告以master为基线的197项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
 
 ## 4. 已确认问题
 
@@ -2709,3 +2709,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认TLS reload先原地污染保存配置再构造ctx，失败会assert且留下旧ctx与新坏conf的混合状态，记录为`TLS-008`；未加载损坏配置。
 - 2026-08-09：第二轮纯静态查漏收口；主报告与HANDOFF自动核对均为196项（P1 83、P2 105、P3 8），编号唯一、索引与模块统计一致，当前范围无未归档候选。
 - 2026-08-09：继续审阅远端`cluster`分支时确认`testcluster.lua`随机分片完整性断言从未执行相等比较，且同一缺口也存在于`master`，记录为`CLUSTER-013`；仍未运行测试或新增重现代码。
+- 2026-08-09：完成`origin/cluster@0f2c8773`专项复核；确认eager `cluster.connect`没有deadline/cancel入口且未转发底层已有connect timeout，作为分支独有`CLUSTER-B001`归档，不计入master基线统计。
