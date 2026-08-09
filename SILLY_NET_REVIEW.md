@@ -592,6 +592,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：版本化协议中增加明确one-way flag，server handler仍可执行但必须跳过response marshal/send；或定义保留session/flag并让C parser返回request kind。不能用“发送端丢弃ACK”代替，因为仍浪费远端工作与带宽。旧peer协商不支持时应拒绝one-way或提供明确legacy行为。
 - 回归测试：修复阶段让统一handler总是返回对象，分别call/send同一cmd；断言call仅一条matching ACK、send零ACK且本地无pending/unknown日志。覆盖旧协议协商、handler nil/error和高频send。当前不运行peer互操作。
 
+### CLUSTER-010 — P2 — hostname 只解析单个 A 记录，IPv6-only 与多地址故障转移不可用
+
+- 状态：已确认；cluster endpoint解析与DNS返回类型的确定性静态核对。不执行DNS或连接。
+- 位置：hostname判断、唯一A lookup和单地址connect在`lualib/silly/net/cluster.lua:179-217`；DNS同时公开A/AAAA及多结果resolve在`lualib/silly/net/dns.lua:574-656`；cluster文档允许hostname endpoint在`docs/src/en/reference/net/cluster.md:249-319`。
+- 触发：peer hostname只有AAAA记录，或同时有多个A/AAAA而首个A地址不可达、后续地址健康；IPv6-only集群、双栈迁移和DNS负载均衡均会遇到。
+- 影响：AAAA-only名字在A lookup返回nil后被直接报告`dns lookup ... failed`，从不查询AAAA；多A只使用`dns.lookup`返回的第一项，该地址connect失败后整次call失败，不尝试同一DNS答案的其他endpoint。合法可达节点因此不可用，自动重连也会重复同样的单地址选择，故障恢复依赖DNS排序/TTL偶然改变。
+- 证据：`connect`对所有`is_host(name)`路径硬编码`dns.lookup(name,dns.A)`，随后只调用一次`join_addr(ip,port)`和一次`tcp_connect`。代码没有`dns.AAAA`、`dns.resolve`、address list、family preference或逐地址剩余deadline循环；直接IPv6 literal虽可绕过DNS，但不能修复hostname语义。
+- 根因：endpoint解析被简化为“hostname→一个IPv4字符串”，没有采用family-neutral address set或连接候选状态机。
+- 建议解法：DNS/addr层返回有序A+AAAA候选，并在同一absolute deadline下实现RFC 8305风格的受控Happy Eyeballs或至少顺序故障转移；每个失败地址保留诊断，成功地址可按TTL/健康度缓存但不能永久钉死。直接literal继续保持单候选。
+- 回归测试：修复阶段覆盖AAAA-only、A-only、双栈首选成功/失败、多A首个拒绝后次个成功、总deadline和全部失败诊断；用静态可控resolver/connector验证候选顺序。当前不运行解析或连接。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2026,7 +2037,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为155项：P0为0，P1为69，P2为82，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 9、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
+当前滚动统计为156项：P0为0，P1为69，P2为83，P3为4。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 10、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 2。
 
 建议按依赖关系分五批修复：
 
@@ -2167,3 +2178,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认cluster accept adapter少接listener id参数，导致incoming peer.remoteaddr保存listener sid并丢弃真实endpoint，记录为`CLUSTER-007`；未建立连接。
 - 2026-08-09：确认cluster timeout只覆盖send后的response wait，lazy DNS/TCP connect不继承预算且TCP无timer，记录为`CLUSTER-008`；未连接黑洞endpoint。
 - 2026-08-09：确认cluster.send发送普通request且wire无one-way标志，正常handler response会变成unmatched ACK，记录为`CLUSTER-009`；未发送消息。
+- 2026-08-09：确认cluster hostname路径硬编码单次A lookup，无AAAA或多地址connect fallback，记录为`CLUSTER-010`；未执行解析或连接。
