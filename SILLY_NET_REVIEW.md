@@ -133,6 +133,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC6455-5.5.2-PING | MUST | `lualib/silly/net/websocket.lua:139-213`; `docs/src/reference/net/websocket.md:160-197` | application endpoint | 契约明确 | read 把 ping 及 payload 交给应用，文档示例要求立即回同 payload pong；属于显式应用层责任，不单独作为库缺陷 | Test 3 覆盖手动 ping/pong | — |
 | RFC6455-4.1/5.3-MASK-ENTROPY | MUST | `lualib/silly/net/websocket.lua:104-127,292-320`; `luaclib-src/crypto/lutils.c:15-23`; `src/engine.c:125-151` | client | 偏离 | mask/key 由 time-seeded 非密码学 PRNG 的小写字母生成；每帧 mask 仅 26^4 种且后续序列可预测，不是强熵 32-bit value | 正常测试只验证 mask 方向和解码结果，不检查熵、取值空间或可预测性 | WS-008 |
 | RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/websocket.lua:292-323`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | hostname 固定单次 A lookup 且只连接首个 IPv4 地址，没有 AAAA 或多地址 fallback | 单地址正常连接无法覆盖 IPv6-only、首候选失败或双栈竞速 | WS-009 |
+| WS-CONNECT-DEADLINE | safety | `lualib/silly/net/websocket.lua:292-336`; `lualib/silly/net/tcp.lua:190-210`; `lualib/silly/net/tls.lua:282-323`; `lualib/silly/net/http/h1.lua:512-553,604-629` | client | 偏离 | opening handshake 没有 timeout/cancel 配置，且未向底层已有的 timeout 入口传递预算 | 正常本机连接只覆盖即时成功/拒绝，不能证明 silent peer 下有界返回 | WS-010 |
 | RFC6455-FRAME-WRITE-ATOMICITY | safety | `lualib/silly/net/websocket.lua:104-127,179-213`; `lualib/silly/net/tcp.lua:307-315`; `src/flipbuf.h:30-51`; `src/socket.c:1614-1659` | client/server | 符合 | 单次 frame 先组装为完整 string，再以一个 TCP send op 入带锁队列；Lua 路径不 yield，未发现并发调用导致帧内交错 | 现有 50-client stress 不是同 socket 并发，但静态原子边界成立 | — |
 | RFC9113-6.5.2-ENABLE-PUSH-ROLE | MUST | `lualib/silly/net/http/h2.lua:1211-1278,1500-1537,1651-1710` | client recipient | 偏离 | client/server 共用 `frame_settings`；收到值 1 时只设 `ch.enablepush=true`，没有识别发送方是 server 并发送 `PROTOCOL_ERROR`。server 发送值 0 符合 RFC，不属于偏离 | 现有测试只覆盖双方发送值 0，没有 server→client 值 1 | H2-001 |
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
@@ -1596,6 +1597,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：抽取 HTTP/WS/gRPC/cluster 共用的 endpoint resolver+dialer：收集 A/AAAA，按 RFC 8305 排序/错峰或至少顺序尝试全部候选，共享 absolute deadline 并关闭输家。WSS 始终用原 hostname 做 SNI/证书验证，错误聚合保留各地址诊断；literal 保持单候选。
 - 后续回归条件：修复阶段用注入式 resolver/connector 覆盖 AAAA-only、A-only、双栈/多 A 首地址失败后成功、全部失败、慢首/快次及 IPv4/IPv6 literal；断言候选共享 deadline、资源释放且 WSS hostname 不被 IP 替换。当前不执行 DNS 或连接。
 
+### WS-010 — P1 — client opening handshake 没有端到端 deadline 或取消入口
+
+- 状态：已确认；公开 API 与 DNS/TCP/TLS/H1 调用链的确定性静态核对。本轮不连接 silent peer，也不运行超时场景。
+- 位置：`lualib/silly/net/websocket.lua:292-336`；底层可选 timeout 入口位于 `lualib/silly/net/dns.lua:585-654`、`lualib/silly/net/tcp.lua:190-210`、`lualib/silly/net/tls.lua:282-323`，无 response-header timeout 的 H1 wait 位于 `lualib/silly/net/http/h1.lua:512-553,604-629`；公开签名见 `docs/src/reference/net/websocket.md:111-145` 和英文同名文档。
+- 触发：连接目标在 TCP connect、TLS handshake 或 HTTP Upgrade response 的任一阶段保持 silent/极慢；DNS 多个 CNAME/search 候选也可能重复消耗各自预算。调用方只能传 `url, header`，不能设置总 deadline、dial timeout 或 cancel token。
+- 影响：`websocket.connect` 可长期占住调用协程及半建连 socket；在成功返回 `sock` 之前，调用方没有连接句柄可从另一个 task 关闭。面向不可信或故障 endpoint 的自动重连会累积挂起任务/连接，且上层无法给一次 opening handshake 建立确定的延迟和资源边界。
+- 证据：DNS 调用不传可选 timeout；`tcp.connect(a)` 不传 opts，`tls.connect` 只传 hostname；发送 Upgrade 后 `stream:waitresponse()` 的 response-line/header reads 均不传 timeout。`M.connect` 没有 opts 参数或 timer/cancel 分支。底层 TCP/TLS 已实现 connect timeout，说明缺陷位于 WebSocket adapter 没有暴露和贯穿它；H1 的 `request` timeout 只用于 `Expect: 100-continue`，不覆盖这里的 GET response。
+- 根因：opening handshake 被实现为若干同步等待的串联，而没有代表一次 logical connect 的 absolute deadline/context；各层可选 timeout 也没有统一预算或 cleanup owner。
+- 建议解法：为 `connect` 增加向后兼容 opts（保留 header 的明确位置），至少提供 absolute deadline/cancel 与可选 dial/handshake timeout。入口计算 monotonic deadline，将剩余时间贯穿 DNS、所有地址尝试、TCP、TLS 和 Upgrade response header；到期/取消必须关闭当前 generation 的连接并返回明确错误。不要让每一阶段重新获得完整 timeout。
+- 后续回归条件：修复阶段用注入式阶段阻塞分别覆盖 DNS、TCP、TLS 和 response-line/header，断言同一 absolute deadline 内返回、socket/timer/task 清理且取消不会关闭已被新连接复用的 generation；另覆盖正常成功、即时失败和接近 deadline 的竞态。当前不执行网络或时序测试。
+
 ### H2-001 — P2 — client 接受 server 非法启用 PUSH 的 SETTINGS
 
 - 状态：已确认；RFC 9113 与确定性角色/分支推导。本阶段只做静态 review，不新增复现代码。
@@ -2233,7 +2245,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为173项：P0为0，P1为76，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 9、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为174项：P0为0，P1为77，P2为92，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2396,3 +2408,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`H2-017`：完整响应后RST若在对象回收前到达会覆盖成功结果，回收后到达则因nil lookup被误判idle并GOAWAY；未新增计数或发送frame。
 - 2026-08-09：扩充`H2-023`：server处理CL1+HEADERS END时会在未发布对象上GOAWAY/清count，随后仍发布并fork handler，收尾可使streamcount为负；未新增计数或发送frame。
 - 2026-08-09：确认WebSocket client独立连接路径只取单个A记录且没有AAAA/多地址fallback，记录为`WS-009`；未执行DNS或连接。
+- 2026-08-09：确认WebSocket client的DNS/TCP/TLS/Upgrade opening handshake没有端到端deadline或取消入口，记录为`WS-010`；未连接silent peer。
