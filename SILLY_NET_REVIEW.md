@@ -924,6 +924,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义公开且唯一的`redis.null` sentinel（或typed reply对象），array/pipeline内部一律保存sentinel并保持dense sequence；顶层命令可为兼容性选择继续返回nil，但文档须区分。pipeline最好返回每项`{ok=..., value=...}`而非含nil的flat tuple，并提供迁移策略。
 - 回归测试：修复阶段覆盖首/中/尾/全null、nested arrays、空array与null array、pipeline null/error混合；断言元素count、顺序和null identity可精确round-trip。当前仅作静态语义核对。
 
+### REDIS-007 — P2 — Pub/Sub push 没有专用 reader，后续消息会与命令响应错配
+
+- 状态：已确认；RESP2 subscribed-mode语义、单response command wrapper与公开文档的确定性静态核对。本轮不连接Redis或发布消息。
+- 规范：Redis RESP2在`SUBSCRIBE/PSUBSCRIBE`后进入subscribed mode：首次返回订阅确认，之后server可在没有对应request的情况下持续推送`message/pmessage/subscribe/...`数组；client必须以独立push reader交付这些消息，并只允许该模式规定的命令，不能继续按严格request→one response配对。
+- 位置：所有命令共用的一次write/一次`read_response` wrapper在`lualib/silly/store/redis.lua:266-303`，reader token队列在`:238-264`；对象没有push/read subscription API，文件到`:351`结束。中英文文档宣称所有标准命令并给出Pub/Sub章节，见`docs/src/reference/store/redis.md:49-57,224-232,665-701`与英文同名文档。
+- 触发：调用`subscriber:subscribe("news")`取得确认后，server推送一条message；应用随后调用订阅态允许的`PING`、`UNSUBSCRIBE`或再次`SUBSCRIBE`，或错误地尝试普通命令以读取下一结果。
+- 影响：第一条SUBSCRIBE只消费确认并执行`wakeup_next_reader`，后续push留在socket buffer且没有公开读取入口。下一命令的`read_response`会消费最早push并把它作为该命令结果返回，真实command response继续滞后，之后每次调用都可能错一拍；消息无法可靠交付，unsubscribe count/state也无法跟踪。若应用从不再调用命令，push则在无上限TCP buffer路径持续积累。
+- 证据：动态method对任何命令完全相同：write一次、取得reader ownership、read一个RESP value、立即释放ownership。代码没有subscribe mode flag、后台read loop、push callback/channel、allowed-command gate或reconnect后的resubscribe逻辑。reference的“发布订阅”示例创建subscriber但从未调用subscribe或读取message，只用另一连接publish，因此无法验证所宣称能力。
+- 根因：driver建立在“每个request恰有一个按序response”的普通RESP2模型上，却无条件把会改变连接为server-push状态的命令也暴露为相同动态method。
+- 建议解法：提供独立subscription对象/connection owner：握手后由唯一reader loop持续解析push，按channel/pattern交付并维护subscription count，只允许规范列出的订阅态命令；close/cancel/reconnect有明确语义与有界push queue。普通client应在发送SUBSCRIBE类命令前拒绝并引导使用该API，避免污染通用response队列。
+- 回归测试：修复阶段覆盖subscribe确认后message、message先于PING reply、多channel/pattern、unsubscribe至0恢复普通模式、server disconnect/reconnect及consumer背压；断言每个push与command response归属准确、队列有界。当前不运行Pub/Sub交互。
+
 ### MYSQLC-001 — P1 — binary result row 未验证 NULL bitmap 长度即发生 C 越界读
 
 - 状态：已确认；C pointer与官方binary row布局静态推导。本阶段不生成截断MySQL packet。
@@ -2317,7 +2329,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为180项：P0为0，P1为78，P2为96，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
+当前滚动统计为181项：P0为0，P1为78，P2为97，P3为6。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 7、MYSQLC 6、MYSQL 12、ETCD 9、DOC 4。
 
 建议按依赖关系分五批修复：
 
@@ -2488,3 +2500,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认gRPC中英文reference的API签名及每份14个registrar示例都遗漏必需service_name，照抄无法注册服务，记录为`DOC-004`；未运行文档示例。
 - 2026-08-09：确认grpc.listen公开的ciphers/backlog配置在adapter重建option table时被静默丢弃，记录为`GRPC-023`；未创建listener或TLS context。
 - 2026-08-09：扩充`GRPC-012`：unary timer在openstream之后才创建，故显式timeout不覆盖DNS/TCP/TLS/H2 handshake；未连接silent endpoint。
+- 2026-08-09：确认Redis SUBSCRIBE后没有push reader/subscription state，后续message会与命令response错配且文档示例未实际订阅，记录为`REDIS-007`；未运行Pub/Sub交互。
