@@ -875,6 +875,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：默认只自动重试可证明未送达的调用以及安全read；mutation遇到可能已送达的transport failure应返回结构化`outcome_unknown`。需要自动恢复时由调用方使用Txn compare/version guard、稳定Lease ID或业务idempotency key，并仅对明确retryable status按deadline/backoff重试；移除最后一次失败后的sleep并验证retry>=1。
 - 回归测试：修复阶段在Put/Delete/Compact/Grant/Revoke的“发送前、server apply前、apply后response前”三个边界断链，记录revision/watch/lease数量；只有未送达请求可透明重试，模糊提交返回可判定错误，guarded mutation最多生效一次。本轮不做故障注入。
 
+### ETCD-002 — P1 — watch 的公开 `revision` 参数未编码，历史事件回放被静默忽略
+
+- 状态：已确认；公开文档、protobuf descriptor与encoder dataflow静态核对。不需要运行watch历史回放。
+- 规范/权威依据：[etcd v3 API](https://etcd.io/docs/v3.6/learning/api/)定义WatchCreateRequest字段为`start_revision`且从该revision（inclusive）开始；未提供时表示从watch创建后的事件开始。Silly文档则明确承诺`revision`可用于历史事件回放。
+- 位置：公开参数和构造在`lualib/silly/store/etcd.lua:557-600`；协议字段在`lualib/silly/store/etcd/v3/proto.lua:2316-2335`；protobuf table encoder在`luaclib-src/pb.c:1737-1756`；用户文档在`docs/src/reference/store/etcd.md:583-596`。
+- 触发：调用`client:watch{key=...,revision=N}`，希望从已知revision回放更新；这也是断线后由应用自己恢复watch的标准用法。
+- 影响：wire上的`start_revision`保持proto3默认0，server把watch解释为“now”；N到watch建立之间的历史事件全部缺失且API不报错。配置/协调、leader election或cache同步逻辑可能在无任何异常的情况下基于不完整状态继续运行。
+- 证据：`M.watch`只执行prefix/sort等通用`apply_options`、filter转换和`watch_id`赋值，从未把`req.revision`复制为`req.start_revision`或删除别名。WatchCreateRequest descriptor没有`revision`字段；`pb.c`查不到table key对应field时直接忽略，因此调用成功但参数不出现在wire。现有测试只检查内部`start_revision`及收到事件后的重连，没有覆盖公开`revision`输入。
+- 根因：Lua API使用了Range/Compaction风格的`revision`命名，却把用户table直接当protobuf message发送，缺少显式API→wire schema适配和未知参数校验。
+- 建议解法：构造新的WatchCreateRequest，把公开`revision`严格校验并映射到`start_revision`；也可把API改名为`start_revision`并保留有弃用期的alias。拒绝同时提供两者或任何不属于公开schema的字段，避免继续静默丢配置；不要原地修改调用方table。
+- 回归测试：修复阶段先写revision N、再产生N/N+1事件后创建`revision=N` watch，断言首个事件从N开始；覆盖0、已compact revision、future revision、alias冲突和未知字段，并抓取create request验证wire字段。当前不新增测试代码。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
