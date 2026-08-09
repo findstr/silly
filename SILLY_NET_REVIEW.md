@@ -307,6 +307,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把接收payload包装为full userdata/opaque buffer handle并附`__gc/__close`，消费或转移时原子清空其owner；Lua callback异常退出后未消费payload由finalizer释放。若保留裸pointer API，则dispatcher必须以受保护调用配合显式take/consume协议，并在异常时关闭socket，不能盲目finally-free造成已转移后的double-free。
 - 回归测试：修复阶段让TCP/UDP callback分别在消费前、消费后、buffer接管后抛错；断言payload各释放恰好一次、无泄漏/double-free，异常策略会阻止同连接无限重复。ASan/LSan与Silly allocator计数均回基线。当前不新增异常触发。
 
+### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
+
+- 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
+- 位置：UDP对象构造与`sendto`在`lualib/silly/net/udp.lua:48-62,108-133,194-204`；Lua/C边界在`luaclib-src/lnet.c:239-278`；C operation构造与类型分支在`src/socket.c:1663-1727`；契约在`docs/src/en/reference/net/udp.md:26-31,166-190`及中文对应文档。
+- 触发：对`udp.bind`返回的socket调用`conn:sendto(data)`而省略文档规定必填的destination；或对`udp.connect`返回的socket传入一个显式destination，期望按`sendto(data, address)`参数发送到该地址。
+- 影响：bound路径仍返回`true,nil`，但operation中的address保持全零；socket线程把family 0按IPv6长度交给`sendto`，永久失败后静默丢弃datagram，调用者既拿不到同步错误也没有异步错误事件。connected路径则无条件把operation address置为NULL，显式目标被静默忽略并发送给默认peer；路由到错误目标时可能造成业务数据误投。
+- 证据：所有UDP对象由同一个`new_socket(fd)`构造，未保存bound/connected mode或default peer。`conn.sendto`只检查fd，原样把可选addr传给`net.udpsend`；C operation以零初始化开始，仅在addrlen>0时复制。消费时只根据底层socket type决定：`SOCKET_UDP_LISTEN`使用`&op->addr`，`SOCKET_UDP_CONNECTION`强制使用NULL，而两条分支都不会把永久send error报告给Lua。文档却明确声明bound address required，并把可选`address`描述为destination。
+- 根因：一个API复用了两种不同socket模式，却没有在对象或operation中表达目标地址的有效性规则；异步acceptance又被错误当成实际发送成功。
+- 建议解法：Lua对象保存mode。bound socket在入队前要求合法address，缺失直接返回`false, EINVAL`；connected socket应明确选择并文档化“禁止override”或实现平台一致的显式目标发送，禁止静默忽略。C层仍须验证sockaddr并为永久UDP发送失败提供可观察的错误/计数，而不是只释放payload。
+- 回归测试：修复阶段覆盖bound缺地址、合法IPv4/IPv6目标、connected省略地址、connected显式同/异目标及永久send error；断言目标选择与文档一致，错误不返回成功且payload/`sendsize`只结算一次。本轮不创建或运行网络复现。
+
 ### TLS-001 — P1 — TLS client 完全不验证服务端证书链或 hostname
 
 - 状态：已确认；OpenSSL默认契约、公开配置面与确定性调用链推导。本阶段不搭建MITM/伪证书动态复现。
@@ -1902,7 +1913,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为144项：P0为0，P1为68，P2为73，P3为3。模块分布：CORE 7、NET 2、SOCK 14、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为145项：P0为0，P1为68，P2为74，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 6、DNS 3、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2032,3 +2043,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：开始第二轮纯静态查漏；平台层确认nonblocking设置失败不回传、blocking fd仍会进入事件循环，记录为`SOCK-013`。本轮不注入syscall失败。
 - 2026-08-09：确认socket/timer共用flip buffer以signed 32-bit计数并无检查倍增，积压接近表示上限时可进入UB、错误realloc或越界copy，记录为`CORE-007`；未制造大队列或运行内存压力复现。
 - 2026-08-09：确认worker在sid校验后直接设置slot closing，旧close可跨越socket-thread free/reuse把状态写入新generation，记录为`SOCK-014`；未新增并发barrier。
+- 2026-08-09：确认UDP对象不保存bind/connect模式，bound缺destination仍返回成功后静默丢包，connected显式destination又被忽略，记录为`UDP-001`；未发送datagram。
