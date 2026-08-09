@@ -1346,6 +1346,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：若无明确兼容需求，从签名删除`wait/limit`并对未知字段fail fast；若保留便利能力，定义精确本地语义：watch创建本身始终异步，`limit`由watcher在完整event边界计数并generation-safe cancel，错误/compaction是否计数需文档化。不要伪造非标准wire字段，并与ETCD-002一起改为新建request而非原地复用caller table。
 - 回归测试：修复阶段对公开watch option逐字段抓取编码table/wire，断言所有接受字段都生效、未知字段返回参数错误；若实现limit，覆盖单response多event、fragment、cancel竞态和0/负值。当前只做schema静态比对。
 
+### ETCD-012 — P2 — `retry` 被当作总 attempt 数，零值会跳过 RPC 并返回 `nil, nil`
+
+- 状态：已确认；中英文配置契约与六个unary retry loop静态核对。不调用RPC或等待重试计时。
+- 位置：配置读取在`lualib/silly/store/etcd.lua:325-349`，Put/Range/DeleteRange/Compact/LeaseGrant/LeaseRevoke循环在`:379-512`；契约见`docs/src/reference/store/etcd.md:45-63`及英文同名文档。
+- 触发：设置`retry=0`表达“首次请求失败后不重试”，或设置任意N并按文档期望一次初始attempt加N次retry；负数和非整数也未被构造器拒绝。
+- 影响：零值时`for i=1,0`完全不进入RPC，method直接返回初始的`nil,nil`，调用方既没有响应也没有错误可诊断；默认5与配置N均少一次实际尝试。每次最终失败后代码还无条件sleep，使已经决定返回的调用额外延迟`retry_sleep`。读写、压缩和lease API因此具有不一致且边界不可用的可靠性/时延契约。
+- 证据：Lua中0为truthy，所以`opts.retry or 5`保留0；六个method都以`for i=1,self.retry`直接控制总RPC调用数，而文档两种语言均写“请求失败时的重试次数”。循环body只在成功时break/return，失败后不判断是否还有下一轮便sleep；没有范围/type校验，也没有在零轮后合成错误。
+- 根因：配置名按“额外retry”设计，循环变量却按“attempt budget”实现，且构造器没有把边界值规范化；retry模板也未区分attempt后的backoff与return。
+- 建议解法：先定义并固定契约。按现有文档应校验`retry`为非负整数，执行一次初始请求并至多额外N次；仅在确实还有下一attempt时sleep。若改用`max_attempts`，应要求至少1并迁移/弃用旧名。所有最终失败必须返回最后一个结构化错误；mutation仍受ETCD-001约束，不能因此扩大盲重试范围。
+- 回归测试：修复阶段以fake service计数覆盖retry=0/1/5、首轮成功、中途成功、全部失败、负数/小数/错误类型；断言attempt数、sleep数、最终error和mutation retry policy。当前只记录控制流。
+
 ### DOC-001 — P3 — etcd 中英文文档承诺不存在的 timeout、watch close 和 lease 失联行为
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2433,7 +2444,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为190项：P0为0，P1为82，P2为101，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 11、DOC 5。
+当前滚动统计为191项：P0为0，P1为82，P2为102，P3为7。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 12、DOC 5。
 
 建议按依赖关系分五批修复：
 
@@ -2616,3 +2627,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`MYSQL-001`：checked-out conn的GC只关闭fd、不递减pool.open_count，与idle/lifetime淘汰同样制造幽灵容量。
 - 2026-08-09：确认etcd LeaseKeepAlive读失败重连时不关闭旧stream或取消旧sender，每轮会再fork发送task且close只覆盖最新stream，记录为`ETCD-010`；未执行断链或并发测试。
 - 2026-08-09：确认etcd watch公开注解中的wait/limit不属于WatchCreateRequest且实现从不消费，编码时被静默丢弃，记录为`ETCD-011`；未建立watch stream。
+- 2026-08-09：确认etcd retry按总attempt而非文档所述额外重试实现，retry=0会跳过RPC并返回nil,nil且最终失败后仍sleep，记录为`ETCD-012`；未调用RPC。
