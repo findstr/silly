@@ -724,6 +724,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：解析A与AAAA候选并在同一absolute deadline/取消上下文内执行RFC 8305风格的地址排序与错峰连接，首个成功者胜出并关闭其余attempt；至少也应顺序尝试全部解析结果。TLS SNI/证书hostname始终保留原host，错误结果聚合而不是只暴露首地址错误，并与`HTTPC-002`的总deadline一起设计。
 - 回归测试：修复阶段用注入式resolver/connector覆盖AAAA-only、A-only、双栈首地址失败后成功、全部失败、慢首地址/快次地址、literal IPv4/IPv6及redirect；断言地址尝试共享一个deadline、输家资源释放且SNI仍为hostname。当前不执行DNS或连接。
 
+### HTTPC-005 — P1 — `close()` 可与在途建连交错，并在返回后复活 orphan pool/请求
+
+- 状态：已确认；HTTP client入口、DNS/TCP/TLS让出点、pool发布与close清理的静态时序。本轮不运行并发barrier或建立连接。
+- 位置：request的唯一closed检查在`lualib/silly/net/http/client.lua:287-317`；建连及H1/H2发布在`:211-280`；H1 release重新归池在`:160-181`；close清理在`:417-443`。
+- 触发时序：task A通过`request_url`的closed检查后阻塞于DNS、TCP connect、TLS handshake或H2初始化；task B调用`client:close()`，标closed、清空当时pool/using并返回；A随后成功继续。
+- 影响：H2路径把迟到channel重新加入`client.h2pool`并返回可发送stream；H1路径把conn加入全局`h1using`并同样继续request。请求因此可在close返回后访问网络。H1 stream稍后正常release时还会向closed client新建idle pool entry，H2则已经直接复活pool；`ensure_timer`因closed拒绝清理timer，而第二次close立即return，这些连接/channel及pool引用可永久残留直到GC/进程退出。
+- 证据：入口只在connect前检查`client.closed`，`connect()`每个yield后及发布前均不复查。H2无条件`client.h2pool[key][#...+1]=entry`，H1无条件写`h1using[conn]`；`releaseh1`也不检查entry.client.closed。close只遍历调用瞬间已有结构，然后设置的closed使后续close和timer都跳过，没有generation、in-flight registry或late-result rollback。
+- 根因：client生命周期只保护调用入口和已有pool，没有把“正在建立但尚未发布”的transport纳入ownership；连接创建/发布不是受closed generation约束的事务。
+- 建议解法：为client建立lifecycle generation和in-flight connect registry；每个让出点后、创建channel后及返回stream前复查generation/closed，失效时关闭局部conn/channel并返回closed。close先禁止admission，再取消/关闭在途attempt并等待其收尾，最后清pool；releaseh1遇closed只能close，绝不重新归池。与HTTPC-002统一为可取消absolute request context。
+- 回归测试：修复阶段分别把DNS、TCP、TLS、H2 init停在close两侧，覆盖H1/H2和release晚到；断言close返回后无request发送、pool/h1using/in-flight均为空，所有transport关闭且重复close幂等。当前仅记录静态时序。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -2477,7 +2488,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为194项：P0为0，P1为82，P2为104，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为195项：P0为0，P1为83，P2为104，P3为8。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2666,3 +2677,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：扩充`ETCD-012`：LeaseTimeToLive与LeaseLeases完全绕过client retry，和六个手写loop共同形成不一致的重试契约；未调用RPC。
 - 2026-08-09：扩充`DOC-001`：双语文档错误宣称grant/revoke自动管理keepalive且newclient失败抛异常，中文还把持续keepalive注册误写成单次发送；未运行文档示例。
 - 2026-08-09：确认etcd双语“事务性操作”示例只执行独立get/put且wrapper没有txn方法，无法提供标题承诺的原子多键更新，记录为`DOC-006`；未运行示例或并发writer。
+- 2026-08-09：确认HTTP client close可与在途DNS/TCP/TLS/H2建连交错，返回后迟到连接仍发布到H1/H2 pool并继续request，记录为`HTTPC-005`；未建立连接或运行barrier。

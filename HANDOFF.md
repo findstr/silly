@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认194项（P1 82、P2 104、P3 8）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认195项（P1 83、P2 104、P3 8）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -116,7 +116,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 `/tmp` 内容可能被清理；若路径不存在，应从当前 `silly` 新建隔离 clone/build，不能直接把 TSAN flags 混进主 ASan 工作副本。
 
-## 5. 已确认问题（194 条）
+## 5. 已确认问题（195 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -167,6 +167,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTPC-002 | P1 | HTTP client无端到端deadline/cancel，DNS/connect/TLS/headers/body任一阶段都可永久挂住调用。 |
 | HTTPC-003 | P2 | pool lookup为每个失败origin永久创建H1/H2空表，高基数host可使client内存无界增长。 |
 | HTTPC-004 | P2 | hostname固定单次A lookup且只连接首地址，IPv6-only或首地址故障origin不可用。 |
+| HTTPC-005 | P1 | close可与在途建连交错，返回后迟到H1/H2 transport仍重新入池并继续请求。 |
 | COMP-001 | P2 | gzip inflate不要求`Z_STREAM_END`或完整消费输入，截断/拼接流可被部分成功接受。 |
 | REDIS-001 | P1 | 畸形RESP会抛出未清理异常并永久占住reader token，使后续请求全部挂起。 |
 | REDIS-002 | P2 | command write失败调用reader-only清理并assert，pipeline则遗留坏socket。 |
@@ -317,7 +318,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 
-当前统计为194条：P1 82、P2 104、P3 8。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
+当前统计为195条：P1 83、P2 104、P3 8。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
