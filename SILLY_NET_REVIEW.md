@@ -972,17 +972,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：若值<=LUA_MAXINTEGER可返回integer；否则默认返回精确decimal string或`mysql.uint64` typed userdata/table，并在文档稳定约定。提供显式lossy-number opt-in也必须标注；parameter side增加相同typed value编码能力。
 - 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`及round-trip parameter，分别验证signed与unsigned column；测试用decimal string/byte pattern建立期望，不能再用会wrap的Lua hex literal。
 
-### MYSQLC-003 — P2 — 非法 temporal length 返回硬编码 2017 时间并使后续列错位
+### MYSQLC-003 — P2 — temporal length 未严格验证，可伪造时间并使后续列错位
 
 - 状态：已确认；codec switch静态核对。本阶段不生成非法temporal row。
-- 规范：MySQL binary DATE/DATETIME/TIMESTAMP value只有协议定义的0/4/7/11-byte forms；未知length必须作为protocol error，不能合成与wire无关的成功值，也不能在未知边界继续解析同一row。
-- 位置：`parse_timestamp`在`luaclib-src/mysql/lmysql.c:259-304`；DATE/TIMESTAMP/DATETIME dispatch在`:394-400`。
-- 触发：binary result row中temporal value的length prefix为1、2、3、5、6、8、9、10或大于11；截断/反同步packet也可能使当前位置出现这些值。
-- 影响：driver向应用返回固定`2017-09-09 20:08:09`，可能被当作真实审计、过期、账务或调度时间；default分支没有消费声明的剩余value bytes，下一column从错误offset解析，造成整行字段错配或迟发异常。连接错误状态也不会由C API自动标记。
-- 证据：switch default直接`lua_pushliteral(..., "2017-09-09 20:08:09")`并return；没有`binary_error`、length-specific剩余检查或cursor advance，且DATE路径也会返回含time的该字符串。
-- 根因：开发期placeholder被留在production parser，错误恢复策略试图继续产出row而没有可信的resynchronization boundary。
-- 建议解法：仅接受该field type允许的精确length，先验证对应byte数再读取；任何其他length立即返回structured codec error并使上层connection fatal。另验证month/day/time/microsecond协议范围，避免产生规范外字符串。
-- 回归测试：修复阶段枚举0..255 length，合法forms检查边界值，其余必须失败且不返回partial row/硬编码值；随后marker query必须使用新连接。当前不生成非法row。
+- 规范：MySQL binary DATE/DATETIME/TIMESTAMP value只有0/4/7/11-byte forms，TIME只有0/8/12-byte forms；未知length必须作为protocol error，不能合成与wire无关的成功值，也不能跨未知边界继续解析同一row。
+- 位置：`parse_timestamp`与`parse_time`在`luaclib-src/mysql/lmysql.c:259-341`；temporal dispatch在`:394-403`。
+- 触发：date-family length不是0/4/7/11，或TIME length不是0/8/12，例如1、5、9、11、13或255；截断/反同步packet也可能使当前位置出现这些值。
+- 影响：date-family向应用返回固定`2017-09-09 20:08:09`，可能被当作真实审计、过期、账务或调度时间；default不按声明边界推进，下一列错位。TIME对任何非零length固定先消费8bytes，只凭`len>8`再消费4bytes：1～7和9～11会越过当前value读取下一列，>12则留下尾部字节。整行可静默错配或迟发异常，连接错误状态也不会由C API自动标记。
+- 证据：timestamp switch default直接push硬编码字符串并return；TIME不检查`len in {8,12}`，无条件读取sign/day/hour/minute/second，并以`len>8`代替`len==12`。两者都没有length-bounded subcursor、精确remaining检查或消费断言。
+- 根因：开发期placeholder被留在production parser，length byte未被当作严格submessage boundary；TIME又把“含microseconds”简化成宽松大小比较。
+- 建议解法：仅接受各field type允许的精确length，先验证remaining后以bounded subcursor读取并要求完整消费；任何其他length立即返回structured codec error并使上层connection fatal。另验证month/day/time/microsecond、TIME sign/day范围与zero-date策略。
+- 回归测试：修复阶段枚举0..255 length；date-family合法0/4/7/11、TIME合法0/8/12检查边界值，其余必须失败且marker列不移位、不返回partial row/硬编码值；随后query必须使用新连接。当前不生成非法row。
 
 ### MYSQLC-004 — P2 — 未协商 SESSION_TRACK 时仍把 OK info 当 lenenc string
 
@@ -2578,3 +2578,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL BEGIN/COMMIT/ROLLBACK把任意非ERR packet当成功并提交本地transaction状态，记录为`MYSQL-014`；未发送transaction命令。
 - 2026-08-09：确认MySQL native lenenc把unsigned64长度塞入signed Lua integer且consumer使用可wrap的pos+len/unchecked advance，可绕过边界进入OOB read，记录为`MYSQLC-007`；未构造packet。
 - 2026-08-09：确认MySQL metadata/row loops只识别EOF而不识别ERR，native row decoder又不验证0x00 header，错误包可被解析成列或业务row，记录为`MYSQL-015`；未构造packet。
+- 2026-08-09：扩充`MYSQLC-003`：binary TIME未限定0/8/12长度，非法值会跨列读取或留下尾字节；未构造row。

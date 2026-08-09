@@ -178,7 +178,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | REDIS-008 | P1 | 共享连接不隔离MULTI/WATCH会话，其他协程命令可被并入错误事务并改变EXEC结果。 |
 | MYSQLC-001 | P1 | binary result row未验证NULL bitmap长度即直接索引，截断packet可造成C越界读。 |
 | MYSQLC-002 | P2 | BIGINT UNSIGNED高半区经signed lua_Integer返回为负值，合法数据发生静默wrap。 |
-| MYSQLC-003 | P2 | 非法temporal length返回硬编码2017时间且不推进cursor，整行可被静默伪造/错位。 |
+| MYSQLC-003 | P2 | DATE/TIMESTAMP/TIME非法length可返回硬编码时间、跨列消费或留下字节，整行错位。 |
 | MYSQLC-004 | P2 | 未协商SESSION_TRACK时仍把OK info按lenenc解析，正常成功响应可抛错或失真。 |
 | MYSQLC-005 | P1 | prepared encoder跨luaL_Buffer扩容持有旧null/type pointer，合法大参数可损坏wire/内存。 |
 | MYSQLC-006 | P2 | row只按column alias建表且无ordinal模式，duplicate columns会静默覆盖。 |
