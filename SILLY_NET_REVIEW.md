@@ -150,7 +150,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-5.1-HALF-CLOSED-REMOTE | MUST | `lualib/silly/net/http/h2.lua:64-70,845-877,1177-1205` | client/server recipient | 偏离 | 已收到 END_STREAM 后再收 DATA 应为该 stream 的 STREAM_CLOSED；当前升级为整连接 GOAWAY(PROTOCOL_ERROR) | 现有测试没有 END_STREAM 后 DATA 与并发 stream 隔离 | H2-014 |
 | RFC9113-5.1/6.9-CLOSED-WINDOW-UPDATE | MUST NOT | `lualib/silly/net/http/h2.lua:238-241,1038-1080,1366-1407,1562-1648` | client recipient | 偏离 | client 不记录本端已用 stream-id；完成 stream 移除后，合法 late WINDOW_UPDATE 被误判为 idle 并触发 GOAWAY | 现有测试只覆盖 active stream flow-control，没有 close 后在途 update | H2-015 |
 | RFC9113-4.1/6.8-GOAWAY-LAST-ID | MUST | `lualib/silly/net/http/h2.lua:238-241,596-608,1562-1648`; `luaclib-src/lhttp.c:1049-1072` | client/server sender | 偏离 | 无 peer stream 时 last id=-1 被转成 0xffffffff；reserved bit 非零且错误声明最大 Last-Stream-ID，而非 0 | 现有测试未检查 outbound GOAWAY bytes/processed boundary | H2-016 |
-| RFC9113-8.1-RST-NO-ERROR-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1088-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的 RST_STREAM(NO_ERROR) 覆盖 END 为 RST；尚未读取的空响应会被丢弃为错误 | 现有测试没有 response END 后 RST(NO_ERROR) | H2-017 |
+| RFC9113-8.1/5.1-RST-AFTER-RESPONSE | MUST NOT | `lualib/silly/net/http/h2.lua:845-877,1038-1123,1336-1351,1446-1499` | client recipient | 偏离 | 完整响应后的RST(NO_ERROR)在对象尚存时覆盖END；对象已回收时又被误判idle并GOAWAY | 现有测试没有response END后两种时序的RST | H2-017 |
 | RFC9113-8.1.1/8.2.2/8.3-SENDER-FIELDS | MUST/MUST NOT | `lualib/silly/net/http/h2.lua:700-738,938-1025`; `lualib/silly/net/http/client.lua:318-365`; `luaclib-src/lhttp.c:357-556` | client/server sender | 偏离 | request/response/trailer 在 HPACK 前无 sender validation；可生成 connection-specific/uppercase/非法或重复 pseudo/status fields | 现有测试只验证正常 fields，未检查 outbound malformed block | H2-018 |
 | RFC9113-8.1.1/8.2.1-FIELD-VALIDITY | MUST/security | `lualib/silly/net/http/h2.lua:331-447,1562-1648` | server recipient | 偏离 | request validator 未拒绝非法 name bytes/冒号及 value 中 NUL/CR/LF/首尾空白；Content-Length 又用宽松 tonumber | 现有测试没有 generic invalid field octets 或非十进制 length | H2-019 |
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
@@ -1788,17 +1788,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：协议状态从 0 初始化（无 peer-initiated stream 即 last=0），按角色只在真正把 peer stream 交给上层时更新；GOAWAY builder 接受前验证范围并强制保留位为 0。若实现两阶段 graceful shutdown，2^31-1 必须是显式策略值，不能由 -1 偶然产生。
 - 后续回归条件：修复阶段逐字节检查 client close、server pre-request error、server 处理 id1 后 error 和 graceful two-stage GOAWAY；断言 reserved bit 恒 0、无处理时 last=0、处理后为正确 peer id、多次 GOAWAY 不增加边界。本轮不新增测试代码。
 
-### H2-017 — P2 — 完整响应后的 RST_STREAM(NO_ERROR) 会覆盖并丢弃响应
+### H2-017 — P2 — 完整响应后的 RST_STREAM 会覆盖响应或在回收后终止连接
 
 - 状态：已确认；RFC 9113 明确规则与确定性 response/RST/read path 推导。本阶段只做静态 review，不新增触发代码。
-- 规范：RFC 9113 §8.1 允许 server 在发送带 END_STREAM 的完整响应后，以 `RST_STREAM(NO_ERROR)` 请求 client 无错终止尚未完成的 request transmission；client MUST NOT 因收到该 RST_STREAM 而丢弃已经完成的响应。
-- 位置：terminal state 写入在 `lualib/silly/net/http/h2.lua:845-877`，`readall` terminal 分支在 `:1088-1123`，RST handler 在 `:1336-1351`，client response END transition 在 `:1446-1499`。
-- 触发：server 发送完整 response HEADERS（可直接 END_STREAM，空 body）或 response DATA+END_STREAM，随后在同一 stream 发送合法 4-byte error code 0 的 RST_STREAM；应用在两个 frames 都已处理后调用 `stream:readall()`。
-- 影响：已经成功完成的 response 被重新标记为 reset。空 body 没有 buffered bytes 可兜底，`readall` 返回 nil 与 “Graceful shutdown”；使用 waitresponse 后再读取、事件驱动消费或调度较慢的调用方会把合法响应当失败。该标准序列常用于 server 提前响应并停止大 request body，故会造成真实互操作故障和不必要重试。
-- 证据：response END 调用 `stream_remoteend(s, STATE_END, EEOF)`；紧随的 `frame_rst` 不检查既有 terminal state或 errorcode，直接再次调用 `stream_remoteend(s, STATE_RST, err_str[0])`，覆盖 `remotestate` 和 `errstr`。之后 `readall` 在 buffer 为空时只有 state 恰为 END 才返回 `""`，RST 则返回 nil/error。实现没有保存“response already complete”事实。
-- 根因：RST handler 将所有 error codes 和到达阶段统一建模为远端失败，terminal state 可逆；遗漏 `NO_ERROR after complete response` 的 HTTP message-level 例外。
-- 建议解法：terminal response completion 必须单调且独立保存；client 若已收到完整 response，再收到 RST_STREAM(NO_ERROR) 只能终止本端 request write/wake writer，不能覆盖 response END、status/header/body/trailer。其他 code 或响应完成前的 RST 仍按 reset 处理，并正确停止双向 stream。
-- 后续回归条件：修复阶段覆盖空 response HEADERS+END_STREAM→RST(NO_ERROR)、带 body END→RST(NO_ERROR)、RST 在 final/END 前、非零 error code、client 仍在上传 body，以及 waitresponse→延迟 readall；断言完成响应保持可读，pending writer被停止，其他 stream 不受影响。本轮不新增测试代码。
+- 规范：RFC 9113 §8.1允许server在发送带END_STREAM的完整响应后，以`RST_STREAM(NO_ERROR)`请求client无错终止尚未完成的request transmission；client不得因此丢弃完成响应。§5.1还要求在closed race窗口忽略晚到RST_STREAM，而非把曾存在的id当idle。
+- 位置：terminal state写入在`lualib/silly/net/http/h2.lua:845-877`，stream移除/readall在`:1038-1123`，RST handler在`:1336-1351`，client response END transition在`:1446-1499`。
+- 触发：server发送完整response HEADERS（可直接END_STREAM）或DATA+END_STREAM，随后同stream发送合法4-byte RST_STREAM。时序A在应用close前到达；时序B在应用已读取并`S.close`移除stream后到达。
+- 影响：时序A把成功response重新标记reset，空body的`readall`返回nil/“Graceful shutdown”；时序B因map lookup为nil而发送GOAWAY(PROTOCOL_ERROR)，清除同连接其他正常streams。标准的提前响应/停止request upload及普通网络重排都可造成结果丢失、不必要重试或整条multiplexed连接中断。
+- 证据：对象尚存时`frame_rst`无视既有END/errorcode，直接`stream_remoteend(...STATE_RST...)`覆盖终态。对象已被`:1052-1054`删除时，`:1337-1341`在读取/判断error code前把任何nil lookup统一当idle并GOAWAY；没有本端stream id closed history或RST race窗口。
+- 根因：application object存在性被误当作protocol stream历史，且terminal response state可逆；同一合法frame仅因应用cleanup调度不同走“丢响应”或“杀连接”两种错误结果。
+- 建议解法：response completion保存为单调message状态；完成response后的NO_ERROR RST只终止pending request writer，不能覆盖可读结果。协议层另保留轻量closed history，先验证RST frame结构，再忽略race窗口内已closed id；真正idle id才是connection error。application对象回收不得删除判定所需的protocol状态。
+- 后续回归条件：修复阶段覆盖空/有body response END后、应用close前后、RST(NO_ERROR/非零)、request仍上传、final前RST及并发stream；完成响应保持可读，late closed-id RST不GOAWAY，真正idle id仍按规范失败。当前不发送RST。
 
 ### H2-018 — P2 — request/response/trailer sender 不校验 field section
 
@@ -2381,3 +2381,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP/2 batch flush丢弃TCP/TLS write失败并清空frames，stream API仍按成功推进状态，记录为`H2-030`；未注入发送失败。
 - 2026-08-09：确认HTTP/2未限制HEAD/204/205/304的DATA content，client接受并交付且server可主动生成malformed response，记录为`H2-031`；未发送no-content response。
 - 2026-08-09：撤回`HPACK-003`：当前`http2_table.h`的code/length数组均只有256项，不含EOS leaf，`i=256`截断前提不存在；原证据误读表规模，统计相应减一。
+- 2026-08-09：扩充`H2-017`：完整响应后RST若在对象回收前到达会覆盖成功结果，回收后到达则因nil lookup被误判idle并GOAWAY；未新增计数或发送frame。

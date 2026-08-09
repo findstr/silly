@@ -260,7 +260,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-014 | P2 | half-closed(remote) 上的 DATA 被升级为整连接 PROTOCOL_ERROR。 |
 | H2-015 | P1 | client 将已完成 stream 的合法 late WINDOW_UPDATE 误判 idle 并触发 GOAWAY。 |
 | H2-016 | P2 | 无已处理 stream 时 GOAWAY 将 -1 写成 0xffffffff Last-Stream-ID。 |
-| H2-017 | P2 | 完整响应后的 RST_STREAM(NO_ERROR) 会覆盖 END 并丢弃空响应。 |
+| H2-017 | P2 | 完整响应后的RST在对象尚存时覆盖结果，对象回收后又被误判idle并GOAWAY。 |
 | H2-018 | P2 | request/response/trailer sender 无 field validation，可主动生成 malformed message。 |
 | H2-019 | P1 | server request validator 缺少最低 field name/value octet 校验。 |
 | H2-020 | P1 | outbound field block 跨 frame 时末帧错误地再次发送 HEADERS。 |
