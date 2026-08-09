@@ -758,6 +758,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：默认限制每连接statement count/bytes并采用LRU；evict时发送COM_STMT_CLOSE（它无response）后移除metadata，连接关闭统一清cache。删除global full-packet strong cache或改为严格有界weak/LRU；提供metrics。文档要求值使用placeholder，但不能把安全完全交给caller。
 - 回归测试：修复阶段在max cache N下执行N+k条不同SQL，验证client内存稳定、server Prepared_stmt_count回落、evicted SQL可重新prepare且statement id不误用；多连接与schema invalidation也覆盖。当前不生成高基数SQL。
 
+### MYSQL-009 — P1 — max_packet_size 未执行且 result set 全量累计无总预算
+
+- 状态：已确认；packet read与result materialization静态推导。本阶段不生成大result set。
+- 规范：[MySQL Packet protocol](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html)允许单physical packet接近16MiB且逻辑message可跨多包；client声明/配置的接收上限必须在分配前执行，并为多packet/多row response设置累计预算或提供streaming。
+- 位置：`max_packet_size`配置/handshake仅在`lualib/silly/store/mysql.lua:78-90,443-465,1138-1156`；`read_packet`在`:313-333`；column/result rows累计在`:776-846,913-945`。
+- 触发：peer声明接近`0xffffff`的packet、返回大量column definitions/rows或持续用`SERVER_MORE_RESULTS_EXISTS`发送结果；合法大查询同样触发。
+- 影响：每包进入TCP buffer和Lua string，所有decoded rows再完整保留至query结束；远端可用单query耗尽进程内存/CPU。`max_packet_size=1MiB`给调用者造成已有保护的错觉，但实际不会拒绝更大incoming packet，也没有max rows/columns/result bytes。
+- 证据：header length解析后直接`tcp_read(fd, len)`，未与`pool.max_packet_size`比较；row loop对每包创建table并`rows[i]=...`直到EOF，没有limit/callback/iterator。column definition loop也不按advertised count或budget停止，只等待EOF。
+- 根因：handshake capability值没有连接到实际parser resource policy，API只提供materialized result模式；socket backpressure无法限制driver主动持续读取并保留的完整结果。
+- 建议解法：在任何body read前执行per-packet与logical-message上限，设置socket buffer limit；提供max columns/rows/decoded bytes和per-query覆盖，并优先增加streaming row iterator/callback以保持常量工作集。超限将连接标broken并关闭，因为剩余response无法安全复用。
+- 回归测试：修复阶段覆盖packet limit-1/limit/limit+1、大量small rows、宽columns、multi-result累计与streaming早停；监测峰值内存并断言超限连接不归池。当前不生成大result。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1750,6 +1762,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL pool close无参数唤醒capacity waiter后其会fall through新建连接，in-flight connect也不复查closed，记录为`MYSQL-006`；仅作并发时序说明。
 - 2026-08-09：确认MySQL把physical packet当完整message、拒绝zero terminator且不校验sequence，≥0xffffff payload会反同步，记录为`MYSQL-007`；未生成大payload。
 - 2026-08-09：确认MySQL global/per-connection prepared caches均无界且从不COM_STMT_CLOSE，高基数SQL可耗尽client/server资源，记录为`MYSQL-008`；未生成高基数SQL。
+- 2026-08-09：确认MySQL max_packet_size仅写握手、接收与全量result rows/columns没有累计预算，记录为`MYSQL-009`；未生成大result。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
