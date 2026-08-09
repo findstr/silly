@@ -701,6 +701,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：parser显式接收capabilities/status flags；未协商时复制全部remaining bytes，协商时严格解析info及可选session-state并完整消费。测试分别建立两种capability fixture，driver只解析自己实际宣告的格式。
 - 回归测试：覆盖无SESSION_TRACK的空/ASCII/binary info，以及SESSION_TRACK的info、state-changed、截断state；与MySQL 8/MariaDB实际UPDATE互操作并断言message完整。
 
+### MYSQLC-005 — P1 — luaL_Buffer 扩容后继续写旧 null/type pointer，prepared 参数编码损坏
+
+- 状态：已确认；Lua auxiliary buffer pointer lifetime与encoder静态推导。本阶段不构造大参数execute。
+- 位置：`add_params`在`luaclib-src/mysql/lmysql.c:473-519`；各append helper在`luaclib-src/mysql/lua_buffer_ex.h:10-91`；调用者`lcompose_stmt_execute`在`:521-545`。
+- 触发：取得`null_map/types_buf` pointer后，第二次`luaL_prepbuffsize`或后续integer/string value append使`luaL_Buffer`扩容；一个足够大的早期string参数即可让后面的type/null entry写到旧buffer。
+- 影响：后续参数的type bytes保持初始化的0（MYSQL_TYPE_DECIMAL）或NULL bitmap缺位，而value区域按真实Lua类型编码，server从此按错误grammar消费value并返回错误/断开；更糟时旧pointer已失效，C写入不再属于当前buffer，构成undefined behavior与潜在内存破坏。合法prepared call可触发，无需恶意server。
+- 证据：函数先保存`null_map = luaL_prepbuffsize(...)`，随后再次prep保存`types_buf`；loop中一边通过`luaL_add*`追加可任意大的value（这些helper都会prep/可能搬移），一边在后续iteration直接写`types_buf[i*2]`和`null_map[...]`。Lua C API不保证buffer扩容后旧地址稳定。
+- 根因：把可增长builder当作固定arena并跨可能扩容操作持有内部pointer；编码需要回填header却没有two-pass sizing/offset abstraction。
+- 建议解法：two-pass扫描参数，先验证类型并overflow-safe计算完整payload size，再一次性reserve，之后以offset写且期间不调用可能扩容API；或把null/type arrays放独立稳定allocation/string后与values拼接。所有size乘加检查`SIZE_MAX/LUA_MAXINTEGER`。
+- 回归测试：修复阶段让第1/中间参数跨LUAL_BUFFERSIZE，后续分别为每种type/null，覆盖多次扩容与大量参数；逐byte对照官方COM_STMT_EXECUTE decoder并在ASan/UBSan下运行。当前不生成大execute。
+
 ### MYSQL-001 — P1 — idle/lifetime 淘汰连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -1828,6 +1839,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认MySQL BIGINT UNSIGNED通过signed lua_Integer返回，合法高半区值wrap为负数，记录为`MYSQLC-002`。
 - 2026-08-09：确认MySQL temporal codec遇非法length会返回硬编码2017时间且不推进cursor，记录为`MYSQLC-003`；未生成非法row。
 - 2026-08-09：确认MySQL未协商SESSION_TRACK时OK info应为EOF string，但codec无条件按lenenc解析，记录为`MYSQLC-004`。
+- 2026-08-09：确认MySQL prepared encoder跨luaL_Buffer扩容持有null/type裸pointer，后续参数会写旧内存并损坏wire，记录为`MYSQLC-005`；未生成大execute。
 - 2026-08-06：确认MySQL idle/lifetime两条淘汰路径关闭fd却不递减open_count，max-open pool可永久假满并挂住请求，记录为`MYSQL-001`。
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
