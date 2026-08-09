@@ -459,6 +459,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：request保存当前server index与round，每次超时按配置顺序推进到下一nameserver，遍历一轮后才增加attempt round；每个server使用自己的connection/cache provenance，同时以调用的absolute deadline限制总体等待。即时send/connect失败也应推进而非直接终止；成功后再更新健康度，且不得让一个调用的短timeout破坏共享request的其他waiter。
 - 回归测试：修复阶段用可控resolver覆盖首个丢包/第二个成功、首个send失败、全部失败、第二轮首个恢复、并发共享inflight和不同caller timeout；断言单次查询按server/round顺序推进并在健康备用服务器返回时成功。当前不创建或运行resolver。
 
+### DNS-006 — P2 — UDP 截断后的 TCP connect 不受 DNS deadline 约束，请求结束后仍可滞留资源
+
+- 状态：已确认；TCP fallback、request timer与底层connect timeout传递的确定性生命周期静态核对。本轮不制造黑洞连接或截断响应。
+- 位置：UDP的TC response派生fallback task在`lualib/silly/net/dns.lua:256-272`；TCP连接与复用在`:305-345`；UDP retry/request结束在`:350-392`；TCP timeout只有显式opts才启用在`lualib/silly/net/tcp.lua:190-210`与`lualib/silly/net.lua:89-140`。
+- 触发：resolver返回TC=1后，DNS模块向其TCP端口发起连接，但该端口被防火墙静默丢弃、SYN长期重传或连接完成时间超过DNS request/caller timeout；同一TC响应重复到达还可排队多个fallback task。
+- 影响：DNS retry timer会正常`finish_req`并向调用方返回timeout，但正在执行的`tcp.connect(server.addr)`没有timeout参数，也没有被`finish_req`持有或取消；对应socket、`socket_pending`项、协程和per-server mutex可滞留到操作系统连接超时。若迟到连接最终成功，代码先把它发布到`server.tcp_conn`并启动recv/idle timer，才重新发现原request已结束，于是还会保留一个无人需要的TCP连接至idle清理。连续TC查询可累积等待该锁的fallback协程并放大延迟与资源占用。
+- 证据：`tcp_fallback`在进入mutex后直接调用`tcp.connect(server.addr)`，未传`{timeout=...}`，且连接期间没有可由`finish_req`访问的handle。请求的`req.timer`仅调用`finish_req`并清理inflight/waiters；底层`connect_wrap`只有`timeout`非nil才注册`connect_timer`，否则无期限`task_wait()`。连接返回后`:325-331`先赋值/派生recv loop，`:332-335`才检查request是否仍inflight。
+- 根因：UDP transaction deadline与异步TCP fallback生命周期彼此分离，request对象不拥有派生的连接任务；同时发布连接与验证request存活的顺序相反。
+- 建议解法：为每项request维护absolute deadline，把剩余预算传入`tcp.connect(...,{timeout=remaining})`及TCP reads；在持锁/建连前后和每次write前核对request generation。连接成功后先确认至少仍有live request需要它，再原子发布并启动recv loop；request结束或reconfigure时取消/关闭尚未完成的专用connect，避免旧task继续写包。若共享单一TCP连接，应由独立的per-server连接管理器拥有connect及pending队列，而不是由某一request的fallback task拥有。
+- 回归测试：修复阶段覆盖TC后TCP黑洞、连接恰在deadline前后完成、caller timeout短于共享request、重复TC、多request等待同一server lock及reconfigure；断言deadline后无pending connect/task/socket、不会发布迟到连接或发送已结束request。当前不运行这些场景。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -1948,7 +1959,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为148项：P0为0，P1为68，P2为77，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 5、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
+当前滚动统计为149项：P0为0，P1为68，P2为78，P3为3。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 6、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1。
 
 建议按依赖关系分五批修复：
 
@@ -2082,3 +2093,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认TLS listen先发布TCP listener再构造ctx，证书/key/cipher失败会泄漏listener并留下解引用nil的accept回调，记录为`TLS-007`；未加载损坏证书。
 - 2026-08-09：确认DNS无条件先查absolute且用ndots决定是否完全跳过search，低点数顺序、高点数fallback和trailing-dot语义均偏离系统resolver，记录为`DNS-004`；未发查询。
 - 2026-08-09：确认DNS每项request固定单一server，全部attempt不会遍历nameserver列表，健康备用resolver只能影响后续查询，记录为`DNS-005`；未制造超时或发查询。
+- 2026-08-09：确认DNS的TCP fallback connect未继承request deadline，request超时后connect task/socket仍可滞留并发布迟到连接，记录为`DNS-006`；未制造TCP黑洞或TC响应。

@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存首轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认148项（P1 68、P2 77、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：首轮全量静态审计已完成，第二轮纯静态查漏进行中；当前确认149项（P1 68、P2 78、P3 3）。按用户要求，不新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -144,6 +144,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DNS-003 | P1 | DNS新名字TXID恒从1递增且每server长期复用单一UDP source port，伪响应entropy显著不足。 |
 | DNS-004 | P2 | ndots被误作是否search的开关，低/高点数候选顺序与trailing-dot absolute语义均错误。 |
 | DNS-005 | P2 | 单次查询的全部retry固定在同一nameserver，健康备用服务器只能影响后续查询而不能接管当前请求。 |
+| DNS-006 | P2 | TC fallback的TCP connect没有deadline，请求已超时后task/socket仍可滞留并发布迟到连接。 |
 | CLUSTER-001 | P1 | cluster response只按全局session匹配，任一peer或wrap后的late ACK可跨连接完成其他RPC。 |
 | CLUSTER-002 | P2 | cluster peer断线/主动close不结束其pending RPC，waiter与timer只能保留到全局timeout。 |
 | CLUSTER-003 | P2 | unknown/late/duplicate ACK会对nil coroutine执行wakeup，连接保持并可持续制造异常/日志。 |
@@ -271,7 +272,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-017 | P2 | server不校验application status code，可发送非法grpc-status文本或error+OK。 |
 | GRPC-018 | P2 | client/bidi零消息request用HEADERS+END_STREAM结束，而非gRPC要求的空DATA+END_STREAM。 |
 
-当前统计为148条：P1 68、P2 77、P3 3。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 5、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
+当前统计为149条：P1 68、P2 78、P3 3。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 6、CLUSTER 6、ADDR 1、URL 3、HTTPC 2、HTTP1 10、COMP 1、WS 8、H2 26、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 1；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
