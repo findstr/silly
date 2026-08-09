@@ -711,6 +711,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分离internal connection与每次checkout的新lease wrapper；wrapper持generation并在每个method校验active，close原子置inactive且幂等，再把internal conn归池。若保留单对象设计，至少维护checked_out/token并确保旧引用无法与新owner共享，但新wrapper更清晰。handoff使用FIFO并为waiter生成新lease。
 - 回归测试：修复阶段覆盖close后每个method、double close、manual close加`<close>`、归池后旧/新引用并发，以及两个idle槽重复同对象检查；断言旧handle只返回closed error、wire上始终单owner且open_count不变。当前仅静态核对。
 
+### MYSQL-005 — P1 — COMMIT/ROLLBACK 失败仍把状态未知的事务连接归池
+
+- 状态：已确认；transaction状态转换与pool release静态推导。本阶段不故障注入COMMIT/ROLLBACK。
+- 位置：commit/rollback共同实现`conn_close_transaction`在`lualib/silly/store/mysql.lua:948-983`；自动rollback与归池判断在`:985-1014`；begin状态设置在`:1191-1221`。
+- 触发：active transaction执行COMMIT或ROLLBACK后server返回ERR；或`conn:close()`自动rollback时收到ERR。网络read/write失败会标broken，但合法ERR packet不会。
+- 影响：连接上的transaction状态仍可能active或unknown，本地却认为已结束并把它交给其他request。后续borrower的SQL可能运行在前一用户事务中，被未来commit/rollback意外包含，或观察未提交session state，造成跨请求数据隔离、原子性和权限边界破坏。
+- 证据：函数在任何I/O之前执行`conn.is_autocommit = true`；收到ERR只`return nil, parse_err_packet(data)`，不恢复flag也不设`is_broken`。`conn_close`调用`conn_rollback(conn)`后丢弃结果，随后仅按当前true flag和`is_broken=false`进入waiter/idle归还。
+- 根因：本地transaction状态记录“请求已尝试”而非server确认状态；pool把protocol同步与session cleanliness混为同一个`is_broken`布尔值，没有unknown/dirty状态。
+- 建议解法：仅在成功OK且必要server-status确认后标记transaction ended；COMMIT/ROLLBACK任何ERR、codec异常或未知response都将连接标dirty并物理关闭，除非实现明确且成功的reset/change-user清理。自动rollback必须检查结果，绝不能把失败连接归池；公开错误仍返回给caller。
+- 回归测试：修复阶段让COMMIT/ROLLBACK分别返回ERR、断线、malformed OK和超时，覆盖显式与auto rollback；断言连接不入idle/不交waiter、open_count释放，下一query使用新connection且看不到旧transaction。当前只作路径推导。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -1699,6 +1710,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认MySQL仅用明文TCP且full-auth接受未认证peer临时RSA key，MITM可读改流量并取得密码，记录为`MYSQL-002`；未搭建MITM。
 - 2026-08-06：确认MySQL connect/auth/query/pool wait均无deadline/cancel且测试传入的connect_timeout被静默忽略，记录为`MYSQL-003`；未运行slow peer。
 - 2026-08-09：确认MySQL conn close归池后原Lua对象仍能操作同一fd且close不幂等，旧/新borrower可共享stream，记录为`MYSQL-004`。
+- 2026-08-09：确认MySQL COMMIT/ROLLBACK在server确认前清除本地transaction flag，ERR后仍归池，记录为`MYSQL-005`；未注入transaction failure。
 - 2026-08-06：确认 half-closed(remote) stream 上的 late DATA 被升级为 connection PROTOCOL_ERROR，而不是该 stream 的 STREAM_CLOSED，记录为 `H2-014`。
 - 2026-08-06：确认 client 不记录本端已用 stream-id，完成后合法 late WINDOW_UPDATE 会被误判 idle 并触发 GOAWAY，记录为 `H2-015`。
 - 2026-08-06：确认无已处理 peer stream 时 `laststreamid=-1` 被 GOAWAY builder 序列化为 0xffffffff，记录为 `H2-016`。
