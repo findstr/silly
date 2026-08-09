@@ -1930,6 +1930,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：建立幂等`fail_open_waiters(err)`并从remote/local GOAWAY、EOF、protocol error和close全部调用；waiter reservation以显式token在成功publish stream时commit，任何错误/cancel路径rollback。不要在唤醒前把匿名数量永久计入`streamcount`；channel close条件应基于实际published streams，已goaway也必须允许完成queue drain。
 - 回归测试：修复阶段覆盖max=0/1、多个waiter、remote NO_ERROR/error GOAWAY、EOF、本地protocol error、GOAWAY后active stream完成及显式close；所有waiter必须恰好一次返回，`streamcount/queue/map`归零、连接释放且无重复slot。当前不建立满载连接。
 
+### H2-029 — P1 — stream WINDOW_UPDATE 可把同一 blocked writer 无界重复压入 connection queue
+
+- 状态：已确认；两级send window、queue引用语义与WINDOW_UPDATE dispatch的确定性静态核对。本轮不发送flow-control frame。
+- 位置：blocked write首次排队在`lualib/silly/net/http/h2.lua:805-838`，重试再次排队在`:895-931`；stream/connection update在`:1131-1171,1362-1403`；queue每次push创建独立引用在`luaclib-src/adt/lqueue.c:65-84`。
+- 触发：本端有大于剩余credit的pending DATA，connection send window已降到0；peer重复向该stream发送正数WINDOW_UPDATE，却始终不发送connection-level WINDOW_UPDATE。每次increment只需保持stream window总值不超过2^31-1。
+- 影响：每个stream update都调用`stream_trysend`，看到connection window仍为0后再次把同一stream push进`writewaitq`。queue长度、C int buffer和Lua registry引用持续增长，而writer仍阻塞且没有数据前进；peer用9+4字节小frame即可造成远大于wire的持久内存/GC负担，直至queue容量/进程内存耗尽。stream后来reset/close也不主动从queue删除这些重复引用。
+- 证据：stream没有`queued`标志。`:907-909`在每次调用都无条件`ch.writewaitq:push(s)`；`:1167-1169`让每个正increment重新调用它。queue `lpush`总是`id_pool_alloc`、把value写入uservalue table并追加ref，不检查对象是否已存在；只有未来connection WINDOW_UPDATE的pop循环才释放引用。
+- 根因：connection credit waiter被实现为事件队列而不是成员集合/每stream一次的等待状态，stream-level credit事件在无法解决connection-level阻塞时仍重复登记。
+- 建议解法：每个stream最多持有一个connection-wait membership，以`in_writewaitq`标志或intrusive set保证去重；pop/close/reset/goaway时原子清标志并移除/惰性跳过。stream WINDOW_UPDATE在connection window<=0时只更新数字，不重复排队；connection WINDOW_UPDATE按公平策略遍历唯一blocked streams。另保留small-frame rate budget作为纵深防御。
+- 回归测试：修复阶段在connection window=0时对一个/多个blocked streams送大量合法stream updates，断言queue size不超过blocked stream数、内存有界；再补connection credit验证公平发送、无丢唤醒，并覆盖reset/close/GOAWAY清理。当前不发送flow-control frame。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2199,7 +2210,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为170项：P0为0，P1为75，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 28、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
+当前滚动统计为171项：P0为0，P1为76，P2为90，P3为5。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 7、DNS 8、CLUSTER 12、ADDR 1、URL 3、HTTPC 4、HTTP1 17、COMP 1、WS 8、H2 29、HPACK 3、GRPC 18、REDIS 6、MYSQLC 6、MYSQL 12、ETCD 9、DOC 3。
 
 建议按依赖关系分五批修复：
 
@@ -2355,3 +2366,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：确认HTTP中英文文档承诺不存在的respond close参数，且H1/H2实际返回契约不一致，记录为`DOC-003`；未调用HTTP API。
 - 2026-08-09：确认HTTP/2 server handler异常会绕过closewrite/close，stream map与并发配额永久滞留，记录为`H2-027`；未触发业务异常。
 - 2026-08-09：确认HTTP/2 remote GOAWAY/EOF不结束openwaitq，优雅GOAWAY后唤醒还会泄漏reserved streamcount，记录为`H2-028`；未建立满载连接。
+- 2026-08-09：确认HTTP/2在connection window为0时，每个stream WINDOW_UPDATE都会重复入队同一blocked writer并永久增持引用，记录为`H2-029`；未发送flow-control frame。
