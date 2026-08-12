@@ -1440,6 +1440,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：EOS携带`{stream,generation,error}`，manager仅在消息匹配当前generation时执行failover；旧recv发现自己不再current时只做本地收尾。更稳妥的是让单一session owner管理recv/send，替换前先标旧generation canceled并显式等待其退出；统一幂等`fail_watch_stream`处理close、通知与checkpoint。
 - 回归测试：修复阶段控制旧recv分别在新stream发布前/queue clear前/clear后/首个event后返回，断言迟到EOS不会关闭新stream，当前generation失败仍恰好触发一次重连；覆盖连续两代旧task和client close。当前仅记录竞态，不建立barrier。
 
+### ETCD-015 — P2 — client 关闭后 `keepalive()` 仍静默登记，lease 会在“成功”后过期
+
+- 状态：已确认；client/keepalive生命周期与后台owner退出条件的确定性静态推导。本轮不等待真实lease过期或运行close竞态。
+- 位置：keepalive registry、owner handle与closed状态在`lualib/silly/store/etcd.lua:26-43,340-360`；公开`keepalive`入口在`:539-555`；recv/send owner均以`c.closed`为退出条件在`:161-209`；client close在`:603-622`。
+- 触发：调用`client:close()`后继续调用`client:keepalive(id)`；也包括上层shutdown与lease注册交错、持有旧client引用的组件在close完成后登记新lease ID。
+- 影响：方法没有错误返回，调用方会认为lease已经纳入持续续租；实际上新登记的entry永远不会发出LeaseKeepAlive，关联的服务注册、锁或选主key会在TTL后静默消失。entry仍被closed client的`keepalives`表保留；若此前从未启动owner，还会fork一个只为观察`closed=true`便退出的task，进一步掩盖admission失败。
+- 证据：`M.keepalive`不检查`self.closed`，先写`keepalives[id]`，再只以`if not self.keepaliveco`决定fork，最后无返回值。close把`closed`置true并关闭当前stream/conn，却不清registry或将`keepaliveco`重置为可诊断终态。新fork的`lease_recv_task`首个`while not c.closed`条件直接失败；已有handle也不会产生新owner，因此两条分支都不会发送请求。
+- 根因：keepalive registration没有纳入client lifecycle admission，fire-and-forget API又没有可观察的成功/失败契约；registry publication与后台owner存活性不是同一个事务。
+- 建议解法：`keepalive(id)`在任何registry修改前检查lifecycle，并返回`true`或`false,"client closed"`；以client generation/owner lock原子完成登记与owner启动，close先封闭admission、再取消并join owner、清理registry并向每个lease观察者报告终态。若保留幂等重复登记，也必须区分“已登记且owner健康”与“client已终止”。
+- 回归测试：修复阶段覆盖close前登记、close后登记、首次登记与close交错、已有owner时登记、重复ID及close幂等；通过可控sender断言失败调用零请求/零registry残留，成功调用有owner并在close时结束，所有分支返回值明确。真实etcd集成再验证不会出现API报告成功而lease到期。本轮不运行这些场景。
+
 ### DOC-001 — P3 — etcd 中英文文档的构造、timeout、watch 与 lease 契约多处偏离实现
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2561,7 +2572,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为201项：P0为0，P1为85，P2为107，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为202项：P0为0，P1为85，P2为108，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2763,3 +2774,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：完成cluster分支第三轮静态收口；远端尖端仍为`0f2c8773`，落后的3个master提交不含共享运行时修复，当前专项范围无未归档候选。
 - 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
+- 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
