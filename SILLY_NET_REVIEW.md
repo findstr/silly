@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：两轮全量纯静态审计已完成；当前范围无未归档候选
+> 状态：两轮全量纯静态审计已完成；第三轮重点模块查漏进行中
 > 审计日期：2026-08-06 至 2026-08-09
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2225,6 +2225,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：final response headers后计算不可变的message mode：normal-content、no-content或CONNECT-tunnel。no-content模式收到非空DATA时仅reset对应stream(PROTOCOL_ERROR)，sender在任何frame写出前拒绝非空data；205纳入集合。允许合法HEAD/304的表示元数据Content-Length但不把它当待收bytes，204/1xx按各自field限制处理；CONNECT tunnel保持DATA可用。
 - 回归测试：修复阶段覆盖H1/H2角色矩阵中的HEAD、204、205、304、1xx与成功CONNECT，分别测试HEADERS END、空DATA END、非空DATA和Content-Length元数据；禁止content只失败对应stream，CONNECT tunnel仍双向传输。当前不发送no-content response。
 
+### H2-032 — P1 — 同一 stream 的并发读取会覆盖唯一 waiter 并永久挂起协程
+
+- 状态：已确认；公开stream API、单worker协程调度与唯一等待槽的确定性静态推导。本轮不新增并发barrier或运行复现。
+- 位置：stream唯一的`readco/readtype/readneed`状态在`lualib/silly/net/http/h2.lua:456-493`；等待注册与timer在`:752-799`；`waitresponse/read/readall`三个公开入口在`:1028-1039,1084-1124`；DATA、END、RST及channel teardown的唤醒在`:563-590,858-892,1177-1204,1446-1497`。发送侧已有显式并发保护在`:805-808,992-998`，读取侧没有对应检查。
+- 触发：同一HTTP/2 stream上，协程A在header/body尚未到齐时调用`waitresponse`、`read`或`readall`并进入`task.wait()`；在A恢复前，协程B再调用任一需要等待的读取方法。gRPC client/server streaming对象直接暴露由这些入口实现的`read`，同样继承该条件。
+- 影响：B无条件把`s.readco/readtype/readneed`改成自己的等待信息。后续DATA、END_STREAM、RST_STREAM、connection关闭或stream close只会唤醒B，A失去所有可达引用而永久挂起。若两次读取带不同timeout，A的timer还会通过共享`s`错误地超时唤醒B；B的timer随后找不到waiter，A仍无法结束，造成返回值归属错乱、任务/请求泄漏以及上层RPC永不完成。
+- 证据：`stream_readwait`在写`s.readco=task.running()`前不检查旧值，也没有队列或operation token；所有`stream_readwakeup`只取当前单个`s.readco`并立刻清空。timer只保存`s`而不保存注册时的coroutine/generation。与之相反，`stream_writewait`发现`s.writeco`会立即抛出race错误，`closewrite`也拒绝pending write，说明同一对象的并发所有权必须显式处理而非由单线程模型自动保证。
+- 根因：异步读取状态被建模为可覆盖的单槽，但API既没有串行化多个reader，也没有在覆盖前fail fast；timeout callback又绑定可变stream状态而不是具体等待操作。
+- 建议解法：选择并明确一种契约：若只支持single-reader，在任何状态写入前检测active read并同步返回稳定错误；更易用的方案是以FIFO/token串行化读取并保证buffer消费顺序。timer必须绑定不可变operation token，仅能取消/唤醒自己的waiter；close/reset/channel teardown应终止全部已登记操作且每个恰好一次。gRPC streaming层可再提供自己的read mutex或明确传播底层错误。
+- 回归测试：修复阶段用channel/barrier覆盖`waitresponse+read`、`read+read`、`read+readall`，分别在DATA到达、END_STREAM、RST、GOAWAY/EOF及两个timeout先后触发；断言要么第二次调用立即失败，要么FIFO返回，所有协程有限时间结束、bytes不重复/丢失、timer无跨操作唤醒。当前不运行并发复现。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2538,7 +2549,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为199项：P0为0，P1为84，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为200项：P0为0，P1为85，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2738,3 +2749,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认`cluster`分支的send已无yield路径，但中英文reference仍声明必须由`task.fork`调用，记录为分支独有`CLUSTER-B003`。
 - 2026-08-12：确认分支新增late-response测试不观察task异常，旧nil-wakeup缺陷可在测试仍通过时只留下错误日志，记录为`CLUSTER-B004`。
 - 2026-08-12：完成cluster分支第三轮静态收口；远端尖端仍为`0f2c8773`，落后的3个master提交不含共享运行时修复，当前专项范围无未归档候选。
+- 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
