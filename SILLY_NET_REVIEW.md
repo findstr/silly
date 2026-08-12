@@ -221,7 +221,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 2026-08-09继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
 
-既有`CLUSTER-001`至`CLUSTER-013`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认1项只属于该分支的`CLUSTER-B001`（P2）：eager `cluster.connect`没有暴露或转发底层connect timeout。分支独有编号不计入本报告以master为基线的197项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
+既有`CLUSTER-001`至`CLUSTER-014`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认1项只属于该分支的`CLUSTER-B001`（P2）：eager `cluster.connect`没有暴露或转发底层connect timeout。分支独有编号不计入本报告以master为基线的198项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
 
 ## 4. 已确认问题
 
@@ -661,6 +661,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：把`assert(value, message)`误写成了预期的`assert(actual == expected)`/`asserteq(actual, expected)`；测试没有自证其随机切片辅助函数保持原始字节序列。
 - 建议解法：改用`testaux.asserteq(table.concat(buf), pk, "Test X.Y: random fragments reconstruct packet")`，并按`CLAUDE.md`补齐case/assert编号；另外用确定性边界切片覆盖1-byte header/body边界、最后1 byte与多帧粘包，随机分片只作为补充。
 - 回归测试：修复阶段先给helper注入一个只在测试内生效的漏字节/重复字节变体，确认新断言必然失败，再恢复helper并运行cluster parser用例；本轮只记录静态缺口，不修改或执行测试。
+
+### CLUSTER-014 — P2 — RPC timeout配置延迟到发包后验证，非法值可造成远端已执行而本地抛错
+
+- 状态：已确认；配置、send与timer创建顺序的确定性静态核对。`master`与远端`cluster`分支均存在；本轮不发送请求或运行边界测试。
+- 位置：`master`基线的配置赋值在`lualib/silly/net/cluster.lua:311-329`、request/send/wait顺序在`:261-305`；远端`cluster`分支对应位置为`:207-270`；timer C入口的实际约束在`luaclib-src/ltime.c:14-27`。
+- 触发：应用成功执行`cluster.serve{timeout=4294967296,...}`（即`UINT32_MAX+1`），或传入其他不能被`luaL_checkinteger`接受的truthy值，随后发起`cluster.call`。配置函数本身不会验证timeout；负数虽被timer层压成0，也说明公开配置没有一致的范围策略。
+- 影响：call先构造frame并调用不yield的`tcp_send`，成功后才进入`waitfor`并以配置值调用`time.after`。超范围/非整数值此时由C层抛Lua异常，caller得不到`nil, err`，pending也尚未登记，但请求已经排入socket并可能在远端产生不可逆副作用。上层若把异常当作未发送而重试，会重复执行非幂等RPC；返回的ACK则成为unknown/late response。branch的nil guard只避免再次异常，不能恢复调用结果。
+- 证据：`M.serve`只是`expire = conf.timeout or 5000`；`callx`按`c.request → tcp_send → waitfor`执行，而`waitfor`第一步才是`after(expire,...)`。`ltime.c:lafter`要求Lua integer且拒绝`timeout > UINT32_MAX`。因此验证点严格晚于不可回滚的网络send，且失败路径没有pending/timer可供统一finish。
+- 根因：公开配置没有在发布前完成类型/范围验证，response deadline又被惰性创建在有副作用的send之后；模块把timer API的内部前置条件当成了RPC配置验证。
+- 建议解法：`serve`先在局部变量中验证timeout为可接受范围内的整数（明确0/负数策略），与新ctx/callback一起事务性提交；`call`入口先计算并成功创建deadline状态，再构造/发送request，任何后续失败都通过单一finish路径取消timer和pending。若send失败，必须清理预注册pending且不遗留timer。
+- 回归测试：修复阶段覆盖`nil`默认、0、负数、非整数、`UINT32_MAX`和`UINT32_MAX+1`；断言非法配置在`serve`阶段且零网络副作用地失败，边界合法值不在call阶段抛错。另用mock send计数确认timer/setup失败时没有request写出。本轮不运行这些场景。
 
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
@@ -2516,7 +2527,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为197项：P0为0，P1为83，P2为105，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 13、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为198项：P0为0，P1为83，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 14、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2710,3 +2721,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：第二轮纯静态查漏收口；主报告与HANDOFF自动核对均为196项（P1 83、P2 105、P3 8），编号唯一、索引与模块统计一致，当前范围无未归档候选。
 - 2026-08-09：继续审阅远端`cluster`分支时确认`testcluster.lua`随机分片完整性断言从未执行相等比较，且同一缺口也存在于`master`，记录为`CLUSTER-013`；仍未运行测试或新增重现代码。
 - 2026-08-09：完成`origin/cluster@0f2c8773`专项复核；确认eager `cluster.connect`没有deadline/cancel入口且未转发底层已有connect timeout，作为分支独有`CLUSTER-B001`归档，不计入master基线统计。
+- 2026-08-12：继续复核cluster配置与timer边界，确认timeout直到request发出后才由`time.after`验证，非法值可形成远端已执行、本地抛错及重试歧义，记录为`CLUSTER-014`；未发送请求。

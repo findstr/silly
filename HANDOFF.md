@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计已收口；继续审阅远端`cluster`分支后当前确认197项（P1 83、P2 105、P3 9），计划范围内无未归档候选。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计已收口；继续审阅远端`cluster`分支后当前确认198项（P1 83、P2 106、P3 9）。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -120,11 +120,11 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 
 - 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
-- 既有13项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
-- 专项另确认`CLUSTER-B001`（P2）：eager `cluster.connect`没有deadline/cancel参数且未向底层传timeout；它只存在于该分支，不计入master基线197项统计。
+- 既有14项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
+- 专项另确认`CLUSTER-B001`（P2）：eager `cluster.connect`没有deadline/cancel参数且未向底层传timeout；它只存在于该分支，不计入master基线198项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
-## 5. 已确认问题（197 条）
+## 5. 已确认问题（198 条）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -169,6 +169,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-011 | P1 | 完整frame ring与handler并发无count/byte上限，单个2MiB read可放大为约十万排队帧/慢task。 |
 | CLUSTER-012 | P1 | 仅收4-byte length便预分配完整body，默认每连接可占128MiB且无partial deadline/global budget。 |
 | CLUSTER-013 | P3 | cluster随机分片测试把期望值当作`assert`错误消息，从未比较重组packet，完整性检查恒通过。 |
+| CLUSTER-014 | P2 | RPC timeout直到request发出后才验证，非法配置会造成远端已执行而本地抛错及重试歧义。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
 | URL-002 | P2 | URL显式port绕过supported-scheme校验，HTTP/WS consumer对未知scheme回落明文TCP并发起连接。 |
@@ -328,7 +329,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 
-当前统计为197条：P1 83、P2 105、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 13、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
+当前统计为198条：P1 83、P2 106、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 14、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

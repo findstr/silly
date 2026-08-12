@@ -53,12 +53,13 @@ test/testcluster.lua
 | CLUSTER-011 | 仍存在 | C complete-frame ring仍无count/byte cap，Lua仍在处理当前request前`task.fork(process)`，慢handler下并发task无上限。 |
 | CLUSTER-012 | 仍存在 | 收满4-byte length后仍立即`malloc(psize + 1)`，没有partial-frame deadline、per-peer/global reservation budget或增量buffer。 |
 | CLUSTER-013 | 仍存在 | `testcluster.lua`仍写成`assert(table.concat(buf), pk)`，没有比较重组packet；已在主报告与提交`f61e68400`归档。 |
+| CLUSTER-014 | 仍存在 | `serve`不验证timeout；call先send再由`time.after`拒绝超范围/非整数值，可形成远端已执行、本地抛错。 |
 
-矩阵结论：13项既有问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余10项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
+矩阵结论：14项既有问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余11项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
 
 ## 4. 分支独有问题
 
-分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告197项统计。
+分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告198项统计。
 
 ### CLUSTER-B001 — P2 — eager `cluster.connect`没有deadline参数，黑洞dial可长期挂起
 
@@ -86,3 +87,4 @@ test/testcluster.lua
 - 2026-08-09：定位远端分支、共同祖先与7个修改文件，逐行核对Lua/C/类型/中英文文档/测试，未切换工作树。
 - 2026-08-09：完成`CLUSTER-001`至`CLUSTER-013`分支状态矩阵；确认`CLUSTER-003`修复、`CLUSTER-008`原lazy-connect路径消除。
 - 2026-08-09：确认eager `cluster.connect`没有暴露或转发底层connect timeout，记录为`CLUSTER-B001`；第二遍静态查漏后当前范围无未归档候选。
+- 2026-08-12：第三轮复核确认timeout配置延迟到request发送后验证，主报告新增`CLUSTER-014`，并在本矩阵标记为仍存在。
