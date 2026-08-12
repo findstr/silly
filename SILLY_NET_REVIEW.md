@@ -1009,6 +1009,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供`transaction(fn)`或transaction对象，在同一owner lock下覆盖WATCH/MULTI到EXEC/DISCARD全部序列，并禁止其他命令写入该socket；取消/异常必须DISCARD或直接关闭连接，避免状态泄漏。普通动态API检测到stateful命令时应拒绝或转入显式session。若支持pipeline事务，验证MULTI/EXEC配对并以typed results保持归属。
 - 回归测试：修复阶段以可控scheduler覆盖A MULTI→B SET→A EXEC、WATCH交错、owner异常/取消、DISCARD和并发普通命令；断言B永不进入A事务、结果基数稳定、结束后连接恢复normal。当前仅记录静态交错。
 
+### REDIS-009 — P1 — client 不支持 TLS，`AUTH` credential 与全部数据固定明文传输
+
+- 状态：已确认；公开配置、connect/handshake调用链与Redis TLS部署能力的确定性静态核对。本轮不建立TLS或抓取credential。
+- 权威依据：[Redis TLS documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/)说明Redis可为client connection启用TLS，并可关闭普通TCP port形成TLS-only部署；client需要验证server certificate/identity并可按部署提供client certificate。AUTH只提供应用认证，不加密其password或后续command/data。
+- 位置：唯一配置面在`lualib/silly/store/redis.lua:19-30,148-166`；连接固定调用`tcp.connect`及AUTH/SELECT handshake在`:135-145,180-213`；中英文reference配置同样只列`addr/auth/db`在`docs/src/reference/store/redis.md:61-104`与英文同名文档。
+- 触发：配置非空`auth`连接任何跨主机Redis，或连接只启用TLS port/要求client certificate的生产Redis；网络路径上的被动监听者或主动中间人可观察/修改TCP字节。
+- 影响：AUTH password、key names、values、Pub/Sub消息和transaction内容全部以明文暴露；主动peer还可伪装server收集credential并返回看似正常RESP。driver无法连接关闭明文port的安全部署，使用者只能另加本地TLS tunnel或降低server安全策略；若文档/部署误把AUTH当作保密机制，会直接泄露长期凭据和业务数据。
+- 证据：module只require `silly.net.tcp`，没有TLS依赖、scheme解析、CA/hostname/client cert配置或upgrade分支。`connect_to_redis`在socket建立后立即以RESP写`AUTH`，其参数由`compose`原样进入bulk string；连接成功也没有任何peer identity验证。配置和返回路径均无法表达TLS required/verify失败。
+- 根因：最小RESP client把transport固定为开发环境明文TCP，把AUTH误当成足够的连接安全边界；transport identity没有进入client配置或reconnect generation。
+- 建议解法：支持明确且默认fail-closed的TLS配置/`rediss` endpoint，至少提供required、CA trust、hostname/SAN验证和可选client cert/key；复用修复后的TLS层并在发送AUTH前完成验证，绝不静默降级明文。若保留plaintext，要求显式选择并在文档突出credential/data不保密；连接generation必须携带相同安全策略。
+- 回归测试：修复阶段覆盖受信TLS、错误CA/hostname、mTLS、TLS-only server、握手失败及明确plaintext opt-in；断言认证只在验证成功后发送、失败连接不发布/复用、日志不含password。当前不建立TLS连接或发送credential。
+
 ### MYSQLC-001 — P1 — binary result row 未验证 NULL bitmap 长度即发生 C 越界读
 
 - 状态：已确认；C pointer与官方binary row布局静态推导。本阶段不生成截断MySQL packet。
@@ -2595,7 +2607,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为204项：P0为0，P1为86，P2为109，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6。
+当前滚动统计为205项：P0为0，P1为87，P2为109，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2800,3 +2812,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
+- 2026-08-12：确认Redis client固定明文TCP，非空AUTH credential与全部command/data无法通过TLS保护，也不能接入TLS-only部署，记录为`REDIS-009`；未建立TLS或发送credential。

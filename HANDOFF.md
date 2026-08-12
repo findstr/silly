@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线204项（P1 86、P2 109、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线205项（P1 87、P2 109、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -190,6 +190,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | REDIS-006 | P2 | RESP null映射为Lua nil后aggregate/pipeline槽位消失，合法响应无法保留长度和位置。 |
 | REDIS-007 | P2 | SUBSCRIBE后无push reader/subscription state，异步message会与后续命令response错配并无API交付。 |
 | REDIS-008 | P1 | 共享连接不隔离MULTI/WATCH会话，其他协程命令可被并入错误事务并改变EXEC结果。 |
+| REDIS-009 | P1 | client固定明文TCP，AUTH credential及全部数据无法用TLS保护，也不能连接TLS-only Redis。 |
 | MYSQLC-001 | P1 | binary result row未验证NULL bitmap长度即直接索引，截断packet可造成C越界读。 |
 | MYSQLC-002 | P2 | BIGINT UNSIGNED高半区经signed lua_Integer返回为负值，合法数据发生静默wrap。 |
 | MYSQLC-003 | P2 | DATE/TIMESTAMP/TIME非法length可返回硬编码时间、跨列消费或留下字节，整行错位。 |
@@ -336,7 +337,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为204条：P1 86、P2 109、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6；以主报告中的编号和证据为准。
+当前统计为205条：P1 87、P2 109、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
