@@ -1498,6 +1498,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：`keepalive(id)`在任何registry修改前检查lifecycle，并返回`true`或`false,"client closed"`；以client generation/owner lock原子完成登记与owner启动，close先封闭admission、再取消并join owner、清理registry并向每个lease观察者报告终态。若保留幂等重复登记，也必须区分“已登记且owner健康”与“client已终止”。
 - 回归测试：修复阶段覆盖close前登记、close后登记、首次登记与close交错、已有owner时登记、重复ID及close幂等；通过可控sender断言失败调用零请求/零registry残留，成功调用有owner并在close时结束，所有分支返回值明确。真实etcd集成再验证不会出现API报告成功而lease到期。本轮不运行这些场景。
 
+### ETCD-016 — P2 — watch compaction 取消丢弃恢复 revision 与服务端原因
+
+- 状态：已确认；etcd WatchResponse schema与watcher交付路径的确定性静态核对。本轮不建立watch或触发compaction。
+- 协议语义：`WatchResponse.canceled`终止对应watch；当请求的revision已被压缩时，响应通过`compact_revision`给出恢复所需的压缩边界，并可通过`cancel_reason`说明取消原因。client必须让调用方区分本地取消、服务端取消与compaction，且不能丢掉恢复游标。
+- 位置：生成的WatchResponse字段在`lualib/silly/store/etcd/v3/proto.lua:2394-2405,3017-3018`；接收及取消分支在`lualib/silly/store/etcd.lua:211-243`；公开`watcher:read/cancel`在`:306-323`。
+- 触发：watch以已经被etcd compact的`start_revision`建立，或运行中的watch被server因compaction/权限/其他原因取消，返回`canceled=true`并携带非零`compact_revision`或`cancel_reason`。
+- 影响：调用方只得到固定字符串`"watch canceled"`，看不到服务端响应、压缩边界或原因，无法可靠决定从`compact_revision+1`重建、先做range snapshot，还是报告权限/参数错误。把所有终态折叠成同一文本会促使盲目从旧revision重试并形成取消循环，或从当前revision重启而静默跳过历史变更；这会放大`ETCD-003`的事件连续性风险。
+- 证据：`watch_recv_task`检测`res.canceled`后立即删除registry entry并执行`w.outch:close("watch canceled")`，从未push/return `res`，也没有读取`res.compact_revision`或`res.cancel_reason`。本地`watcher:cancel()`最终走相同server response分支，因此公开`read()`的第二返回值无法区分原因。仓库除生成schema注释外没有消费这两个字段。
+- 根因：watch输出channel只把普通event response当数据，把所有canceled response当无结构close signal；终态没有保留协议payload或typed error。
+- 建议解法：定义结构化watch终态，至少包含`kind`、`watch_id`、`compact_revision`、`cancel_reason`及最后确认revision；可以先把完整canceled response交付一次再关闭，或让`read()`返回typed error。compaction恢复策略必须由调用方明确选择snapshot/restart，不能库内无信息盲重试；本地cancel也应有独立kind。
+- 回归测试：修复阶段覆盖显式本地cancel、server普通cancel、auth error及已压缩revision；断言调用方精确取得compact revision/reason且watch恰好终止一次。再从边界执行snapshot+watch并验证无重复/缺口，当前不请求compaction。
+
 ### DOC-001 — P3 — etcd 中英文文档的构造、timeout、watch 与 lease 契约多处偏离实现
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -2643,7 +2655,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为208项：P0为0，P1为88，P2为111，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
+当前滚动统计为209项：P0为0，P1为88，P2为112，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2852,3 +2864,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认MySQL checkout用returned_at而非created_at判断max_lifetime，持续繁忙连接可无限超过轮换上限，记录为`MYSQL-019`；未运行计时或数据库连接测试。
 - 2026-08-12：确认HTTP/2合法SETTINGS下调可使stream window为负，下一次write把负值作为DATA length交给builder并抛异常，记录为`H2-033`；未发送frame或运行互操作。
 - 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
+- 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。

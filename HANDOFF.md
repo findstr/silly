@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线208项（P1 88、P2 111、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线209项（P1 88、P2 112、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -232,6 +232,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-013 | P2 | client关闭后watch仍返回成功对象，其control enqueue已失败且read channel会永久等待。 |
 | ETCD-014 | P2 | 旧watch recv的无generation迟到EOS可关闭已发布的新stream并触发额外重连。 |
 | ETCD-015 | P2 | client关闭后keepalive仍静默登记但无存活owner，lease会在调用“成功”后过期。 |
+| ETCD-016 | P2 | watch compaction取消丢弃完整响应、恢复revision与server cancel reason。 |
 | DOC-001 | P3 | etcd双语文档的构造返回、timeout、自动keepalive、失联处理和watch close均偏离API。 |
 | DOC-002 | P3 | DNS中英文文档宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突。 |
 | DOC-003 | P3 | HTTP中英文文档虚构respond close参数，且统一返回承诺与H1 nil/H2 boolean实现不符。 |
@@ -340,7 +341,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为208条：P1 88、P2 111、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6；以主报告中的编号和证据为准。
+当前统计为209条：P1 88、P2 112、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
