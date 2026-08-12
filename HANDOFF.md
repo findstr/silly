@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计已收口；继续审阅远端`cluster`分支后当前确认199项（P1 84、P2 106、P3 9）。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口；当前确认master基线199项（P1 84、P2 106、P3 9）及4项分支独有问题，当前范围无未归档候选。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -119,6 +119,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 ### 4.1 `cluster` 分支专项复核
 
 - 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
+- 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
 - 既有15项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
 - 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master基线199项统计。

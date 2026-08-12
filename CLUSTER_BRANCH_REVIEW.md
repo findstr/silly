@@ -1,7 +1,7 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：第三轮纯静态复核进行中；确认4项分支独有问题
-> 审计日期：2026-08-09
+> 状态：第三轮纯静态复核完成；确认4项分支独有问题，当前范围无未归档候选
+> 审计日期：2026-08-09 至 2026-08-12
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
 ## 1. 基线与分支关系
@@ -60,7 +60,7 @@ test/testcluster.lua
 
 ## 4. 分支独有问题
 
-分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告198项统计。
+分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告199项统计。
 
 ### CLUSTER-B001 — P2 — eager `cluster.connect`没有deadline参数，黑洞dial可长期挂起
 
@@ -113,8 +113,17 @@ test/testcluster.lua
 - 已逐行读取分支的Lua状态机、C frame parser/encoder、C类型stub、中英文参考文档、CHANGELOG和完整cluster测试改动。
 - 已与共同祖先比较，而非把分叉后的3个master提交误算为cluster改动。
 - 已核对底层`net` accept/connect callback ABI、connect timeout入口、task唤醒顺序和trace attach/restore语义。
+- 第三轮补查了同批次parser部分提交/回滚、timeout配置边界、全仓旧API文档调用点、新增测试能否在旧实现上失败，以及分支落后的3个master提交。
+- 分支缺少的3个master提交仅为lcov 2.5参数修正、VuePress版本更新和undici依赖升级，没有cluster依赖的共享运行时修复。
 - 未运行任何代码；因此大端peer、黑洞dial、partial frame、跨peer ACK、断链竞态和资源上限仍只保留确定性静态证据，动态验证继续延期到修复阶段。
 - “未发现更多分支独有问题”只表示上述提交与调用链在当前静态范围内没有剩余可确认候选，不表示cluster或整个仓库绝对无bug。
+
+第三轮明确排除、未另立问题的路径：
+
+- `tcp_send`到`wait_pool`登记之间不存在response抢跑：send、`time.after`和table写均不yield，worker会在当前消息后的wakeup阶段跑完caller才分发下一条网络消息；timeout配置的“验证太晚”已单列`CLUSTER-014`。
+- request `traceid=0`不会被误判为response，因为Lua中的数字0为truthy；C只对response返回nil traceid。
+- eager connect完成后、peer map建立前的close/data事件不会插入执行：CONNECT消息唤醒的caller在下一消息前完成map写入。无deadline/取消能力仍见`CLUSTER-B001`。
+- 多个`process` task在单Lua worker中串行调用`c.pop`，不会重复消费同一queue slot；无界fork/queue与parse-error滞留分别由`CLUSTER-011`和`CLUSTER-015`覆盖。
 
 ## 6. 审计记录
 
@@ -126,3 +135,4 @@ test/testcluster.lua
 - 2026-08-12：确认同批次合法frame后的解析错误不会回滚或清除已入ring的完整frame，主报告新增`CLUSTER-015`并在本矩阵标记为仍存在。
 - 2026-08-12：确认eager改造后的`cluster.send`已无任何yield路径，但中英文reference仍强制要求`task.fork`，记录为`CLUSTER-B003`。
 - 2026-08-12：确认新增late-response用例不观察task异常，旧nil-wakeup路径被框架日志隔离后测试仍可假绿，记录为`CLUSTER-B004`。
+- 2026-08-12：只读确认远端`cluster`仍指向`0f2c8773`；核对落后的3个master提交与第三轮排除项后收口，当前静态范围无未归档候选。
