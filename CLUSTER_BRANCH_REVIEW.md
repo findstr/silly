@@ -54,8 +54,9 @@ test/testcluster.lua
 | CLUSTER-012 | 仍存在 | 收满4-byte length后仍立即`malloc(psize + 1)`，没有partial-frame deadline、per-peer/global reservation budget或增量buffer。 |
 | CLUSTER-013 | 仍存在 | `testcluster.lua`仍写成`assert(table.concat(buf), pk)`，没有比较重组packet；已在主报告与提交`f61e68400`归档。 |
 | CLUSTER-014 | 仍存在 | `serve`不验证timeout；call先send再由`time.after`拒绝超范围/非整数值，可形成远端已执行、本地抛错。 |
+| CLUSTER-015 | 仍存在 | 同批次先入ring的合法frame在后续解析错误时不回滚；Lua关闭后不process，`c.clear`又只清half frame，形成跨连接滞留。 |
 
-矩阵结论：14项既有问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余11项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
+矩阵结论：15项既有问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余12项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
 
 ## 4. 分支独有问题
 
@@ -100,3 +101,4 @@ test/testcluster.lua
 - 2026-08-09：确认eager `cluster.connect`没有暴露或转发底层connect timeout，记录为`CLUSTER-B001`；第二遍静态查漏后当前范围无未归档候选。
 - 2026-08-12：第三轮复核确认timeout配置延迟到request发送后验证，主报告新增`CLUSTER-014`，并在本矩阵标记为仍存在。
 - 2026-08-12：确认raw-string breaking API只更新cluster reference，logging/trace/errno中英文文档仍使用旧接口，记录为`CLUSTER-B002`。
+- 2026-08-12：确认同批次合法frame后的解析错误不会回滚或清除已入ring的完整frame，主报告新增`CLUSTER-015`并在本矩阵标记为仍存在。

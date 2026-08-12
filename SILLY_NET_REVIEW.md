@@ -673,6 +673,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：`serve`先在局部变量中验证timeout为可接受范围内的整数（明确0/负数策略），与新ctx/callback一起事务性提交；`call`入口先计算并成功创建deadline状态，再构造/发送request，任何后续失败都通过单一finish路径取消timer和pending。若send失败，必须清理预注册pending且不遗留timer。
 - 回归测试：修复阶段覆盖`nil`默认、0、负数、非整数、`UINT32_MAX`和`UINT32_MAX+1`；断言非法配置在`serve`阶段且零网络副作用地失败，边界合法值不在call阶段抛错。另用mock send计数确认timer/setup失败时没有request写出。本轮不运行这些场景。
 
+### CLUSTER-015 — P1 — 同批次合法帧后的解析错误会把完整frame滞留在全局队列并跨连接累积
+
+- 状态：已确认；C parser提交顺序、Lua错误分支与clear范围的确定性静态核对。`master`与远端`cluster`分支均存在；本轮不构造混合frame批次。
+- 位置：完整frame入ring、批量push及错误早退在`luaclib-src/lcluster.c:149-188,219-300`，`c.clear`只清incomplete hash在`:302-311`；Lua data错误路径直接close/return在`lualib/silly/net/cluster.lua:115-175`。远端`cluster`分支为同一状态机（C约`:144-305`，Lua`:98-158`）；单次TCP read buffer上限在`src/silly_conf.h:49-50`。
+- 触发：同一个`c.push`输入/TCPDATA批次先包含一个或多个完整合法frame，随后包含非法length或request header。前面的frame已由`push_complete`加入全局ring；解析后续frame返回负错误，使整个`c.push`对Lua报告失败。
+- 影响：Lua错误分支调用`close_fd`后直接return，不执行`process()`；`c.clear(ctx,fd)`只摘除该fd的半包节点，不扫描complete ring。因此已经提交的body allocation与queue slot会一直保留到未来任意连接的一次成功data触发全局process，或整个ctx GC。攻击者可反复建连并在单批次尾部追加错误frame，使每个连接遗留合法frame并跨连接累计内存/queue容量；如果滞留的是ACK，它在以后被pop时还会脱离已关闭transport按全局session处理，叠加`CLUSTER-001`造成迟延跨peer完成。
+- 证据：`push`逐帧循环且没有transaction/rollback marker；每个成功的`push_once`立即推进`head`并转移`ic->buff`到ring。后续`n < 0`直接return，未返回“已入队数量”。`EVENT.data`只有`ok`分支才调用`process()`；error分支的`clear_incomplete`无法访问`struct packet queue`。ring本身全局属于ctx而非peer，因此后续连接可继续在同一滞留队列后扩容。
+- 根因：parser将“一批输入的部分成功”隐藏成单一失败返回值，而调用者把失败理解为该fd所有状态均已清理；complete queue缺少per-fd teardown/rollback能力，解析提交与连接错误处理不具事务性。
+- 建议解法：优先让`c.push`返回结构化结果（已完成frame数/错误），Lua无论尾部是否出错都先受控地drain或逐fd丢弃已提交frame，再关闭连接；更稳妥的是为每次push建立临时完成链，整批验证成功后再原子splice到dispatch queue。C层提供幂等`clear_fd`，同时释放该generation的incomplete与尚未dispatch complete项；响应仍必须验证fd generation/session，不能因drain而接受已关闭peer ACK。
+- 回归测试：修复阶段在parser级分别输入`valid request + invalid length`、`valid ACK + malformed request`、多valid+invalid与跨多fd交错；断言错误返回后该fd的complete/incomplete bytes和queue count均为0，其他fd帧不丢失，后续data不会执行已关闭peer帧。用小内存计数验证重复错误连接不增长；本轮不创建或运行混合frame。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -2527,7 +2538,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为198项：P0为0，P1为83，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 14、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为199项：P0为0，P1为84，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 31、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2723,3 +2734,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-09：完成`origin/cluster@0f2c8773`专项复核；确认eager `cluster.connect`没有deadline/cancel入口且未转发底层已有connect timeout，作为分支独有`CLUSTER-B001`归档，不计入master基线统计。
 - 2026-08-12：继续复核cluster配置与timer边界，确认timeout直到request发出后才由`time.after`验证，非法值可形成远端已执行、本地抛错及重试歧义，记录为`CLUSTER-014`；未发送请求。
 - 2026-08-12：确认`cluster`分支raw-string API迁移遗漏logging/trace/errno的中英文示例，记录为分支独有`CLUSTER-B002`；未执行文档示例。
+- 2026-08-12：确认同一data batch中先完成frame再遇解析错误时，Lua关闭分支不会dispatch或清除已入全局ring的完整frame，记录为`CLUSTER-015`；未构造混合frame。
