@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线200项（P1 85、P2 106、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线201项（P1 85、P2 107、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -331,8 +331,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-021 | P1 | close不与in-flight newchannel共同串行，返回后仍可复活orphan channel并继续RPC。 |
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
+| GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为200条：P1 85、P2 106、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
+当前统计为201条：P1 85、P2 107、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -2520,6 +2520,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：显式把 `backlog` 传入两种listener、把 `ciphers` 传入TLS listener，并在入口验证TLS专用字段只用于 `tls=true`。gRPC的ALPN应固定为h2并删除公开override，而不是接受任意值；所有未知/不适用配置fail fast。最好以共享schema生成LuaLS注解与双语文档表。
 - 后续回归条件：修复阶段用stub listener捕获下传table，覆盖明文/TLS的backlog、TLS ciphers、未知字段和不适用组合；TLS集成阶段再检查实际ctx cipher policy。当前只做静态配置数据流核对。
 
+### GRPC-024 — P2 — request runtime error 通过第二个 `:status` HEADERS 冒充 trailers
+
+- 状态：已确认；gRPC response sequence、HTTP/2 trailer规则与确定性server调用链推导。本轮不发送超限或压缩消息。
+- 规范：gRPC server可先发送Response-Headers，再以Trailers结束RPC；后一个field section必须包含`grpc-status`且遵守HTTP/2 trailers规则，不能再含任何pseudo-header。HTTP/2规定pseudo-header只能出现在initial field section，出现在trailer会使message malformed并作为stream error处理。
+- 位置：dispatch预置initial response在`lualib/silly/net/grpc/server.lua:8-26`；request envelope reader及超限/压缩分支在`lualib/silly/net/grpc/helper.lua:16-50`；HTTP/2 read会flush pending header在`lualib/silly/net/http/h2.lua:757-799,1088-1105`；`respond`与`closewrite`对pending header的发送在`:704-738,953-960,992-1025`。
+- 触发：client向任一已注册method发送声明长度大于4 MiB的request message，或发送任意非零compressed flag。两条路径都会先通过`h2stream:read(5)`，随后helper调用`h2stream:respond(200,{grpc-status=...})`表达runtime error。
+- 影响：严格client会把final HEADERS中的`:status`视为malformed response并RST_STREAM，收不到预期的RESOURCE_EXHAUSTED或UNIMPLEMENTED gRPC status，最终通常退化为INTERNAL/UNKNOWN transport error。本库client因`H2-009`不验证response trailers而可能接受同一违规输出，使同库测试假绿并造成跨实现互操作分裂。
+- 证据：server dispatch先调用`stream:respond(200,{content-type=application/grpc})`。无论5 bytes已在buffer还是需要等待，HTTP/2 `read`都会调用`stream_flush`，因此initial `:status=200`已确定发送。helper错误分支再次调用`respond`，而该方法不检查`s.localstate`，只重设`s.status/writeheader`；外层server wrapper随后`closewrite()`，`stream_writeheader`对server stream无条件再次编码`:status`并以END_STREAM发出。正确的final status应使用不含pseudo-header的trailer path。
+- 根因：gRPC helper把“发送initial HTTP response”和“结束RPC status”混用同一个`respond` API；HTTP/2 sender又没有以local state阻止重复initial response，宽松的本库recipient进一步遮蔽错误。
+- 建议解法：dispatch只发送一次Response-Headers；所有读取/解码/runtime失败都由统一gRPC finalizer生成合法trailers，并保证恰好一个canonical grpc-status。helper返回结构化错误而不直接写response；wrapper根据错误类别选择RESOURCE_EXHAUSTED、UNIMPLEMENTED或INTERNAL并调用trailer-only终止路径。H2 `respond`还应在initial header已提交后fail fast，形成纵深保护。
+- 回归测试：修复阶段覆盖request length limit±1、compressed flag 1/2及支持/不支持encoding，捕获完整field-section序列；断言仅首个HEADERS含`:status`，final trailers无pseudo且含准确grpc-status。分别以本库和独立严格client验证，不以本库宽松parser通过作为充分条件。本轮不构造这些消息。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -2549,7 +2561,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为200项：P0为0，P1为85，P2为106，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 23、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
+当前滚动统计为201项：P0为0，P1为85，P2为107，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 14、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2750,3 +2762,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认分支新增late-response测试不观察task异常，旧nil-wakeup缺陷可在测试仍通过时只留下错误日志，记录为`CLUSTER-B004`。
 - 2026-08-12：完成cluster分支第三轮静态收口；远端尖端仍为`0f2c8773`，落后的3个master提交不含共享运行时修复，当前专项范围无未归档候选。
 - 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
+- 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
