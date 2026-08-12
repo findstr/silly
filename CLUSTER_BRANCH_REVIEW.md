@@ -1,6 +1,6 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：两轮纯静态复核完成；确认1项分支独有问题，当前范围无未归档候选
+> 状态：第三轮纯静态复核进行中；确认2项分支独有问题
 > 审计日期：2026-08-09
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
@@ -72,7 +72,18 @@ test/testcluster.lua
 - 建议解法：为`cluster.connect`增加向后兼容的options/timeout参数，在入口计算monotonic absolute deadline，并把remaining budget同时传给DNS和每个TCP候选；dial timeout/取消必须关闭对应generation的pending socket且不能让late CONNECT发布peer。若以后实现多地址fallback，所有候选共享同一总deadline而不是逐候选重置。
 - 回归测试：修复阶段用可控connector覆盖直接IP黑洞、DNS接近deadline后再dial、CONNECT恰在timeout前后完成、并发不同deadline、取消/close与late CONNECT；断言总耗时受单一预算约束、返回后`socket_pending`/fd/task/timer清零且不发布迟到peer。本轮不创建或运行这些场景。
 
-分支独有统计：1项（P2 1）。
+### CLUSTER-B002 — P3 — raw-string API迁移遗漏跨模块文档，多个示例仍调用已删除接口
+
+- 状态：已确认；分支API变更与全仓中英文文档调用点的确定性静态核对。本轮不执行文档示例。
+- 位置：旧`marshal/unmarshal/cmd`示例位于`docs/src/en/guides/logging-monitoring.md:574-602`及中文对应位置；旧三参数call另位于`docs/src/en/reference/trace.md:235-254`、`docs/src/en/reference/errno.md:54-69`及各自中文对应位置。分支只更新了中英文`reference/net/cluster.md`。
+- 触发：用户按这些仍在官方文档树中的示例，为新分支配置`marshal/unmarshal`、定义`call(peer,cmd,body)`，或调用`cluster.call(peer,cmd,obj)`。
+- 影响：`serve`会静默忽略已经删除的`marshal/unmarshal`字段；Lua又会静默忽略`cluster.call`的第三实参。远端只收到第二实参字符串，server handler则把它放入`data`位置，旧handler中的`cmd/body`发生错位，可能将nil交给业务处理或按错误命令执行。trace/errno页面的示例即使不立即报错，也没有发送示例声称的对象；这是一项由breaking API迁移不完整造成的确定性文档回归。
+- 证据：新实现公开路径为`callx(...)->function(peer,data)`，server callback为`call(peer,buf)`，没有读取第三实参或配置中的marshal字段。全仓检索仍命中上述6个中英文文件位置；分支独有commit的7文件清单不包含logging/trace/errno文档，因此这些旧调用没有随reference更新。
+- 根因：breaking API变更只同步了cluster专属reference、CHANGELOG、stub和测试，没有对整个文档树做符号/调用形状检索；Lua对多余参数和未知table字段的宽松行为又掩盖了迁移遗漏。
+- 建议解法：将所有示例改为业务层显式encode/decode后调用二参数`cluster.call(peer,data)`，server callback只接收`peer,data`；connect示例统一检查`peer,err`。为文档构建增加cluster API片段的可执行/类型检查，至少用静态规则禁止`marshal =`、`unmarshal =`以及三实参`cluster.call`重新出现。
+- 回归测试：修复阶段对整个`docs/src`执行旧API零命中检查，并让中英文raw-string tracing/error示例通过文档validator；另断言传入对象必须先显式序列化。本轮不修改上游文档或运行validator。
+
+分支独有统计：2项（P2 1、P3 1）。
 
 ## 5. 静态审计边界
 
@@ -88,3 +99,4 @@ test/testcluster.lua
 - 2026-08-09：完成`CLUSTER-001`至`CLUSTER-013`分支状态矩阵；确认`CLUSTER-003`修复、`CLUSTER-008`原lazy-connect路径消除。
 - 2026-08-09：确认eager `cluster.connect`没有暴露或转发底层connect timeout，记录为`CLUSTER-B001`；第二遍静态查漏后当前范围无未归档候选。
 - 2026-08-12：第三轮复核确认timeout配置延迟到request发送后验证，主报告新增`CLUSTER-014`，并在本矩阵标记为仍存在。
+- 2026-08-12：确认raw-string breaking API只更新cluster reference，logging/trace/errno中英文文档仍使用旧接口，记录为`CLUSTER-B002`。
