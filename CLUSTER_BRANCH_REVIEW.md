@@ -1,6 +1,6 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：第三轮纯静态复核进行中；确认3项分支独有问题
+> 状态：第三轮纯静态复核进行中；确认4项分支独有问题
 > 审计日期：2026-08-09
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
@@ -95,7 +95,18 @@ test/testcluster.lua
 - 建议解法：中英文文档明确`cluster.send`为同步排队、不会yield，并建议直接检查返回值；只有`connect`和`call`需要可yield的task上下文。若产品意图让send支持背压等待，则应显式设计async admission/deadline，而不是只保留错误文案。
 - 回归测试：修复阶段增加静态yield-contract检查/文档断言，并在bootstrap task与accept callback中直接调用send、同步检查失败返回；确认调用前后没有`task.wait`或调度切换。本轮不运行这些场景。
 
-分支独有统计：3项（P2 1、P3 2）。
+### CLUSTER-B004 — P3 — 新增late-response测试不观察task异常，旧nil-wakeup缺陷仍可通过
+
+- 状态：已确认；测试时序、旧response分支与task异常边界的确定性静态核对。本轮不回退实现或运行测试。
+- 位置：分支新增用例在`test/testcluster.lua:379-405`；修复后的guard在`lualib/silly/net/cluster.lua:81-89`，共同祖先旧分支为无guard的`wait_pool[session]=nil; task.wakeup(co,buf)`；dispatcher预先fork在两版`process`的约`:55-61`；task异常只记录并关闭子协程在`lualib/silly/task.lua:47-64`。
+- 触发：把late-response nil guard回退到旧实现，运行分支新增Test 18。请求先按预期timeout，server随后释放并返回late ACK，旧response路径对nil执行`task.wakeup`而抛错。
+- 影响：该异常不会传播到`testaux.case`或使断言直接失败，而由任务调度器记录日志后关闭当前data callback协程。`process`在触碰ACK前已经`task.fork(process)`，因此后继dispatcher仍可处理测试紧接着发起的正常call；Test 18的四个断言全部仍可能成功。也就是说声称覆盖本次核心修复的回归用例无法阻止nil guard被删除，CI会给出假绿结果。
+- 证据：Test 18只断言原call返回timeout及下一次call成功，没有task error hook、日志计数或unknown-response metric断言。旧代码的异常发生在timeout结果已经交给`completed`之后；`task_resume`对业务协程错误执行`log_error`并返回，不调用`testaux.error`。预先fork的successor隔离了后续处理能力，正好使最后的liveness断言无法检测这次异常。
+- 根因：测试只观察外部“超时后还能继续调用”，没有观察修复目标“late ACK不得触发task异常”；框架的协程异常隔离机制让负向路径被日志吞掉。
+- 建议解法：在测试期间安装可恢复的task error/log capture或暴露bounded unknown-response metric，发送late ACK后断言异常计数不增加且late计数准确增加；也可把response dispatch提取为可直接断言返回状态的纯函数。测试结束必须恢复hook，避免污染其他case。
+- 回归测试：修复阶段先临时移除guard确认新测试必然失败，再恢复guard确认通过；同时覆盖unknown、duplicate、timeout-late和错误fd ACK，并断言无task traceback、active waiter不变。本轮不修改或执行测试。
+
+分支独有统计：4项（P2 1、P3 3）。
 
 ## 5. 静态审计边界
 
@@ -114,3 +125,4 @@ test/testcluster.lua
 - 2026-08-12：确认raw-string breaking API只更新cluster reference，logging/trace/errno中英文文档仍使用旧接口，记录为`CLUSTER-B002`。
 - 2026-08-12：确认同批次合法frame后的解析错误不会回滚或清除已入ring的完整frame，主报告新增`CLUSTER-015`并在本矩阵标记为仍存在。
 - 2026-08-12：确认eager改造后的`cluster.send`已无任何yield路径，但中英文reference仍强制要求`task.fork`，记录为`CLUSTER-B003`。
+- 2026-08-12：确认新增late-response用例不观察task异常，旧nil-wakeup路径被框架日志隔离后测试仍可假绿，记录为`CLUSTER-B004`。

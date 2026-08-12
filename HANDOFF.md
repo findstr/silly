@@ -121,7 +121,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
 - 既有15项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
-- 专项另确认3项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）、`CLUSTER-B002`（P3，跨模块中英文文档仍使用旧API）和`CLUSTER-B003`（P3，非yield send仍被文档强制要求fork）；不计入master基线199项统计。
+- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master基线199项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
 ## 5. 已确认问题（199 条）

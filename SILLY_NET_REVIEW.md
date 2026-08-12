@@ -221,7 +221,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 2026-08-09继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
 
-既有`CLUSTER-001`至`CLUSTER-015`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认3项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）、`CLUSTER-B002`（P3，跨模块文档仍使用旧API）和`CLUSTER-B003`（P3，非yield send仍被文档强制要求fork）。分支独有编号不计入本报告以master为基线的199项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
+既有`CLUSTER-001`至`CLUSTER-015`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认4项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）以及3项P3文档/测试回归（`CLUSTER-B002`至`B004`）。分支独有编号不计入本报告以master为基线的199项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
 
 ## 4. 已确认问题
 
@@ -2736,3 +2736,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认`cluster`分支raw-string API迁移遗漏logging/trace/errno的中英文示例，记录为分支独有`CLUSTER-B002`；未执行文档示例。
 - 2026-08-12：确认同一data batch中先完成frame再遇解析错误时，Lua关闭分支不会dispatch或清除已入全局ring的完整frame，记录为`CLUSTER-015`；未构造混合frame。
 - 2026-08-12：确认`cluster`分支的send已无yield路径，但中英文reference仍声明必须由`task.fork`调用，记录为分支独有`CLUSTER-B003`。
+- 2026-08-12：确认分支新增late-response测试不观察task异常，旧nil-wakeup缺陷可在测试仍通过时只留下错误日志，记录为`CLUSTER-B004`。
