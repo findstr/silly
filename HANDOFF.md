@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线203项（P1 86、P2 108、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线204项（P1 86、P2 109、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -214,6 +214,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQL-015 | P1 | result metadata/row loops不识别ERR且row decoder不验0x00 header，错误包可变成列或业务row。 |
 | MYSQL-016 | P1 | broken connection释放capacity后不唤醒waiter，受限pool已有请求可永久停在task.wait。 |
 | MYSQL-017 | P1 | transaction conn无command并发门禁，第二协程可先写命令再触发single-reader断言并错配响应。 |
+| MYSQL-018 | P2 | pool waiter按LIFO handoff，持续新请求可让最早排队的调用无限饥饿。 |
 | ETCD-001 | P1 | mutation RPC在结果未知的transport失败后无条件重放，可产生重复revision/watch事件和孤儿lease。 |
 | ETCD-002 | P1 | watch公开revision参数未映射到start_revision，承诺的历史事件回放被静默忽略。 |
 | ETCD-003 | P1 | watch重连不记录created/progress revision且忽略fragment边界，可静默漏掉断线窗口事件。 |
@@ -335,7 +336,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为203条：P1 86、P2 108、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 17、ETCD 15、DOC 6；以主报告中的编号和证据为准。
+当前统计为204条：P1 86、P2 109、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -1290,6 +1290,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为每个physical conn建立command mutex/queue，在任何packet write前取得且持有到完整logical response消费或fatal cleanup；transaction control与ping共用同一门禁。若产品选择single-coroutine lease，所有methods也必须在写wire前以owner/busy token稳定返回错误，文档明确限制。异常/cancel后无法证明response已drain时必须标broken并物理关闭，不能让下一调用猜测边界。
 - 回归测试：修复阶段以channel/barrier覆盖`query+query`、`query+ping`、`query+commit/rollback`和close/cancel相邻时序；断言第二操作要么排队后取得准确response，要么在零字节写出前失败，绝不触发TCP assert或残留packet。随后marker query验证连接同步与事务结果，当前不运行并发复现。
 
+### MYSQL-018 — P2 — pool waiter 使用 LIFO handoff，持续负载下旧请求可无限饥饿
+
+- 状态：已确认；Lua array栈语义、capacity wait与healthy connection handoff的确定性调度推导。本轮不运行连接池并发压力。
+- 位置：waiter按到达顺序append在`lualib/silly/store/mysql.lua:1038-1047`；healthy connection归还时以无index的`table.remove`取队尾在`:991-1000`；pool wait没有timeout/cancel见`:1039-1044`及`MYSQL-003`。
+- 触发：设置较小`max_open_conns`且全部connection被占用；旧请求A先进入`waiting_for_conn`，之后B进入。connection归还时B先获得它；B执行期间若C进入，下一次又由C先获得。只要每轮归还前都有至少一个更新请求到达，A可始终留在队首。
+- 影响：连接池吞吐和新请求看似正常，最早等待的业务却没有等待上界，可永久挂起并持有task、调用参数与上游请求资源。热点持续时形成反公平tail latency，事务/锁操作可能超过业务deadline；因为API本身又没有acquire timeout，饥饿不会自动收敛或产生错误。
+- 证据：Lua `table.remove(t)`省略位置时删除并返回最后一个元素，而enqueue固定写`waiting_for_conn[#waiting_for_conn+1]=co`，因此该容器是stack而不是注释/修复建议期望的queue。每次handoff只pop一个最新waiter；旧元素不会因新arrival或正常归还获得优先级，也没有aging、deadline或独立scheduler。
+- 根因：用普通array同时充当wait list却未明确FIFO不变量；直接把physical conn wake给某个coroutine，使公平性、取消、pool close和capacity permit无法由单一acquire scheduler管理。
+- 建议解法：改用真正FIFO queue并为每个waiter保存token/generation/deadline；归还connection或释放capacity时总是完成最早仍有效waiter，跳过已取消项。handoff后由waiter生成新lease，和`MYSQL-004/016`的ownership与capacity修复统一，避免在array头部`remove(1)`造成O(n)退化。
+- 回归测试：修复阶段用max-open=1建立A/B/C确定性排队并连续插入新请求，记录acquire顺序严格FIFO；再覆盖中间waiter取消、pool close、broken/expired connection释放permit及多connection同时归还。断言旧请求有界推进、无重复/丢失connection且open_count不超限。本轮不运行压力或barrier。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2584,7 +2595,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为203项：P0为0，P1为86，P2为108，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 17、ETCD 15、DOC 6。
+当前滚动统计为204项：P0为0，P1为86，P2为109，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2788,3 +2799,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
+- 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
