@@ -1,6 +1,6 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：第三轮纯静态复核进行中；确认2项分支独有问题
+> 状态：第三轮纯静态复核进行中；确认3项分支独有问题
 > 审计日期：2026-08-09
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
@@ -84,7 +84,18 @@ test/testcluster.lua
 - 建议解法：将所有示例改为业务层显式encode/decode后调用二参数`cluster.call(peer,data)`，server callback只接收`peer,data`；connect示例统一检查`peer,err`。为文档构建增加cluster API片段的可执行/类型检查，至少用静态规则禁止`marshal =`、`unmarshal =`以及三实参`cluster.call`重新出现。
 - 回归测试：修复阶段对整个`docs/src`执行旧API零命中检查，并让中英文raw-string tracing/error示例通过文档validator；另断言传入对象必须先显式序列化。本轮不修改上游文档或运行validator。
 
-分支独有统计：2项（P2 1、P3 1）。
+### CLUSTER-B003 — P3 — eager改造后`cluster.send`已不yield，文档仍强制要求`task.fork`
+
+- 状态：已确认；分支send调用链与仓库协程/yield规则的确定性静态核对。本轮不执行send。
+- 位置：分支`lualib/silly/net/cluster.lua:229-255`的`callx(true)`；中英文reference在`docs/src/en/reference/net/cluster.md:187-205,310-329`及中文对应位置；非yield transport send在`lualib/silly/net.lua:47`、`luaclib-src/lnet.c:166-197`，仓库架构规则见`CLAUDE.md:74-87`。
+- 触发：用户阅读新分支文档并调用已经连接peer的`cluster.send(peer,data)`。文档把它称为“asynchronous operation”，在API条目和统一coroutine requirements中反复要求必须由`task.fork()`创建的协程调用。
+- 影响：实际send路径只检查`peer.fd`、同步构造frame、调用不yield的`tcp_send`并返回；它既不等待response，也不会再lazy connect。错误的强制fork建议让调用者失去直接的`ok,err`控制流，容易把发送失败留在无人观察的子任务中，同时增加无必要的task调度和生命周期管理。bootstrap task、accept callback等并非由`task.fork()`创建但同样是合法运行上下文，文档的更强限制也与runtime不符。
+- 证据：`callx`唯一可能进入`task.wait`的路径是末尾`return waitfor(session)`，而`is_send`分支在它之前直接`return true,nil`。`trace_propagate`、`c.request`和`tcp_send`均不yield；`CLAUDE.md`明确将send列在“Does NOT yield”。该描述是分支移除lazy connect后遗留的旧契约，master上首次send仍可能在connect中yield，不能直接沿用。
+- 根因：eager/no-reconnect改造更新了connect返回值和peer行为，却没有重新按实际yield boundary审阅send的reference文本；“网络操作”被笼统等同于“必须异步协程等待”。
+- 建议解法：中英文文档明确`cluster.send`为同步排队、不会yield，并建议直接检查返回值；只有`connect`和`call`需要可yield的task上下文。若产品意图让send支持背压等待，则应显式设计async admission/deadline，而不是只保留错误文案。
+- 回归测试：修复阶段增加静态yield-contract检查/文档断言，并在bootstrap task与accept callback中直接调用send、同步检查失败返回；确认调用前后没有`task.wait`或调度切换。本轮不运行这些场景。
+
+分支独有统计：3项（P2 1、P3 2）。
 
 ## 5. 静态审计边界
 
@@ -102,3 +113,4 @@ test/testcluster.lua
 - 2026-08-12：第三轮复核确认timeout配置延迟到request发送后验证，主报告新增`CLUSTER-014`，并在本矩阵标记为仍存在。
 - 2026-08-12：确认raw-string breaking API只更新cluster reference，logging/trace/errno中英文文档仍使用旧接口，记录为`CLUSTER-B002`。
 - 2026-08-12：确认同批次合法frame后的解析错误不会回滚或清除已入ring的完整frame，主报告新增`CLUSTER-015`并在本矩阵标记为仍存在。
+- 2026-08-12：确认eager改造后的`cluster.send`已无任何yield路径，但中英文reference仍强制要求`task.fork`，记录为`CLUSTER-B003`。
