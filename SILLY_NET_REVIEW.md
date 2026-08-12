@@ -1313,6 +1313,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：改用真正FIFO queue并为每个waiter保存token/generation/deadline；归还connection或释放capacity时总是完成最早仍有效waiter，跳过已取消项。handoff后由waiter生成新lease，和`MYSQL-004/016`的ownership与capacity修复统一，避免在array头部`remove(1)`造成O(n)退化。
 - 回归测试：修复阶段用max-open=1建立A/B/C确定性排队并连续插入新请求，记录acquire顺序严格FIFO；再覆盖中间waiter取消、pool close、broken/expired connection释放permit及多connection同时归还。断言旧请求有界推进、无重复/丢失connection且open_count不超限。本轮不运行压力或barrier。
 
+### MYSQL-019 — P2 — checkout 用 `returned_at` 执行 lifetime 判断，繁忙连接可永不轮换
+
+- 状态：已确认；pool时间字段、checkout淘汰条件与周期idle清理的确定性静态核对。本轮不等待真实lifetime或建立数据库连接。
+- 契约：公开`max_lifetime`表示连接从创建起允许存在的最大秒数；它与`max_idle_time`语义不同。无论连接最近何时归还，只要`now-created_at`达到上限，就不能再被新borrower复用。
+- 位置：`created_at/returned_at`字段在`lualib/silly/store/mysql.lua:45-60`；checkout计算与错误比较在`:1018-1037`；归还每次刷新`returned_at`在`:1001-1006`；周期清理的正确`created_at`对照在`:1082-1115`；公开配置说明在`docs/src/reference/store/mysql.md:61-72`及英文同名文档。
+- 触发：设置非零`max_lifetime`；一个physical connection已存活超过该值，但刚被前一请求归还，下一请求在周期`pool_clear`扫描前取得它。持续负载下connection反复短暂归还/立即checkout，`returned_at`每轮刷新。
+- 影响：超过部署轮换上限的connection可持续被复用，甚至在稳定负载下永不进入idle scan的淘汰窗口。credential/权限变更、server failover、网络设备会话上限和长期连接状态清理无法按配置收敛；运营方以为max_lifetime已限制陈旧session，实际行为更接近max idle age。最终若被timer关闭还会触发`MYSQL-001`的capacity计数泄漏。
+- 证据：`conn_new`计算`lifetime_since=now-max_lifetime`，但接受条件写成`conn.returned_at > lifetime_since`；正确字段`conn.created_at`未参与checkout判断。`conn_close`在每次健康归还时把`returned_at`重置为当前秒，因此古老connection只要最近使用过就通过。后台timer虽以`created_at`判断，却只遍历当时仍位于`conns_idle`的对象，不能撤销已经checkout的lease。
+- 根因：lifetime与idle age两种时间域在快速acquire路径中混用，并依赖周期best-effort清理代替checkout时的硬性配置不变量。
+- 建议解法：checkout分别计算`idle_expired=returned_at<=idle_since`与`lifetime_expired=created_at<=created_since`，任一命中都通过统一destroy/capacity路径淘汰；归还时也可标记超过lifetime、直接销毁而非入池。时间边界统一定义等号语义并使用同一monotonic单位，和`MYSQL-001/016`一起保证计数及waiter唤醒。
+- 回归测试：修复阶段用fake monotonic clock覆盖lifetime前1秒、恰好边界、超过边界，分别让连接长时间checked-out、刚归还立即checkout及等待timer；断言均按created_at轮换而max_idle仍按returned_at，open_count/waiter保持一致。本轮不运行计时测试。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2607,7 +2619,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为205项：P0为0，P1为87，P2为109，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 18、ETCD 15、DOC 6。
+当前滚动统计为206项：P0为0，P1为87，P2为110，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2813,3 +2825,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
 - 2026-08-12：确认Redis client固定明文TCP，非空AUTH credential与全部command/data无法通过TLS保护，也不能接入TLS-only部署，记录为`REDIS-009`；未建立TLS或发送credential。
+- 2026-08-12：确认MySQL checkout用returned_at而非created_at判断max_lifetime，持续繁忙连接可无限超过轮换上限，记录为`MYSQL-019`；未运行计时或数据库连接测试。
