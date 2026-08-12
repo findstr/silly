@@ -1278,6 +1278,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：任何物理销毁导致`open_count`下降后，若pool仍开放且有waiter，应以structured capacity permit唤醒最早waiter，让其在generation/closed复查后创建connection；或由pool内单一acquire scheduler统一决定handoff/新建。使用FIFO、可取消waiter，并避免多次释放同一permit造成超max。
 - 回归测试：修复阶段以max_open=1/2覆盖唯一checked-out连接在write/read/login/expiry时销毁且已有1/N waiters；断言最早waiter立即获得create permit、open_count不超限、其余队列可继续推进，并覆盖pool close竞态。当前仅记录时序。
 
+### MYSQL-017 — P1 — transaction conn 无并发命令门禁，可写入多条命令后响应错配
+
+- 状态：已确认；MySQL command串行语义、transaction公开方法与TCP single-reader断言的确定性静态推导。本轮不运行并发barrier或数据库请求。
+- 规范：经典MySQL protocol在一个connection上按command/response顺序工作；上一command的完整response结束前不能发送下一command，除非协议显式定义对应pipeline。driver若把connection对象暴露给多个协程，必须串行化command、绑定响应owner，或在第二个调用写wire前fail fast。
+- 位置：transaction conn公开`query/ping/commit/rollback`在`lualib/silly/store/mysql.lua:849-983,1224-1246`；各方法均直接write后read且没有busy状态/锁；底层TCP唯一reader槽及`assert(not s.co)`在`lualib/silly/net/tcp.lua:258-300`。pool级query通过独占checkout避免共享，但`pool:begin()`把同一physical conn直接交给应用在`mysql.lua:1191-1221`。
+- 触发：协程A对同一个transaction conn调用`query()`并在等待prepare/execute response时yield；协程B在A完成前调用`query()`、`ping()`、`commit()`或`rollback()`。并行处理事务内多个子任务、timeout cleanup与业务query交错都可自然形成该时序。
+- 影响：B会在A尚有outstanding response时把另一条command写入同一socket，破坏MySQL严格command边界；随后B的首次`tcp_read`因A已占唯一reader槽触发Lua assert并终止B。server仍可能依次执行两条命令并发送两份response，A只消费自己的终局，B的response残留；下一次conn调用会把该旧response当作新command结果，造成事务内响应/数据错配、错误commit判断、未预期副作用及最终归池污染。
+- 证据：所有conn methods在第一次可能yield之前先调用`tcp_write`，没有检查`busy/current_command`。A进入`read_packet→tcp_read→task.wait`后`s.co`非nil；B的write不yield且成功排队，随后同样进入read，命中`assert(not s.co)`。异常边界没有撤回已发送command或drain其response，也不会自动把transaction conn标broken；caller仍持有同一对象，后续操作可继续读取B遗留packet。
+- 根因：pool checkout只建立“连接不被其他borrower使用”的外层隔离，却没有定义单个lease内部的协程并发契约；写入与response-reader ownership不是一个原子operation，底层single-reader断言发生得太晚。
+- 建议解法：为每个physical conn建立command mutex/queue，在任何packet write前取得且持有到完整logical response消费或fatal cleanup；transaction control与ping共用同一门禁。若产品选择single-coroutine lease，所有methods也必须在写wire前以owner/busy token稳定返回错误，文档明确限制。异常/cancel后无法证明response已drain时必须标broken并物理关闭，不能让下一调用猜测边界。
+- 回归测试：修复阶段以channel/barrier覆盖`query+query`、`query+ping`、`query+commit/rollback`和close/cancel相邻时序；断言第二操作要么排队后取得准确response，要么在零字节写出前失败，绝不触发TCP assert或残留packet。随后marker query验证连接同步与事务结果，当前不运行并发复现。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -2572,7 +2584,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为202项：P0为0，P1为85，P2为108，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 16、ETCD 15、DOC 6。
+当前滚动统计为203项：P0为0，P1为86，P2为108，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 8、MYSQLC 7、MYSQL 17、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2775,3 +2787,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
+- 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
