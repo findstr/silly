@@ -2306,6 +2306,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：可发送credit计算下限为0；stream window<=0时不构造任何DATA，只登记一次stream-credit waiter并等待对应WINDOW_UPDATE。connection与stream两级blocked membership、close/reset清理和公平唤醒应与`H2-029`统一设计；SETTINGS delta应用后不得把合法负值升级为异常。
 - 回归测试：修复阶段先消耗不同数量stream credit，再把initial window降到0/较小值，覆盖负值、恰好0及后续分段WINDOW_UPDATE；`write/closewrite`必须等待且不抛异常、不提前发DATA，credit转正后精确续发。client/server及多个并发stream均覆盖，当前不发送frame。
 
+### H2-034 — P2 — client/server 均接受 ACK-only SETTINGS 作为对端连接前言
+
+- 状态：已确认；RFC 9113 connection preface要求与握手分支的确定性静态核对。本轮不建立peer或发送frame。
+- 规范：client与server的HTTP/2 connection preface都包含一个可能为空、但不带ACK的SETTINGS frame；SETTINGS ACK只确认此前收到的SETTINGS，不能作为对端的初始settings替代品。对端首个frame不是这种SETTINGS时应视为connection `PROTOCOL_ERROR`。
+- 位置：通用SETTINGS ACK处理在`lualib/silly/net/http/h2.lua:1211-1278`；client首帧检查与ACK等待在`:1513-1546`；server对称路径在`:1669-1711`。
+- 触发：peer在连接前言位置先发送stream 0、空payload、带ACK的SETTINGS；随后可以发送普通SETTINGS及对Silly初始SETTINGS的ACK，或保持连接不再完成握手。
+- 影响：两端都把非法首帧当作有效连接前言继续握手，没有按协议拒绝。若peer继续补帧，连接可在从未收到合规初始SETTINGS的情况下进入可用状态；若不补帧，则叠加`H2-025`无限占用握手task/fd。严格peer与Silly对连接建立边界的判断不一致，协议错误也缺少明确诊断。
+- 证据：两个`handshake_as_*`都只验证`t == FRAME_SETTINGS`，未验证`f & ACK == 0`；随后直接调用`frame_settings`。该helper对合法空ACK立即返回，不发送ACK也不报告失败；握手循环继续读取，直到看到任意SETTINGS ACK才结束。因此ACK-only首帧被确定性接受。
+- 根因：通用SETTINGS处理正确处理运行期ACK，但握手层没有对“首个SETTINGS”施加比普通frame更强的前言约束，且handler没有返回可供握手判断的frame语义结果。
+- 建议解法：client/server首帧路径显式要求type SETTINGS、stream 0且ACK未设置，再交给可返回成功/错误的SETTINGS validator；任何前言违规都发送/记录`PROTOCOL_ERROR`并关闭连接，不能继续等ACK。将初始SETTINGS已接收与本端SETTINGS已确认建模为两个独立状态。
+- 回归测试：修复阶段覆盖首帧空/非空普通SETTINGS、空ACK、带payload ACK、非0 stream及非SETTINGS；client/server都应只接受前两种合规普通SETTINGS（包括空payload），其余有限时间内失败并释放资源。当前不运行握手复现。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2631,7 +2643,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为207项：P0为0，P1为88，P2为110，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 33、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
+当前滚动统计为208项：P0为0，P1为88，P2为111，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2839,3 +2851,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认Redis client固定明文TCP，非空AUTH credential与全部command/data无法通过TLS保护，也不能接入TLS-only部署，记录为`REDIS-009`；未建立TLS或发送credential。
 - 2026-08-12：确认MySQL checkout用returned_at而非created_at判断max_lifetime，持续繁忙连接可无限超过轮换上限，记录为`MYSQL-019`；未运行计时或数据库连接测试。
 - 2026-08-12：确认HTTP/2合法SETTINGS下调可使stream window为负，下一次write把负值作为DATA length交给builder并抛异常，记录为`H2-033`；未发送frame或运行互操作。
+- 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
