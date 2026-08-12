@@ -2294,6 +2294,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：选择并明确一种契约：若只支持single-reader，在任何状态写入前检测active read并同步返回稳定错误；更易用的方案是以FIFO/token串行化读取并保证buffer消费顺序。timer必须绑定不可变operation token，仅能取消/唤醒自己的waiter；close/reset/channel teardown应终止全部已登记操作且每个恰好一次。gRPC streaming层可再提供自己的read mutex或明确传播底层错误。
 - 回归测试：修复阶段用channel/barrier覆盖`waitresponse+read`、`read+read`、`read+readall`，分别在DATA到达、END_STREAM、RST、GOAWAY/EOF及两个timeout先后触发；断言要么第二次调用立即失败，要么FIFO返回，所有协程有限时间结束、bytes不重复/丢失、timer无跨操作唤醒。当前不运行并发复现。
 
+### H2-033 — P1 — 合法负 stream window 被当作 DATA length，下一次写触发 Lua 异常
+
+- 状态：已确认；RFC 9113 flow-control window调整规则与Lua→C builder参数路径的确定性静态推导。本轮不发送SETTINGS或运行peer互操作。
+- 规范：收到较小的`SETTINGS_INITIAL_WINDOW_SIZE`时，endpoint必须把差值应用到所有active stream；若先前已消耗credit，stream flow-control window可以合法变为负数。此时sender必须停止发送DATA，直到WINDOW_UPDATE使窗口转正，不能把负window解释为payload长度或协议错误。
+- 位置：SETTINGS delta及已有stream更新在`lualib/silly/net/http/h2.lua:1211-1278`；允许保存负window的`stream_winupdate`在`:1156-1171`；新写的credit选择和DATA builder调用在`:805-838`；native builder拒绝负length在`luaclib-src/lhttp.c:950-985`。公开`write/closewrite`在`h2.lua:965-1025`。
+- 触发：active stream已发送部分DATA，使其剩余sendwindow小于旧initial value；peer随后合法下调INITIAL_WINDOW_SIZE，delta令`s.sendwindow<0`。在尚未收到足够stream WINDOW_UPDATE前，应用对该stream调用`write(data)`或带data的`closewrite`。
+- 影响：`stream_writewait`取`min(s.sendwindow,ch.sendwindow)`得到负`win`，把它作为builder的length参数；C层`len>=0`参数检查直接抛Lua exception，而不是异步等待credit或返回结构化错误。client RPC/request task可意外终止；server handler异常还会叠加`H2-027`，留下stream map和并发quota。header可能已在进入该函数前排队，peer看到半成品message而本地没有正常writer收尾。
+- 证据：`frame_settings`按规范计算negative delta并对所有stream调用`stream_winupdate`，后者只拒绝上溢、会保存负值。`stream_writewait`没有`win=max(0,min(...))`或`swin<=0`分支，直接执行`build_body(...,0,win)`；native `lframe_build_body`把length读入int并以`len >= 0`做`luaL_argcheck`，因此该合法flow-control状态确定性进入异常。
+- 根因：发送slow path假定两级window最小值永远非负；虽然SETTINGS接收侧部分实现了规范允许的负stream window，write admission与waiter模型没有同步扩展该状态。
+- 建议解法：可发送credit计算下限为0；stream window<=0时不构造任何DATA，只登记一次stream-credit waiter并等待对应WINDOW_UPDATE。connection与stream两级blocked membership、close/reset清理和公平唤醒应与`H2-029`统一设计；SETTINGS delta应用后不得把合法负值升级为异常。
+- 回归测试：修复阶段先消耗不同数量stream credit，再把initial window降到0/较小值，覆盖负值、恰好0及后续分段WINDOW_UPDATE；`write/closewrite`必须等待且不抛异常、不提前发DATA，credit转正后精确续发。client/server及多个并发stream均覆盖，当前不发送frame。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -2619,7 +2631,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为206项：P0为0，P1为87，P2为110，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
+当前滚动统计为207项：P0为0，P1为88，P2为110，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 33、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2826,3 +2838,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
 - 2026-08-12：确认Redis client固定明文TCP，非空AUTH credential与全部command/data无法通过TLS保护，也不能接入TLS-only部署，记录为`REDIS-009`；未建立TLS或发送credential。
 - 2026-08-12：确认MySQL checkout用returned_at而非created_at判断max_lifetime，持续繁忙连接可无限超过轮换上限，记录为`MYSQL-019`；未运行计时或数据库连接测试。
+- 2026-08-12：确认HTTP/2合法SETTINGS下调可使stream window为负，下一次write把负值作为DATA length交给builder并抛异常，记录为`H2-033`；未发送frame或运行互操作。

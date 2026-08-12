@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09（Asia/Shanghai）
 > 用途：保存两轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线206项（P1 87、P2 110、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计及`cluster`分支三轮专项复核已收口，第三轮重点模块查漏进行中；当前确认master基线207项（P1 88、P2 110、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -312,6 +312,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-030 | P2 | batch frame flush丢弃TCP/TLS write失败并清空buffer，stream API仍按成功推进状态。 |
 | H2-031 | P2 | HEAD/204/205/304的DATA content未被禁止，client接受交付且server可主动生成malformed response。 |
 | H2-032 | P1 | 同一stream并发读取会覆盖唯一waiter，旧reader永久挂起且timer可唤醒错误操作。 |
+| H2-033 | P1 | SETTINGS合法下调可产生负stream window，下一次write把负值当DATA length并抛Lua异常。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
 | GRPC-001 | P1 | client 创建 HTTP/2 channel 时漏传 target authority，所有请求把 `:authority` 编码成字面量 `nil`。 |
 | GRPC-002 | P2 | unary 与三种 streaming client request 都缺少 gRPC Call-Definition 要求的 `te: trailers`。 |
@@ -338,7 +339,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为206条：P1 87、P2 110、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 32、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6；以主报告中的编号和证据为准。
+当前统计为207条：P1 88、P2 110、P3 9。模块分布为CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 33、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 15、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
