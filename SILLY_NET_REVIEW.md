@@ -1,7 +1,7 @@
 # Silly `net` 全量审计记录
 
-> 状态：两轮全量纯静态审计已完成；第三轮重点模块查漏进行中
-> 审计日期：2026-08-06 至 2026-08-09
+> 状态：两轮全量纯静态审计、`cluster`三轮专项及第三轮 HTTP/2、gRPC、etcd、MySQL、Redis 重点查漏已完成
+> 审计日期：2026-08-06 至 2026-08-12
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
 > 审计基线：`d1aef7ffd8439340dfd957a49fccba3fbf133055`（2026-07-19）
@@ -2865,3 +2865,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认HTTP/2合法SETTINGS下调可使stream window为负，下一次write把负值作为DATA length交给builder并抛异常，记录为`H2-033`；未发送frame或运行互操作。
 - 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
+- 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
