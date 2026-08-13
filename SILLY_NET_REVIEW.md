@@ -181,6 +181,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-TRANSPORT-STATUS-MAPPING | MUST/interoperability | `lualib/silly/net/http/h2.lua:103-124,563-590,1333-1349`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client recipient | 偏离 | H2 RST/断连只留下文本；gRPC client缺 error-code context和 mapping，统一变 UNKNOWN/raw string | 无 peer RST 各 error code或 connection failure gRPC status 测试 | GRPC-013 |
 | GRPC-PROTOBUF-SERVICE-NAME | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:259-279`; `lualib/silly/net/grpc/registrar.lua:264-290`; `lualib/protoc.lua:498-505,827` | client/server | 偏离 | full path无条件插入 package与点；无 package时值为 nil并经 `%s` 变 `nil`，生成 `/nil.Service/Method`而非 `/Service/Method` | gRPC test proto总是声明 package | GRPC-014 |
 | GRPC-CLIENT-PARSE-STATUS | MUST | `lualib/silly/net/grpc/helper.lua:16-50`; `lualib/silly/net/grpc/client/service.lua:38-81,134-176` | client | 偏离 | response envelope/protobuf parse error不生成 INTERNAL；streaming finalizer可被 peer OK trailer覆盖为成功 status | 无 malformed/truncated response message 测试 | GRPC-015 |
+| GRPC-STREAM-FINAL-STATUS-API | MUST/API | `lualib/silly/net/grpc/client/service.lua:38-81,95-132`; `docs/src/{en/,}reference/net/grpc.md:521-530` | streaming client | 偏离 | read到EOS后只写未文档化对象字段并返回nil；client-streaming有message时不管最终status仍返回对象，所有路径都不返回文档承诺的error | tests只断言两个OK status字段，没有任何streaming非OK或read错误tuple | GRPC-034 |
 | GRPC-HANDLER-EXCEPTION-STATUS | MUST/interoperability | `lualib/silly/net/grpc/registrar.lua:80-228` | server | 偏离 | 四种 wrapper将 application handler抛出异常统一映射 INTERNAL；gRPC library-generated mapping要求 UNKNOWN | 无 handler throw status-code assertion | GRPC-016 |
 | GRPC-STATUS-SENDER | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `luaclib-src/lhttp.c:489-548` | server sender | 偏离 | application `err.code` 无类型/range/canonical校验，truthy值直接经通用字符串化写 grpc-status；可发送非法文本或error+OK | 自测仅覆盖0与合法常量 | GRPC-017 |
 | GRPC-REQUEST-EOS-DATA | MUST | `lualib/silly/net/grpc/client/service.lua:65-70,215-257`; `lualib/silly/net/http/h2.lua:992-1025` | streaming client sender | 偏离 | client/bidi零消息closewrite时pending request header直接带END_STREAM；未发送gRPC要求的空DATA+END_STREAM | tests的client/bidi均先write至少一条 | GRPC-018 |
@@ -3531,6 +3532,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按`type_id`在写tag/body前验证宿主类型和闭区间；32/64位signed、unsigned分别处理，并为Lua不能直接表达的uint64保留严格十进制/十六进制字符串通道。enum只接受整数且验证32位范围（是否允许未声明proto3值可按edition决定），bool只接受Lua boolean。错误通过`GRPC-032`建议的protected encode返回field path和受控错误，不发送HEADERS/envelope。
 - 回归测试：修复阶段对每个整数scalar覆盖min-1/min/min+1、-1/0/1、max-1/max/max+1及Lua integer/`#`字符串；enum覆盖fractional、边界和未知整数，bool覆盖true/false/0/1/string/table；普通/repeated/map/nested与四类RPC sender均断言合法值round-trip等值、非法值不上wire且资源立即收尾。当前不执行encode。
 
+### GRPC-034 — P1 — streaming client 不通过返回值交付最终非 OK status，失败可被当作正常 EOF/response
+
+- 状态：已确认；官方call completion语义、三种stream对象的read返回值、公开文档与现有测试的确定性静态核对。本轮不建立stream或发送错误status。
+- 规范：[gRPC error handling](https://grpc.io/docs/guides/error/)说明RPC失败时client必须获得非OK error status及可选message；[core call lifecycle](https://grpc.io/docs/what-is-grpc/core-concepts/)明确client-streaming的单response只在最终status OK时构成成功，server/bidi streaming则在消息序列后以最终status完成call。公开文档也承诺`stream:read()`失败返回`nil, string`，不能把非OK completion降成与正常EOS相同的裸nil。
+- 位置：status parser在`lualib/silly/net/grpc/client/service.lua:38-53`；client-streaming final read在`:56-63`，server/bidi read在`:72-81`，三种对象在`:95-132`；双语返回契约在`docs/src/{en/,}reference/net/grpc.md:521-530`；现有OK字段断言在`test/testgrpc.lua:156-174,198-222`。
+- 触发：server-streaming或bidi先发送零/多条message，最终以`PERMISSION_DENIED`、`INVALID_ARGUMENT`、`ABORTED`等非OK trailer结束；或client-streaming peer返回一条response message再带非OK status。普通transport/read错误、缺status也走同一返回形态；Trailers-Only status位置另见`GRPC-008`。
+- 影响：server/bidi的最后一次`read()`总是只返回nil，没有第二返回值，和`grpc-status: OK`正常EOS不可区分；client-streaming `read()`在成功解出object后无条件返回该object，即使最终status非OK，调用方按文档把它当成功response。真实的code/message只写进文档未声明且LuaLS未说明读取时机的`stream.status/message`字段。权限拒绝、乐观并发失败、事务abort或服务不可用因此可能被当成“流正常结束/提交成功”，错误监控、retry和补偿逻辑均不会运行。
+- 证据：`stream_read`在obj为nil时调用`check_trailer`后固定`return nil`；`stream_readfinal`先读一条、raw drain并设置字段后固定`return obj`，从未根据`s.status`选择success/error，也没有第二返回值。类注解只列status/message字段，却把`read`方法挂到未注明错误tuple的本地table；reference明确写失败为`nil,string`。现有test只在正常server/bidi EOS后直接访问`stream.status==OK`，client-streaming甚至不检查status，完全没有非OK streaming case。
+- 根因：实现把最终Status当成stream对象的旁路诊断属性，而不是决定RPC成功/失败的终态；message reader、final status和公开返回契约没有统一成一个call completion API。
+- 建议解法：区分`read next message`与`finish/close_and_recv/status`。client-streaming提供`close_and_recv()`或让final read只在status OK时返回response，否则`nil, typed_status/error`；server/bidi可让EOS read返回`nil, typed_status`，其中OK使用可区分的clean-EOS结果，或提供必须调用的`finish()`。文档和LuaLS公开code/message/trailers，所有transport/protocol/status错误归一，不能只给字符串导致code丢失。
+- 回归测试：修复阶段三种streaming分别覆盖0/N message后OK及每类代表性非OK、response+nonOK、Trailers-Only、缺/非法status、RST/断连；断言调用方只用公开返回值即可区分clean EOS与失败，非OK client-streaming永不返回成功对象，status/message只交付一次。当前不运行RPC。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3560,7 +3573,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为286项：P0为0，P1为103，P2为158，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 33、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为287项：P0为0，P1为104，P2为158，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 34、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3847,6 +3860,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认`grpc.listen`直接返回只拥有listen fd的底层listener，accepted H2 channels无server owner；close返回后既有连接仍可无限创建新RPC，归档为`GRPC-031`。
 - 2026-08-13：确认protobuf encode类型/schema错误直接抛异常，多个gRPC wrapper因此越过公开错误tuple、timer取消、final status与H2 stream回收；归档为`GRPC-032`，未编码错误对象或建立RPC。
 - 2026-08-13：确认native protobuf scalar encoder对32/64位整数、enum与bool缺少schema域校验，边界外/错误类型输入会被静默截断或改义；归档为`GRPC-033`，未编码这些输入。
+- 2026-08-13：确认三种streaming client不通过公开read返回值交付最终非OK status，失败会表现为普通EOF，client-streaming还可返回成功对象；归档为`GRPC-034`，未建立错误stream。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
