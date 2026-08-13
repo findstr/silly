@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档359项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档360项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2989,6 +2989,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：显式`local time = require "silly.time"`，等待用`time.sleep(ms)`，耗时观测用`time.monotonic()`之差而非墙钟；同时按`DOC-051`避免把raw path作为永久label。若HTTP示例需要生产级异常收尾，应以finally式路径保证状态和duration只提交一次。
 - 回归检查：修复阶段执行双语围栏的模块加载与单请求路径，断言handler返回200、duration单位为秒且metrics有样本；文档lint拒绝不存在的顶层`silly.*`成员。当前不运行server。
 
+### DOC-068 — P3 — 双语文档漏写 `gather(registry)`，隔离 Registry 教程转而手写不完整 exporter
+
+- 状态：已确认；Prometheus公开实现/LuaLS、双语signature、Registry隔离与自定义导出示例的确定性静态核对。本轮不调用gather或执行formatter。
+- 位置：`lualib/silly/metrics/prometheus.lua:129-133`明确以`---@param r silly.metrics.registry`定义`M.gather(r)`并用`r or R`选择registry；双语Prometheus reference却只发布零参数`function prometheus.gather()`，见`docs/src/{en/,}reference/metrics/prometheus.md:274-301`。Registry reference承诺隔离/自定义导出后，在`:584-649`另写简化formatter，而不是调用现成`prometheus.gather(custom_reg)`。
+- 触发：用户按双语文档创建独立Registry并需要暴露Prometheus文本；由于公开签名没有registry参数，只能复制Registry页的`format_metrics`或自行重写encoder。
+- 影响：示例formatter只识别`m.value`及普通vector，simple Histogram没有value而会格式化失败，HistogramVec也被当成普通value对象；它还重复已有的name/HELP/label拼接且没有修复`METRIC-001/006`边界。隔离metrics能力因此无法按文档可靠导出，多个团队会各自维护不兼容wire实现。
+- 证据：runtime在任何collect之前就选择传入的`r`，不是私有未使用参数；全仓文档零命中带实参的`prometheus.gather(...)`。Registry示例虽只放Counter/Gauge而显得可用，但同页把Registry定义为统一管理Counter/Gauge/Histogram，formatter的else分支读取Histogram不存在的`m.value`，并完全遗漏bucket/sum/count序列化。
+- 根因：实现增加custom registry参数后reference signature与示例没有同步，作者误以为只有全局R可用，复制了不完整的exporter逻辑。
+- 建议解法：正式发布`gather(r?) -> string`契约，Registry自定义导出示例直接调用`prometheus.gather(custom_reg)`；明确传入registry不会自动包含全局built-ins，除非显式注册。若该参数不准备支持，则应提供官方`registry:gather()`而不是让文档手写wire格式。
+- 回归检查：修复阶段用独立registry同时注册counter/gauge/histogram/vector，断言`gather(custom)`只包含目标集合且独立parser接受；双语signature、示例和LuaLS参数一致，仓库文档零手写Prometheus formatter。当前不执行。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4403,7 +4414,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为359项：P0为0，P1为112，P2为196，P3为51。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为360项：P0为0，P1为112，P2为196，P3为52。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 68。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4781,4 +4792,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Exporter异常收尾反查确认gather复用module-level buffer且只在concat成功后清空；一个坏Gauge/custom metric值可永久毒化后续全部scrape并持续追加内存，归档为`METRIC-009`。
 - 2026-08-13：Registry mutation时序反查确认collect固定旧上界遍历live array；custom collector重入注销或yield期间被另一task注销会跳过对象并最终调用nil，归档为`METRIC-010`。
 - 2026-08-13：Histogram exporter所有权反查确认所有历史bucket数值/字符串进入无界module-level强缓存；动态Histogram注销/GC后仍永久保留，归档为`METRIC-011`。
+- 2026-08-13：隔离Registry导出反查确认runtime已有`gather(r)`，双语reference却漏掉参数并教用户手写不支持Histogram/转义的formatter，归档为`DOC-068`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

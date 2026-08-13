@@ -336,8 +336,8 @@
 | `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006/008/009、DOC-065/066 | descriptor/value/label examples与截断EOF |
 | `docs/src/en/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006至008/011、DOC-067 | cumulative bucket契约、vectors/lifetime与完整示例 |
 | `docs/src/en/reference/metrics/labels.md` | 审阅中 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
-| `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054 | constructor/gather/HTTP examples |
-| `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011 | duplicate family、mutation/lifetime与custom collector |
+| `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068 | constructor/gather/HTTP examples |
+| `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068 | duplicate family、mutation/lifetime、export与custom collector |
 | `docs/src/en/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
 | `docs/src/en/reference/net/README.md` | 已审有归档 | DOC-047 | net子模块索引含URL |
 | `docs/src/en/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |
@@ -401,8 +401,8 @@
 | `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006/008/009、DOC-065 | descriptor/value/label examples |
 | `docs/src/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006至008/011、DOC-067 | cumulative bucket契约、vectors/lifetime与完整示例 |
 | `docs/src/reference/metrics/labels.md` | 审阅中 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
-| `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054 | constructor/gather/HTTP examples |
-| `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011 | duplicate family、mutation/lifetime与custom collector |
+| `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068 | constructor/gather/HTTP examples |
+| `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068 | duplicate family、mutation/lifetime、export与custom collector |
 | `docs/src/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
 | `docs/src/reference/net/README.md` | 已审有归档 | DOC-047 | 中文net索引缺URL |
 | `docs/src/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |
