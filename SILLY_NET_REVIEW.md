@@ -1723,17 +1723,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：共享严格dispatcher：只有首字节OK且OK packet完整、capability一致时才提交本地transaction transition；ERR返回结构化错误；其他类型一律protocol-fatal、标broken并物理关闭。状态更新必须发生在validator成功后，自动rollback仍需检查结果。
 - 回归测试：修复阶段对BEGIN/COMMIT/ROLLBACK分别覆盖OK、ERR、EOF、LOCAL_INFILE、resultset header、未知byte、截断/尾随OK；只有合法OK改变本地状态，其余连接均不归池。当前不发送控制命令。
 
-### MYSQL-015 — P1 — result metadata/row loops 不识别 ERR，错误包可被解析为列或业务数据
+### MYSQL-015 — P1 — prepare/result phase 不验证 packet 类型与声明计数，错误可变成列或业务数据
 
 - 状态：已确认；prepared-result packet phase、Lua discriminator与native row header处理的确定性静态核对。本轮不构造result/ERR packet。
 - 规范：MySQL command/resultset各阶段允许的packet类型必须按phase和首字节分派；ERR(`0xff`)表示当前command失败并终止结果，不能进入ColumnDefinition或Binary Protocol Resultset Row decoder。binary row还必须验证首字节header为`0x00`，而不是盲目跳过任意byte。
-- 位置：column-definition循环在`lualib/silly/store/mysql.lua:776-797`，execute首响应与row循环在`:898-945`；native binary row入口在`luaclib-src/mysql/lmysql.c:430-470`，column decoder在`:216-257`。
-- 触发：server/proxy在metadata或row phase返回ERR；或连接已因MYSQL-010等未排空response而让当前loop读到上一command的ERR/其他packet。恶意peer也可构造以0xff开头、后续字节恰能满足当前columns的payload。
-- 影响：metadata ERR被送进column parser并通常抛异常，随后触发MYSQL-011的坏连接清理问题；row-phase ERR则被当binary row，decoder跳过0xff后把errno/SQLSTATE/message字节解释成NULL bitmap和字段，可能向应用返回伪造业务row。若解析后遇EOF，query甚至可报告成功并把connection归池；否则异常/残余packet造成跨请求结果串线。
-- 证据：`recv_col_def_packet`只有`if first==EOF then break`，其余一律`parse_column_def(data)`；row loop同样只有EOF分支，其余一律`parse_row_data_binary(data,cols)`。C row decoder在`:439-444`仅`chk.pos += 1`，从不检查被跳过的byte是0x00。只有execute的第一个packet在进入resultset前检查ERR，后续phase没有同样dispatcher。
+- 位置：column-definition循环在`lualib/silly/store/mysql.lua:776-797`，prepare response/声明的param与field count在`:799-846`，execute首响应与row循环在`:898-945`；native binary row入口在`luaclib-src/mysql/lmysql.c:430-470`，column decoder在`:216-257`。
+- 触发：server/proxy在prepare首响应、parameter/column metadata或row phase返回ERR/其他类型；metadata terminator过早、过晚或缺失，使实际definition数量不等于COM_STMT_PREPARE_OK/result header声明；或连接已因MYSQL-010等未排空response而读到上一command的packet。恶意peer也可构造以0xff开头、后续字节恰能满足当前decoder的payload。
+- 影响：prepare的任意非OK首包被强制按ERR解析；metadata ERR/row/result header会被送进column parser并通常抛异常，触发MYSQL-011的坏连接清理问题。过多definition可一直写入数组并把后续phase吸走，过少definition仍被接受，使execute按错误column layout解析。row-phase ERR则被当binary row，decoder跳过0xff后把errno/SQLSTATE/message字节解释成NULL bitmap和字段，可能向应用返回伪造业务row；若之后遇EOF，query甚至报告成功并把connection归池，否则残余packet造成跨请求串线。
+- 证据：`prepare`只做`if typ~=OK then parse_err_packet(data)`，不要求typ确为ERR。`recv_col_def_packet(conn,array)`没有接收expected count：只有`first==EOF`才break，其余一律append `parse_column_def`；调用者虽已解出`param_count/field_count`，却完全不用于控制或核对数组长度。execute result同样解析了`field_count`但只用`>0`决定是否进入无界metadata loop。row loop只有EOF分支，其余一律`parse_row_data_binary`；C row decoder在`:439-444`仅跳过首byte，从不检查其为0x00。
 - 根因：result consumer把“非terminator”视作目标数据packet，没有为每个phase声明完整allowlist；native typed decoders也不验证discriminator，无法防守调用层遗漏。
-- 建议解法：实现显式result state machine：每个read先统一识别ERR并终止，metadata只接受合法ColumnDefinition和规定terminator，row phase只接受0x00 binary row及合法terminator/ERR；未知type标protocol-fatal并关闭。所有native parser验证header/type，完整response验证后才允许lease归池。
-- 回归测试：修复阶段在首response、每个column位置、metadata terminator前后、首/中/末row注入合法ERR及未知type；断言ERR结构化返回、绝不生成row、连接按同步状态关闭/不归池，随后marker query不串线。当前不注入packet。
+- 建议解法：实现显式prepare/result state machine：每个read先统一识别ERR并终止；按声明的param/field count精确读取definition，随后只接受规定terminator；row phase只接受0x00 binary row及合法terminator/ERR。数量不符或未知type标protocol-fatal并关闭。所有native typed parser验证header/type，完整response验证后才允许lease归池。
+- 回归测试：修复阶段在prepare首包、每个param/column位置、metadata terminator前后、首/中/末row注入合法ERR及未知type，并覆盖声明count的少1/相等/多1、零列和terminator缺失；断言ERR结构化返回、绝不生成row、连接按同步状态关闭/不归池，随后marker query不串线。当前不注入packet。
 
 ### MYSQL-016 — P1 — broken connection 释放 capacity 后不唤醒 waiter，受限 pool 可永久停住
 
@@ -4034,6 +4034,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语监控在调用pool query前连续采集wait/query时间戳，所谓等待几乎恒为零，真实checkout排队全被误算成SQL执行；归档为`DOC-031`，未运行计时或并发barrier。
 - 2026-08-13：补强`MYSQL-012`：AuthSwitch的plugin data按规范是EOF opaque bytes，代码却无条件删除末byte；initial response多数capability也未取server交集，未知plugin名与native token可不一致；不重复计数。
 - 2026-08-13：补强`MYSQLC-002`：OK packet的affected_rows和last_insert_id同样是unsigned lenenc，超过Lua signed范围也会wrap为负，影响业务行数/主键判断；不重复计数。
+- 2026-08-13：补强`MYSQL-015`：prepare非OK首包一律按ERR解码，metadata reader完全忽略已声明param/field count而读到EOF，少/多definition均可跨phase反同步；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
