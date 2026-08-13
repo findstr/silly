@@ -137,6 +137,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC6455-FRAME-WRITE-ATOMICITY | safety | `lualib/silly/net/websocket.lua:104-127,179-213`; `lualib/silly/net/tcp.lua:307-315`; `src/flipbuf.h:30-51`; `src/socket.c:1614-1659` | client/server | 符合 | 单次 frame 先组装为完整 string，再以一个 TCP send op 入带锁队列；Lua 路径不 yield，未发现并发调用导致帧内交错 | 现有 50-client stress 不是同 socket 并发，但静态原子边界成立 | — |
 | RFC9113-6.5.2-ENABLE-PUSH-ROLE | MUST | `lualib/silly/net/http/h2.lua:1211-1278,1500-1537,1651-1710` | client recipient | 偏离 | client/server 共用 `frame_settings`；收到值 1 时只设 `ch.enablepush=true`，没有识别发送方是 server 并发送 `PROTOCOL_ERROR`。server 发送值 0 符合 RFC，不属于偏离 | 现有测试只覆盖双方发送值 0，没有 server→client 值 1 | H2-001 |
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
+| RFC9113-6.1/6.2-PAD-LENGTH-REQUIRED | MUST | `lualib/silly/net/http/h2.lua:268-307,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | payload长度为0时完全跳过PADDED解析；缺失强制Pad Length字段的DATA可被当作合法空DATA并用END_STREAM结束消息 | 现有测试没有zero-length PADDED DATA/HEADERS或错误作用域断言 | H2-041 |
 | RFC9113-5.2/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-263,479-482,502-542,1177-1204` | client/server recipient | 偏离 | channel/stream 没有剩余 receive-window 状态；DATA 无条件 append，仅累计将来回补的 debt，超过已广告 credit 也不会报 `FLOW_CONTROL_ERROR` | 现有测试只覆盖守规发送方和正常 1 MiB 消息，没有超 window DATA | H2-003 |
 | RFC9113-6.5.2-HEADER-TABLE-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-170,239-263,1211-1278` | client/server | 偏离 | 收到 peer 的 HEADER_TABLE_SIZE 后错误地 hard-limit `recvhpack` decoder；该 setting 描述 peer decoder 的上限，应约束本端 `sendhpack` encoder | HPACK 单测只同时修改 encoder/decoder；HTTP/2 测试没有非默认 peer setting | H2-004 |
 | RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
@@ -2965,6 +2966,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：initial headers提交时严格解析单一规范十进制Content-Length并保存`sendexpect`；每次DATA发送前以checked arithmetic累计且立即拒绝超发，在任何END_STREAM排帧前要求累计值恰好匹配。失败应稳定终止/reset该stream、唤醒writer且不得发送矛盾的END_STREAM；HEAD/无content响应的规则与`H2-031`统一处理。
 - 回归测试：修复阶段覆盖client request/server response的少发、多发、zero/nonzero、分片write、final data、trailer结束、flow-control阻塞后续写与合法精确匹配；断言失配调用返回typed error、wire上不完成malformed消息、其他并发stream不受影响。当前只保存静态证据。
 
+### H2-041 — P2 — zero-length PADDED frame 绕过必需的 Pad Length 校验
+
+- 状态：已确认；frame header/payload读取、padding预处理及DATA/HEADERS dispatch静态推导。本轮不发送畸形padding frame。
+- 规范：DATA或HEADERS设置PADDED flag时，payload开头必须存在1-byte Pad Length；若该值等于或大于frame payload长度，recipient必须把它作为connection `PROTOCOL_ERROR`。因此payload length为0时不可能包含合法padding结构，不能按普通空frame继续处理。
+- 位置：统一frame读取/裁剪在`lualib/silly/net/http/h2.lua:268-307`；DATA状态转换在`:1177-1205`；client/server HEADERS入口在`:1446-1499,1562-1648`。
+- 触发：peer在open stream发送length=0、flag含PADDED的DATA，最明显是同时设置END_STREAM；HEADERS/PUSH_PROMISE上的同一结构也会跳过padding层，随后才由各自不完整的field/state校验偶然决定结果。
+- 影响：zero-length PADDED DATA被当作普通空DATA接受，带END_STREAM时可正常结束request/response并让应用看到成功，而规范要求立即终止connection。严格proxy/peer与Silly对同一frame作出相反决定，形成协议合规和诊断分歧；malformed消息还能推进Content-Length、stream终态及业务handler生命周期，导致本应废弃连接继续承载其他streams。
+- 证据：padding分支被包在`if n > 0 then`内部；当frame header声明`n=0`时直接走`dat=""`，PADDED bit从未检查。`frame_data`对空dat仍设置`remotestate=STATE_DATA`，若END_STREAM存在就调用normal `stream_remoteend(...STATE_END...)`。非空payload路径已有`pad_length >= #dat`的正确拒绝，说明缺口仅由零长度外层分支造成。现有测试未覆盖该边界。
+- 根因：frame reader把“无需读取payload”和“payload内没有type-specific前缀”视为同一情况，在知道flags前提下仍先按长度短路；padding语法没有归属到DATA/HEADERS/PUSH_PROMISE各自parser。
+- 建议解法：通用reader保留原始payload及其wire length；仅在允许PADDED的frame parser中，无条件按flag要求至少1 byte Pad Length，再以`pad_length < payload_length`验证并裁剪。其他frame type忽略0x08，配合`H2-002`一次性修正type-specific flag语义；flow control继续按裁剪前完整DATA payload计数。
+- 回归测试：修复阶段分别对DATA、HEADERS、PUSH_PROMISE覆盖length 0+PADDED、仅1-byte padlen=0、padlen等于/大于payload、合法最大padding及未设置PADDED的空frame；断言畸形padding始终connection PROTOCOL_ERROR、合法空content仍可表达且并发stream不会在错误后继续。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3302,7 +3315,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为264项：P0为0，P1为100，P2为143，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 40、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
+当前滚动统计为265项：P0为0，P1为100，P2为144，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
 
 建议按依赖关系分五批修复：
 
@@ -3377,6 +3390,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H2 client把openstream的本地reservation立即放入wire map，peer可在request HEADERS发送前让idle id被当作open接受；归档为`H2-039`。
 - 2026-08-13：确认H2 sender不累计实际DATA长度，request/response可在Content-Length失配时仍排END_STREAM并报告成功；归档为`H2-040`。
 - 2026-08-13：确认32位HPACK table-size setting未经checked conversion窄化进C int，动态表非空时容量减法可触发signed overflow；归档为`HPACK-004`。
+- 2026-08-13：确认zero-length H2 frame会在检查PADDED前按空payload短路，缺失Pad Length的DATA仍可正常END_STREAM；归档为`H2-041`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
