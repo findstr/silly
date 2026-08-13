@@ -485,6 +485,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在共享TCP/TLS Lua入口要求n为可表示的非负整数；n==0直接返回`"",nil`，负数或超过明确最大单次读取值返回稳定参数/limit错误。native binding也使用`luaL_checkinteger`后做checked range conversion，并让返回状态显式区分empty success与insufficient data，避免依赖nil重载。
 - 回归测试：修复阶段覆盖TCP/TLS的0、-1、1、`INT_MAX`、`INT_MAX+1`与非整数number，分别在空缓存、已有缓存、peer close和timeout配置下核对；0必须同步成功且不写`s.co/delim`，非法值同步失败且不消费buffer。当前只记录静态证据。
 
+### TLS-010 — P2 — `ciphers` 只限制 TLS 1.2 及以下，TLS 1.3 仍使用 OpenSSL 默认套件
+
+- 状态：已确认；OpenSSL cipher API契约、server context调用链与双语安全指南静态核对。本轮不启动TLS server或协商cipher。
+- API契约：[OpenSSL `SSL_CTX_set_cipher_list` 文档](https://docs.openssl.org/3.3/man3/SSL_CTX_set_cipher_list/)明确说明该函数只设置TLS 1.2及以下cipher list，不影响TLS 1.3；TLS 1.3必须单独调用`SSL_CTX_set_ciphersuites()`。两套列表组合参与版本协商，前者成功不代表后者受控。
+- 位置：唯一消费`conf.ciphers`的native路径在`luaclib-src/ltls.c:436-449`；Lua下传在`lualib/silly/net/tls.lua:326-365`。公开参数与生产安全建议见双语`docs/src/{en/,}reference/net/tls.md:317-327,580-587`，明确包含TLS 1.3 suite的推荐示例在双语`docs/src/{en/,}guides/tls-configuration.md:448-476`。
+- 触发：OpenSSL 1.1.1/3.x server配置`ciphers` allowlist并与TLS 1.3 client握手；尤其照指南把`TLS_AES_*`/`TLS_CHACHA20_*`与若干TLS 1.2 suite合并到同一字符串。因为至少一个旧版suite有效，现有返回值检查仍成功。
+- 影响：listener成功启动，TLS 1.2策略按配置收紧，但TLS 1.3继续接受库的默认ciphersuites；管理员无法禁用不符合组织/FIPS/硬件策略的TLS 1.3 suite，也无法限制为指南中声称的集合。审计、合规和incident response依据配置得出错误结论；不同OpenSSL版本/发行版默认变化还会让同一Silly配置协商出不同套件。
+- 证据：代码只在每个ctx调用一次`SSL_CTX_set_cipher_list(ptr,cipher)`，全文没有`SSL_CTX_set_ciphersuites`。OpenSSL会忽略旧API字符串中的TLS 1.3名称；指南的混合示例又含三个有效TLS 1.2名称，因此旧API仍返回1，现有失败分支检测不到策略缺口。server minimum允许TLS 1.3且未设置maximum，故该路径现实可达。
+- 根因：公开配置把两个不同语法/作用域的OpenSSL policy合并成单一`ciphers`字符串，并把旧API的“至少选出一个旧suite”返回值误当成完整TLS版本策略已验证。
+- 建议解法：拆分为`ciphers`（TLS<=1.2）与`ciphersuites`（TLS1.3），对每个certificate ctx分别调用并检查对应API；或提供结构化TLS policy后集中生成两套列表。启动时记录最终生效的min/max version和两套suite集合，未知/全被忽略的token应fail fast；同步修正双语指南，不能再把TLS 1.3名称传给旧API。
+- 回归测试：修复阶段用OpenSSL 1.1.1/3.x分别配置只允许一个TLS1.2 suite和一个TLS1.3 suite，枚举实际协商结果；覆盖未知token、空列表、混合列表、多SNI ctx及reload，断言未列出的TLS1.3 suite被拒绝且失败不会留下listener/污染旧策略。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2930,7 +2942,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为232项：P0为0，P1为94，P2为126，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为233项：P0为0，P1为94，P2为127，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 10、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -2971,6 +2983,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认系统resolver配置读取失败或显式空列表会自动改用公共8.8.8.8，绕过本机DNS策略并可能泄漏内部查询；归档为`DNS-018`。
 - 2026-08-13：排除DNS共享TCP recv task覆盖新连接的候选；close只将reader排入wakeup queue，worker在下一条消息前完成旧task收尾，期间没有可发布新连接的yield点。
 - 2026-08-13：确认DNS双语reference声明的`sys.dns.resolv_conf`/`sys.dns.hosts`环境变量没有任何实现consumer，设置后仍读取固定系统路径；归档为`DOC-008`。
+- 2026-08-13：按OpenSSL契约确认TLS `ciphers`只调用旧cipher-list API，TLS1.3 suites仍使用库默认；双语安全指南的混合列表会静默假成功；归档为`TLS-010`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
