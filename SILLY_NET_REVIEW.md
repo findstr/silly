@@ -1909,6 +1909,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：将底层模块标记为internal并准确声明：client无参数，server接收PEM entry数组/cipher/wire ALPN，handshake返回`1|0|-1`及`string|silly.errno|nil`；最好用命名常量或枚举封装三态，避免任何boolean误用。由导出函数签名或共享schema生成stub，避免继续漂移。
 - 回归测试：修复阶段增加LuaLS静态fixture，覆盖server参数shape及handshake三态穷举；再加文档/API lint对照唯一高层调用，确保底层stub不会建议文件路径或boolean分支。当前只保存静态证据。
 
+### DOC-011 — P3 — TLS 指南虚构自动 session resumption 与 0-RTT 收益
+
+- 状态：已确认；双语性能章节、完整TLS binding与OpenSSL官方session-cache/early-data契约交叉核对。本轮不建立TLS连接。
+- 位置：错误承诺在`docs/src/{en/,}guides/tls-configuration.md:726-743`；client ctx/open/handshake/write全部实现在`luaclib-src/ltls.c:222-234,445-482,550-648`，高层每次连接新建SSL对象在`lualib/silly/net/tls.lua:72-94,291-324`。
+- 触发：用户依据指南预期重复使用Silly TLS client连接时自动恢复session，或据0-RTT提示设计首包延迟/幂等与重放防护。
+- 影响：每个连接都从共享ctx创建全新`SSL*`，实现既不导出/保存`SSL_SESSION`，也不在新连接调用`SSL_set_session`，所以Silly client不能把前一连接的ID/ticket带入下一连接；实际仍执行完整握手。0-RTT还需要显式early-data API及服务端启用额度，当前没有`SSL_write_early_data`、`SSL_read_early_data`或`SSL_CTX_set_max_early_data`，因此性能承诺不可达，也没有指南应同时说明的重放风险。
+- 证据：OpenSSL官方[`SSL_CTX_set_session_cache_mode`](https://docs.openssl.org/3.6/man3/SSL_CTX_set_session_cache_mode/)文档说明默认模式是`SSL_SESS_CACHE_SERVER`，并非自动替client挑选旧session；[`SSL_set_session`](https://docs.openssl.org/3.0/man3/SSL_set_session/)正是“set a TLS/SSL session to be used during connect”的客户端入口。官方[`SSL_read_early_data`](https://docs.openssl.org/3.0/man3/SSL_read_early_data/)文档要求client在任何handshake/普通IO前调用`SSL_write_early_data`，server默认不接受early data，必须设置nonzero max early data并以专用读取API消费。仓库对这些符号全量检索为零。服务器OpenSSL默认行为可能允许其他正确实现的client恢复，这不等于Silly自身“自动受益”。
+- 根因：指南把OpenSSL具备的协议能力与binding实际开放/编排的能力混写，并把一般TLS 1.3特性直接描述成当前产品优化。
+- 建议解法：1.0若不实现，删除“自动”及0-RTT收益，明确当前只建议应用层复用已建立连接；若实现，增加以origin/SNI/ALPN/验证策略隔离且有过期和ticket更新的session cache，显式观测是否恢复。0-RTT必须另设opt-in API、服务端额度、拒绝回退及anti-replay/仅幂等请求规则，不能由普通`write`隐式开启。
+- 回归测试：修复阶段用本地stub/受控TLS peer连续握手，断言第二次`SSL_session_reused`与full-handshake计数；0-RTT需分别覆盖accept/reject/replay/非幂等禁用。文档CI检查被宣传的OpenSSL特性至少存在对应binding符号或明确标注“不支持”。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3048,7 +3059,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为242项：P0为0，P1为95，P2为132，P3为15。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 10。
+当前滚动统计为243项：P0为0，P1为95，P2为132，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3100,6 +3111,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认低层TLS ctx/ssl显式free后仍由同一strict函数执行GC，meta tombstone会被当作类型错误并在finalizer中抛出；归档为`TLS-017`。
 - 2026-08-13：确认TLS双语reference的validate示例一处漏必填listener addr、另一处把hostname直接传给numeric-only connect并静默退出；归档为`DOC-009`。
 - 2026-08-13：确认TLS底层LuaLS仍声明文件路径ctx与boolean handshake，真实C ABI却要求PEM表并返回`1/0/-1`三态整数；归档为`DOC-010`。
+- 2026-08-13：确认TLS双语指南把OpenSSL能力误写为Silly自动session resumption/0-RTT收益，而binding没有client session复用或early-data API；归档为`DOC-011`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
