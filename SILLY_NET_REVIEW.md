@@ -2012,6 +2012,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在HTTP conf注解加入backlog并在两分支显式转发、验证integer/range；更稳妥地由统一listener option mapper处理共享transport字段，TLS专属字段另行allowlist，未知字段报错而非静默忽略。若1.0不支持HTTP级覆盖，则从双语文档删除并明确固定默认。
 - 回归测试：修复阶段用stub替换tcp/tls listen，分别断言nil及边界backlog原样到达且invalid值在资源创建前失败；文档/schema lint确保每个公开option有consumer。当前只保存静态证据。
 
+### DOC-013 — P3 — 中文 HTTP reference 虚构默认生效的 `read_timeout`
+
+- 状态：已确认；中英文client配置、LuaLS option schema及完整请求链逐字段静态核对。本轮不连接slow peer或等待超时。
+- 位置：中文承诺在`docs/src/reference/net/http.md:254-270`，英文配置表在`docs/src/en/reference/net/http.md:383-404`；真实option定义与构造在`lualib/silly/net/http/client.lua:67-73,191-226`，请求读取在`:278-401`。
+- 触发：按中文reference构造`http.newclient{read_timeout=5000}`，或不传该字段并相信文档所称默认5秒，然后访问不结束response headers/body的peer。
+- 影响：Lua table的未知字段被静默接受但从不保存或读取，底层`stream:readall()`仍以nil timeout调用，故请求可无限等待。部署者会误以为已有5秒防护而不加外层deadline，容量规划、故障切换和shutdown都建立在不存在的超时上；英文用户看到的配置面又与中文不同。实际无端到端deadline的实现风险已独立记录为`HTTPC-002`，本项记录错误公开承诺。
+- 证据：真实`default_opts`和client对象仅有`max_idle_per_host/idle_timeout/alpnprotos`，LuaLS注解同样没有`read_timeout`；构造器只复制这三项。convenience路径在所有redirect hop执行无参数`stream:readall()`，connect/DNS/TLS也未读取client级read timeout。英文reference没有该字段，只有中文明确列出并宣称默认5000ms。
+- 根因：翻译版reference保留了未实现或已删除的配置，而动态table构造器没有unknown-option校验；文档与实现schema没有单一来源。
+- 建议解法：不要单独补一个只覆盖read的相对timer来伪装完整保护；按`HTTPC-002`建立跨DNS/connect/TLS/redirect/header/body的absolute request deadline与cancel，并明确idle/progress timeout是否另设。实现前从中文文档删除该字段或明确“不支持/无限等待”，构造器对unknown option返回参数错误；中英文配置表由同一schema生成。
+- 回归测试：修复阶段增加双语doc/schema lint，逐项断言公开option被构造器消费；deadline实现后分别停在DNS、connect、TLS、header、body和redirect，验证同一预算。另覆盖未知字段、0/负数/边界值在资源创建前失败。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3151,7 +3162,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为251项：P0为0，P1为99，P2为135，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
+当前滚动统计为252项：P0为0，P1为99，P2为135，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3213,6 +3224,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认HTTP双语reference公开listen backlog，而http.lua明文/TLS adapter都未转发到底层，任何配置均静默落回默认；归档为`DOC-012`。
 - 2026-08-13：确认H1 sender只按精确小写Lua key识别Host/CL/TE等控制字段，常规Title-Case输入可被重复并由库自动形成TE+CL歧义wire；归档为`HTTP1-021`。
 - 2026-08-13：确认H1 server把HEAD/304与1xx/204共用bodyless分支并无差别删除CL/TE，丢失规范允许的representation元数据；归档为`HTTP1-022`。
+- 2026-08-13：确认中文HTTP reference声明`http.newclient.read_timeout`默认5秒，但实现/schema完全不接收该字段且请求仍无限等待；归档为`DOC-013`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
