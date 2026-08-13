@@ -2939,6 +2939,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：RST建立单调的stream-terminal/reset状态，原子结束read/write waiters并让所有之后的respond/write/flush/closewrite返回原始typed error，且不得再排任何非必要frame或扣credit。handler可通过context/cancel信号尽早停止；wrapper最终close只回收map/quota，不再发送第二次RST/END。与`H2-017`结合保留已经完整收到的response结果，但必须停止尚未结束的request发送。
 - 回归测试：修复阶段在respond前、headers后、partial DATA、blocked flow-control write和handler返回前分别注入各RST code；覆盖client/server和write retry，断言RST后零新HEADERS/DATA、所有调用稳定失败、quota/queue/credit收敛且其他streams继续。当前只保存静态证据。
 
+### H2-039 — P2 — client 把仅本地预留、尚未发 HEADERS 的 stream ID 当作 wire-open
+
+- 状态：已确认；openstream reservation、首次header发送/ID重排及client frame handlers静态推导。本轮不猜测或发送idle stream frame。
+- 规范：本端仅创建application stream对象不会让HTTP/2 wire stream离开idle；只有发送initial HEADERS才打开stream。peer在真正idle id发送HEADERS/RST_STREAM/WINDOW_UPDATE必须按各frame state规则产生connection error，不能因本地恰有未发布对象就接受。
+- 位置：reservation立即进map在`lualib/silly/net/http/h2.lua:649-676`；首次真正发送及可能重排id在`:704-738`；client HEADERS/RST/WINDOW_UPDATE仅查map在`:1336-1352,1366-1407,1446-1510`；IDLE close测试背景在`test/testhttp2.lua:1045-1110`。
+- 触发：调用`ch:openstream()`后在`request/write/closewrite/flush`前yield；peer依据已见最高id猜测这个下一个奇数id并发送合法response HEADERS、RST_STREAM或WINDOW_UPDATE。多个本地reserved streams与乱序首次发送会扩大可猜id集合。
+- 影响：client可接受一个从未发送request的response并让应用读取status/body，或把idle RST/window update当正常stream事件；之后真正发送请求时可能在peer看来使用已closed/非法id，引发reset/connection failure并影响其他复用streams。状态/错误仅取决于本地Lua对象是否提前分配，而不是双方可观察的wire历史，破坏stream-id安全边界。
+- 证据：`C.openstream`立即递增`streamidx`、写`ch.streams[id]=stream`并增加count，但`S.request`只保存header，直到`stream_writeheader`才真正排HEADERS；该函数还会为乱序发送重新分配更高id，证明此前id只是reservation。三个接收handler却把`s~=nil`等同非idle，HEADERS可直接通过`:status`验证并进入response，RST直接terminal，WINDOW_UPDATE直接加credit；均不检查`localstate==STATE_NONE/writeheader`或“initial HEADERS已flush”标志。
+- 根因：一个map同时保存application reservations、wire-active streams和closing tombstones，frame state判定以object existence替代独立的protocol stream history。
+- 建议解法：分离reserved对象与wire stream registry，或为每个id维护严格`IDLE→OPEN/...`状态；首次HEADERS编码/排入有序writer时原子提交id和map，之前收到该id任何不允许的frame按真正idle规则处理。乱序发送的id分配应在commit时完成且不会与接收侧可见历史冲突；closed history继续独立保留。
+- 回归测试：修复阶段覆盖open后在request前/request后但flush前yield，peer对reserved id发送HEADERS/RST/WINDOW_UPDATE/DATA/PRIORITY，以及两个reserved stream乱序发送；除PRIORITY规范例外外idle frame应正确终止connection，绝不向应用发布响应，正常commit后同类frame按open state处理。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3264,7 +3276,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为261项：P0为0，P1为99，P2为141，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
+当前滚动统计为262项：P0为0，P1为99，P2为142，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 39、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
 
 建议按依赖关系分五批修复：
 
@@ -3336,6 +3348,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认HTTP双语reference/中文guide把server push列为Silly已支持，但H2无push API且client SETTINGS明确禁用；归档为`DOC-014`。
 - 2026-08-13：确认HTTP双语reference/guide反称H2不支持实际已实现的write，并让用户调用不存在的close(body)；归档为`DOC-015`。
 - 2026-08-13：确认中文HTTP reference与双语guide错称client不池化/每次新建连接，实际顶层singleton与专用client均复用H1/H2；归档为`DOC-016`。
+- 2026-08-13：确认H2 client把openstream的本地reservation立即放入wire map，peer可在request HEADERS发送前让idle id被当作open接受；归档为`H2-039`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

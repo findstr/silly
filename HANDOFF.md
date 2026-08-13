@@ -367,6 +367,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-036 | P2 | client在final HEADERS前接受DATA，convenience readall可返回status=nil、body非空且无error的成功对象。 |
 | H2-037 | P2 | RST/GOAWAY错误终态后若recvbuf非空，readall优先返回partial body,nil并吞掉terminal error。 |
 | H2-038 | P2 | remote RST后新的respond/write/closewrite仍排HEADERS/DATA并成功返回，取消可污染复用连接。 |
+| H2-039 | P2 | client把尚未发送HEADERS的本地reserved id当wire-open，peer可向真正idle stream注入响应/状态帧。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
 | GRPC-001 | P1 | client 创建 HTTP/2 channel 时漏传 target authority，所有请求把 `:authority` 编码成字面量 `nil`。 |
 | GRPC-002 | P2 | unary 与三种 streaming client request 都缺少 gRPC Call-Definition 要求的 `te: trailers`。 |
@@ -393,7 +394,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为261条：P1 99、P2 141、P3 21。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16；以主报告中的编号和证据为准。
+当前统计为262条：P1 99、P2 142、P3 21。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 39、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
