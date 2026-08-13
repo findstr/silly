@@ -603,6 +603,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：RR parser返回三态`OK/SKIP/MALFORMED`并始终先完整验证owner、fixed header和RDLENGTH；合法unknown TYPE只SKIP，任何结构/已知RDATA失败立即回滚records table并让`lanswer`返回nil。只有严格消费完header声明的全部section count后才能发布records；section边界/来源还需与`DNS-002/008`一起保留。
 - 回归测试：修复阶段覆盖每个RR name/fixed/RDATA字节的截断、合法第一项+坏第二项、坏第一项+合法第二项、unknown合法TYPE、unsupported TYPE后合法A及TC路径；malformed响应必须零cache改动且request继续等待合法response，unknown合法项可跳过。当前只保存静态证据。
 
+### DNS-011 — P2 — caller timer 创建晚于 singleflight waiter 发布，参数异常会遗留 dead waiter 并打断共享完成
+
+- 状态：已确认；公开timeout、timer C边界、task状态与DNS singleflight完成顺序的确定性静态推导。本轮不传入超范围timer或运行并发复现。
+- 并发/异常契约：加入共享inflight request必须是事务操作；任何参数校验或timer创建失败都不能把未再等待的coroutine发布给其他完成者。一个caller的错误也不能阻止同一DNS query的其他合法caller完成。
+- 位置：waiter字段写入和timer创建顺序在`lualib/silly/net/dns.lua:424-475`；timer binding对`timeout>UINT32_MAX`抛错在`luaclib-src/ltime.c:14-27`；共享完成遍历/wakeup在`dns.lua:175-200`，task只允许唤醒WAIT状态在`lualib/silly/task.lua:177-190`。双语DNS reference只声明timeout为integer milliseconds，位于`docs/src/{en/,}reference/net/dns.md:85-150`，未给上限。
+- 触发：调用`dns.lookup/resolve(name,type,UINT32_MAX+1)`；在该name已有其他正常caller加入同一inflight时影响最清楚。timer allocator/内部异常也会落入相同发布窗口，但不作为本条成立条件。
+- 影响：DNS query已经发送，当前coroutine先被写入`request.waiting`，随后`time.after`抛`expire too large`使caller task异常退出，且没有finally清除waiting entry。response或retry终局调用`finish_req`时遍历到dead coroutine，`task.wakeup`再次抛错并中止循环；排序在它之后的合法waiter收不到真实结果，只能等各自caller timeout。完成函数虽已删除inflight，但waiting表和req仍可能被其他timer引用，错误从一个参数调用扩散到共享并发请求。
+- 证据：`trans.co/trans.req/request.waiting[co]`三项均在`time.after(timeout,...)`之前提交，且函数没有`pcall`或to-be-closed rollback。`ltime.c`对大于32-bit毫秒明确`luaL_argerror`，不是普通返回值。`finish_req`在for循环中直接调用wakeup且不检查task status/保护单项，第一处异常会跳过余下waiter。
+- 根因：caller-local timer acquisition发生在共享状态发布之后；waiter集合存裸coroutine，没有operation generation/status与幂等`finish_waiter`边界。
+- 建议解法：公开入口先验证timeout为允许范围内的非负整数，并在发布waiting之前成功创建timer；若后续任一步失败，用guard取消timer并撤回entry。waiter保存operation对象及其timer，所有response/reconfigure/caller-timeout路径调用不抛异常的幂等finish；唤醒前验证operation仍active，单个异常不得中断其他waiter。
+- 回归测试：修复阶段覆盖`-1/0/UINT32_MAX/UINT32_MAX+1`、非整数、timer创建失败及1个坏caller与多个正常caller共享请求；非法调用零wire/零waiting残留，合法caller仍收到原response且每个operation只完成一次。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2823,7 +2835,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为223项：P0为0，P1为92，P2为121，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 10、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为224项：P0为0，P1为92，P2为122，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 11、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2854,6 +2866,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS native把`read(0)`编码为未满足，Lua登记值为0的唯一waiter后所有data callback都无法完成；归档为`TLS-009`。
 - 2026-08-13：确认DNS query encoder处理普通名字最后一个label后构造`end+1`指针，所有无尾随点查询落入C未定义行为；归档为`DNS-009`。
 - 2026-08-13：确认DNS RR循环把结构/RDATA parse failure降格为break或skip，仍以成功提交已解析前缀并完成请求；归档为`DNS-010`。
+- 2026-08-13：确认DNS caller在timer创建前已发布singleflight waiter，超范围timeout抛错会留下dead task并使共享finish再次异常；归档为`DNS-011`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
