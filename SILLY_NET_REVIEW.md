@@ -1776,6 +1776,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按平台实现reserve对象：Unix保留`/dev/null` fd；Windows创建一个最小Winsock socket并以`fd_t/SOCKET`存储、用`closesocket`释放和重建。所有创建/释放均检查错误；若Windows无法可靠恢复，则从poller临时禁用listener并采用有界退避，避免热循环。
 - 回归测试：修复阶段在Windows以可控socket配额或API stub命中首个`accept=WSAEMFILE`，断言确实释放一个Winsock slot、只drain一条pending连接、reserve重建成功且poller不热循环；同时核对初始化失败与正常退出没有CRT fd或socket handle泄漏。当前不做资源耗尽测试。
 
+### SOCK-018 — P1 — Windows 控制 socket 路径长度可造成启动期栈越界写
+
+- 状态：已确认；Win32返回值契约、无符号算术与固定数组寻址的确定性静态推导。本轮不修改环境变量或启动Windows进程。
+- 平台契约：`GetTempPath`与`GetWindowsDirectory`在buffer不足时返回所需长度，该值可大于传入capacity；调用方必须在使用返回值作为offset前检查0、capacity和为后缀保留的空间。`snprintf`返回的是本来需要写入的长度，截断时也可能大于可用空间，不能无条件累加后继续寻址。
+- 位置：Windows socket-pair替代实现的固定`a.unaddr.sun_path`、目录选择和文件名追加在`src/win/win.c:127-215`，尤其`:169-209`；`pipe()`由`trigger_init`在所有网络引擎启动时调用，见`src/trigger.h:20-34`和`src/socket.c:1929-1945`。
+- 触发：`GetTempPath(UNIX_PATH_MAX, sun_path)`返回大于等于`UNIX_PATH_MAX`的required length；或Windows目录及追加的`"\\Temp\\"`使`n`达到/超过该上限。长`TEMP/TMP/USERPROFILE`配置、长系统目录或API返回截断均可在首次网络初始化命中。
+- 影响：代码继续计算`a.unaddr.sun_path + n`，指针已经越过栈上union；`UNIX_PATH_MAX - n`因`n`为`DWORD`而无符号下溢成巨大size，再交给`snprintf`写入计时器/PID字符串。结果是确定的越界写风险，可破坏相邻局部变量、控制流元数据并导致启动崩溃；具体可利用性取决于编译器栈布局，因此本报告不宣称远程代码执行。
+- 证据：两个Win32目录API的返回值均未与0或`UNIX_PATH_MAX`比较；第二个分支还把可能截断的`snprintf("\\Temp\\")`返回值累加到`n`，随后所有分支共用`:207-209`的unchecked pointer/length。fallback只在`bind`失败后发生，无法保护发生在`bind`之前的内存写。
+- 根因：把Win32“buffer不足时返回required size”和C `snprintf`“返回未截断所需长度”的契约误当成“始终返回已写入且位于buffer内的长度”。
+- 建议解法：用checked helper逐段构造路径：每次调用后要求`0 < n < capacity`，每次追加后要求返回值小于remaining，并预留NUL和唯一文件名最大长度；任何不满足都跳过该目录而不做指针运算。优先直接使用AF_INET loopback socket pair，或使用支持长路径且能可靠清理命名项的Windows专用实现。
+- 回归测试：修复阶段用Win32 API stub覆盖返回0、恰好capacity、capacity+1、目录可容纳但后缀截断、文件名恰好满等边界；ASan/Windows Application Verifier下均只能安全fallback，不越界且不泄漏listener/client/accepted socket。当前不构造长环境路径。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -2703,7 +2715,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为213项：P0为0，P1为89，P2为115，P3为9。模块分布：CORE 7、NET 3、SOCK 17、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为214项：P0为0，P1为90，P2为115，P3为9。模块分布：CORE 7、NET 3、SOCK 18、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2724,6 +2736,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：确认立即失败的 TCP connect 泄漏 fd；8 次失败令 open fd 从 8 增至 16。
 - 2026-08-13：1.0封板平台审计确认Windows控制唤醒通道以Winsock socket创建，却由CRT `close`销毁；归档为`SOCK-016`。
 - 2026-08-13：确认Windows accept资源耗尽路径以CRT `/dev/null` fd冒充Winsock reserve socket，无法释放对应资源槽；归档为`SOCK-017`。
+- 2026-08-13：确认Windows控制socket路径拼接未检查Win32 required length和`snprintf`截断，长目录可在启动期形成栈越界写；归档为`SOCK-018`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
