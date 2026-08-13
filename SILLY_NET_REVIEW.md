@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档358项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档359项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -483,6 +483,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：registry同时把可变collector集合和当前iteration storage当成同一数组，没有定义collection epoch与mutation可见性；单worker被误等同于不可重入，忽略collector是任意Lua代码且可以yield/回调registry。
 - 建议解法：collect入口复制collector引用snapshot并仅遍历snapshot，明确本轮包含入口时已注册对象；或设置collecting epoch，把register/unregister排队到本轮完成后原子应用。snapshot中的已注销对象是否仍采一次需写入契约；collector异常也应按策略隔离/标注，不能留下半轮全局状态。
 - 回归测试：修复阶段覆盖first/middle/last collector自注销、注销next/previous、采集中register、collector yield期间另一task mutation及嵌套collect；断言无nil调用/跳过/重复，当前轮集合符合snapshot契约，下轮准确反映mutation。当前不运行这些时序。
+
+### METRIC-011 — P2 — Histogram bucket 字符串缓存全局只增不减，动态边界跨注销永久泄漏
+
+- 状态：已确认；Prometheus exporter cache所有权、Histogram/custom collector与registry注销生命周期的确定性静态核对。本轮不循环创建bucket或采集内存。
+- 资源契约：格式化缓存的生命周期不能超过其metric owner且无任何容量边界；动态Registry或custom collector删除Histogram后，若没有其他对象引用其bucket，exporter不应仍永久保留每个历史数值和字符串。
+- 位置：`lualib/silly/metrics/prometheus.lua:36-40`建立module-level `strcache`，miss时以bucket number作强key、`tostring(v)`作强value并永不删除；`format_histogram`在`:57-82`对每个有限bucket访问该cache。Registry `unregister`只删除collector引用，见`registry.lua:24-31`，不会通知exporter。双语文档公开custom buckets、动态注销和custom collector。
+- 触发：反复创建带新浮点边界的Histogram，注册到global/custom registry、gather一次再注销并丢弃；或一个custom collector在每轮collect返回包含新bucket数值的临时Histogram metric。每次只需一个此前未见的boundary。
+- 影响：每个历史boundary的Lua number key、字符串value与table slot存活到进程退出；即使所有Histogram和Registry引用已释放，GC也无法回收。配置热更新、按租户动态instrumentation或错误的per-request collector可使heap随scrape次数线性增长，最终增加GC停顿或耗尽内存；registry当前没有metric/cardinality预算来截断该路径。
+- 证据：`strcache`不是weak table，代码全文件没有remove/reset/size check；它位于module scope而非Histogram对象或一次gather局部。默认bucket只造成固定14项，但公开constructor允许任意number数组，custom collector可跨轮更换对象；`test/testprometheus.lua`只使用固定少量边界且不检查unregister/GC后的cache可达性。
+- 根因：为避免重复`tostring`把低成本转换提升成无界全局intern pool，假定进程内bucket全集静态且有限；Registry公开动态生命周期后该前提不成立。
+- 建议解法：直接在局部输出`tostring(bucket)`，或把预格式化boundary字符串存入各Histogram的validated immutable descriptor，使其随owner释放；若必须全局缓存，使用明确小容量LRU/weak策略并处理number identity/NaN。配合构造期bucket数量上限和`METRIC-007`的finite/unique校验。
+- 回归测试：修复阶段循环创建、gather、unregister并释放大量唯一bucket，强制GC后断言cache/heap回到有界基线；静态常用bucket路径仍输出一致。另覆盖custom collector每轮新边界与多Registry隔离。当前不运行压力循环。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4391,7 +4403,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为358项：P0为0，P1为112，P2为195，P3为51。模块分布：CORE 11、METRIC 10、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为359项：P0为0，P1为112，P2为196，P3为51。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4768,4 +4780,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：共享labels fast path反查确认非空schema调用零参数`:labels()`会在arity assert前返回空key；三类vector均静默建立缺失全部标签的series，归档为`METRIC-008`。
 - 2026-08-13：Exporter异常收尾反查确认gather复用module-level buffer且只在concat成功后清空；一个坏Gauge/custom metric值可永久毒化后续全部scrape并持续追加内存，归档为`METRIC-009`。
 - 2026-08-13：Registry mutation时序反查确认collect固定旧上界遍历live array；custom collector重入注销或yield期间被另一task注销会跳过对象并最终调用nil，归档为`METRIC-010`。
+- 2026-08-13：Histogram exporter所有权反查确认所有历史bucket数值/字符串进入无界module-level强缓存；动态Histogram注销/GC后仍永久保留，归档为`METRIC-011`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
