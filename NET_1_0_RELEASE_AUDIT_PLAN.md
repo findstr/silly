@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL 与 HTTP common/HTTP1 阶段已收口；共 254 项（P1 99、P2 137、P3 18）。HTTP 本轮完整复核 transport adapter、pool/redirect/gzip、URL/helper/DOM/status、H1 parser/sender/stream/server、H1 tests/conformance 及双语 reference，新增 `HTTPC-006/007`、`HTTP1-018` 至 `HTTP1-023`、`DOC-012/013`；已有 `DOC-003`、`HTTP1-008` 至 `HTTP1-017` 等重叠项只补核不重复计数。现转入 HTTP/2 + HPACK 专项。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共268项（P1 100、P2 147、P3 21）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。现转入WebSocket专项。
 
 ## 1. 目标和边界
 
@@ -60,7 +60,7 @@
 - `luaclib-src/laddr.c`：已审有归档；新增`ADDR-002`，既有binary sockaddr边界另见`ADDR-001`、`SOCK-011`。
 - `luaclib-src/ltls.c`：已审有归档；逐项复核context/SSL/BIO/read/write/GC、certificate/SNI、ALPN、session/early-data、error queue与Lua调用链；本轮新增`TLS-009`至`TLS-018`，既有风险由`TLS-001`至`TLS-008`覆盖。
 - `luaclib-src/ldns.c`：已审有归档；完成query/name compression、header/question、各RR/RDLENGTH、section/class、EDNS/RCODE、TTL/negative和Lua stack/offset矩阵，新增`DNS-009/010/013/014`，其余偏差由`DNS-001/002/003/008`覆盖。
-- `luaclib-src/lhttp.c`：审阅中；已定位为HPACK/frame builder并完成H1无调用交叉核对，全部整数/stack/dynamic-table检查并入HTTP/2 + HPACK阶段。
+- `luaclib-src/lhttp.c`：已审有归档；HPACK static/dynamic table、Huffman、varint、Lua stack/整数/size转换及全部frame builder已逐函数核对，保留`HPACK-001/002`，本轮新增`HPACK-004`；Huffman tree预分配经静态节点计数恰为270，排除realloc悬空指针候选。
 - `luaclib-src/lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
 
 ### 3.2 Lua transport 和协议层
@@ -71,17 +71,17 @@
 - `lualib/silly/net/cluster.lua`：待审。
 - `lualib/silly/net/http.lua`、`http/client.lua`、`http/h1.lua`、`http/url.lua`：已审有归档；本轮新增`HTTPC-006/007`、`HTTP1-018`至`HTTP1-023`、`DOC-012/013`，既有URL、pool、framing、Expect/upgrade/keepalive与limits问题已逐项去重。
 - `lualib/silly/net/http/dom.lua`、`http/helper.lua`、`http/statusname.lua`：已审无新增；DOM异常受protected parse边界收敛，target/status helper的协议偏差已并入`HTTP1-008/010`，未另立重复条目。
-- `lualib/silly/net/http/h2.lua`：审阅中；首轮34项保留，现开始按frame/state/role和H1交叉矩阵二次封板。
-- `lualib/silly/net/websocket.lua`：待审。
+- `lualib/silly/net/http/h2.lua`：已审有归档；完成DATA/HEADERS/PRIORITY/RST/SETTINGS/PING/GOAWAY/WINDOW_UPDATE/CONTINUATION/PUSH_PROMISE按client/server与idle/open/half-closed/closed矩阵，新增`H2-035`至`H2-041`并补强padding flow-control到`H2-003`。未知RST code由元表稳定格式化、Huffman tree恰好不扩容等候选已排除。
+- `lualib/silly/net/websocket.lua`：审阅中；现按opening handshake、frame parser/sender、fragment/control/close、并发与文档测试矩阵二次封板。
 - `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：待审；其中顶层 `grpc.lua` 当前没有直接文件证据引用，优先补审。
 - `lualib/silly/store/redis.lua`、`mysql.lua`、`etcd.lua`：待审。
 
 ### 3.3 测试、类型和文档
 
 - transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`已逐项映射，positive ALPN、reload、读写/关闭等覆盖与certificate verification、close_notify、握手deadline、TLS版本、invalid config和failure cleanup缺口均已落到TLS条目。
-- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；发现现有gzip测试固化decoded body仍保留wire encoding metadata，但因属于已记录`HTTPC-001`的解压契约暂不重复计数。`testhttp2.lua`、`testhpack.lua`、`testwebsocket.lua`、`testgrpc.lua`及conformance其余部分待对应专项。
+- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`审阅中，`testgrpc.lua`待审。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
-- `lualib/types/silly/` 下DNS/TLS native公开面及双语DNS/TLS reference、TLS configuration guide已审有归档；TLS底层签名漂移见`DOC-010`，不可运行示例见`DOC-009`，session/0-RTT虚假承诺见`DOC-011`，安全契约错误已补强到`TLS-001/004/006`。HTTP双语reference的listen/client/stream/H1契约已核对，新增`DOC-012/013`并确认既有`DOC-003`仍完整；HTTP/2专属、其他类型/guide/tutorial/example待对应专项及最终一致性核对。
+- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket/gRPC/storage/cluster类型、guide/tutorial/example继续对应专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
 
