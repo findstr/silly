@@ -174,6 +174,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-014 | P2 | RPC timeout直到request发出后才验证，非法配置会造成远端已执行而本地抛错及重试歧义。 |
 | CLUSTER-015 | P1 | 同批次合法frame后的解析错误会把已完成frame留在全局ring，跨错误连接累积并可能迟延分发ACK。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
+| ADDR-002 | P2 | `addr.parse("[::1]")`等无端口bracket输入构造`se+1`指针并比较，公开正常路径触发C未定义行为。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
 | URL-002 | P2 | URL显式port绕过supported-scheme校验，HTTP/WS consumer对未知scheme回落明文TCP并发起连接。 |
 | URL-003 | P2 | relative URL resolver不拆path/query、不移除dot-segments且错误处理empty ref，redirect target偏离RFC3986。 |
@@ -347,7 +348,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为215条：P1 90、P2 116、P3 9。模块分布为CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
+当前统计为216条：P1 90、P2 117、P3 9。模块分布为CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

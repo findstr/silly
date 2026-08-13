@@ -707,6 +707,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有address入口先用`luaL_checklstring`取得长度并拒绝任何embedded NUL；再复制/确保唯一terminator后调用inet_pton/getaddrinfo。让parse/join/iptype/connect共享同一validated endpoint类型，避免helper与最终consumer规则漂移。
 - 回归测试：修复阶段覆盖IPv4/IPv6/hostname/port在每个位置嵌NUL，addr分类、DNS和TCP/UDP/TLS/cluster均返回明确EINVAL且不发起连接；合法普通string行为不变。当前不新增NUL连接复现。
 
+### ADDR-002 — P2 — 无端口 bracket 地址构造越过 one-past-end 的指针
+
+- 状态：已确认；C指针算术规则与公开支持输入的确定性静态推导。现有功能测试通过不代表未定义行为已消除，本轮不运行UBSan。
+- 语言约束：对数组只能构造从首元素到one-past-end范围内的指针；在one-past-end基础上再加1本身已越界，随后对该指针做关系比较也不具备已定义语义。
+- 位置：bracket地址解析在`luaclib-src/laddr.c:17-57`，关键为`:24-35,49-55`；公开类型和双语契约在`lualib/types/silly/net/addr.lua:7-10`、`docs/src/{en/,}reference/net/addr.md:14-58`；现有明确覆盖在`test/testaddr.lua:36-40,75-84`。
+- 触发：调用公开`addr.parse("[::1]")`、`addr.parse("[]")`或任意恰好以`]`结尾且没有`:port`的bracket输入。
+- 影响：闭括号`p`位于最后一个字符，`se`是one-past-end；代码无条件执行`ps=p+2`，得到`se+1`，再在`if (ps < se)`中参与关系比较。优化器可基于未定义行为做不可预测转换；当前常见构建通常表现为碰巧返回`port=nil`，但不能保证跨编译器、优化级别或未来改动仍稳定，属于公开正常输入上的潜在错误结果或崩溃点。
+- 证据：代码只检查`p+1 < se`时后一字符必须为冒号，却没有在`p+1 == se`时直接表示“无端口”；两条测试和`addr.join`都会生成这种无端口bracket形式，因此不是不可达畸形输入。
+- 根因：把“跳过闭括号和冒号”写成统一`p+2`，没有把“闭括号就是末尾”和“闭括号后确有冒号”分成两个控制分支。
+- 建议解法：若`p+1 == se`，直接设置`port->str=NULL/len=0`并返回；只有确认`p[1]==':'`后才令`ps=p+2`。最好用剩余长度而不是先构造候选指针来表达边界。
+- 回归测试：修复阶段保留现有`[::1]`与`[]`断言，并在ASan/UBSan及高优化构建覆盖最短`[]`、`[a]`、带端口、空端口和尾随非法字符；所有路径不得构造数组范围外指针。当前不重跑既有测试。
+
 ### URL-001 — P1 — URL fragment 被保留在 HTTP request target 并发送给服务端
 
 - 状态：已确认；RFC URI/HTTP语义与URL→HTTP/1/HTTP/2调用链推导。本阶段不发送含敏感fragment的请求。
@@ -2727,7 +2739,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为215项：P0为0，P1为90，P2为116，P3为9。模块分布：CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为216项：P0为0，P1为90，P2为117，P3为9。模块分布：CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2750,6 +2762,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认Windows accept资源耗尽路径以CRT `/dev/null` fd冒充Winsock reserve socket，无法释放对应资源槽；归档为`SOCK-017`。
 - 2026-08-13：确认Windows控制socket路径拼接未检查Win32 required length和`snprintf`截断，长目录可在启动期形成栈越界写；归档为`SOCK-018`。
 - 2026-08-13：确认TCP listen/connect/accept及stat将Win64指针宽度`SOCKET`存入`int`，合法高位handle会被截断；归档为`SOCK-019`。
+- 2026-08-13：确认`addr.parse`处理无端口bracket地址时构造`se+1`指针并比较，公开正常输入落入C未定义行为；归档为`ADDR-002`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
