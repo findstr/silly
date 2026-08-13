@@ -2138,6 +2138,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：文档只声明真实且稳定的结果：read成功返回完整`text/binary`或明确的control event，错误返回`nil,error`，除非未来实现可证明partial归属的流式API；删除正常`continuation`类型。先决定`close`是否应返回result并与`WS-007`的幂等/handshake结果统一，再同步双语签名和LuaLS。
 - 回归测试：修复阶段用API contract test枚举read的EOF、header/payload短读、合法fragment和非法standalone continuation，并检查返回值数量/类型；覆盖close成功、已关闭和底层失败。CI比较双语reference、LuaLS annotation与导出函数签名/枚举。本轮不执行调用。
 
+### DOC-020 — P3 — WebSocket 双语教程的广播优化调用不存在的 channel `recv` 方法
+
+- 状态：已确认；双语教程示例与`channel`完整导出面静态对照。本轮不运行教程代码。
+- 位置：错误调用位于`docs/src/{en/,}tutorials/websocket-chat.md:1866-1883`；实际channel方法全集在`lualib/silly/sync/channel.lua:11-94`，正确用法也已出现在同一教程较早的reference广播示例中。
+- 触发：用户复制“广播优化/Broadcasting Optimization”代码，创建`channel.new()`并让fork task执行`broadcast_chan:recv()`。
+- 影响：channel对象没有`recv`字段，task第一轮即抛`attempt to call a nil value (method 'recv')`并退出，后续push的数据无人消费；教程声称的异步广播完全不工作。若生产聊天服务仍接受连接和入队消息，queue还可持续增长，故错误不只是示例少打印一次。
+- 证据：channel metatable的`__index`表只定义`new`以外的`push/pop/clear/close`，仓库没有任何`channel.recv`别名；同一教程前面的广播服务器正确使用`broadcast_chan:pop()`，证明末尾`recv`不是另一种受支持API。双语文件逐字复制了同一错误，且该教程没有`lua validate`代码块，现有doc检查无法发现unknown member。
+- 根因：示例混用了其他channel库的`recv`命名，复制翻译后没有通过LuaLS或最小doc-test验证。
+- 建议解法：两种语言统一改为`local msg,err=broadcast_chan:pop()`并处理channel关闭错误；同时检查`broadcast`参数与前文消息结构一致。将教程Lua块标为可抽取验证，启用LuaLS unknown-member检查。
+- 回归测试：修复阶段提取双语该代码块，用stub producer push一条消息并关闭channel，断言consumer恰好调用一次broadcast后有限退出；静态检查不得再出现未导出的channel方法。本轮不执行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3372,7 +3383,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为270项：P0为0，P1为100，P2为148，P3为22。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 19。
+当前滚动统计为271项：P0为0，P1为100，P2为148，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 20。
 
 建议按依赖关系分五批修复：
 
@@ -3454,6 +3465,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`TLS-009`：WebSocket frame reader对零payload仍调用`read(0)`，故WSS收到合法空Close/Ping/Pong/data frame会永久等待；现有WSS测试只读非空消息，未覆盖该分叉。不重复计数。
 - 2026-08-13：补强`WS-007`：WebSocket把非幂等close直接注册为`__close`，显式close后作用域退出或重复cleanup会在nil connection上抛异常并可能掩盖原错误。不重复计数。
 - 2026-08-13：确认WebSocket双语reference虚构partial read data、把非法standalone continuation列为正常消息类型，并把有result的close写成无返回值；归档为`DOC-019`。
+- 2026-08-13：确认WebSocket双语教程的广播优化调用channel不存在的`recv`方法，consumer首轮即异常退出；归档为`DOC-020`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
