@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线320项（P1 110、P2 170、P3 40）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线321项（P1 110、P2 171、P3 40）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -138,6 +138,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CORE-005 | P3 | `worker.maxmsg` 诊断阈值跨线程普通读写；TSAN 实证。 |
 | CORE-006 | P2 | timer把64位毫秒delta窄化为int，长暂停/时钟跳变可崩溃、错时或产生巨量catch-up循环。 |
 | CORE-007 | P2 | socket/timer命令flip buffer以signed 32-bit扩容且无溢出/总量检查，极端积压可触发UB、错误realloc或越界copy。 |
+| CORE-008 | P2 | macOS/Windows openfds恒0且RSS退化成heap，运行时资源监控错误并让TCP fd泄漏回归0→0假通过。 |
 | NET-001 | P2 | listener close与已排队ACCEPT竞态时只assert，不关闭已注册的accepted fd，形成孤儿连接。 |
 | NET-002 | P2 | raw data callback异常时C message已放弃payload ownership，task错误路径不会释放，形成可重复内存泄漏。 |
 | NET-003 | P1 | multipack裸refcount在send失败重试或fanout偏小时可提前释放仍由异步send引用的共享buffer。 |
@@ -452,7 +453,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为320条：P1 110、P2 170、P3 40。模块分布为CORE 7、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 44；以主报告中的编号和证据为准。
+当前统计为321条：P1 110、P2 171、P3 40。模块分布为CORE 8、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 44；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

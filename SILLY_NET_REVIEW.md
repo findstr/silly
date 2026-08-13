@@ -317,6 +317,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：将size/cap/write length统一为`size_t`，在加法和倍增前检查`SIZE_MAX`与项目硬上限；达到可配置的pending-op预算时返回明确错误或施加backpressure。allocator失败也必须保留原pointer并向caller传播，不能继续copy。
 - 回归测试：修复阶段用小型可配置cap或allocator stub覆盖恰好满、加一、倍增越界、hard-limit和allocation failure；分别验证socket/timer caller得到有限错误且已有命令仍可安全消费。当前不生成或运行这些压力条件。
 
+### CORE-008 — P2 — macOS/Windows 进程资源指标退化为零或 heap，FD 泄漏回归可假通过
+
+- 状态：已确认；平台宏、metrics binding、Prometheus/console consumer与TCP leak assertions静态对照。本轮不运行macOS/Windows进程或建立socket。
+- 公开契约：`metrics.openfds()`声明返回进程打开的文件描述符数，`memstat()`和内置Prometheus/console明确把第一值发布为process resident memory bytes；支持平台不能用常量0或应用allocator计数冒充这些指标而不标记unsupported。
+- 位置：Unix open-fd实现固定读取Linux `/proc/self/fd`在`src/unix/unix.c:33-49`，Windows直接宏替换为0在`src/win/win.h:66`；`memory_rss`只在Linux定义，见`src/unix/unix.h:10-24`，macOS/Windows因此在`src/mem.c:101-108`回退到与heap相同的`allocsize`。Lua binding位于`luaclib-src/lmetrics.c:25-51`，Prometheus/console消费在`lualib/silly/metrics/collector/process.lua:7-48`和`lualib/silly/console.lua:89-109`；fd leak断言在`test/testtcp2.lua:502-535`。
+- 触发：在macOS调用`openfds()`（标准系统没有Linux procfs），或在Windows调用同API；在两平台采集`memstat`/Prometheus/console。macOS运行Test 16/17的connect/listen fd leak检查也直接命中。
+- 影响：macOS openfds记录一条错误后恒返回0，Windows静默返回0；连接前后比较永远相等，因此专门声称验证connect/listen泄漏的回归在这些平台即使真实泄漏也会通过。两平台`process_resident_memory_bytes`与`process_heap_bytes`变成同一allocator计数，遗漏Lua/OpenSSL/system allocator、thread stacks和mapped pages，内存告警/容量判断可严重低估进程RSS；Windows CPU/maxfds也以零stub暴露，进一步让通用process dashboard看似健康但没有真实数据。
+- 证据：macOS与Windows均未定义`memory_rss`宏，fallback返回的表达式和`mem_used()`完全相同；collector没有platform/unsupported分支，仍以RSS名称发布。macOS open-fd函数没有`__MACH__`分支，只在`opendir`失败时return 0；Test 16/17仅比较before/after，没有验证计数非零、能力可用或平台skip，因此0→0确定性通过。README明确宣称Linux/macOS/Windows为支持构建，指标文档没有平台限制。
+- 根因：Unix平台抽象把Linux procfs实现共用于macOS，Windows则以数值0代替缺失能力；metrics API没有“unsupported/error”表示，测试也把不可用观测值误当真实零值。
+- 建议解法：macOS用`proc_pidinfo`/`proc_pid_rusage`或等价系统API获取fd/RSS，Windows用`GetProcessHandleCount`与`GetProcessMemoryInfo`并明确socket/handle口径；若能力不可用则返回`nil,error`或暴露availability，collector省略/标记指标而非伪造0。leak测试先断言observer可用且baseline合理，否则明确skip/fail；跨平台socket资源最好另有engine内部active-slot计数作为确定性断言。
+- 回归测试：修复阶段三平台分别打开/关闭普通文件与socket，断言openfds按定义变化且恢复；分配allocator内存、线程stack和mmap/VirtualAlloc，断言RSS与heap不被强制等同。故意注入一条connect/listen fd泄漏，保证Test 16/17在每个声明支持的平台都会失败；当前不运行平台测试。
+
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
 - 状态：已确认；worker消息顺序、callback table生命周期与socket ownership的确定性推导。本阶段不新增accept/close barrier复现。
@@ -4308,4 +4320,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：跨模块duration时钟复核确认`time.now()`由固定启动wall基准加monotonic tick构成，运行中系统校时不会直接影响HTTP pool、DNS TTL、MySQL pool或etcd keepalive比较；据此撤回`HTTPC-008`中的附带wall-clock论据，保留由`lastfree=0`确定触发的核心问题。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
+- 2026-08-13：平台metrics复核确认macOS openfds固定读Linux procfs、Windows硬编码0，两平台RSS又退化为heap计数；运行时监控错误且TCP fd leak用例可0→0假通过，归档为`CORE-008`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

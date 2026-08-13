@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共320项（P1 110、P2 170、P3 40），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除；跨层大timeout在operation发布后抛错的问题归档为`NET-007`。当前继续deadline/cancel/GC/resource-budget/platform组合审计与最终测试、文档、LuaLS、编号统计核账。
+当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共321项（P1 110、P2 171、P3 40），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除；跨层大timeout在operation发布后抛错的问题归档为`NET-007`，macOS/Windows资源观测退化归档为`CORE-008`。当前继续最终测试、文档、LuaLS、编号统计核账。
 
 ## 1. 目标和边界
 
@@ -50,10 +50,10 @@
 ### 3.1 Engine 和 native 层
 
 - `src/socket.c`：已审有归档；既有 `SOCK-001` 至 `SOCK-014`，本轮新增 `SOCK-015`、`SOCK-017`、`SOCK-019`，平台共用调用链另见 `SOCK-016/018`。
-- `src/engine.c`、`src/worker.c`、`src/timer.c`、`src/queue.c`：已审有归档；对应 `CORE-001` 至 `CORE-007` 及 `SOCK-008`，本轮未发现可独立于既有条目的新问题。
+- `src/engine.c`、`src/worker.c`、`src/timer.c`、`src/queue.c`：已审有归档；对应 `CORE-001` 至 `CORE-007` 及 `SOCK-008`，平台process/socket资源观测另见`CORE-008`。
 - `src/message.c`、`src/api.c`、`src/monitor.c` 及直接 header：已审无新增；公开转发、message id、shutdown调用顺序和monitor跨线程字段已映射到既有问题。
 - `src/array.h`、`src/flipbuf.h`、`src/trigger.h`、`src/spinlock.h`、`src/platform.h`、`src/sockaddr.h`、`src/silly.h`、`src/silly_conf.h`、`src/socket.h`：已审有归档；新增Windows控制通道问题为`SOCK-016/018`，其他结论并入`CORE-007`、`SOCK-011/012/015/017/019`。
-- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`：已审有归档；注册/修改失败、裸slot userdata和nonblocking失败已由`SOCK-009/010/013`覆盖，固定resolver路径及读取失败策略另见`DNS-018`、`DOC-008`。
+- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`：已审有归档；注册/修改失败、裸slot userdata和nonblocking失败已由`SOCK-009/010/013`覆盖，固定resolver路径及读取失败策略另见`DNS-018`、`DOC-008`；macOS误用Linux procfs的资源观测见`CORE-008`。
 - `src/win/win.c`：已审有归档；本轮新增`SOCK-016`至`SOCK-019`及`DNS-016/017`，resolver读取失败策略另见`DNS-018`。
 - `src/win/event_iocp.h`、`src/win/wepoll.h`、`src/win/wepoll.c`：已审无新增；完整检查handle tree、reflock、poll cancel/delete、事件映射和Silly wrapper，项目侧代际及控制API偏差已归入`SOCK-009/010/016/019`。
 - `luaclib-src/lnet.c`：已审有归档；本轮新增`NET-003`，既有裸pointer/address长度问题见`NET-002`、`SOCK-006/011`。
