@@ -153,7 +153,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | TLS-006 | P2 | TLS server显式允许TLS1.1、client不设minimum，版本安全基线依赖环境并偏离RFC8996。 |
 | TLS-007 | P2 | TLS listener先于ctx发布，证书/key/cipher配置失败会泄漏listener并留下失效accept回调。 |
 | TLS-008 | P2 | TLS reload先污染保存配置再构造ctx，失败会抛异常并留下旧ctx/坏conf混合状态。 |
-| TLS-009 | P2 | TLS read(0)被当作未满足并登记唯一waiter，后续data也永远无法完成该合法空读取。 |
+| TLS-009 | P2 | TLS read(0)被当作未满足并登记唯一waiter；WSS收到合法空Close/Ping/Pong/data frame也会永久挂起。 |
 | TLS-010 | P2 | ciphers只限制TLS1.2及以下，TLS1.3仍使用OpenSSL默认套件且混合配置静默假成功。 |
 | TLS-011 | P1 | plaintext buffer以signed int无检查扩容，累计远端数据可溢出并污染SSL_read写地址/长度。 |
 | TLS-012 | P2 | client在TCP发布后才编码ALPN/创建SSL，初始化异常发生在owner发布前并遗留不可达连接。 |

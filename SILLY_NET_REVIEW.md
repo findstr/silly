@@ -480,13 +480,13 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；Lua/native read返回约定与data callback的确定性静态推导。本轮不建立TLS连接或等待复现。
 - 公开契约：`conn:read(n)`承诺精确读取n字节；零长度是合法、已经满足的请求，应与TCP一致立即返回空字符串。所有非法或不可表示长度也必须在登记waiter前同步拒绝。
-- 位置：TLS native定长读取在`luaclib-src/ltls.c:514-542`，Lua fast path与waiter登记在`lualib/silly/net/tls.lua:169-191,435-448`，data callback重试在`:242-278`；TCP对照在`luaclib-src/adt/lbuffer.c:318-333`。双语TLS reference的契约位于`docs/src/{en/,}reference/net/tls.md:439-452`。
-- 触发：对任意开放TLS connection调用`conn:read(0)`且不提供timeout；不要求peer发送数据。负数或经`lua_Integer→int`窄化为非正数的大整数会进入相同不可满足路径。
-- 影响：native `tls.read`返回nil，Lua进入`block_read`并把`s.delim=0`、当前协程写入唯一waiter槽。Lua中数字0为truthy，后续每次TLS data callback都会再次调用`tls.read(...,0)`，仍返回nil，因此请求永不成功并占住该连接的reader；只有外部close或显式timeout能打断。TCP同样请求会立即返回`""`，使通用TCP/TLS上层在切换transport后出现隐蔽分叉。
-- 证据：TLS `read_bytes`把`size <= 0`与“缓存不足”统一为`lua_pushnil`；`conn.read`看到nil且无错误就无条件登记等待。callback的`elseif delim then`对0成立，但native永远重复nil。相反buffer reader对`bytes <= 0`明确push空字符串。两条C入口都把64-bit Lua integer无范围检查地传给C `int`，所以超范围值还具有实现相关窄化结果。
+- 位置：TLS native定长读取在`luaclib-src/ltls.c:514-542`，Lua fast path与waiter登记在`lualib/silly/net/tls.lua:169-191,435-448`，data callback重试在`:242-278`；TCP对照在`luaclib-src/adt/lbuffer.c:318-333`。WebSocket无条件读取frame payload在`lualib/silly/net/websocket.lua:51-95`；双语TLS reference的契约位于`docs/src/{en/,}reference/net/tls.md:439-452`。
+- 触发：对任意开放TLS connection调用`conn:read(0)`且不提供timeout；不要求peer发送数据。正常WSS路径也会在收到零payload的Close、Ping、Pong、text或binary frame后调用同一`conn:read(0)`。负数或经`lua_Integer→int`窄化为非正数的大整数会进入相同不可满足路径。
+- 影响：native `tls.read`返回nil，Lua进入`block_read`并把`s.delim=0`、当前协程写入唯一waiter槽。Lua中数字0为truthy，后续每次TLS data callback都会再次调用`tls.read(...,0)`，仍返回nil，因此请求永不成功并占住该连接的reader；只有外部close或显式timeout能打断。它会让WSS reader在完全合法且常见的空Close控制帧上永久挂起，无法进入应用的close处理；TCP WebSocket收到同一frame则立即返回，形成ws/wss协议行为分叉。
+- 证据：TLS `read_bytes`把`size <= 0`与“缓存不足”统一为`lua_pushnil`；`conn.read`看到nil且无错误就无条件登记等待。callback的`elseif delim then`对0成立，但native永远重复nil。相反buffer reader对`bytes <= 0`明确push空字符串。WebSocket解出payload后，即使值为0也在mask/unmask两分支调用`conn:read(payload)`，没有空payload短路。现有WSS Test 5只读取非空`"secure"`消息后由本端close，没有读取peer的空Close；Test 3的空Close只走明文ws，因此未覆盖该分叉。两条C入口还把64-bit Lua integer无范围检查地传给C `int`，所以超范围值具有实现相关窄化结果。
 - 根因：TLS native把zero-length completed operation编码成“尚未完成”，Lua层又没有验证read count或区分invalid/empty/would-block三种状态。
 - 建议解法：在共享TCP/TLS Lua入口要求n为可表示的非负整数；n==0直接返回`"",nil`，负数或超过明确最大单次读取值返回稳定参数/limit错误。native binding也使用`luaL_checkinteger`后做checked range conversion，并让返回状态显式区分empty success与insufficient data，避免依赖nil重载。
-- 回归测试：修复阶段覆盖TCP/TLS的0、-1、1、`INT_MAX`、`INT_MAX+1`与非整数number，分别在空缓存、已有缓存、peer close和timeout配置下核对；0必须同步成功且不写`s.co/delim`，非法值同步失败且不消费buffer。当前只记录静态证据。
+- 回归测试：修复阶段覆盖TCP/TLS的0、-1、1、`INT_MAX`、`INT_MAX+1`与非整数number，分别在空缓存、已有缓存、peer close和timeout配置下核对；0必须同步成功且不写`s.co/delim`，非法值同步失败且不消费buffer。另让WSS client/server分别读取零payload的Close/Ping/Pong/data frame，断言与明文ws一致立即返回且不占用reader槽。当前只记录静态证据。
 
 ### TLS-010 — P2 — `ciphers` 只限制 TLS 1.2 及以下，TLS 1.3 仍使用 OpenSSL 默认套件
 
@@ -3440,6 +3440,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`H2-003`：padding在flow-control记账前已被剥离，守规peer发送padded DATA也会因Pad Length/padding credit永不回补而停顿；不重复计数。
 - 2026-08-13：确认双语HTTP/2最佳实践示例遗漏tls开关和server ALPN，原样实际启动明文H1且证书不生效；归档为`DOC-017`并按安全误导定为P2。
 - 2026-08-13：确认双语WebSocket教程在`sock:read()`完整缓冲后才检查10 KiB并错误声称可防恶意大消息；归档为`DOC-018`，实现侧根因仍由`WS-005`覆盖。
+- 2026-08-13：补强`TLS-009`：WebSocket frame reader对零payload仍调用`read(0)`，故WSS收到合法空Close/Ping/Pong/data frame会永久等待；现有WSS测试只读非空消息，未覆盖该分叉。不重复计数。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
