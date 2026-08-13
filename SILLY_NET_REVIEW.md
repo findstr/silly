@@ -545,6 +545,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：调用任何`SSL_write`前先验证/固定整张string vector和每段长度；明确API为all-or-connection-fatal或返回accepted-prefix。每次OpenSSL调用后都统一检查state并drain必须发送的ciphertext/alert；一旦后段失败且已有plaintext被接受，应标记connection不可重用并关闭，而不是让未来write提交旧prefix。更稳妥可把vector合并/使用支持的write_ex循环，但仍需总量cap和partial语义。
 - 回归测试：修复阶段覆盖首/中/末元素类型错误、空元素、第二段WANT_READ/WANT_WRITE/fatal、flush transport失败及随后再次write；断言失败调用的prefix绝不在未来成功调用中出现，或连接已确定关闭且报告准确partial状态。当前只保存静态证据。
 
+### TLS-015 — P2 — certificate 字段类型错误以 Lua longjmp 绕过 native SSL_CTX 清理
+
+- 状态：已确认；`fill_entry`资源获取顺序、Lua C API异常和userdata GC可见所有权静态核对。本轮不传错误类型证书或循环reload。
+- 异常安全契约：C函数在调用可抛出的Lua类型检查前，必须把已获取native资源交给可见owner或建立能跨longjmp清理的边界；普通配置类型错误不能永久遗失SSL_CTX/BIO/X509。
+- 位置：`fill_entry`先创建局部SSL_CTX、后读取`cert/key`字段并调用`luaL_checklstring`在`luaclib-src/ltls.c:256-280`；只有正常成功末尾才把指针写入entry在`:351-354`，C cleanup label在`:356-368`。外层ctx创建/调用在`:398-435`，Lua listen/reload入口在`lualib/silly/net/tls.lua:326-397`。
+- 触发：certificate数组任一元素缺少`cert`或`key`，字段为boolean/table/function等不可转换类型，或字段访问metamethod抛错。首项、后续项以及活动listener的`reload`都可触发；无需建立TLS连接。
+- 影响：`luaL_checklstring`/metamethod以Lua longjmp直接越过`fail:`，本次已创建的`SSL_CTX *ptr`仍只在C局部变量中，既不释放也未写入`ctx->entries[i]`。Lua userdata最终GC只遍历entry里已提交的指针，无法找回当前ptr；反复配置/reload可持续泄漏OpenSSL context及其内部资源。公开API同时抛异常而非返回声明的错误，并叠加`TLS-007/008`的listener泄漏或配置污染。
+- 证据：赋值`entry->ptr=ptr`严格位于所有PEM/key解析成功之后；类型检查位于任何BIO创建前但SSL_CTX创建后。`fail:`只处理显式NULL/return-code分支，Lua非局部退出不会执行它。ctx userdata初始被memset为0，因此GC不会误打误撞持有local ptr；后续entry出错时仅已完成entry可被ctx_destroy释放。
+- 根因：native helper混用返回式OpenSSL错误和longjmp式Lua参数错误，却只为前者设计goto cleanup；资源owner提交过晚，也没有在进入helper前完整验证Lua schema。
+- 建议解法：在任何SSL_CTX创建前先于Lua层/独立C pass完整验证cert数组、每项table及cert/key string并固定引用；随后构造阶段不再调用会抛的API。或创建后立即写入entry让userdata成为owner，失败时清空/幂等销毁。公开listen/reload用protected copy-build-commit返回稳定错误，并保证敏感PEM不进入日志。
+- 回归测试：修复阶段逐项覆盖cert/key缺失、boolean/table、抛错`__index`、第一/第二证书失败与重复reload；allocator/OpenSSL计数回基线，旧listener/config保持可用，端口无泄漏，错误不含key内容。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2990,7 +3002,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为237项：P0为0，P1为95，P2为130，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 14、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为238项：P0为0，P1为95，P2为131，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 15、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -3036,6 +3048,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS client在TCP已注册后才编码ALPN/创建SSL，配置或native构造异常发生在conn owner发布前且无cleanup guard；归档为`TLS-012`。
 - 2026-08-13：确认TLS native将可由`__len`提供的Lua证书数量直接窄化为int并以int计算flexible-array大小，可形成零entry ctx或越界写；归档为`TLS-013`。
 - 2026-08-13：确认TLS vectored write逐段进入SSL后才校验后续元素，后段异常/错误会把已生成prefix ciphertext留在out BIO并由未来write迟发；归档为`TLS-014`。
+- 2026-08-13：确认TLS certificate loader先创建SSL_CTX再调用可longjmp的Lua字段类型检查，异常绕过cleanup且指针尚未提交给userdata owner；归档为`TLS-015`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
