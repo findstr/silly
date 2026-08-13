@@ -2511,8 +2511,8 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 规范：RFC 6455 §5.2 要求未协商 extension 时 RSV1/2/3 全为 0，未知 opcode 必须使连接失败；64-bit payload length 的最高位必须为 0，且长度必须使用最短编码。§5.5 要求所有控制帧 FIN=1 且 payload 不超过 125 bytes。client→server 必须 mask、server→client 必须不 mask。
 - 位置：`lualib/silly/net/websocket.lua:51-128`、`:139-176`。
 - 触发：对端发送任何非零 RSV、126 编码的 0..125、127 编码的 0..65535、64-bit 高位为 1、未知 opcode，或 fragmented/超长控制帧；本库发送恰好 125 或 65535 bytes 的 data/control payload 也会触发非最短编码。
-- 影响：接收端会消费并向应用交付 RFC 要求使连接失败的帧，不同实现对同一 TCP 字节流产生接受/关闭差异；控制帧可能进入错误的 fragmentation 路径。发送端则会生成严格 peer 必须拒绝的非规范帧，造成稳定互操作失败。若非法 header 同时声明巨大 payload，当前实现还会在 opcode/control 校验前尝试读取完整数据，资源风险另行跟踪。
-- 证据：首字节只提取 FIN 与低 4-bit opcode，RSV 三位被丢弃；扩展长度 `unpack` 后没有最短编码或最高位检查。`read_frame` 在任何 opcode 下先读取完整 payload，`s.read` 之后才查 `data_type`，且从未按 opcode 检查 FIN/125。mask 的 `needmask ~= mask` 校验是符合项。发送端使用 `len < 125` 与 `len < 0xffff`，导致合法直接编码的上界 125 和 16-bit 上界 65535 分别被提升一级。
+- 影响：接收端会消费并向应用交付 RFC 要求使连接失败的帧，不同实现对同一 TCP 字节流产生接受/关闭差异；控制帧可能进入错误的 fragmentation 路径。64-bit最高位置1还有transport分叉：长度变为负Lua integer后，TCP把它当空payload成功并把真实payload留作后续frame header重新解释，TLS则把负读取登记成永不满足的waiter。发送端还会生成严格 peer 必须拒绝的非规范帧，造成稳定互操作失败。若其他非法header声明巨大正payload，当前实现会在opcode/control校验前尝试读取完整数据，资源风险另见`WS-005`。
+- 证据：首字节只提取 FIN 与低 4-bit opcode，RSV 三位被丢弃；扩展长度 `unpack(">I8")` 后没有最短编码或最高位检查。内置Lua `unpackint`在size恰等于`sizeof(lua_Integer)`时不做unsigned overflow检查，最终把`lua_Unsigned`直接cast成有符号integer（`deps/lua/lstrlib.c:1746-1768`），故wire高位1得到负payload。TCP buffer对非正长度返回空串，TLS非正长度挂起路径见`TLS-009`。`read_frame` 在任何 opcode 下先读取payload，`s.read` 之后才查 `data_type`，且从未按 opcode 检查 FIN/125。mask 的 `needmask ~= mask` 校验是符合项。发送端使用 `len < 125` 与 `len < 0xffff`，导致合法直接编码的上界 125 和 16-bit 上界 65535 分别被提升一级。
 - 建议解法：在读取 payload 前完整验证 header：RSV 与协商 extension 状态、已知 opcode、角色对应 mask、canonical length、63-bit 上限和控制帧 FIN/长度。编码条件改为 `len <= 125`、`len <= 0xffff`。任何 protocol error 进入统一 Fail WebSocket Connection 状态，必要时发送 1002 Close，且不得继续向应用交付帧。
 - 后续回归条件：修复阶段按 client/server 两角色覆盖 RSV1/2/3、全部保留 opcode、mask 反向、125/126、65535/65536、非最短 126/127、64-bit 高位，以及 close/ping/pong 的 FIN 与 125/126；本轮不新增测试代码。
 
@@ -3515,6 +3515,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认WebSocket完整聊天室把远端昵称原样拼入浏览器`innerHTML`，20字节server限制仍允许可执行SVG payload并形成跨用户XSS；归档为`DOC-022`。
 - 2026-08-13：依据WHATWG确认browser Ping是不可依赖的user-agent可选行为；教程只被动回Pong却宣称自动心跳，没有主动探测或失联deadline，归档为`DOC-023`。
 - 2026-08-13：确认WebSocket完整server把JSON语法成功等同schema成功，合法primitive/错型字段可抛异常并跳过clients registry清理，重复连接累积幽灵对象；归档为`DOC-024`。
+- 2026-08-13：补强`WS-003`：127-length最高位置1经Lua `>I8`转为负integer；TCP按空payload成功导致wire重新分帧，TLS进入`TLS-009`挂起。不重复计数。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。

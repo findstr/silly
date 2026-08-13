@@ -330,7 +330,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-023 | P2 | 读取失败后若stream buffer有部分正文，第二次readall会返回残缺data,nil并吞掉cached error。 |
 | WS-001 | P1 | server 接受缺失/无效的 WebSocket opening handshake，并切换到 frame parser。 |
 | WS-002 | P1 | client 仅凭 101 status 接受握手，不验证 Accept 或 Upgrade/Connection。 |
-| WS-003 | P2 | frame parser 缺少 RSV/长度/control 校验，writer 的 125/65535 边界非规范。 |
+| WS-003 | P2 | parser缺少RSV/长度/control校验；64-bit高位转负后TCP重新分帧、TLS挂起，writer边界也非规范。 |
 | WS-004 | P2 | fragmentation 状态机接受 standalone continuation 和进行中插入的新 data message。 |
 | WS-005 | P1 | frame 与 fragmented message 没有大小上限或 deadline，可被远端耗尽内存。 |
 | WS-006 | P2 | text message 与 Close reason 的收发均不验证 UTF-8。 |
