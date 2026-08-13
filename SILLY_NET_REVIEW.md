@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档324项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档325项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2592,6 +2592,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按实际API为`option`声明受限literal setter及零返回；conv统一声明integer/number单返回；为types/fields/field与slice level/leave写精确多返回/overload，补`unsafe.use`boolean和`Parser.reload`，并将`addpath`改为nil或让实现真正返回self。长期从native注册表和parser公开表生成manifest，再由manifest校验LuaLS名称、参数、返回arity与条件分支。
 - 回归检查：修复阶段建立不执行wire的LuaLS fixture，覆盖option每个合法literal、全部conv、type/field普通与oneof解构、slice level/leave、unsafe.use及protoc路径配置；合法用法零告警，虚构getter/string/链式用法必须报错。当前不运行type checker。
 
+### DOC-046 — P2 — 低层 net 双语文档用不释放 payload 的 `silly.tostring`，官方示例会逐包泄漏
+
+- 状态：已确认；双语reference全部接收示例、Lua导出、native复制/释放路径与callback coroutine调度的确定性静态核对。本轮不收发数据或运行示例。
+- 位置：中英文低层net reference在`docs/src/{en/,}reference/net.md:65-112,185-200,300-389`反复要求用`silly.tostring(ptr,size)`复制TCP/UDP payload，并声称pointer仅在callback同步执行期间有效、callback不能yield。该名字映射到`lualib/silly.lua:39`和`luaclib-src/lsilly.c:33-40`；实际消费函数是`lualib/silly/net.lua:45`映射的`luaclib-src/lnet.c:323-339`。消息ownership转移及callback task创建在`lualib/silly/net.lua:211-237`，task可挂起/恢复的调度在`lualib/silly/task.lua:32-64`。
+- 触发：用户照任一官方TCP/UDP示例在`data` callback调用`silly.tostring(ptr,size)`；正常接收一个或多个packet即可，无需异常、畸形输入或竞态。文档建议在复制后fork异步工作，也会走同一路径。
+- 影响：`silly.tostring`只用`lua_pushlstring`复制bytes，完全不调用`silly_free`；dispatcher已把payload所有权交给callback，callback存在时也没有finally释放。因此每个packet的原始native allocation永久泄漏，远端可用持续正常流量线性增加进程内存。官方文档还把pointer说成return/yield后自动失效，用户会认为无需free并无法发现泄漏；反过来，若真要跨yield保留pointer，当前实现不会自动释放它，但必须最终恰好调用一次`net.tostring`、`net.c.free`或转交buffer。
+- 证据：通用`silly.c`的`ltostring`读取pointer/size并push string后直接return；net专用同名函数在push后明确`silly_free((void *)s)`。`TCPDATA/UDPDATA` handler只在没有callback时`c.free(ptr)`，有callback时创建可yield coroutine并把裸pointer传入，task框架不会检查或释放其参数。文档内至少六组可复制示例调用前者而没有后续free，故泄漏路径确定成立；这也与`NET-002`的“callback异常前未消费”不同，本条在文档推荐的成功路径稳定触发。
+- 根因：文档混淆了两个同名但所有权语义不同的native函数，并虚构“callback边界自动回收”规则；低层API又用裸lightuserdata表达必须恰好消费一次的ownership，类型系统无法提示错误函数。
+- 建议解法：所有接收示例与正文改用`net.tostring(ptr,size)`并明确其复制后立即释放、pointer随后不可再用；零拷贝转移只能调用一次buffer append或显式`net.c.free`。文档应说明callback在独立task中可以yield，但未消费pointer会一直占有native内存，异常路径风险另见`NET-002`。更根本地将payload改成带`__gc/__close`和consume状态的opaque userdata，避免依赖同名函数与人工一次性释放。
+- 回归检查：修复阶段为双语文档代码块做API/ownership lint，禁止接收callback中的`silly.tostring(ptr,size)`；以allocator计数覆盖`net.tostring`、buffer接管、显式free、yield后消费和callback异常，断言每个payload恰好释放一次。当前不执行示例或网络测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4006,9 +4017,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为324项：P0为0，P1为111，P2为172，P3为41。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为325项：P0为0，P1为111，P2为173，P3为41。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 46。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；172项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；173项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4361,4 +4372,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：最终protobuf类型复核确认`pb.option`、conv、type/field iterator、slice多返回、unsafe use与protoc path API的LuaLS契约均偏离真实Lua/C返回，归档为`DOC-045`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
 - 2026-08-13：完成性反查共享ADT确认TCP默认无界接收buffer以signed int累计所有node字节；远端backlog超过INT_MAX会触发UB，并使read永久nil或readall断言终止，归档为`NET-008`。
+- 2026-08-13：完成性反查低层net双语reference确认所有接收示例误用只复制不释放的`silly.tostring`，且虚构callback return/yield自动失效规则；官方成功路径逐包泄漏，归档为`DOC-046`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
