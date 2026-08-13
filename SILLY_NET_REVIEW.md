@@ -164,7 +164,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
 | RFC9113-6.6/8.4-PUSH-DISABLED | MUST | `lualib/silly/net/http/h2.lua:1500-1547` | client recipient | 偏离 | client 广告 ENABLE_PUSH=0 并获 ACK 后仍静默忽略 PUSH_PROMISE；未报 PROTOCOL_ERROR且未处理 HPACK/stream state | 现有测试没有 disabled-push violation | H2-026 |
 | RFC7541-5.1-INTEGER-LIMITS | MUST/safety | `luaclib-src/lhttp.c:558-583,613-630,696-771` | HPACK decoder | 偏离 | varint continuation/value 无上限，移位可有符号溢出或超过位宽；unsigned 结果缩成 int 后作为 string pointer/length，未按 decoding error 拒绝 | 现有测试没有超长/溢出/未终止 varint；本轮按要求不新增复现 | HPACK-002 |
-| RFC9113-6.5.2/7541-4.2-TABLE-LIMIT-WIDTH | MUST/safety | `lualib/silly/net/http/h2.lua:1211-1278`; `luaclib-src/lhttp.c:22-30,246-260,289-318,782-791` | HPACK client/server | 偏离 | 合法32位SETTINGS_HEADER_TABLE_SIZE未经范围转换写入C int；大值成为负limit，已有动态表时limit减size触发signed overflow/UB | 现有setting测试只使用小值，HPACK resize只覆盖4096→2048 | HPACK-003 |
+| RFC9113-6.5.2/7541-4.2-TABLE-LIMIT-WIDTH | MUST/safety | `lualib/silly/net/http/h2.lua:1211-1278`; `luaclib-src/lhttp.c:22-30,246-260,289-318,782-791` | HPACK client/server | 偏离 | 合法32位SETTINGS_HEADER_TABLE_SIZE未经范围转换写入C int；大值成为负limit，已有动态表时limit减size触发signed overflow/UB | 现有setting测试只使用小值，HPACK resize只覆盖4096→2048 | HPACK-004 |
 | GRPC-CALL-AUTHORITY | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/http/h2.lua:231-263,700-738,1718-1724`; `luaclib-src/lhttp.c:489-548` | client sender | 偏离 | endpoint 保存的 hostname 只用于 TLS SNI，调用 `h2.newchannel` 时漏传 host；channel 的 authority 为 nil，HPACK sender 经 `luaL_tolstring` 将其编码为字面量 `"nil"` | gRPC 自测只连接不校验 authority 的 Silly server，无法覆盖虚拟主机或严格 peer | GRPC-001 |
 | GRPC-CALL-TE-TRAILERS | MUST/interoperability | `lualib/silly/net/grpc/client/service.lua:134-257` | client sender | 偏离 | unary、server-streaming、client-streaming、bidi 四条 request path 均只发送 `content-type`，没有 mandatory `te: trailers` | 自测直连 Silly HTTP/2 server，不经过依赖 TE 判断 trailer 能力的 proxy | GRPC-002 |
 | GRPC-CALL-SERVER-VALIDATION | MUST/SHOULD | `lualib/silly/net/grpc/server.lua:8-27` | server recipient | 偏离 | dispatch 仅按 `:path` 查 handler，不校验 POST、gRPC Content-Type 或 TE；非 gRPC Content-Type 也不返回建议的 HTTP 415 | 自测仅由同库 client 发送 POST/application-grpc，且 client 本身缺 TE | GRPC-003 |
@@ -2977,7 +2977,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让 decoder 返回 `{ok, value}`，使用明确宽度无符号类型；在每个 octet 前检查 shift、乘法/加法和每用途 maximum，并要求遇到 continuation=0 才成功。string length 用 `size_t` 且以 `len <= (size_t)(e-p)` 做 subtraction-based bounds check，绝不先构造可能越界的 `p+len`；任何超值、超长或未终止编码返回 decoding error/HTTP2 `COMPRESSION_ERROR`。
 - 后续回归条件：修复阶段覆盖各 prefix 的最大合法值、跨 32/64-bit 边界、过多零 continuation、过多 0xFF、未终止、non-minimal 但未溢出的合法整数，以及 string/index/table-size 三种用途；ASan/UBSan 下零告警并确认下一连接/stream 的错误作用域。本轮不新增测试代码。
 
-### HPACK-003 — P1 — 32 位 table-size setting 窄化为 C `int` 后可触发 signed overflow
+### HPACK-004 — P1 — 32 位 table-size setting 窄化为 C `int` 后可触发 signed overflow
 
 - 状态：已确认；SETTINGS无符号值、Lua integer、native context字段和eviction arithmetic静态推导。本轮不发送极值setting或运行UBSan。
 - 规范：SETTINGS_HEADER_TABLE_SIZE是32位无符号值；HPACK实现必须在自身可表示/配置的资源上限内安全处理，不能让合法wire整数经窄化进入负容量或C未定义行为。无法支持的资源值应采用明确上限/安全策略，而非污染decoder状态。
@@ -3376,7 +3376,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认中文HTTP reference与双语guide错称client不池化/每次新建连接，实际顶层singleton与专用client均复用H1/H2；归档为`DOC-016`。
 - 2026-08-13：确认H2 client把openstream的本地reservation立即放入wire map，peer可在request HEADERS发送前让idle id被当作open接受；归档为`H2-039`。
 - 2026-08-13：确认H2 sender不累计实际DATA长度，request/response可在Content-Length失配时仍排END_STREAM并报告成功；归档为`H2-040`。
-- 2026-08-13：确认32位HPACK table-size setting未经checked conversion窄化进C int，动态表非空时容量减法可触发signed overflow；归档为`HPACK-003`。
+- 2026-08-13：确认32位HPACK table-size setting未经checked conversion窄化进C int，动态表非空时容量减法可触发signed overflow；归档为`HPACK-004`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

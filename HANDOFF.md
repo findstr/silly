@@ -370,7 +370,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | H2-039 | P2 | client把尚未发送HEADERS的本地reserved id当wire-open，peer可向真正idle stream注入响应/状态帧。 |
 | H2-040 | P2 | sender不校验Content-Length与实际DATA总量，request/response可成功完成malformed消息。 |
 | HPACK-002 | P1 | HPACK varint 无溢出/长度限制，可进入 signed-shift UB 与越界 string length 路径。 |
-| HPACK-003 | P1 | 32位HPACK table-size setting窄化为C int，动态表非空时容量减法可触发signed overflow/UB。 |
+| HPACK-004 | P1 | 32位HPACK table-size setting窄化为C int，动态表非空时容量减法可触发signed overflow/UB。 |
 | GRPC-001 | P1 | client 创建 HTTP/2 channel 时漏传 target authority，所有请求把 `:authority` 编码成字面量 `nil`。 |
 | GRPC-002 | P2 | unary 与三种 streaming client request 都缺少 gRPC Call-Definition 要求的 `te: trailers`。 |
 | GRPC-003 | P2 | server 只按 path 路由，不校验 POST、gRPC Content-Type 或 TE，非 gRPC请求也不返回 HTTP 415。 |
