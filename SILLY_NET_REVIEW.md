@@ -1,7 +1,7 @@
 # Silly `net` 全量审计记录
 
-> 状态：两轮全量纯静态审计、`cluster`三轮专项及第三轮 HTTP/2、gRPC、etcd、MySQL、Redis 重点查漏已完成
-> 审计日期：2026-08-06 至 2026-08-12
+> 状态：两轮全量纯静态审计、重点协议查漏及1.0封板的storage/cluster逐文件阶段已完成；跨模块组合与发布收口进行中
+> 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
 > 审计基线：`d1aef7ffd8439340dfd957a49fccba3fbf133055`（2026-07-19）
@@ -236,9 +236,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ### 3.3 远端 `cluster` 分支专项复核
 
-2026-08-09至2026-08-12继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`；2026-08-12已重新查询远端，尖端未变化。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
+2026-08-09至2026-08-13继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`；远端尖端未变化。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
 
-既有`CLUSTER-001`至`CLUSTER-016`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认4项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）以及3项P3文档/测试回归（`CLUSTER-B002`至`B004`）。分支独有编号不计入master统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
+`CLUSTER-001`至`CLUSTER-019`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中17项master问题在分支仍有对应路径，`CLUSTER-003`已由nil guard修复，`CLUSTER-008`的lazy-connect触发路径因eager connect消除，`CLUSTER-017/019`随cmd/codec删除而不适用；另确认4项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）以及3项P3文档/测试回归（`CLUSTER-B002`至`B004`）。分支独有编号不计入master统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
 
 ## 4. 已确认问题
 
@@ -4277,6 +4277,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
 - 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
+- 2026-08-13：完成cluster封板审计：master Lua 331行、native 553行、类型stub 54行、`testcluster.lua`24组/604行、中英文reference 1127/1126行及raw-string分支7个变更文件均已映射；新增`CLUSTER-016`至`019`、`DOC-038`至`042`，并沿断线链发现但对cluster排除`NET-007`。其余候选归入既有19项、4项分支独有问题或静态排除，阶段收口。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

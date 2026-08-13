@@ -1,7 +1,7 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：1.0封板纯静态复核进行中；确认4项分支独有问题及17项master共同问题
-> 审计日期：2026-08-09 至 2026-08-12
+> 状态：1.0封板纯静态复核已收口；确认4项分支独有问题及17项仍有分支对应路径的master问题
+> 审计日期：2026-08-09 至 2026-08-13
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
 ## 1. 基线与分支关系
@@ -150,3 +150,4 @@ test/testcluster.lua
 - 2026-08-13：master的marshal command无范围检查并窄化为uint32，新增`CLUSTER-017`；raw-string分支已删除cmd字段，矩阵标记不适用。
 - 2026-08-13：确认两版serve均可无保护替换所有listener共享的global context/handler，官方多节点示例确定由最后配置接管全部端口；新增共同问题`CLUSTER-018`。
 - 2026-08-13：master codec调用缺少protected boundary，新增`CLUSTER-019`；raw-string分支删除内置marshal/unmarshal，矩阵标记不适用。
+- 2026-08-13：完成封板收口：分支7个变更文件、master对应Lua/C/type/test/双语reference、19项master问题矩阵、4项分支独有问题与共享net close路径均已映射；当前无未归档高置信分支候选。

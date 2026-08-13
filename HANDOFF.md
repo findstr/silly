@@ -1,8 +1,8 @@
 # Silly `net` 全量审计交接文档
 
-> 更新时间：2026-08-12（Asia/Shanghai）
+> 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计、`cluster`分支三轮专项及第三轮重点模块查漏已收口，1.0发布封板逐文件审计进行中；当前确认master基线211项（P1 89、P2 113、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线318项（P1 111、P2 169、P3 38）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -121,7 +121,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
 - 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
-- 既有16项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
+- 既有19项master cluster结论（其中17项在分支仍有对应路径）的状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
 - 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master基线199项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
