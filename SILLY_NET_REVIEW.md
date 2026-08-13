@@ -639,6 +639,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：保留section与OPT provenance，严格要求response最多一个合法root-owner OPT；组合`full_rcode=(ext_rcode<<4)|header_rcode`并验证version/flags/options，再决定成功、BADVERS或其他错误。未知option按RFC忽略，但OPT本身不能忽略。是否短期无EDNS重试可按RFC 6891 §6.2.2与产品策略实现，不能用降级掩盖extended error。
 - 回归测试：修复阶段覆盖无OPT普通RCODE、合法OPT ext=0/version0、BADVERS、其他extended RCODE、非零version、重复OPT、非root owner及unknown option；扩展错误不得产生negative cache或成功结果，后续合法response仍可完成。当前只保存静态证据。
 
+### DNS-014 — P2 — RRset cache 只采用首条 TTL，未按 RFC 2181 收紧到组内最低值
+
+- 状态：已确认；RFC 2181 RRset TTL规则与Lua cache提交循环的确定性静态核对。本轮只查RFC原文，不发送TTL不一致响应。
+- 协议规范：[RFC 2181 §5.2](https://www.rfc-editor.org/rfc/rfc2181.html#section-5.2)规定同一label/class/type的RR组成RRset且TTL必须一致；client从其配置的server收到不一致TTL时，应对所有用途按组内最低TTL处理。不能让wire顺序决定整组缓存寿命。
+- 位置：response record生成保留逐条TTL在`luaclib-src/ldns.c:274-285,441-509`；server cache按首见RR设置一次expiry在`lualib/silly/net/dns.lua:229-245`，同次transaction merge则固定maxinteger在`:128-148`；cache命中在`:495-514`。
+- 触发：matching A、AAAA或SRV response包含同owner/type的多条rdata，第一条TTL高、后续一条TTL低；错误或中间设备造成的异TTL RRset即可，调用方无需特殊配置。
+- 影响：`seen[cache_rr]`使只有第一条执行`clear_rr(rr,now+ttl)`，后续记录只append，较低TTL完全丢失；整组地址/服务会在最短权威寿命之后继续从cache返回。下线节点、安全轮换、服务发现权重/成员变化可能长期不可见，且攻击者/故障resolver可仅调整记录顺序选择高TTL。若低TTL恰在首位则提前过期，行为同样由wire顺序而非RRset语义决定。
+- 证据：C records table为每条RR独立保存`rec[3]`。Lua循环第一次见到对象时设`seen`并写expiry，第二次起不再比较TTL或修改`cache_rr.ttl`。`merge_records`又把transaction-local RR设为`math.maxinteger`，所以没有其他层对同组TTL取min；现有multiple A/AAAA/SRV测试统一TTL，无法覆盖。
+- 根因：cache builder把“首条时清空旧RRset”与“确定新RRset统一expiry”合并成一次操作，没有先验证/聚合完整RRset元数据。
+- 建议解法：先按section/class/owner/type分组并验证完整RRset，计算minimum TTL（也可记录异TTL诊断），再一次性替换cache与expiry；不得跨trust来源/section拼组，需与`DNS-002/010`共同修复。transaction-local结果可以在当前调用内使用，但持久cache必须遵守minimum deadline。
+- 回归测试：修复阶段覆盖TTL顺序`high,low`与`low,high`、三条不同TTL、统一TTL、A/AAAA/SRV、同owner不同type和不同section；两个顺序都必须在同一最低TTL到期，且到期后重新查询整组。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2859,7 +2871,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为226项：P0为0，P1为92，P2为124，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 13、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为227项：P0为0，P1为92，P2为125，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 14、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2893,6 +2905,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认DNS caller在timer创建前已发布singleflight waiter，超范围timeout抛错会留下dead task并使共享finish再次异常；归档为`DNS-011`。
 - 2026-08-13：确认`dns.conf`在任何新配置校验前已结束inflight并关闭旧resolver，后续异常会留下空/半配置全局状态；归档为`DNS-012`。
 - 2026-08-13：按RFC 6891确认DNS主动发送OPT却跳过response OPT，extended RCODE/version丢失并会把扩展错误当成功空答案；归档为`DNS-013`。
+- 2026-08-13：按RFC 2181确认DNS cache只采用RRset首条TTL，未将异TTL组收紧到最低值，缓存寿命受wire顺序控制；归档为`DNS-014`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

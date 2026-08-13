@@ -167,6 +167,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DNS-011 | P2 | caller timer晚于singleflight waiter发布，超范围timeout抛错会遗留dead task并打断其他waiter完成。 |
 | DNS-012 | P2 | dns.conf在验证新配置前先销毁旧resolver，任意后续异常会留下空或半配置的全局DNS状态。 |
 | DNS-013 | P2 | 主动发送EDNS0 OPT却跳过response OPT，extended RCODE/version丢失并把扩展错误误报为空答案。 |
+| DNS-014 | P2 | RRset cache只采用wire首条TTL，未按RFC 2181取组内最低值，缓存寿命受记录顺序控制。 |
 | CLUSTER-001 | P1 | cluster response只按全局session匹配，任一peer或wrap后的late ACK可跨连接完成其他RPC。 |
 | CLUSTER-002 | P2 | cluster peer断线/主动close不结束其pending RPC，waiter与timer只能保留到全局timeout。 |
 | CLUSTER-003 | P2 | unknown/late/duplicate ACK会对nil coroutine执行wakeup，连接保持并可持续制造异常/日志。 |
@@ -358,7 +359,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为226条：P1 92、P2 124、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 13、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
+当前统计为227条：P1 92、P2 125、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 14、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
