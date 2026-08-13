@@ -274,6 +274,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-012 | P3 | HTTP双语reference公开listen.backlog，但http.lua的TCP/TLS分支均未转发，配置静默无效。 |
 | DOC-013 | P3 | 中文HTTP reference虚构默认5秒的newclient.read_timeout，实际字段被静默忽略且请求仍可无限等待。 |
 | DOC-014 | P3 | HTTP双语reference/中文guide宣称支持server push，实际无push API且client SETTINGS明确禁用。 |
+| DOC-015 | P3 | HTTP双语文档反称H2不支持已实现的write，并指向不存在的close(body)发送API。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -391,7 +392,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为259条：P1 99、P2 141、P3 19。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 14；以主报告中的编号和证据为准。
+当前统计为260条：P1 99、P2 141、P3 20。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 15；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

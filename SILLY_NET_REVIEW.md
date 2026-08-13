@@ -2056,6 +2056,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0若不实现，删除server push承诺并明确“禁用/不支持”，同时按`H2-026`正确拒绝违规peer；若以后实现，必须补偶数stream id、promised request验证、HPACK/state/flow-control/quota、缓存安全策略和application accept/cancel API后再更新能力表。不要把协议理论特性等同产品功能。
 - 回归测试：最终文档CI应把能力声明映射到公开symbol、initial SETTINGS和正/负向conformance；当前版本断言广告push=0、无push API且违规PUSH_PROMISE得到connection PROTOCOL_ERROR。当前只保存静态证据。
 
+### DOC-015 — P3 — 双语 HTTP 文档反称 H2 不支持 `write` 并指向不存在的 `close(body)`
+
+- 状态：已确认；双语reference/guide、H2 stream API、flow-control实现和现有测试静态对照。本轮不调用stream方法。
+- 位置：双语reference错误说明在`docs/src/en/reference/net/http.md:218-233`与`docs/src/reference/net/http.md:213-228`；双语最佳实践在`docs/src/{en/,}guides/http-best-practices.md:180-211`；真实实现位于`lualib/silly/net/http/h2.lua:805-838,896-1029`，覆盖见`test/testhttp2.lua:290-309,358-609`。
+- 触发：用户按文档为H2 response/request做流式发送，看到“HTTP/2不支持write，使用close(body)”后把所有chunks先拼成一个大string，或直接调用文档所写的`stream:close(body)`。
+- 影响：stream对象没有`close(body)`发送API（`close`用于资源取消/回收且不接body），照文档调用可能直接变成nil method错误或错误取消；为规避write而聚合大文件/SSE/log输出会丢失真正的流式与flow-control能力，增加峰值内存和首字节延迟。协议版本切换后应用还会维护两套不必要且错误的发送逻辑。
+- 证据：`S.write`公开接受data并通过stream/connection window分片等待，`S.closewrite(data,trailer)`才是结束发送的方法；现有H2测试覆盖multiple writes、跨DATA读取及63KiB/connection flow control。文档API标题却限定“HTTP/1.1 only”，note和guide均称H2不支持并写`close(body)`；同页其他示例实际使用`closewrite`，内部自相矛盾。
+- 根因：文档保留早期H2一次性发送限制和旧方法名，没有由共享stream接口/LuaLS及protocol-specific capability tests生成；示例按版本分支复制后长期漂移。
+- 建议解法：把`stream:write(data)`和`stream:closewrite([data[,trailer]])`定义为H1/H2共同能力，分别说明H1 framing与H2 flow-control/并发约束；删除错误版本分支和`close(body)`，补充每次write返回值必须检查。若产品决定不公开H2 streaming，则实现必须一致拒绝而非文档单方面隐藏，但1.0更合理的是保留现有能力并修复其H2状态问题。
+- 回归测试：将reference/guide示例纳入LuaLS/doc test；H1/H2同一handler执行多次write+closewrite，断言方法存在、返回契约一致且大body不先聚合。静态API lint禁止文档引用不存在的方法。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3242,7 +3253,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为259项：P0为0，P1为99，P2为141，P3为19。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 14。
+当前滚动统计为260项：P0为0，P1为99，P2为141，P3为20。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 15。
 
 建议按依赖关系分五批修复：
 
@@ -3312,6 +3323,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H2 stream进入RST/GOAWAY error终态后，readall只要buffer非空就返回partial data,nil并吞掉终态错误；归档为`H2-037`。
 - 2026-08-13：确认remote RST只终止当前waiter/remote half，之后respond/write/closewrite仍排HEADERS/DATA并报告成功；归档为`H2-038`。
 - 2026-08-13：确认HTTP双语reference/中文guide把server push列为Silly已支持，但H2无push API且client SETTINGS明确禁用；归档为`DOC-014`。
+- 2026-08-13：确认HTTP双语reference/guide反称H2不支持实际已实现的write，并让用户调用不存在的close(body)；归档为`DOC-015`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
