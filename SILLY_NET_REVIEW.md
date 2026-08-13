@@ -651,6 +651,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先按section/class/owner/type分组并验证完整RRset，计算minimum TTL（也可记录异TTL诊断），再一次性替换cache与expiry；不得跨trust来源/section拼组，需与`DNS-002/010`共同修复。transaction-local结果可以在当前调用内使用，但持久cache必须遵守minimum deadline。
 - 回归测试：修复阶段覆盖TTL顺序`high,low`与`low,high`、三条不同TTL、统一TTL、A/AAAA/SRV、同owner不同type和不同section；两个顺序都必须在同一最低TTL到期，且到期后重新查询整组。当前只保存静态证据。
 
+### DNS-015 — P1 — 每个查询名字永久留在 server cache，过期、失败与 TTL=0 均无淘汰
+
+- 状态：已确认；name cache创建、查询终局与命中路径的确定性生命周期静态核对。本轮不生成高基数查询或做内存压力。
+- 资源契约：TTL cache必须回收过期/无效entry并有per-server/global name与byte预算；查询临时identity不能无条件升级成永久cache节点。失败或明确不可缓存的TTL=0响应结束后，不应保留只用于singleflight的空对象。
+- 位置：`name_cache`与RR intern在`lualib/silly/net/dns.lua:32-46,99-126`；每次cache miss在发包前创建RR于`:424-455`；成功/失败只清inflight在`:175-200,204-253`；lookup遇过期只返回miss而不删除在`:478-545`。唯一整体释放是`dns.conf`替换server对象在`:757-808`。
+- 触发：持续解析大量互不相同的合法hostname；上游可正常返回TTL=0、NX/NODATA、超时或send失败，均能增长。应用若接受用户URL、tenant域名、service-discovery key或代理目标，外部请求可间接提供这些名字；结合`DNS-002`，单个response还可携带最多约1000个无关owner加速增长。
+- 影响：`try_create_rr`为每个name永久保存name-key、by-name table、RR table及元数据；失败后`finish_req`只删`inflight[rr]`，TTL=0不写持久数据但空RR仍保留，expired positive/negative也从不evict。进程生命周期内heap和GC扫描集合随历史唯一名字单调增长，攻击者或高基数正常流量可最终耗尽内存；TTL文档所称“过期”只表示不命中，不表示释放资源。
+- 证据：`name_cache[name]=by_name`和`by_name[qtype]=rr`没有任何反向删除语句。`clear_rr`只清数组rdata并改ttl，不删除RR或空name bucket。`lookup_server`检查`ttl>=now`失败后直接return nil；没有LRU、timer、size/byte cap、negative/empty admission或metrics。`close_servers`不清当前server cache，只有随后`servers={}`失去整组引用。
+- 根因：同一个永久intern table同时承担cache与inflight dedup identity；为方便用RR对象作`inflight` key，所有查询名字都被提升为强引用cache entry，TTL没有对应的storage lifecycle。
+- 建议解法：把transaction key与cache entry分离，inflight用canonical `(server-generation,name,qtype,class)` key；只在完整可缓存response提交时创建cache RRset。实现按deadline的expiry queue/timing wheel或有界LRU，命中/周期扫描时删除过期RR及空name bucket，并设置per-server/global entry/byte hard cap与可观测eviction；TTL=0和失败仅保留当前operation结果，不持久化。
+- 回归测试：修复阶段用小cap/可控clock覆盖大量唯一成功、TTL0、NX、timeout、send失败、CNAME/additional与重复热key；过期/失败对象回到基线，cache entries/bytes不超过cap，singleflight仍合并同key且eviction不破坏在途request。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2871,7 +2883,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为227项：P0为0，P1为92，P2为125，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 14、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为228项：P0为0，P1为93，P2为125，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 15、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2906,6 +2918,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认`dns.conf`在任何新配置校验前已结束inflight并关闭旧resolver，后续异常会留下空/半配置全局状态；归档为`DNS-012`。
 - 2026-08-13：按RFC 6891确认DNS主动发送OPT却跳过response OPT，extended RCODE/version丢失并会把扩展错误当成功空答案；归档为`DNS-013`。
 - 2026-08-13：按RFC 2181确认DNS cache只采用RRset首条TTL，未将异TTL组收紧到最低值，缓存寿命受wire顺序控制；归档为`DNS-014`。
+- 2026-08-13：确认DNS为每个查询名字永久intern cache节点，expired/TTL0/timeout/send failure均无逐项删除或容量预算；归档为`DNS-015`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
