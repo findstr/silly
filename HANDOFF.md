@@ -419,8 +419,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-033 | P2 | protobuf scalar encoder不校验整数/enum/bool类型和值域，静默截断或改变业务值。 |
 | GRPC-034 | P1 | streaming client不通过read返回值交付最终非OK status，失败可被当作正常EOF或成功response。 |
 | GRPC-035 | P1 | protobuf oneof decoder保留已失效member，sender也会同时编码多个members。 |
+| GRPC-036 | P2 | protobuf decoder覆盖而非merge重复singular embedded message，合法拆分字段会丢数据。 |
 
-当前统计为288条：P1 105、P2 158、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 35、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
+当前统计为289条：P1 105、P2 159、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 36、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
