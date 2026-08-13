@@ -195,6 +195,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | PROTOBUF-SCALAR-DOMAIN | schema/data integrity | `luaclib-src/pb.c:316-359,406-470,1616-1668`; `lualib/silly/net/grpc/helper.lua:53-67` | client/server sender | 偏离 | 32位整数静默取低32位、signed/unsigned 64位不查范围，enum接受fractional number并转整数，bool把任意truthy值编码为true | gRPC测试只用小范围int32和正确Lua类型，没有边界外值或encode→decode等值断言 | GRPC-033 |
 | PROTOBUF-ONEOF-INVARIANT | MUST/data integrity | `luaclib-src/pb.c:1304-1307,1728-1757,1943-1973`; `lualib/silly/net/grpc/helper.lua:16-67` | client/server | 偏离 | decoder遇到新oneof member只更新case名、不清除旧member；encoder也会发送table中全部members，破坏API层“至多一个/last wins”不变量 | gRPC schema与测试完全没有oneof | GRPC-035 |
 | PROTOBUF-SINGULAR-MESSAGE-MERGE | MUST/data integrity | `luaclib-src/pb.c:1869-1876,1943-1973`; `lualib/silly/net/grpc/helper.lua:16-50` | client/server recipient | 偏离 | 同一singular embedded-message field重复出现时每次新建table并整块覆盖，未按protobuf规则递归merge | gRPC测试没有重复singular field或拆分embedded message | GRPC-036 |
+| PROTOBUF-PACKED-COMPAT | MUST/interoperability | `luaclib-src/pb.c:1884-1899,1926-1941`; `luaclib-src/pb.h:1697-1701` | client/server recipient | 偏离 | descriptor声明`packed=false`的repeated numeric收到合法packed wire时走普通type check并抛mismatch；只接受声明格式，未实现parser双格式兼容 | gRPC测试proto3 numeric为默认packed但没有proto2/unpacked descriptor或反向wire格式 | GRPC-037 |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
 | GRPC-AUTOMATIC-RETRY | safety | `lualib/silly/net/grpc/client/conn.lua:82-100`; `lualib/silly/net/grpc/client/service.lua:134-257` | client | 不适用/安全 | 实现没有automatic retry，不会无条件重放非幂等RPC；GOAWAY/REFUSED_STREAM可靠性与status mapping缺口见H2-008/GRPC-013 | 无retry tests | — |
@@ -3570,6 +3571,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：singular message首次出现时创建typed table，后续出现复用现有table作为decode target并递归应用同一merge规则；scalar最后值覆盖、repeated追加、map key最后值及oneof切换清理分别保持规范语义。decode hook必须在merge边界只执行定义明确的次数，避免把已有对象替换回旧状态。
 - 回归测试：修复阶段覆盖两个片段不同/相同scalar、nested message、repeated追加、map重复key、同一oneof message member和不同member切换；与官方protobuf实现对同一bytes比较结构，四类RPC双向断言业务看到完整merge结果。当前不构造bytes。
 
+### GRPC-037 — P2 — protobuf parser 拒绝 packed=false repeated numeric 的合法 packed 表示
+
+- 状态：已确认；descriptor packed默认值、repeated decoder分支与protobuf parser兼容规则的确定性静态核对。本轮不加载proto2 schema或构造packed payload。
+- 规范：[Protocol Buffers Encoding](https://protobuf.dev/programming-guides/encoding/#repeated-elements)要求parser对packable repeated primitive同时接受packed和unpacked wire表示，不论schema中的`packed`选项如何；这保证给既有字段切换`[packed=true]`仍保持wire兼容。选项控制serializer首选格式，不能缩小parser接受域。
+- 位置：descriptor把proto2未指定/显式false保存为`f->packed=0`在`luaclib-src/pb.h:1697-1701`；wire type校验和repeated分支在`luaclib-src/pb.c:1884-1899,1926-1941`；gRPC decode入口在`lualib/silly/net/grpc/helper.lua:16-50`。
+- 触发：service message含proto2 repeated int/enum/bool/fixed/float等packable字段且descriptor为默认`packed=false`或显式false；独立peer以LEN packed形式发送其值。schema演进中peer切换packed选项、代理或其他runtime规范化输出时都可出现。
+- 影响：规范上兼容的request会在Silly server抛type mismatch，继而按`GRPC-007`缺status/泄漏；client遇到合法response也会按`GRPC-015`抛异常。相同schema与bytes在官方runtime成功，在Silly失败，使proto2及跨版本rolling upgrade无法互操作。反向`packed=true` descriptor接收unpacked值当前能够工作，偏离是单向的。
+- 证据：当incoming wire type是BYTES时，`lpbD_repeated`只有`f->packed=true`才进入packed slice循环；若`f->packed=false`且元素原生wire type不是BYTES，条件直接调用`lpbD_field`，随后`lpbD_checktype`以元素VARINT/32BIT/64BIT对LEN tag报错。descriptor loader明确只对proto3默认设packed。现有`testgrpc.lua`没有repeated numeric字段，更没有descriptor选项与相反wire表示组合。
+- 根因：decoder错误复用serializer的preferred packed flag决定接收语法，而不是按“字段可打包类型 + incoming wire type”选择两种合法解析路径。
+- 建议解法：为每个packable repeated scalar始终接受原生wire type和LEN packed type；string/bytes/message等不可打包类型仍只接受其合法LEN单值记录。descriptor `packed`只决定encode格式。错误packed payload必须完整消费并验证元素边界，异常按统一gRPC parse finalizer收尾。
+- 回归测试：修复阶段对每个packable type、proto2 default/true/false与proto3 default/false做packed/unpacked交叉矩阵，混合两种记录也应按顺序append；不可打包类型的伪packed仍拒绝。与官方encoder bytes互通，并在四类RPC双向断言status和资源归零。当前不构造wire。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3599,7 +3612,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为289项：P0为0，P1为105，P2为159，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 36、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为290项：P0为0，P1为105，P2为160，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 37、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3889,6 +3902,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认三种streaming client不通过公开read返回值交付最终非OK status，失败会表现为普通EOF，client-streaming还可返回成功对象；归档为`GRPC-034`，未建立错误stream。
 - 2026-08-13：确认native protobuf oneof decoder只更新case而不清除旧member，sender也会编码table中的多个members，破坏last-one-wins不变量；归档为`GRPC-035`，未加载oneof schema。
 - 2026-08-13：确认native protobuf decoder对重复singular embedded message整块覆盖而非递归merge，合法拆分字段会静默丢数据；归档为`GRPC-036`，未构造重复field payload。
+- 2026-08-13：确认native protobuf parser用descriptor packed flag限制接收格式，`packed=false` repeated numeric会拒绝规范要求兼容的packed wire；归档为`GRPC-037`，未构造payload。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
