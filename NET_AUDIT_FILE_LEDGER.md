@@ -156,7 +156,7 @@
 | `lualib/silly/store/mysql.lua` | 已审有归档 | MYSQL-001至020 | auth/packet/result/prepare/pool/transaction |
 | `lualib/silly/store/redis.lua` | 已审有归档 | REDIS-001至010 | RESP/FIFO/reconnect/pipeline/transaction/close |
 | `lualib/silly/adt/list.lua` | 范围外 | 未被内建net/storage/metrics require | 单独容器，不在当前调用图 |
-| `lualib/silly/metrics/collector.lua` | 已审无新增 | collector type alias | runtime仅返回type declaration |
+| `lualib/silly/metrics/collector.lua` | 已审有归档 | DOC-070 | collector instance/factory type contract |
 | `lualib/silly/metrics/collector/jemalloc.lua` | 已审有归档 | METRIC-003 | native tuple与gauge字段 |
 | `lualib/silly/metrics/collector/process.lua` | 已审有归档 | CORE-008 | CPU/RSS/heap collector与平台能力 |
 | `lualib/silly/metrics/collector/silly.lua` | 已审有归档 | METRIC-005 | engine counters、gauge与sent/received语义 |
@@ -331,13 +331,13 @@
 | `docs/src/en/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
 | `docs/src/en/reference/logger.md` | 已审有归档 | DOC-057/058/063 | level/formatter/eager args/SIGUSR1/reopen与native逐项对账 |
-| `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005/009至011 | custom collector、异常/重入/lifetime与内置字段继续复核 |
+| `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005/009至011、DOC-070 | custom collector contract、异常/重入/lifetime与内置字段 |
 | `docs/src/en/reference/metrics/counter.md` | 已审有归档 | METRIC-004/006/008、DOC-051 | descriptor、cardinality与output examples |
 | `docs/src/en/reference/metrics/gauge.md` | 已审有归档 | METRIC-004/006/008/009、DOC-065/066/069 | descriptor/value/label/HTTP examples与截断EOF |
 | `docs/src/en/reference/metrics/histogram.md` | 已审有归档 | METRIC-002/004/006至008/011、DOC-051/067 | cumulative bucket契约、vectors/lifetime与完整示例 |
 | `docs/src/en/reference/metrics/labels.md` | 已审有归档 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
-| `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068 | constructor/gather/HTTP examples |
-| `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068 | duplicate family、mutation/lifetime、export与custom collector |
+| `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068/070 | constructor/gather/HTTP/custom collector examples |
+| `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068/070 | duplicate family、mutation/lifetime、export与custom collector |
 | `docs/src/en/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
 | `docs/src/en/reference/net/README.md` | 已审有归档 | DOC-047 | net子模块索引含URL |
 | `docs/src/en/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |
@@ -396,13 +396,13 @@
 | `docs/src/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
 | `docs/src/reference/logger.md` | 已审有归档 | DOC-057/058/063 | level/formatter/eager args/SIGUSR1/reopen与native逐项对账 |
-| `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005/009至011 | custom collector、异常/重入/lifetime与内置字段继续复核 |
+| `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005/009至011、DOC-070 | custom collector contract、异常/重入/lifetime与内置字段 |
 | `docs/src/reference/metrics/counter.md` | 已审有归档 | METRIC-004/006/008、DOC-051 | descriptor、cardinality与output examples |
 | `docs/src/reference/metrics/gauge.md` | 已审有归档 | METRIC-004/006/008/009、DOC-065/069 | descriptor/value/label/HTTP examples |
 | `docs/src/reference/metrics/histogram.md` | 已审有归档 | METRIC-002/004/006至008/011、DOC-051/067 | cumulative bucket契约、vectors/lifetime与完整示例 |
 | `docs/src/reference/metrics/labels.md` | 已审有归档 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
-| `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068 | constructor/gather/HTTP examples |
-| `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068 | duplicate family、mutation/lifetime、export与custom collector |
+| `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至011、CORE-008、DOC-051/054/068/070 | constructor/gather/HTTP/custom collector examples |
+| `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004/009至011、DOC-068/070 | duplicate family、mutation/lifetime、export与custom collector |
 | `docs/src/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
 | `docs/src/reference/net/README.md` | 已审有归档 | DOC-047 | 中文net索引缺URL |
 | `docs/src/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |

@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档361项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档362项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3011,6 +3011,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：若目标是in-flight requests，改名`http_requests_in_flight`并用保证恰好一次执行的finally/defer收尾，包含异常/提前返回；若目标是真实TCP连接，直接使用`silly_tcp_connections`或在listener/channel生命周期提供明确hook，不能从request handler推断。文档同时说明H2 multiplex语义。
 - 回归检查：修复阶段覆盖一条H1两次keep-alive请求、一条H2多stream、handler throw和write error；in-flight Gauge回到0，真实connection Gauge在socket关闭前保持1、关闭后为0。当前不运行网络场景。
 
+### DOC-070 — P3 — Collector 必需字段在 LuaLS 与三份双语 reference 间互相冲突
+
+- 状态：已确认；runtime registry字段访问、collector type alias与双语Collector/Prometheus/Registry示例的确定性静态核对。本轮不运行LuaLS或注册示例对象。
+- 位置：`lualib/silly/metrics/collector.lua:3-6`及双语Collector reference `reference/metrics/collector.md:37-52,127-142`把`name`、`new`、`collect`全部声明为必需，并称constructor必须返回三字段。实际`registry.lua:14-40`只比较对象引用并调用`:collect()`，从不读取name/new；双语Prometheus custom collector在`prometheus.md:260-271`只给`collect`，Registry custom collector在`registry.md:421-466`只给`name+collect`，均违反前述必需结构。
+- 触发：用户照Prometheus/Registry官方示例编写custom collector并启用LuaLS检查，或照Collector页认为registry会调用`new()`/读取name；无需运行采集。
+- 影响：完全可在runtime注册工作的官方对象会被类型系统报缺字段，迫使用户加无意义成员或关闭诊断；反向地，提供name/new却写错collect的对象可正常注册，直到scrape才抛异常。1.0插件/collector接口无法从三份官方文档得到唯一shape。
+- 证据：register没有type/interface validation，collect唯一字段读取是`self[i]:collect(metrics)`；Prometheus示例table源码确实没有name/new，Registry示例没有new，而同页文字又说“all objects must implement”含name的interface。内置collector包含三字段只是实现惯例，不能证明runtime requirement。
+- 根因：内置模块的constructor/module metadata被误合并进“已实例化collector”的最小协议，之后简化示例按runtime最小结构编写，却没有同步LuaLS与主reference。
+- 建议解法：定义两个明确类型：collector module/factory可有`new`，registered collector instance只要求`collect`，`name?`作为诊断字段；或若1.0决定强制三字段，register必须同步校验并修正所有官方示例。LuaLS、三份双语reference和runtime错误时机必须一致。
+- 回归检查：修复阶段把每份官方custom collector围栏交给LuaLS，零缺字段诊断；register对最小合法/缺collect对象按契约同步接受或拒绝，错误包含collector name（若有）。当前不运行type checker。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4425,7 +4436,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为361项：P0为0，P1为112，P2为197，P3为52。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 69。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为362项：P0为0，P1为112，P2为197，P3为53。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 70。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4805,5 +4816,6 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Histogram exporter所有权反查确认所有历史bucket数值/字符串进入无界module-level强缓存；动态Histogram注销/GC后仍永久保留，归档为`METRIC-011`。
 - 2026-08-13：隔离Registry导出反查确认runtime已有`gather(r)`，双语reference却漏掉参数并教用户手写不支持Histogram/转义的formatter，归档为`DOC-068`。
 - 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
+- 2026-08-13：Collector contract反查确认LuaLS/主reference要求name+new+collect，但Prometheus/Registry官方示例与runtime只要求collect，归档为`DOC-070`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
