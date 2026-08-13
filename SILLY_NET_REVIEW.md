@@ -2523,6 +2523,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：master把timeout改为`integer?`，call/send cmd改为`integer|string`并与`CLUSTER-017`修复后的uint32范围说明配套；`c.pop`使用overload或首返回`integer?`并令后续返回在fd存在时有效。raw-string分支同步pop修正。以API contract fixture对省略字段、union参数与empty/nonempty tuple执行LuaLS检查。
 - 回归检查：修复阶段运行最小LuaLS fixture，要求默认serve、string/numeric cmd及`if not fd then`drain loop无误报；错误类型仍被拒绝，空pop不得被推断为必有string/session。当前只保存静态证据。
 
+### DOC-043 — P3 — etcd generated LuaLS 把可缺失 `prev_kv` 标为必有并虚构 progress 字段
+
+- 状态：已确认；bundled etcd proto、生成尾注、watch option与protobuf默认对象规则静态对照。本轮不解码watch event或运行type checker。
+- 公开契约：etcd仅在创建watch时设置`prev_kv=true`且旧值尚未被compact时附带`Event.prev_kv`；Lua类型必须要求caller做nil检查。`WatchProgressRequest`在官方schema中是空message，类型不应声明不存在的payload field。
+- 位置：`Event.prev_kv`的proto定义在`lualib/silly/store/etcd/v3/proto.lua:1473-1491`，request端条件与compact例外在`:2350-2352`，空`WatchProgressRequest`在`:2371-2375`；文件尾LuaLS却把`Event.prev_kv`写成必有`KeyValue`并给progress message虚构`progress_request boolean`，见`:2980-3005`。公开双语watch参数表位于`docs/src/{en/,}reference/store/etcd.md`的Watch API段，也没有列出实现可透传的`prev_kv`选项。
+- 触发：普通watch不传`prev_kv`后按LuaLS直接读取`event.prev_kv.value`；或构造内部progress request时按stub填写`{progress_request=true}`并认为该字段具有wire语义。
+- 影响：默认watch event的`prev_kv`实际为nil，静态检查却不会提示nil dereference，业务在首次事件就可能异常；即使请求了旧值，compaction也允许字段缺失。phantom progress字段会被protobuf encoder作为unknown Lua key忽略，让调用方误以为布尔值控制请求。双语reference漏掉真实选项又迫使用户绕过文档猜schema。`Event.type`的integer/string反向标注已由`DOC-036`覆盖，本条不重复计数。
+- 证据：protobuf decoder只为实际出现的message field建table；默认模式不会给缺失message创建对象，`decode_default_message`默认为false。proto注释明确把`prev_kv`绑定request flag并声明compact时仍可能没有；尾注却缺`?`。progress message的大括号完全为空，尾注的同名boolean没有field number或任何wire来源。wrapper的`M.watch`原样保留`req.prev_kv`并发送，因此这是可用但未文档化的公开行为。
+- 根因：手写尾注没有由descriptor生成或与field presence校验；相邻的outer oneof field名被误复制成empty nested message的成员，中英文reference也未从同一option schema生成。
+- 建议解法：把`Event.prev_kv`标为`KeyValue?`，删除`WatchProgressRequest.progress_request`，保留outer `WatchRequest.progress_request`；在public watch request类型和双语参数表补充`prev_kv:boolean?`及其compaction例外。由descriptor生成scalar/repeated/message presence和enum表示类型，并在CI对照wrapper透传选项；同时保留`DOC-036`所需的enum-as-name修正。
+- 回归测试：修复阶段用LuaLS覆盖默认watch直接解引用应告警、nil guard通过、`prev_kv=true`仍要求nil guard、empty progress request只接受空table；descriptor snapshot断言每个annotated field真实存在且presence一致。当前不运行protobuf decode或类型检查。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4278,6 +4290,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
 - 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
+- 2026-08-13：完成etcd generated LuaLS presence复核，确认`Event.prev_kv`在默认watch/compaction时可缺失却标必有，空`WatchProgressRequest`又被虚构boolean字段；归档为`DOC-043`，`Event.type`偏差仍由`DOC-036`覆盖。
 - 2026-08-13：完成cluster封板审计：master Lua 331行、native 553行、类型stub 54行、`testcluster.lua`24组/604行、中英文reference 1127/1126行及raw-string分支7个变更文件均已映射；新增`CLUSTER-016`至`019`、`DOC-038`至`042`，断线registry候选则经GC/finalizer反查排除。其余候选归入既有19项、4项分支独有问题或静态排除，阶段收口。
 - 2026-08-13：跨模块timeout事务复核确认native timer拒绝大于`UINT32_MAX`的整数，但connect、TCP/TLS/UDP/H2均先发布fd/waiter，gRPC也先占stream；同步参数异常会跳过回滚并毒化对象或遗留资源，归档为`NET-007`。DNS同类顺序已由`DNS-011`覆盖，H1因尚未发布底层waiter而排除。
 - 2026-08-13：跨模块duration时钟复核确认`time.now()`由固定启动wall基准加monotonic tick构成，运行中系统校时不会直接影响HTTP pool、DNS TTL、MySQL pool或etcd keepalive比较；据此撤回`HTTPC-008`中的附带wall-clock论据，保留由`lastfree=0`确定触发的核心问题。
