@@ -3493,6 +3493,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：引入per-call options/context：client接受并校验request metadata，server context公开decoded request/initial metadata与cancellation/deadline；server可在首message前发送一次initial metadata并在唯一finalizer附加trailing metadata。统一ASCII key/value、重复值、顺序、`-bin` Base64、`grpc-`保留key与size budget；credentials/interceptor在写HEADERS前注入。若1.0延期，应把公开能力标为不支持并对误传选项fail fast。
 - 回归测试：修复阶段四类RPC双向覆盖ASCII/重复/空值/多值metadata、合法/非法key、`-bin` padded/unpadded Base64、initial与trailing位置、authorization和超预算；与独立gRPC client/server互通并断言应用不需访问H2私有字段。当前不建立peer。
 
+### GRPC-031 — P1 — `server:close()` 只关闭 listener，既有 H2 连接可无限创建新 RPC
+
+- 状态：已确认；gRPC listener返回对象、TCP/TLS ownership、H2 server channel可达性与官方shutdown生命周期的确定性静态核对。本轮不建立长连接或执行关闭竞态。
+- 依据：[gRPC Graceful Shutdown](https://grpc.io/docs/guides/server-graceful-stop/)要求shutdown开始后立即通知client停止发送新RPC、拒绝新RPC，并让已在途调用在deadline内完成；forceful shutdown则关闭全部连接。Silly可以选择暴露其中一种或两种，但“关闭server”不能只停止新TCP accept而让既有HTTP/2连接继续永久接单。
+- 位置：`grpc.listen`直接返回底层listener且accept后不保存channel在`lualib/silly/net/grpc/server.lua:30-55`；TCP/TLS listener close只删除listener pool并`net.close(fd)`在`lualib/silly/net/tcp.lua:152-188`、`tls.lua:339-375`；H2 server channel是`httpd`局部对象并持续dispatch在`lualib/silly/net/http/h2.lua:1668-1740`；双语close承诺在`docs/src/{en/,}reference/net/grpc.md:214-261`。
+- 触发：任一client在server close前已建立HTTP/2连接；应用随后调用文档化`server:close()`并观察成功，再由该client在相同channel上发起新stream/RPC。滚动发布、停机、配置撤销或测试teardown都会遇到。
+- 影响：close返回后旧client仍可无限调用业务handler并产生数据库写入、计费或其他副作用，服务无法形成“不再接收新工作”的shutdown barrier。旧进程/配置可能长期存活，socket、dispatch task和业务资源无法由server owner回收；部署者无法实现graceful drain或force stop，只有等待每个client自行断开/进程退出。安全策略或证书撤换后旧channel也继续使用旧上下文。
+- 证据：返回对象就是`tcp.listener/tls.listener`，只拥有listen fd与accept callback；accepted conn立即交给`h2.httpd`，生成的`ch`没有写入server registry。listener close不遍历accepted conns。`common_dispatch`只依赖channel/conn且frame_header_server仍会为后续HEADERS创建stream和fork handler，没有server-closed检查或本端GOAWAY。`testgrpc.lua`先`conn:close()`再`server:close()`，恰好避开既有channel继续请求。
+- 根因：server生命周期被建模为监听socket生命周期，没有一个gRPC server owner追踪channels、active calls和shutdown generation；HTTP/2多路复用使“停止accept”不等于“停止RPC”。
+- 建议解法：返回专用gRPC server对象，accept时登记每个H2 channel并在dispatch退出时摘除。graceful close原子标记draining、先关listener、向全部channel发送正确Last-Stream-ID的GOAWAY并拒绝新stream，等待active calls到0或absolute deadline；超时/force close终止channel并让call得到UNAVAILABLE/CANCELLED。close返回必须保证registry为空且迟到accept/channel发布受generation阻断，并与`H2-016/028/035`修复联动。
+- 回归测试：修复阶段用可控channel覆盖idle/active/streaming RPC、close前已连接但未发call、close与accept/HEADERS并发、deadline/force、重复close及handler异常；断言close开始后无新handler，in-flight按策略完成，client收到GOAWAY/标准status，所有conn/channel/task/quota归零。当前不运行并发场景。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3522,7 +3534,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为283项：P0为0，P1为102，P2为156，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为284项：P0为0，P1为103，P2为156，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 31、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3806,6 +3818,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native descriptor把proto2 required/optional共同折叠为非repeated，codec无法执行required presence检查，缺字段message仍可进入业务/上wire；归档为`GRPC-029`。
 - 2026-08-13：确认四类RPC均无公开metadata/call-context入口，server也无法正常读取request或发送initial/trailing metadata，`-bin`没有Base64语义；归档为`GRPC-030`。
 - 2026-08-13：确认gRPC双语reference把client/server/bidi streaming混成统一API，server-stream调用不存在的write，client-stream upload以RST close代替EOS/final response；归档为`DOC-026`。
+- 2026-08-13：确认`grpc.listen`直接返回只拥有listen fd的底层listener，accepted H2 channels无server owner；close返回后既有连接仍可无限创建新RPC，归档为`GRPC-031`。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
