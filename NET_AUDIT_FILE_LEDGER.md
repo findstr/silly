@@ -333,7 +333,7 @@
 | `docs/src/en/reference/logger.md` | 已审有归档 | DOC-057/058/063 | level/formatter/eager args/SIGUSR1/reopen与native逐项对账 |
 | `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
-| `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006、DOC-065 | descriptor/value/label examples |
+| `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006、DOC-065/066 | descriptor/value/label examples与截断EOF |
 | `docs/src/en/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006/007 | cumulative bucket契约与vectors |
 | `docs/src/en/reference/metrics/labels.md` | 审阅中 | METRIC-001/006 | cache/cardinality/name/value wire |
 | `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至007、CORE-008、DOC-051/054 | constructor/gather/HTTP examples |

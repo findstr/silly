@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档353项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档354项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2919,6 +2919,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：删除全部bug警告/源码修改建议，将示例期望改成150/175，业务示例直接调用`add(0.1)`；若`.value`并非正式API则从文档示例移除或标为只读诊断。以单一API contract生成双语方法说明。
 - 回归检查：修复阶段覆盖0、正数、负数、浮点、vector submetric并断言`new == old + v`；双语文档零命中“add只加1/等待修复”，代码围栏预期值与实现一致。当前不执行。
 
+### DOC-066 — P3 — 英文 Gauge reference 在示例中途截断并保留模型“后续另发”占位文本
+
+- 状态：已确认；英文页面EOF、中文对应页、Gauge公开方法与文档结构的确定性静态核对。本轮不执行文档示例。
+- 位置：`docs/src/en/reference/metrics/gauge.md:365-407`开始“Monitor Active Connections”示例，代码围栏结束后文件立刻以“Due to length constraints, I'll provide the remaining metric files in separate responses”终止。对应中文页从`docs/src/reference/metrics/gauge.md:407`继续到`:972`，仍包含系统资源、队列、缓存/命中率、余额、性能、线程安全、Prometheus集成和See Also等章节。
+- 触发：英文用户阅读Gauge reference的Usage Examples第一节之后，或从页面寻找生产用法、性能注意、Prometheus集成及相关链接。
+- 影响：英文发布文档只有407行而中文为972行，超过一半已承诺内容缺失；页面没有正常结尾/相关链接，并把对话式生成提示直接暴露为1.0文档正文。维护者无法判断缺页还是正式结束，英文API审查也会漏掉中文页中的陈旧bug说明等风险。
+- 证据：英文文件的最后一行就是占位句，之后无Markdown标题或内容；同目录其余metrics reference均以完整See Also/References结束。中文对应位置逐章继续565行，英文不是有意精简的完整结构。该项不同于`DOC-065`：后者是两种语言已有内容与实现相反，本条是英文artifact缺失与发布完整性。
+- 根因：长文档生成/翻译被响应长度截断，临时交接句进入仓库；文档构建只验证Markdown可渲染，没有双语结构/EOF sentinel或生成提示扫描。
+- 建议解法：按当前实现重新翻译并人工核对中文后半页，同时先修正`DOC-065`及其他已归档示例问题，避免把错误内容机械复制到英文；为双语reference校验标题/API方法集合、围栏数与正常尾部，并禁止“length constraints/separate responses”等生成占位语进入发布文档。
+- 回归检查：修复阶段比较中英文Gauge的API标题、方法、示例主题与链接集合，英文页面必须正常结束且零命中生成提示；所有`lua validate`围栏再通过项目文档校验。当前只记录静态差异。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4333,7 +4344,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为353项：P0为0，P1为112，P2为192，P3为49。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 65。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为354项：P0为0，P1为112，P2为192，P3为50。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 66。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4705,4 +4716,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：core双语reference反查确认`tostring`被写成单参数pointer hex formatter，实际是需要size且不释放的内存复制，归档为`DOC-053`；net payload泄漏仍由`DOC-046`覆盖。
 - 2026-08-13：收口counter/gauge descriptor路径，确认metric/label name与HELP均未校验/转义，Histogram还允许保留label `le`；公开配置可破坏或注入scrape，归档为`METRIC-006`。
 - 2026-08-13：继续收口Histogram schema，确认constructor不校验空、重复及非有限bucket；空数组会在sum/count已更新后崩溃，重复边界会导出重复series，归档为`METRIC-007`。
+- 2026-08-13：双语结构反查发现英文Gauge reference在首个usage示例后直接EOF，并保留“长度限制、后续另发”的生成占位句，缺少中文后半页565行内容，归档为`DOC-066`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
