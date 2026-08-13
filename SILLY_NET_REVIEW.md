@@ -1096,6 +1096,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按(status,method)矩阵处理：301/302仅在明确兼容策略下POST→GET，303为HEAD→HEAD、其他→GET，307/308严格保留method/body；提供禁用自动改写/redirect hook。丢弃body时统一移除全部body-specific/framing/Expect/trailer字段并重新生成，保留body时确认可重放且每跳错误/预算受总deadline约束。
 - 回归测试：修复阶段覆盖五种status×GET/HEAD/POST/PUT/PATCH/DELETE、自定义method，以及有无body和Expect/TE/content-* headers；捕获每跳method/header/body，断言语义矩阵、不可重放body策略及H1/H2一致。当前只保存静态证据。
 
+### HTTPC-007 — P2 — 重复 Location/Content-Encoding 把远端响应升级为未捕获 Lua 类型异常
+
+- 状态：已确认；H1/H2重复字段表示、redirect resolver与自动解压分支静态核对。本轮不发送重复响应字段。
+- 位置：H1重复字段提升为array在`lualib/silly/net/http/h1.lua:129-169`；H2同样映射在`lualib/silly/net/http/h2.lua:367-387`；高层消费在`lualib/silly/net/http/client.lua:357-397`，URL resolver字符串操作在`lualib/silly/net/http/url.lua:78-127`。
+- 触发：redirect response携带两个`Location`字段，或最终response携带两个`Content-Encoding`字段（后者可以是协议上可合并的field list）；H1和H2 parser都把对应map value变为Lua array。
+- 影响：redirect路径把array直接传入`url.resolve`，其首个`string.match`对table抛类型错误；解压路径把array直接传给`string.lower`也会抛错。异常从`get/post`逃逸，而非按公开契约返回`nil,error`；调用方若只处理返回值，业务task会被终止。`<close>`通常能收尾当前stream，但错误分类、redirect响应及可诊断信息全部丢失，同一合法多行Content-Encoding也无法按列表语义处理。
+- 证据：两个parser明确使用`string|string[]`联合表示所有重复字段；高层没有type check、列表合并或protected conversion。`if stream.header["location"]`对非空table为true，随后resolver的`match(ref,...)`要求string；`encoding and lower(encoding)`走同一确定性类型错误路径。现有测试只覆盖普通自定义重复字段，没有覆盖被高层解释的字段。
+- 根因：通用header map把重复值的动态union暴露给上层，但各语义消费者仍假定singleton string；没有集中执行field-specific combine/singleton validation与结构化协议错误转换。
+- 建议解法：在解析完成、进入业务逻辑前按field schema规范化：Location若非单一合法值则结束该redirect并返回明确响应错误；Content-Encoding按HTTP list语法合并、顺序解析coding链，只自动解码库实际支持且协商过的组合，其他作为普通响应或typed error处理。所有remote-input解析错误经统一边界返回`nil,error`，不得泄露Lua类型异常；H1/H2共用同一规范化层。
+- 回归测试：修复阶段在H1/H2分别覆盖零/一/重复Location、重复及逗号列表Content-Encoding、未知coding、空值和大小写；断言API从不抛异常、redirect选择规则明确、coding按正确逆序解码或完整保留响应，并验证stream/connection收尾。当前只保存静态证据。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -3162,7 +3173,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为252项：P0为0，P1为99，P2为135，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为253项：P0为0，P1为99，P2为136，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3225,6 +3236,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1 sender只按精确小写Lua key识别Host/CL/TE等控制字段，常规Title-Case输入可被重复并由库自动形成TE+CL歧义wire；归档为`HTTP1-021`。
 - 2026-08-13：确认H1 server把HEAD/304与1xx/204共用bodyless分支并无差别删除CL/TE，丢失规范允许的representation元数据；归档为`HTTP1-022`。
 - 2026-08-13：确认中文HTTP reference声明`http.newclient.read_timeout`默认5秒，但实现/schema完全不接收该字段且请求仍无限等待；归档为`DOC-013`。
+- 2026-08-13：确认H1/H2 parser把重复字段提升为array，而redirect/gzip仍将Location/Content-Encoding当string，远端响应可触发未捕获Lua类型异常；归档为`HTTPC-007`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
