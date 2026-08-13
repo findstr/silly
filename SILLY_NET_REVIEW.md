@@ -346,6 +346,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：入口在地址解析/任何native调用之前验证event table及该socket模式要求的全部function；TCP listener必须明确要求accept，或为nil定义立即拒绝并关闭accepted fd。所有成功后发布步骤用受保护的transaction：任意异常都调用底层close并清空已写表项；`M.close`不应仅凭callback存在判断底层fd是否可关闭。
 - 回归测试：修复阶段覆盖nil event、逐个缺accept/data/close、字段非function、callback table写入中异常，以及无accept listener收到多连接；断言调用在分配前失败或每个fd立即关闭，pool/open-fd/callback表回到基线。当前不新增误配置复现。
 
+### NET-005 — P1 — TCP/TLS 单 reader 门禁晚于缓存读取，并发调用可偷走字节并永久挂起旧 reader
+
+- 状态：已确认；TCP/TLS缓存、唯一waiter槽和worker调度的确定性静态时序。本轮不新增并发barrier或发送分片数据。
+- 并发契约：同一byte stream若只允许一个在途reader，第二个read必须在观察或消费任何连接状态前稳定fail fast；若允许多个reader，则必须有FIFO请求队列并保证每个字节只交付给确定的owner。不能根据当时缓存是否凑巧满足第二个请求而改变门禁结果。
+- 位置：TCP先读缓存、后登记/assert唯一waiter在`lualib/silly/net/tcp.lua:263-300`，data callback按旧reader的delimiter尝试读取在`:127-148`；TLS结构相同，公开read在`lualib/silly/net/tls.lua:435-448`，真正的`assert(not s.co)`直到`block_read`的`:169-191`，data callback在`:242-278`。
+- 触发时序：协程A调用`read(100)`并登记为`s.co`；peer只到达10字节，callback按100读取失败并把10字节留在buffer。A仍挂起时，协程B调用同一连接的`read(1)`；B在检查`s.co`前从buffer成功取走1字节并返回。若B请求超过当前缓存，则反而进入等待分支并命中assert，因此行为取决于网络分片与请求长度。
+- 影响：A的逻辑请求边界被B静默破坏；peer总共发送A原先需要的100字节时，buffer最终只剩99字节，A不会被唤醒且无timeout时永久挂起。面向协议的reader还会把属于另一操作的prefix/body交给错误协程，引发response错配或状态机反同步。TLS与TCP具有相同漏洞，且现有文档没有声明同连接并发read为非法；即使将其定义为非法，当前也没有一致拒绝。
+- 证据：两个`conn.read`都先调用`bread/tls.read`并在成功时直接return；唯一reader断言只存在于首次读取失败后的等待登记路径。旧reader的`co/delim`在第二次缓存成功读取时完全未检查或清理，后续data callback仍按旧delimiter和旧co继续运行。UDP虽然也在`qpop`后检查waiter，但有waiter时第一包会直接清槽并唤醒，不会形成“部分datagram留存”，因此本条限定byte-stream TCP/TLS。
+- 根因：把single-reader检查当成“能否登记waiter”的局部条件，而不是整个read operation的并发ownership条件；缓存fast path绕过了门禁。
+- 建议解法：在任何buffer/SSL读取之前检查并占用per-connection reader token，并让token在同步成功、异步成功、timeout、close和error的所有终局统一释放；更清晰的是用operation对象绑定co、delimiter、timer与generation。若只支持单reader，第二调用稳定返回明确`BUSY`错误而非assert；若要支持多reader，则实现FIFO队列并明确拆分语义。
+- 回归测试：修复阶段用可控分片覆盖A等待100/B读1、A delimiter/B fixed-size、TLS decrypted partial buffer、B在0/1/99/100字节时进入，以及timeout/close与第二reader交错；断言第二调用永不消费A的字节、A有限完成或得到明确终态、timer不误唤醒新operation。当前只记录静态时序。
+
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
 - 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
@@ -2763,7 +2775,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为218项：P0为0，P1为90，P2为118，P3为10。模块分布：CORE 7、NET 4、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为219项：P0为0，P1为91，P2为118，P3为10。模块分布：CORE 7、NET 5、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2789,6 +2801,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认`addr.parse`处理无端口bracket地址时构造`se+1`指针并比较，公开正常输入落入C未定义行为；归档为`ADDR-002`。
 - 2026-08-13：确认低层net在socket成功发布后才assert事件回调，缺字段配置会遗留不可达fd；文档允许无accept listener又可被远端重复触发；归档为`NET-004`。
 - 2026-08-13：确认TCP/TLS双语reference、guide与benchmark共10处使用底层明确拒绝的多字节`"\\r\\n"` delimiter；归档为`DOC-007`。
+- 2026-08-13：确认TCP/TLS single-reader门禁位于buffer fast path之后，并发reader可按分片时序偷走旧operation字节并使其永久等待；归档为`NET-005`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
