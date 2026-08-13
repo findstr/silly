@@ -4085,6 +4085,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语连接池指南声称max_idle_conns=0为无限，实际return条件与两组test都明确把0当作no cache；默认配置每次query重连，归档为`DOC-033`，未建立连接。
 - 2026-08-13：确认MySQL唯一inline LuaLS把row全部值标为string，并把native/test/reference实际公开的err.sqlstate拼成不存在的sql_stage；归档为`DOC-034`，未运行type checker。
 - 2026-08-13：确认MySQL native `binary_error`把整个不可信packet逐byte hex嵌入异常，默认task日志可泄漏前序敏感row且大包至少放大两倍；归档为`MYSQLC-009`，未构造packet。
+- 2026-08-13：完成MySQL封板审计：1264行Lua driver、582行native及340行直接header、`testmysql.lua`全部41组/1472行、双语reference/pool guide/database tutorial和error-handling相关章节均已映射；新增`MYSQL-020`、`MYSQLC-008/009`、`DOC-027`至`DOC-034`，既有20项Lua与9项native问题覆盖其余根因，阶段无未归档高置信候选。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
