@@ -4155,6 +4155,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认etcd `Event.type`的生成LuaLS标成integer，但默认protobuf codec、真实集成断言和双语示例均交付/使用`PUT`、`DELETE`字符串；归档为`DOC-036`，未解码event。
 - 2026-08-13：确认etcd中英文reference各16处`lua validate`示例调用顶层并不存在的`silly.sleep`，watch/lease/关闭等流程会在首次等待处异常；归档为`DOC-037`，未运行文档示例。
 - 2026-08-13：etcd字段矩阵反查确认protobuf默认把`2^63..2^64-1`的合法uint64/fixed64经signed参数解码成负Lua integer，直接影响cluster/member ID等；归档为`GRPC-039`，未构造高位varint。
+- 2026-08-13：完成etcd封板审计：624行wrapper、KV/Lease/Watch生成descriptor、`testetcd.lua`17组/919行、692行fake server、真实etcd 15组/764行及双语reference 1554/1564行均已映射；新增`ETCD-017`、`DOC-035/036/037`并反查`GRPC-039`，其余疑点归入既有17项etcd根因或静态排除，未运行服务、断链或并发barrier。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

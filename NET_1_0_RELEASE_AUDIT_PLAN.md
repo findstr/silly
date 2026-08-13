@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、Redis与MySQL阶段已收口；共308项（P1 109、P2 166、P3 33）。etcd复核新增`ETCD-017`、`DOC-035/036/037`并反查出通用`GRPC-039`高位uint64解码偏差；当前继续核对watch/lease generation、proto字段与测试盲区。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC及Redis/MySQL/etcd存储阶段已收口；共308项（P1 109、P2 166、P3 33）。etcd新增`ETCD-017`、`DOC-035/036/037`并反查出通用`GRPC-039`；当前进入cluster Lua/native/分支差异复核。
 
 ## 1. 目标和边界
 
@@ -78,13 +78,13 @@
 - `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：已审有归档；四类RPC的headers/envelope/status/deadline/cancel/metadata/cardinality、conn round-robin/close、server dispatch/shutdown、timer/异常收尾及所有公开方法已映射到`GRPC-001`至`GRPC-038`，顶层装配与status常量无独立新增。
 - `lualib/silly/store/redis.lua`：已审有归档；RESP2 sender/parser、FIFO reader ownership、connect/auth/select/reconnect/close、pipeline、transaction与push mode逐路径核对，问题由`REDIS-001`至`REDIS-010`覆盖；`MONITOR`和RESP3 push归入`REDIS-007/001`，阻塞命令、pipeline写序与断线后不重放已静态排除为独立候选。
 - `lualib/silly/store/mysql.lua`：已审有归档；1264行逐路径完成handshake/auth switch/caching-sha2/sha256、packet sequence/fragment、prepare/execute/result phases、pool wait/handoff/expiry/close、transaction与异常cleanup，问题由`MYSQL-001`至`MYSQL-020`覆盖；BLOB真实集成路径已有byte数据测试，未把VARCHAR parameter type候选升级为独立问题。
-- `lualib/silly/store/etcd.lua`：待审。
+- `lualib/silly/store/etcd.lua`：已审有归档；624行逐路径完成KV/lease/watch option转换、retry/deadline、stream generation、queue/registry ownership、cancel/close/reconnect与资源预算，问题由`ETCD-001`至`ETCD-017`覆盖；本轮新增caller request别名污染，关闭后unary会由gRPC稳定返回Closed且额外attempt/末轮sleep已归入`ETCD-012`，channel wakeup只排ready queue、不会在registry发布前同步抢占。
 
 ### 3.3 测试、类型和文档
 
 - transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`已逐项映射，positive ALPN、reload、读写/关闭等覆盖与certificate verification、close_notify、握手deadline、TLS版本、invalid config和failure cleanup缺口均已落到TLS条目。
 - HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`全部7组顶层场景及两组11项data vector已映射，相应缺口均已归档。`testgrpc.lua`全部9组已映射：只覆盖同库正常unary/三类stream、简单application error、已有连接unary timeout、10路并发、1MiB与单target DNS失败；缺少独立peer、malformed/status/header、TLS/ALPN、多target、metadata、shutdown、codec边界及异常后资源归零，均对应`GRPC-001`至`GRPC-038`。
-- storage/cluster：`testredis.lua`全部18组、`fake_redis_server.lua`及Redis双语reference各851行已映射，正常/1024并发/pipeline/error/partial read/disconnect/restart/db restore/close/waitq场景与缺少malformed、budget、null/nested error、transaction、push/TLS/deadline确定性覆盖均已落账。`testmysql.lua`全部41组/1472行已映射：native基本fixture、连接/认证、pool、prepared cache、transaction、large field、temporal/JSON/DECIMAL/BIT/BLOB/ENUM/SET、close等正常路径均对照，伪multi、timeout无效、sha256缺口及malformed/并发/故障路径均落入MYSQL/MYSQLC条目；双语reference各1657行、pool guide各1310行、database tutorial各1231行与error-handling中MySQL章节已核对，文档问题归入`DOC-027`至`DOC-034`，无独立MySQL types文件。`testetcd.lua`、其他fake servers与`testcluster.lua`待审。
+- storage/cluster：`testredis.lua`全部18组、`fake_redis_server.lua`及Redis双语reference各851行已映射，正常/1024并发/pipeline/error/partial read/disconnect/restart/db restore/close/waitq场景与缺少malformed、budget、null/nested error、transaction、push/TLS/deadline确定性覆盖均已落账。`testmysql.lua`全部41组/1472行已映射：native基本fixture、连接/认证、pool、prepared cache、transaction、large field、temporal/JSON/DECIMAL/BIT/BLOB/ENUM/SET、close等正常路径均对照，伪multi、timeout无效、sha256缺口及malformed/并发/故障路径均落入MYSQL/MYSQLC条目；双语reference各1657行、pool guide各1310行、database tutorial各1231行与error-handling中MySQL章节已核对，文档问题归入`DOC-027`至`DOC-034`，无独立MySQL types文件。etcd已映射`testetcd.lua`全部17组/919行、692行fake server、`etcdcheck.lua`真实server 15组/764行、KV/Lease/Watch生成descriptor与双语reference 1554/1564行；正常CRUD/range/revision/lease/watch/cancel/close/并发/reconnect用例及fake对filter/compaction/history/fragment/generation的盲区均落入`ETCD-001`至`ETCD-017`、`DOC-001/006/035-037`和`GRPC-039`。`testcluster.lua`及cluster文档待审。
 - `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；WebSocket无独立type文件，inline LuaLS及双语reference/tutorial已收口。gRPC无独立types文件，7个模块inline LuaLS、`lualib/types/pb/pb.lua`及中英文reference各1758行（64代码围栏、46标题）已核对，新增`DOC-026`并保留`DOC-004`；storage/cluster类型、guide/example继续对应专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
