@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档330项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档331项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -340,6 +340,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：实现为了让elapsed计算不受墙钟跳变影响，把“启动墙钟 + 单调elapsed”暴露成了`now`，但同时又提供了专门的`monotonic`且保留了wall-clock契约，没有区分realtime与monotonicized epoch。
 - 建议解法：让`time.now()`每次读取平台realtime clock并保持Unix epoch语义，耗时、timeout、lease interval和pool idle统一使用`time.monotonic()`；若确实需要平滑epoch，新增名称与契约明确的独立API。调用方不得用realtime差值做deadline，文档/LuaLS应明确各时钟是否可跳变及适用场景。
 - 回归测试：修复阶段用可注入clock覆盖realtime前跳/后跳而monotonic连续，断言`now`跟随新Unix时间、`monotonic`不回退，HTTP pool和etcd lease等相对调度不受墙钟调整影响；三平台核对epoch、单位和长期运行溢出。当前不修改系统时间或运行测试。
+
+### METRIC-001 — P2 — Prometheus label value 未转义，网络字段可破坏或注入抓取文本
+
+- 状态：已确认；label序列化、HTTP request target保留与Prometheus文本边界的确定性静态核对。本轮不发送特殊target或运行metrics抓取。
+- 协议契约：Prometheus text exposition的quoted label value必须把反斜杠、双引号和换行分别编码为`\\`、`\"`、`\n`；任意公开metrics API接受string label时都必须生成可解析的单一sample，不能让value逃逸引号或创建新行。
+- 位置：`lualib/silly/metrics/labels.lua:7-38`的`compose`直接在`label="`与`"`之间append`tostring(values[i])`，没有任何escape；counter/gauge/histogram均复用该key，最终由`lualib/silly/metrics/prometheus.lua:32-177`原样拼入输出。H1 request target只用宽松pattern捕获并由`parsetarget`原样返回，见`lualib/silly/net/http/h1.lua:850-870`与`http/helper.lua:33-44`；H2只检查`:path`非空，不检查value控制字节，见`http/h2.lua:390-444,1621`。双语HTTP监控指南又直接把`stream.path`作label，见`DOC-051`。
+- 触发：应用把HTTP path/header、RPC method metadata、数据库名或其他含`"`、`\\`、LF的字符串传给任一vector的`:labels()`，随后调用`prometheus.gather()`；官方HTTP指南提供了直接可达路径。H1 target中的引号/反斜杠不会被当前request-line/parser拒绝，H2 HPACK value还可携带未校验控制字节。
+- 影响：引号或反斜杠使对应sample语法错误，Prometheus scraper可拒绝整次响应并丢失该进程全部指标；换行与精心构造的后缀可以结束当前sample并注入伪造metric/label/value行，污染告警、SLO和取证数据。序列化key同时作为内部metrics table key，错误文本会被永久缓存。高基数导致的内存耗尽是`DOC-051`的示例问题，本条关注任何单个合法API value的wire编码错误。
+- 证据：`compose`依次写label name、`="`、value的原始`tostring`、`",`，全文件没有`gsub`或byte escape。gather把已序列化label夹在`{}`中直接concat；测试只断言字母数字/path等普通值，没有quote、backslash或newline vectors。HTTP helper也不percent-decode或验证target字符，故这些值能够从网络到达示例label调用而无需修改metrics内部状态。
+- 根因：内部cache key与Prometheus wire representation被合并成同一字符串，并假定label value已安全；缺少独立canonical tuple key和spec-compliant encoder。
+- 建议解法：cache按原始typed tuple建立不可碰撞键，输出阶段对每个value统一转义反斜杠、双引号和LF；同时验证metric/label names与HELP text的格式边界。HTTP层应按各协议拒绝非法field/control bytes，但metrics仍必须对任意公开string输入安全编码，不能依赖所有调用方预清洗。
+- 回归测试：修复阶段覆盖空值、quote、single/multiple backslash、LF、CR、UTF-8及组合，断言cache identity稳定且gather只产生预期一个sample；用独立Prometheus parser验证整份文本。H1/H2各以注入式stream字段走官方监控handler，确保不能破坏或新增series。当前不构造网络输入。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4072,9 +4084,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为330项：P0为0，P1为111，P2为176，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 51。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为331项：P0为0，P1为111，P2为177，P3为43。模块分布：CORE 9、METRIC 1、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 51。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；176项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；177项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4433,4 +4445,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：逐段复核双语HTTP最佳实践，确认gzip、流式sleep、协程timeout和周期健康检查分别调用不存在模块、顶层方法或未导入local，归档为`DOC-049`。
 - 2026-08-13：继续反查HTTP最佳实践timeout时序，确认timer只结束外层channel等待而无法取消fork中的正文/下游/业务操作；handler返回后子task仍可无限残留、提交副作用或二次响应，归档为`DOC-050`。
 - 2026-08-13：HTTP最佳实践监控段反查metrics生命周期，确认两处把任意远端path写入永久labelcache/series，唯一404 URL即可线性增加heap与gather成本，归档为`DOC-051`。
+- 2026-08-13：沿HTTP监控示例反查Prometheus encoder，确认label value未转义quote/backslash/LF，网络字段可使整次scrape非法或注入额外exposition行，归档为`METRIC-001`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
