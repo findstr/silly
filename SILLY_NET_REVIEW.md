@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档350项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档351项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2885,6 +2885,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：reference改为“只省去logger内部格式化与I/O，实参始终求值”，所有昂贵表达式必须放在level guard中；可提供`logger.debuglazy(function() return ... end)`或明确的`logger.enabled(level)`，但closure异常/trace语义需定义。删除零开销绝对表述并统一双语示例。
 - 回归检查：修复阶段用计数/抛错/大序列化函数作为被过滤实参，文档契约必须明确它仍执行；guard/lazy API路径则断言不执行。静态lint提示logger调用中的function call/json.encode/string.format。当前不运行。
 
+### DOC-064 — P3 — logging Grafana 查询引用不存在的 `process_cpu_seconds_total`
+
+- 状态：已确认；双语PromQL示例、默认process collector和全仓metric name集合的确定性静态核对。本轮不运行Prometheus/Grafana查询。
+- 位置：`docs/src/{en/,}guides/logging-monitoring.md:457-499`把CPU使用率查询写成`rate(process_cpu_seconds_total[1m]) * 100`。默认collector实际分别创建`process_cpu_seconds_user`与`process_cpu_seconds_system`，见`lualib/silly/metrics/collector/process.lua:8-19,27-47`；双语Prometheus reference和同一logging页内置指标列表也只列这两个名称，见`docs/src/{en/,}reference/metrics/prometheus.md:77-83`和logging guide`:264-281`。
+- 触发：按指南在Grafana/Prometheus执行CPU查询。默认registry没有其他模块注册同名total family。
+- 影响：查询返回空vector，CPU panel显示No data且基于它的告警永不触发；高CPU、busy loop或远程CPU放大不会从指南提供的dashboard被发现。其余process指标仍正常，容易让维护者误以为只是进程CPU为0或采集延迟。
+- 证据：全仓唯一`process_cpu_seconds_total`文本命中就是中英文该查询；collector/gather没有派生或alias逻辑。真实两个counter的HELP和文档均明确为user/system seconds，必须在PromQL中组合而不是引用未导出名称。
+- 根因：示例套用了其他Prometheus client常见的total metric命名，未从项目collector manifest生成/验证查询。
+- 建议解法：使用`rate(process_cpu_seconds_user[1m]) + rate(process_cpu_seconds_system[1m])`（多实例面板按需要再`sum by(instance)`），并明确乘100所得是单核百分比语义、多核可能超过100%；或产品新增规范命名且保持向后兼容的total counter。所有dashboard/alert PromQL通过实际metric manifest lint。
+- 回归检查：修复阶段从一次gather提取family names并验证文档PromQL selector均存在；用user/system递增fixture确认查询有值、组合正确且实例label不被意外丢失。当前不执行查询。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4299,7 +4310,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为350项：P0为0，P1为112，P2为191，P3为47。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 63。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为351项：P0为0，P1为112，P2为191，P3为48。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 64。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
