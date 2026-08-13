@@ -2379,6 +2379,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把字段改为`sqlstate string?`；row index至少声明`integer|number|string|nil`，更理想是为query结果提供generic/用户可标注row shape，并为超范围uint、NULL和duplicate labels使用修复后稳定类型。将native exported key、LuaLS与双语reference纳入一致性检查。
 - 回归检查：修复阶段用LuaLS fixture访问`err.sqlstate`及integer/double/string/NULL row，断言无unknown-field且不把numeric值固定推断为string；同时确保`sql_stage`被判为无效。当前不执行type checker。
 
+### DOC-035 — P3 — etcd 删除结果把 int64 数量标成 boolean，Lua 的零值真值语义会误报删除成功
+
+- 状态：已确认；etcd protobuf schema、wrapper内联LuaLS、中英文reference及fake/real测试断言静态对照。本轮不发送删除请求或运行type checker。
+- 位置：`DeleteRangeResponse.deleted`的wire定义在`lualib/silly/store/etcd/v3/proto.lua:2114-2122`；错误的wrapper返回注解在`lualib/silly/store/etcd.lua:432-437`；中文/英文reference分别在`docs/src/reference/store/etcd.md:239-250`与`docs/src/en/reference/store/etcd.md:239-250`；numeric runtime预期见`test/testetcd.lua:75-78,112-116`及`test/etcdcheck.lua:60-63,113-117`。
+- 触发：调用`client:delete()`删除不存在的单key/空range，并按文档boolean契约写`if res.deleted then ... end`；或者LuaLS据错误类型提示把该字段传给只接受boolean的业务API。
+- 影响：protobuf实际返回整数删除数量，且Lua中`0`同样为truthy，所以“零个key被删除”仍进入成功分支。幂等清理、锁/注册撤销、CAS式上层检查和审计日志可能报告并不存在的删除；前缀删除时文档还隐藏了具体数量，调用方无法按契约验证完整性。
+- 证据：生成schema明确注释“number of keys deleted”并声明`int64 deleted=2`，通用protobuf decoder因此交付Lua integer。fake测试直接断言空删除为0，真实etcd集成测试直接断言单key/前缀删除为1/3；两套测试与文档boolean类型矛盾。同一reference示例又执行`print("Deleted",res2.deleted,"keys")`，说明正文内部也同时把字段当数量使用。
+- 根因：文档/手写LuaLS把“是否发生删除”的自然语言概念误抄为boolean，未从生成descriptor或integration assertions生成公开response类型；Lua真值规则使这种跨语言类型误译不会自然fail closed。
+- 建议解法：两种语言和inline LuaLS统一改为`integer`并明确为受int64表示策略影响的非负删除数量；示例用`res.deleted > 0`或与期望数量显式比较。由protobuf descriptor生成/校验公开response类型，避免手写schema漂移。
+- 回归检查：修复阶段对不存在单key、存在单key、空/多key prefix分别断言0/1/N，并让LuaLS检查`deleted > 0`通过、boolean消费报类型错误；doc-test验证中英文示例不再依赖Lua零值真值。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3781,7 +3792,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为304项：P0为0，P1为109，P2为165，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 34。
+当前滚动统计为305项：P0为0，P1为109，P2为165，P3为31。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 35。
 
 建议按依赖关系分五批修复：
 
@@ -4106,6 +4117,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
 - 2026-08-13：确认etcd watch原地改写并长期保存caller request table，同table复用或调用后修改会覆盖watch ID及重连范围，导致事件错投、漏投或永久等待；归档为`ETCD-017`，未建立watch或断链。
+- 2026-08-13：确认etcd `DeleteRangeResponse.deleted`实际为int64数量，但wrapper LuaLS及中英文reference均标成boolean；Lua中0为truthy会让照文档判断的调用方误报删除成功，归档为`DOC-035`，未发送删除请求。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
