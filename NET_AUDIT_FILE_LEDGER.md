@@ -369,7 +369,7 @@
 | `docs/src/en/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/en/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
 | `docs/src/en/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
-| `docs/src/en/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
+| `docs/src/en/tutorials/getting-started.md` | 审阅中 | DOC-079、first network app | 继续核build/version/CLI与平台说明 |
 | `docs/src/en/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/en/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
 
@@ -433,7 +433,7 @@
 | `docs/src/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
 | `docs/src/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
-| `docs/src/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
+| `docs/src/tutorials/getting-started.md` | 审阅中 | DOC-079、first network app | 继续核build/version/CLI与平台说明 |
 | `docs/src/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
 

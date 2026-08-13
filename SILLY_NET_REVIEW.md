@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档373项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档374项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3134,6 +3134,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：教程优先直接使用`conn:read("\n",30000)`并按`errno.TIMEDOUT`处理；若实现跨多次read的idle timer，维护generation/absolute last-activity deadline，callback执行时再次核对generation和monotonic deadline，只允许当前generation关闭。close/cancel/重排必须幂等并在统一finally收尾。
 - 回归检查：修复阶段以可控event order覆盖data-before-expire但reader-late、expire-before-data、cancel-before-expire和连续reset；前者必须保活并echo，只有真实超过deadline的current generation关闭，timer/reader最终清零。当前不运行时序barrier。
 
+### DOC-079 — P2 — Getting Started 首个 TCP coroutine 忽略 connect/read 错误并把 nil 继续解引用/写出
+
+- 状态：已确认；双语入门围栏与TCP公开tuple契约、write参数边界的确定性静态核对。本轮不发起连接。
+- 位置：`docs/src/{en/,}tutorials/getting-started.md:216-231`的“清晰”Silly coroutine示例用`local conn=tcp.connect(...)`只取第一返回，立即调用`conn:read`；两次read也只取data，随后无条件`conn:write(data)`。实际`tcp.connect`和`conn:read`分别返回`conn?,errno?`与`string?,errno?`，见`lualib/silly/net/tcp.lua:194-210,258-301`；write最终对nil data进入C `luaL_error`的unsupported type路径。
+- 触发：目标拒绝/超时/地址无效导致connect返回nil，或连接成功后peer在任一read前关闭、reset或超时导致data为nil。
+- 影响：最先展示的网络协程在普通网络故障时抛`attempt to index a nil value`或native binding参数异常，不会记录真实errno，也不保证关闭已建立connection；新用户会把“同步风格异步”理解成无需处理tuple，复制到服务后把预期I/O失败升级为task异常与资源收尾遗漏。
+- 证据：Lua多返回赋给单变量会丢弃err；代码没有任何nil分支、protected cleanup或write返回检查。`tcp.connect`只有成功才返回object，read只有成功才返回string，故每个错误路径都是确定性非法下一步，不依赖调度。
+- 根因：教程为了与callback hell做视觉对比删掉了所有错误分支，却仍把它称为可读的Silly方式；围栏没有以LuaLS nullable return做控制流检查。
+- 建议解法：示例接收并检查每个`value,err`，连接成功后用统一finally/xpcall或`<close>`所有权保证close；每次write也检查boolean/error并在首错停止。若保持概念伪代码，必须明确标注省略错误处理且紧邻给出生产完整版本，不能放在“Your First”路径中冒充可运行代码。
+- 回归检查：修复阶段对围栏做LuaLS nilability检查，并覆盖connect refusal、first/second read EOF、write failure和success；所有失败打印原errno、零nil dereference且已建立connection恰好close一次。当前不连接peer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4560,7 +4571,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为373项：P0为0，P1为114，P2为203，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 78。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为374项：P0为0，P1为114，P2为204，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 79。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4954,6 +4965,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：沿echo write语义反查socket发送入口，确认TCP outbound queue没有soft/hard limit；live sid的每次write均无条件复制、增加wlbytes并入队，教程承诺的queue-full错误不存在，归档为`SOCK-020`。
 - 2026-08-13：echo idle timer调度反查确认data callback只把reader放入ready queue；其执行cancel前旧EXPIRE可同步运行并关闭已有activity的连接，归档为`DOC-078`，并发barrier留待修复阶段。
 - 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，映射到`SOCK-020`及`DOC-075`至`078`；randomkey只产小写字母，不构成delimiter候选。
+- 2026-08-13：getting-started首个TCP coroutine反查确认connect/read均丢弃nullable error并把nil继续解引用或交给write，普通拒绝/EOF升级为task异常，归档为`DOC-079`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
