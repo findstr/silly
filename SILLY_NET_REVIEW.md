@@ -1668,13 +1668,13 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；multi-result官方状态机与query reader静态核对。本阶段不创建stored procedure。
 - 规范：[MySQL stored-program protocol](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_command_phase_sp.html)规定每个result set独立包含header/metadata/rows/terminator，terminator的`SERVER_MORE_RESULTS_EXISTS`表示下一完整result紧随；`CALL`还会有closing OK。client必须读取全部结果或丢弃连接后才能复用。
-- 位置：capability flags在`lualib/silly/store/mysql.lua:152-167,414-436`；execute response与result loop在`:898-945`；OK/EOF parsers在`luaclib-src/mysql/lmysql.c:64-135`。
+- 位置：capability flags在`lualib/silly/store/mysql.lua:152-167,414-436`；execute response与result loop在`:898-945`；OK/EOF parsers在`luaclib-src/mysql/lmysql.c:64-135`；名为multi-statement support的现有测试在`test/testmysql.lua:1026-1045`。
 - 触发：prepared `CALL`、stored procedure/OUT parameter或其他server response产生多个result/closing OK；第一个response本身为带MORE flag的OK也可触发。
 - 影响：首个OK路径立即return且不检查`server_status`，剩余packet留在socket；row EOF带MORE时则继续用旧`cols`把下一result的column-count/OK当binary row解析。异常路径未必标broken，to-be-closed lease会把反同步connection归池，下一无关query读取上一调用的packet，造成跨请求结果错配、数据泄露和业务误提交。
-- 证据：`:910-912`只`parse_ok_packet`后return；EOF分支仅在MORE flag为0时break，为1时不重新进入“read result header/metadata”状态。返回类型也只能表达一个`ok_packet|row[]`，没有results collection/iterator。driver还宣告multi capability却没有完整consumer。
+- 证据：`:910-912`只`parse_ok_packet`后return；EOF分支仅在MORE flag为0时break，为1时不重新进入“read result header/metadata”状态。返回类型也只能表达一个`ok_packet|row[]`，没有results collection/iterator。driver无条件宣告`CLIENT_MULTI_STATEMENTS|CLIENT_MULTI_RESULTS`，前者对其prepared user-query路径不可用，后者却允许server发送实现无法消费的stored-program multi results。Test 27的注释明确承认prepared statements不支持multi，然后只执行`SELECT 1 as first_result`，测试名和成功结果因此不能证明任一multi capability。
 - 根因：把MORE理解为“当前rows继续”而不是“当前logical result结束、另一个result开始”；connection归池前没有统一的response-drained invariant。
 - 建议解法：实现外层results loop，每轮解析OK/ERR或完整binary result，检查其终态status后决定继续；API返回result list/iterator，并提供显式drain。若暂不支持，不能宣告相关capability，且遇MORE必须完整discard或关闭连接。任何parser exception/未消费结果标broken。
-- 回归测试：修复阶段覆盖`CALL`返回0/1/2 result、OUT params、result+closing OK、首个OK+more及中途ERR；随后立即在同一pool发marker query，断言结果不串线。当前不创建procedure。
+- 回归测试：修复阶段先把当前伪multi测试重命名/删除；覆盖`CALL`返回0/1/2 result、OUT params、result+closing OK、首个OK+more、多statement（若公开支持）及中途ERR，逐项断言宣告capability与API能力一致；随后立即在同一pool发marker query，结果不串线。当前不创建procedure。
 
 ### MYSQL-011 — P1 — codec/unpack 异常绕过 broken cleanup，login 泄漏容量、query 归池坏连接
 
@@ -4035,6 +4035,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`MYSQL-012`：AuthSwitch的plugin data按规范是EOF opaque bytes，代码却无条件删除末byte；initial response多数capability也未取server交集，未知plugin名与native token可不一致；不重复计数。
 - 2026-08-13：补强`MYSQLC-002`：OK packet的affected_rows和last_insert_id同样是unsigned lenenc，超过Lua signed范围也会wrap为负，影响业务行数/主键判断；不重复计数。
 - 2026-08-13：补强`MYSQL-015`：prepare非OK首包一律按ERR解码，metadata reader完全忽略已声明param/field count而读到EOF，少/多definition均可跨phase反同步；不重复计数。
+- 2026-08-13：补强`MYSQL-010`：握手无条件宣告MULTI_STATEMENTS/MULTI_RESULTS，名为multi support的Test 27却明确只测单条SELECT，无法覆盖stored-program多结果与response drain；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
