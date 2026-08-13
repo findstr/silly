@@ -153,6 +153,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | TLS-006 | P2 | TLS server显式允许TLS1.1、client不设minimum，版本安全基线依赖环境并偏离RFC8996。 |
 | TLS-007 | P2 | TLS listener先于ctx发布，证书/key/cipher配置失败会泄漏listener并留下失效accept回调。 |
 | TLS-008 | P2 | TLS reload先污染保存配置再构造ctx，失败会抛异常并留下旧ctx/坏conf混合状态。 |
+| TLS-009 | P2 | TLS read(0)被当作未满足并登记唯一waiter，后续data也永远无法完成该合法空读取。 |
 | DNS-001 | P2 | CNAME/SRV/SOA解析可跨越声明RDLENGTH借用后续字节，A/AAAA也接受非精确长度。 |
 | DNS-002 | P1 | DNS response三section被抹平且CLASS丢失，无关低trust记录可覆盖任意名字的既有cache。 |
 | DNS-003 | P1 | DNS新名字TXID恒从1递增且每server长期复用单一UDP source port，伪响应entropy显著不足。 |
@@ -352,7 +353,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为220条：P1 92、P2 118、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
+当前统计为221条：P1 92、P2 119、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

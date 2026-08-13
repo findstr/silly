@@ -473,6 +473,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：从当前conf深/受控复制出candidate，合并并完整校验；`new_server_ctx`返回`ctx?,err?`而非assert。只有candidate ctx成功后才原子替换`l.ctx/l.conf`，失败返回`false,err`且旧ctx/旧conf保持完全不变。敏感错误不泄露key内容，并与TLS-002一起让旧ctx由在途连接保活到安全释放。
 - 回归测试：修复阶段覆盖坏PEM、key mismatch、invalid cipher/ALPN、部分更新失败后修复重试及无参reload；断言无异常、旧连接/新连接策略明确、失败后conf深度相等、下一次合法reload成功。当前只做控制流核对。
 
+### TLS-009 — P2 — TLS `read(0)` 被登记为永远无法满足的异步读取
+
+- 状态：已确认；Lua/native read返回约定与data callback的确定性静态推导。本轮不建立TLS连接或等待复现。
+- 公开契约：`conn:read(n)`承诺精确读取n字节；零长度是合法、已经满足的请求，应与TCP一致立即返回空字符串。所有非法或不可表示长度也必须在登记waiter前同步拒绝。
+- 位置：TLS native定长读取在`luaclib-src/ltls.c:514-542`，Lua fast path与waiter登记在`lualib/silly/net/tls.lua:169-191,435-448`，data callback重试在`:242-278`；TCP对照在`luaclib-src/adt/lbuffer.c:318-333`。双语TLS reference的契约位于`docs/src/{en/,}reference/net/tls.md:439-452`。
+- 触发：对任意开放TLS connection调用`conn:read(0)`且不提供timeout；不要求peer发送数据。负数或经`lua_Integer→int`窄化为非正数的大整数会进入相同不可满足路径。
+- 影响：native `tls.read`返回nil，Lua进入`block_read`并把`s.delim=0`、当前协程写入唯一waiter槽。Lua中数字0为truthy，后续每次TLS data callback都会再次调用`tls.read(...,0)`，仍返回nil，因此请求永不成功并占住该连接的reader；只有外部close或显式timeout能打断。TCP同样请求会立即返回`""`，使通用TCP/TLS上层在切换transport后出现隐蔽分叉。
+- 证据：TLS `read_bytes`把`size <= 0`与“缓存不足”统一为`lua_pushnil`；`conn.read`看到nil且无错误就无条件登记等待。callback的`elseif delim then`对0成立，但native永远重复nil。相反buffer reader对`bytes <= 0`明确push空字符串。两条C入口都把64-bit Lua integer无范围检查地传给C `int`，所以超范围值还具有实现相关窄化结果。
+- 根因：TLS native把zero-length completed operation编码成“尚未完成”，Lua层又没有验证read count或区分invalid/empty/would-block三种状态。
+- 建议解法：在共享TCP/TLS Lua入口要求n为可表示的非负整数；n==0直接返回`"",nil`，负数或超过明确最大单次读取值返回稳定参数/limit错误。native binding也使用`luaL_checkinteger`后做checked range conversion，并让返回状态显式区分empty success与insufficient data，避免依赖nil重载。
+- 回归测试：修复阶段覆盖TCP/TLS的0、-1、1、`INT_MAX`、`INT_MAX+1`与非整数number，分别在空缓存、已有缓存、peer close和timeout配置下核对；0必须同步成功且不写`s.co/delim`，非法值同步失败且不消费buffer。当前只记录静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2787,7 +2799,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为220项：P0为0，P1为92，P2为118，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为221项：P0为0，P1为92，P2为119，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2815,6 +2827,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TCP/TLS双语reference、guide与benchmark共10处使用底层明确拒绝的多字节`"\\r\\n"` delimiter；归档为`DOC-007`。
 - 2026-08-13：确认TCP/TLS single-reader门禁位于buffer fast path之后，并发reader可按分片时序偷走旧operation字节并使其永久等待；归档为`NET-005`。
 - 2026-08-13：确认TCP/TLS buffer limit会在当前定长/分隔符read满足前暂停transport，唯一reader无法消费或恢复，形成永久自锁；归档为`NET-006`。
+- 2026-08-13：确认TLS native把`read(0)`编码为未满足，Lua登记值为0的唯一waiter后所有data callback都无法完成；归档为`TLS-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
