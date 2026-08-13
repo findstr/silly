@@ -2183,6 +2183,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：教程改为server周期性发送带nonce/timestamp的Ping，记录last-pong并在absolute deadline后关闭/移除连接；或设计application-level heartbeat并让browser JS定期发送，同时说明它是text消息而非protocol Ping。心跳task、reader和close必须有单一owner，避免并发read；停止/异常时取消timer。删除浏览器自动Ping保证。
 - 回归测试：修复阶段用可控clock覆盖及时Pong、错误payload、无Pong、只有业务data、browser tab休眠及close竞态；断言健康连接保留、silent连接在deadline后恰好清理、timer/task无泄漏。文档契约检查禁止再把user-agent MAY写成保证。本轮不运行时序场景。
 
+### DOC-024 — P2 — WebSocket 完整server不验证 JSON schema，合法非对象输入可绕过连接清理并累积幽灵client
+
+- 状态：已确认；双语完整server、JSON decoder返回域与HTTP handler异常收尾的确定性静态对照。本轮不发送JSON或建立连接。
+- 位置：直接decode与字段访问在`docs/src/{en/,}tutorials/websocket-chat.md:759-863`，client登记/正常清理在`:727-736,865-878`，错误处理承诺在`:1635-1640`；JSON公开返回域/实现见`lualib/types/silly/encoding/json.lua:15-18`与`luaclib-src/encoding/ljson.c:409-455,540-591`；HTTP/1 handler保护边界在`lualib/silly/net/http/h1.lua:872-890`。
+- 触发：已upgrade的远端发送合法JSON primitive，例如数字`1`或布尔值，随后代码求值`msg.type`；也可发送`{"type":{}}`走到错误字符串拼接，或`{"type":"set_name","name":1}`触发长度运算错误。输入无需畸形JSON。
+- 影响：Lua抛类型异常并跳过教程handler尾部的`clients[client_id]=nil`、`sock:close()`、leave广播及计数收尾。HTTP/1外层pcall会关闭底层连接，却不知道教程业务registry，故`clients`永久保留引用已关闭socket的幽灵entry；攻击者重复新连接/单消息可持续增长map和错误在线列表，并放大`DOC-021`的失效admission。当前连接的业务task异常退出，教程所谓无效消息错误响应也不可达。
+- 证据：`json.decode`成功可以返回number/string/boolean/table，LuaLS却错误收窄成table；教程只判断`if not msg or not msg.type`，在访问`.type`前没有`type(msg)=="table"`。各字段也没有schema/type验证。页面声称“JSON解析错误使用pcall捕获”，实际唯一pcall是`safe_json_encode`，两处decode都直接调用。H1外层捕获异常后只清理stream/transport并break，不会执行已经展开退出的业务handler清理。
+- 根因：把JSON语法成功等同于应用message schema成功，并把业务资源cleanup放在可能抛异常的loop之后；文档又误报了不存在的decode保护。
+- 建议解法：decode后同时检查`err`、顶层type及每种message的严格field schema/长度，再进入业务分支；所有拼接/格式化前约束string/number。用幂等`remove_client`和保护性finally/`<close>` owner保证任何decode、handler或send异常都清registry、socket和计数。文档只宣称实际存在的错误处理。
+- 回归测试：修复阶段覆盖全部JSON primitive、array、null、缺type、type为table/number、每个字段错型及decoder error；断言返回受控error或关闭策略、handler不抛、registry/count恢复基线且leave只通知一次。再注入branch内部异常验证finally。本轮不执行输入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3417,7 +3428,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为274项：P0为0，P1为100，P2为151，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 23。
+当前滚动统计为275项：P0为0，P1为100，P2为152，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 24。
 
 建议按依赖关系分五批修复：
 
@@ -3503,6 +3514,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认WebSocket教程对单调ID稀疏`clients`表使用`#clients`做在线统计和连接资源上限，断开产生hole后可持续低估并放行超额连接；归档为`DOC-021`。
 - 2026-08-13：确认WebSocket完整聊天室把远端昵称原样拼入浏览器`innerHTML`，20字节server限制仍允许可执行SVG payload并形成跨用户XSS；归档为`DOC-022`。
 - 2026-08-13：依据WHATWG确认browser Ping是不可依赖的user-agent可选行为；教程只被动回Pong却宣称自动心跳，没有主动探测或失联deadline，归档为`DOC-023`。
+- 2026-08-13：确认WebSocket完整server把JSON语法成功等同schema成功，合法primitive/错型字段可抛异常并跳过clients registry清理，重复连接累积幽灵对象；归档为`DOC-024`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
