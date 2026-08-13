@@ -2270,13 +2270,13 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；指南代码、driver错误边界与MySQL官方重连警告静态核对。本轮不执行写SQL或注入断线。
 - 权威依据：[MySQL Connector/J troubleshooting](https://dev.mysql.com/doc/connector-j/en/connector-j-usagenotes-troubleshooting.html)明确指出通信失败后没有安全的透明重连/重发方法，transaction和database state可能损坏；[MySQL C API automatic reconnect](https://dev.mysql.com/doc/c-api/8.0/en/c-api-auto-reconnect.html)也说明重连会丢失transaction、temporary table、prepared statement、session variable、lock等连接状态且该功能已弃用。
-- 位置：双语连接池指南“重连机制/实现自动重连”的`DBPool:query`在`docs/src/guides/mysql-connection-pool.md:579-686`与`docs/src/en/guides/mysql-connection-pool.md:579-686`；底层query在请求写出后任一response read失败只返回transport错误，见`lualib/silly/store/mysql.lua:876-945`。
+- 位置：双语连接池指南“重连机制/实现自动重连”的`DBPool:query`在`docs/src/guides/mysql-connection-pool.md:579-686`与`docs/src/en/guides/mysql-connection-pool.md:579-686`；双语通用错误处理指南又提供对2006/2013错误循环调用同一任意SQL的`safe_query`，见`docs/src/{en/,}guides/error-handling.md:500-550`。底层query在请求写出后任一response read失败只返回transport错误，见`lualib/silly/store/mysql.lua:876-945`。
 - 触发：应用照抄wrapper执行INSERT/UPDATE/DELETE、DDL或调用procedure；server已执行/提交该statement，但OK/result在返回途中丢失，driver返回包含`Lost connection`或`MySQL server has gone away`的错误文本。
 - 影响：示例关闭整个pool、重连并最多三次无条件重发相同SQL。非幂等写可重复扣款、发号、追加记录、触发器/outbox事件或DDL副作用；如果第一次仍在旧server session执行，新连接重放还可并发产生两份结果。与此同时session/temporary table/lock状态已丢失，重放即使只执行一次也未必保持原语义。指南把这种危险行为包装成通用自动恢复，属于1.0数据一致性release blocker。
-- 证据：retry入口只按英文message substring分类连接错误，不区分SQL类别、packet是否写出、server是否已执行、autocommit/transaction状态或幂等键；`self:reconnect()`成功后loop直接再次`self.pool:query(sql,...)`。没有outcome-unknown结果、stable operation ID、transaction compare或read-only allowlist。driver本身没有自动重放，风险完全由官方指南新增。
+- 证据：连接池guide的retry入口只按英文message substring分类连接错误，不区分SQL类别、packet是否写出、server是否已执行、autocommit/transaction状态或幂等键；`self:reconnect()`成功后loop直接再次`self.pool:query(sql,...)`。错误处理guide虽注释“这里可以重新创建连接池”，实际无论是否重建都会继续下一轮`db:query(sql,...)`，且`safe_query`同样接受所有SQL。两处都没有outcome-unknown结果、stable operation ID、transaction compare或read-only allowlist。driver本身没有自动重放，风险完全由官方指南新增。
 - 根因：把“下一次新操作使用新连接”与“重放结果未知的上一操作”混成同一个retry loop，并假设transport failure等价于server未执行。
 - 建议解法：删除通用SQL自动重放示例；连接失败后淘汰旧pool/connection只供**后续**操作使用，本次调用返回结构化`outcome_unknown`。只允许在可证明write前失败或调用方明确标记幂等read时自动重试；写操作必须由业务使用唯一请求ID/unique constraint、幂等表或可验证transaction设计，并显式处理session state丢失。
-- 回归检查：文档测试建立read-only重试与unknown-write两条API示例；修复阶段在write前、server execute前、commit后OK前分别断链，只有第一类可透明重试，后两类向调用方暴露不确定结果且数据库最多出现一次业务效果。当前不执行SQL或fault injection。
+- 回归检查：文档测试建立read-only重试与unknown-write两条API示例，并扫描全部guide禁止通用SQL retry wrapper；修复阶段在write前、server execute前、commit后OK前分别断链，只有第一类可透明重试，后两类向调用方暴露不确定结果且数据库最多出现一次业务效果。当前不执行SQL或fault injection。
 
 ### DOC-028 — P3 — MySQL 双语示例调用不存在的 `silly.wait/sleep/time`，预热和监控首次运行即失败
 
@@ -4018,6 +4018,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语reference/连接池guide的健康检查、预热和监控调用不存在的`silly.wait/sleep/time`并遗漏task import，首次运行即失败；归档为`DOC-028`，未执行示例。
 - 2026-08-13：确认MySQL双语reference声明row key为小写，但native codec原样使用server column alias，混合case字段按文档访问会静默得到nil；归档为`DOC-029`，未执行查询。
 - 2026-08-13：确认MySQL双语事务教程用普通非锁定SELECT校验余额，并把零行UPDATE当成功；并发转账可透支，收款账户缺失可只扣不加，归档为`DOC-030`，未执行SQL或并发barrier。
+- 2026-08-13：扩展`DOC-027`证据：双语通用错误处理指南还有第二个接受任意SQL的2006/2013自动重试wrapper，即使注释未实现重建，也会在结果未知后重新调用原statement；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
