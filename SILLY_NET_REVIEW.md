@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档365项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档366项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3056,6 +3056,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先定义export策略：函数经join后替换，immutable scalar metadata显式复制，mutable table按schema迁移或保留，删除字段也需显式策略；所有变更在验证通过后原子发布，失败时恢复完整快照。若1.0只支持function map，则删除VERSION/config示例并明确限制。
 - 回归检查：修复阶段以含function、VERSION、BUILD_TIME、配置table、新增/删除字段的双版本module覆盖成功和失败回滚；断言调用方旧引用、`package.loaded`、版本日志和业务函数始终属于同一generation。当前不执行hot reload。
 
+### DOC-073 — P2 — 热更新加载失败没有 finally 恢复 `package.loaded`，后续调用方可获得另一份 module
+
+- 状态：已确认；双语全部reload脚本、Lua `require/package.loaded`缓存契约与rollback控制流的确定性静态核对。本轮不改写module或执行require。
+- 位置：`docs/src/{en/,}guides/hot-reload.md:125-128,260-263,362-365,487-490,650-652,812-814,896-900,1052-1055`均先把`package.loaded[name]=nil`，再调用可能抛错的`require(name)`，最后才恢复旧引用；rollback示例虽以`pcall`包住`:648-675`，恢复语句仍位于require之后，失败处理`:677-687`只复制module字段，不恢复cache。
+- 触发：新文件存在语法错误、顶层初始化抛错、缺少依赖或返回不符合预期，使清空cache后的`require`在恢复语句之前失败。
+- 影响：热更新失败后，现有持有者仍使用旧module table，但`package.loaded[name]`不再保证指向它；后续任意`require(name)`会重新加载磁盘版本，成功时产生第二份module及独立upvalue/singleton状态，继续失败则扩大故障面。指南仍打印“Rollback completed”，给运维造成服务已经恢复一致状态的错误确认。
+- 证据：所有示例的cache恢复都是普通顺序语句，没有finally/xpcall收尾；失败分支只遍历`backup`写回`mymodule`，完全不赋值`package.loaded["mymodule"]`。Lua cache是后续require选择对象的唯一依据，恢复旧table字段不能替代恢复cache entry。
+- 根因：指南把临时清cache、加载与恢复拆成非异常安全的三条语句，并把函数表回滚误当成module loader状态回滚；没有定义load transaction或generation publication point。
+- 建议解法：提供单一受保护loader helper：保存原cache值，在任何成功/失败路径都先恢复原entry，再返回new module或错误；只有新module shape、upvalue迁移和完整验证都通过后才原子提交export变化。失败处理还应验证`package.loaded[name] == old_module`，并记录真实回滚结果。
+- 回归检查：修复阶段覆盖新module语法错误、顶层error、缺dependency、错误return type及迁移error；每次失败后断言`rawequal(require(name),old_module)`、旧状态/函数未变且没有第二singleton。当前不执行模块加载。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4470,7 +4481,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为365项：P0为0，P1为112，P2为199，P3为54。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 72。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为366项：P0为0，P1为112，P2为200，P3为54。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 73。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4854,6 +4865,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：hot-reload依赖反查确认`patch:collectupval(table)`把每个export value无条件交给debug.getinfo；典型VERSION/config常量使官方主流程立即崩溃，归档为`CORE-012`。
 - 2026-08-13：hot-reload timer方案反查确认递归`repeat_call`既不保存也不返回after session；cancel handle恒nil，每次更新叠加永久周期任务，归档为`DOC-071`。
 - 2026-08-13：hot-reload导出策略反查确认全部流程只写回function字段，但版本段要求普通`VERSION/BUILD_TIME`同步并断言新值；旧module及package.loaded必然仍报告旧代际，归档为`DOC-072`。
+- 2026-08-13：hot-reload加载事务反查确认所有示例在清空package.loaded后才调用可能抛错的require，且rollback不恢复cache；失败后续require可产生第二singleton，归档为`DOC-073`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
