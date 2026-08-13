@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档372项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档373项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3123,6 +3123,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为全部client设置start barrier，使用channel/latch收集恰好100个完成结果并分别统计成功/失败，最后由单独coordinator打印；耗时使用`time.monotonic()`毫秒差并转换单位，显式处理零时长。吞吐还应区分completed round trips、attempts和bytes。
 - 回归检查：修复阶段用可控调度让最后创建的client最先/最后完成并注入若干连接/I/O失败；断言只在全部结果收集后打印、计数守恒、duration正且单位正确。当前不运行压力测试。
 
+### DOC-078 — P2 — Echo 活动超时示例在 data 已到达后仍可由旧 timer 关闭连接
+
+- 状态：已确认；双语timeout围栏、TCP data wakeup、task ready queue与timer EXPIRE同步dispatch顺序的确定性静态核对。本轮不构造相邻data/timer事件。
+- 位置：`docs/src/{en/,}tutorials/echo-server.md:479-515`为connection创建独立`time.after`，只有阻塞的`conn:read("\n")`返回后才cancel旧timer并重排；TCP data path在`lualib/silly/net/tcp.lua:127-143`清reader字段后调用`task.wakeup`，而`task.lua:189-199`只把reader放入ready queue。timer EXPIRE却在`lualib/silly/time.lua:51-65`立即`task_resume` callback，callback会直接`conn:close()`。
+- 触发：完整line/data event先被处理并唤醒reader，但在worker下一次`task._dispatch_wakeup`真正恢复该reader之前，旧timeout的EXPIRE event到达/被dispatch；常见于activity恰好靠近30秒边界或ready queue繁忙。
+- 影响：已经按时到达的有效请求仍被旧timer关闭；reader稍后恢复拿到data并cancel时timer mapping已经被EXPIRE删除，只能在closed conn上继续write/read。客户端表现为边界附近随机断连，且日志错误写成“Connection timeout”，难以从业务日志区分真实idle与调度延迟。
+- 证据：data callback没有访问教程局部`timeout_timer`或更新activity generation；`time.cancel`只有mapping仍存在才调用native cancel，一旦EXPIRE创建并resume callback便不可撤销。框架内置`conn:read(n,timeout)`在data path先清`s.co`，其`read_timer`会检查`s.co`，说明正确模式需要可验证的pending generation，而教程callback只持conn。
+- 根因：idle timeout以“reader恢复并执行cancel”的时间作为activity确认点，而非I/O到达点；one-shot callback没有generation/deadline复核，取消与callback dispatch之间没有线性化协议。
+- 建议解法：教程优先直接使用`conn:read("\n",30000)`并按`errno.TIMEDOUT`处理；若实现跨多次read的idle timer，维护generation/absolute last-activity deadline，callback执行时再次核对generation和monotonic deadline，只允许当前generation关闭。close/cancel/重排必须幂等并在统一finally收尾。
+- 回归检查：修复阶段以可控event order覆盖data-before-expire但reader-late、expire-before-data、cancel-before-expire和连续reset；前者必须保活并echo，只有真实超过deadline的current generation关闭，timer/reader最终清零。当前不运行时序barrier。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4549,7 +4560,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为372项：P0为0，P1为114，P2为202，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 77。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为373项：P0为0，P1为114，P2为203，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 78。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4941,6 +4952,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：echo-server accept ownership反查确认wrapper只在callback异常时立即close；正常return不做同步收尾，只由弱pool对象稍后的`__gc`关闭，与教程“返回自动关闭”的确定时序相反，归档为`DOC-076`。
 - 2026-08-13：echo-server性能围栏反查确认其把最后创建的client当成全部完成屏障，并以秒级os.time计算短测吞吐；可报告部分结果或除零为inf，归档为`DOC-077`。
 - 2026-08-13：沿echo write语义反查socket发送入口，确认TCP outbound queue没有soft/hard limit；live sid的每次write均无条件复制、增加wlbytes并入队，教程承诺的queue-full错误不存在，归档为`SOCK-020`。
+- 2026-08-13：echo idle timer调度反查确认data callback只把reader放入ready queue；其执行cancel前旧EXPIRE可同步运行并关闭已有activity的连接，归档为`DOC-078`，并发barrier留待修复阶段。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
