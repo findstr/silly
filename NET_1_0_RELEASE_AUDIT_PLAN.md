@@ -72,7 +72,7 @@
 - `lualib/silly/net/http.lua`、`http/client.lua`、`http/h1.lua`、`http/url.lua`：已审有归档；本轮新增`HTTPC-006/007`、`HTTP1-018`至`HTTP1-023`、`DOC-012/013`，既有URL、pool、framing、Expect/upgrade/keepalive与limits问题已逐项去重。
 - `lualib/silly/net/http/dom.lua`、`http/helper.lua`、`http/statusname.lua`：已审无新增；DOM异常受protected parse边界收敛，target/status helper的协议偏差已并入`HTTP1-008/010`，未另立重复条目。
 - `lualib/silly/net/http/h2.lua`：已审有归档；完成DATA/HEADERS/PRIORITY/RST/SETTINGS/PING/GOAWAY/WINDOW_UPDATE/CONTINUATION/PUSH_PROMISE按client/server与idle/open/half-closed/closed矩阵，新增`H2-035`至`H2-041`并补强padding flow-control到`H2-003`。未知RST code由元表稳定格式化、Huffman tree恰好不扩容等候选已排除。
-- `lualib/silly/net/websocket.lua`：审阅中；现按opening handshake、frame parser/sender、fragment/control/close、并发与文档测试矩阵二次封板。重复close与`__close`组合已归入既有`WS-007`，WSS空payload挂起归入底层`TLS-009`，127-length最高位经Lua有符号转换造成的TCP重分帧/TLS挂起已补入`WS-003`，均不重复计数。
+- `lualib/silly/net/websocket.lua`：审阅中；现按opening handshake、frame parser/sender、fragment/control/close、并发与文档测试矩阵二次封板。重复close与`__close`组合已归入既有`WS-007`，WSS空payload挂起归入底层`TLS-009`，127-length最高位经Lua有符号转换造成的TCP重分帧/TLS挂起已补入`WS-003`；H2误用的非法101/nil conn路径依赖缺失必需字段，归入`WS-001`而未新立`WS-011`。
 - `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：待审；其中顶层 `grpc.lua` 当前没有直接文件证据引用，优先补审。
 - `lualib/silly/store/redis.lua`、`mysql.lua`、`etcd.lua`：待审。
 

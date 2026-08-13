@@ -328,7 +328,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-021 | P1 | sender按Lua key大小写识别控制字段，常规Content-Length/Host拼写可被重复并自动生成TE+CL歧义wire。 |
 | HTTP1-022 | P2 | server把HEAD/304与1xx/204一刀切删除CL/TE，丢失规范允许且常用的representation长度元数据。 |
 | HTTP1-023 | P2 | 读取失败后若stream buffer有部分正文，第二次readall会返回残缺data,nil并吞掉cached error。 |
-| WS-001 | P1 | server 接受缺失/无效的 WebSocket opening handshake，并切换到 frame parser。 |
+| WS-001 | P1 | server接受缺失/无效opening handshake；H2 GET也可收到非法101并返回`conn=nil` socket，继发异常/泄漏。 |
 | WS-002 | P1 | client 仅凭 101 status 接受握手，不验证 Accept 或 Upgrade/Connection。 |
 | WS-003 | P2 | parser缺少RSV/长度/control校验；64-bit高位转负后TCP重新分帧、TLS挂起，writer边界也非规范。 |
 | WS-004 | P2 | fragmentation 状态机接受 standalone continuation 和进行中插入的新 data message。 |
