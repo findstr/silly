@@ -421,8 +421,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-035 | P1 | protobuf oneof decoder保留已失效member，sender也会同时编码多个members。 |
 | GRPC-036 | P2 | protobuf decoder覆盖而非merge重复singular embedded message，合法拆分字段会丢数据。 |
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
+| GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为290条：P1 105、P2 160、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 37、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
+当前统计为291条：P1 105、P2 161、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

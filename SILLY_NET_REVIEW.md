@@ -196,6 +196,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | PROTOBUF-ONEOF-INVARIANT | MUST/data integrity | `luaclib-src/pb.c:1304-1307,1728-1757,1943-1973`; `lualib/silly/net/grpc/helper.lua:16-67` | client/server | 偏离 | decoder遇到新oneof member只更新case名、不清除旧member；encoder也会发送table中全部members，破坏API层“至多一个/last wins”不变量 | gRPC schema与测试完全没有oneof | GRPC-035 |
 | PROTOBUF-SINGULAR-MESSAGE-MERGE | MUST/data integrity | `luaclib-src/pb.c:1869-1876,1943-1973`; `lualib/silly/net/grpc/helper.lua:16-50` | client/server recipient | 偏离 | 同一singular embedded-message field重复出现时每次新建table并整块覆盖，未按protobuf规则递归merge | gRPC测试没有重复singular field或拆分embedded message | GRPC-036 |
 | PROTOBUF-PACKED-COMPAT | MUST/interoperability | `luaclib-src/pb.c:1884-1899,1926-1941`; `luaclib-src/pb.h:1697-1701` | client/server recipient | 偏离 | descriptor声明`packed=false`的repeated numeric收到合法packed wire时走普通type check并抛mismatch；只接受声明格式，未实现parser双格式兼容 | gRPC测试proto3 numeric为默认packed但没有proto2/unpacked descriptor或反向wire格式 | GRPC-037 |
+| PROTOBUF-PROTO2-GROUP | compatibility | `lualib/protoc.lua:363-394,444-495,637-650`; `luaclib-src/pb.c:406-483,486-535,1644-1668`; `luaclib-src/pb.h:82-109` | client/server | 偏离 | bundled parser拒绝proto2 group语法；外部descriptor的TYPE_GROUP虽可表示，native encoder/decoder均落入unknown type | 无proto2 group schema或wire测试 | GRPC-038 |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
 | GRPC-AUTOMATIC-RETRY | safety | `lualib/silly/net/grpc/client/conn.lua:82-100`; `lualib/silly/net/grpc/client/service.lua:134-257` | client | 不适用/安全 | 实现没有automatic retry，不会无条件重放非幂等RPC；GOAWAY/REFUSED_STREAM可靠性与status mapping缺口见H2-008/GRPC-013 | 无retry tests | — |
@@ -3583,6 +3584,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为每个packable repeated scalar始终接受原生wire type和LEN packed type；string/bytes/message等不可打包类型仍只接受其合法LEN单值记录。descriptor `packed`只决定encode格式。错误packed payload必须完整消费并验证元素边界，异常按统一gRPC parse finalizer收尾。
 - 回归测试：修复阶段对每个packable type、proto2 default/true/false与proto3 default/false做packed/unpacked交叉矩阵，混合两种记录也应按顺序append；不可打包类型的伪packed仍拒绝。与官方encoder bytes互通，并在四类RPC双向断言status和资源归零。当前不构造wire。
 
+### GRPC-038 — P2 — bundled protobuf parser/native codec 无法收发合法 proto2 group field
+
+- 状态：已确认；proto2 grammar、bundled protoc parser、descriptor type与native codec switch的确定性静态核对。本轮不加载group schema或构造SGROUP/EGROUP wire。
+- 规范：[Protocol Buffers proto2 groups](https://protobuf.dev/programming-guides/proto2/#groups)虽明确标为deprecated并建议新schema改用nested message，但仍是合法proto2 schema与独立wire格式；现存服务及迁移期runtime必须能够解析，不能因为“弃用”把合法field静默变成不可调用。若1.0只支持proto3，应在入口与文档明确fail-fast范围，而当前parser默认syntax恰是proto2。
+- 位置：protoc type表列出group却把com type当字段名错误在`lualib/protoc.lua:363-394,444-495`，message body没有group parser在`:637-650`；native wire/type enum包含`PB_Tgroup`在`luaclib-src/pb.h:82-109`，但scalar encode/decode switch没有对应case在`luaclib-src/pb.c:406-483,486-535`，field dispatch仅特判message/enum在`:1644-1668`；gRPC统一codec入口在`lualib/silly/net/grpc/helper.lua:16-67`。
+- 触发：用bundled protoc加载含`optional/repeated group`的合法proto2 service schema；或绕过parser加载外部FileDescriptorSet，其中RPC request/response包含TYPE_GROUP field，再进行任一方向encode/decode。
+- 影响：第一条路径在服务启动/加载schema时直接报`invalid type name: group`；第二条路径descriptor可保留type 10，但client/server编码或解析首个known group field时抛`unknown type group`，RPC无法互操作并可能按`GRPC-007/015/032`错误收尾或泄漏。旧proto2 gRPC服务、历史descriptor及向Editions DELIMITED迁移的wire兼容路径均不可使用，而公开文档只笼统宣称标准Protocol Buffers、未声明限制。
+- 证据：`types/com_types`都含group，但`type_info`明确对所有com type报invalid type name，且`msgbody`只有oneof/option等、没有proto2 group grammar。native的`lpb_addtype/lpb_readtype`覆盖全部scalar/message bytes路径却没有`PB_Tgroup`，最终default抛unknown；`lpbE_field/lpbD_rawfield`只把`PB_Tmessage`递归处理，故外部descriptor也不能绕过。底层`pb_readgroup/pb_skipvalue`只支持跳过unknown group，不能解析known group。
+- 根因：wire helper保留了group skip能力，但schema parser和typed codec从未实现known group，且没有在gRPC能力声明中将proto2/legacy feature范围收窄。
+- 建议解法：若保留proto2支持，在protoc实现group grammar/descriptor nested type，并在native codec用匹配field number的SGROUP/EGROUP递归收发、执行depth/required/merge规则；错误end tag必须拒绝。若1.0决定不支持group，应在schema load阶段返回明确unsupported feature、文档声明proto3-only/受限proto2，不能让外部descriptor直到RPC时才抛generic unknown type。
+- 回归测试：修复阶段覆盖optional/repeated group、nested group、unknown group skip、错误/missing/mismatched EGROUP、required子字段和跨官方runtime收发；四类RPC验证合法group或明确的注册期拒绝，均不得在调用中抛裸异常/泄漏。当前不加载schema。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3612,7 +3625,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为290项：P0为0，P1为105，P2为160，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 37、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为291项：P0为0，P1为105，P2为161，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3906,6 +3919,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`GRPC-025`的map-entry证据：其循环同样接受截断tag，且unknown field不skip value、会把value误作后续tag；不重复计数。
 - 2026-08-13：补强`GRPC-023`：双语配置表还公开`alpnprotos`，adapter同样忽略并固定h2；建议删除override而不是静默接受，不重复计数。
 - 2026-08-13：补强`GRPC-027`：native encoder也对递归schema的深层/自引用Lua table做无界C递归；与decoder共享depth budget根因，不重复计数。
+- 2026-08-13：确认bundled protoc拒绝合法proto2 group语法，外部descriptor即便加载后native codec也对known group收发抛unknown type；归档为`GRPC-038`，未加载schema或构造wire。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
