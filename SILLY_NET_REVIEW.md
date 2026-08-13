@@ -2500,6 +2500,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：master中英文serve参数表补充integer类型、默认值、允许范围、`hardlimit>=softlimit`、body是否包含协议header以及softlimit仅发送侧告警的精确定义；同时坦白hardlimit不能替代global/per-peer budget。由结构化conf schema生成inline LuaLS和双语表，分支迁移也复用同一字段定义。
 - 回归检查：修复阶段做API/doc schema lint，断言serve消费的每个字段在两种语言各恰好出现且默认/range一致；用stub create捕获省略值和显式limit的数据流，但当前不运行frame或allocation测试。
 
+### DOC-042 — P3 — cluster LuaLS 把可选 timeout、numeric command 和空队列 pop 标成相反契约
+
+- 状态：已确认；master/分支inline annotation、native所有return路径和双语reference静态对照。本轮不运行LuaLS或调用API。
+- 位置：master serve conf把`timeout`写成必填`integer`，见`lualib/silly/net/cluster.lua:311-320`，但实现`:321-329`及双语reference`:47-83`均允许省略并默认5000；`callx`把公开cmd标成`string`，见Lua`:274-305`，文档`:325-446`与marshal路径却允许string或number。底层stub `lualib/types/silly/net/cluster/c.lua:14-21`把`pop`的fd/data/session标为必有，而native空ring在`luaclib-src/lcluster.c:324-356`直接return 0 values，高层正以`if not fd`处理。raw-string分支已把timeout改为optional并删除cmd，但其`c.pop`前三个返回仍错误地必有。
+- 触发：省略timeout使用默认配置；以numeric schema tag调用call/send；或编写低层parser drain loop检查`local fd=pop(ctx); if not fd then break end`。这些都是实现和reference允许/要求的正常用法。
+- 影响：LuaLS会把合法默认serve报告缺字段、把numeric command报告参数类型错误，并把必要的空队列nil检查视为与声明不一致/可能不可达；反过来，依据stub直接使用`pop`返回值则在队列为空时得到nil并可能把它传给算术/string操作。团队为消警可能加入虚假timeout、把numeric ID转成错误string或删除正确终止检查，降低1.0静态契约可信度。
+- 证据：master `expire=conf.timeout or 5000`确定字段可选；native `cmd_t`入口接受Lua integer且文档每个call/send参数表写`string|number`；`lpop`的`pk==NULL`分支不push任何值。分支diff专门修正了timeout `integer?`和删除后的cmd签名，却仍只把traceid标optional，没有把整个pop tuple建模为条件返回。
+- 根因：inline高层签名、native stub和Markdown由不同变更手写；LuaLS对“有值时多返回tuple、空时零返回”的关联类型表达也被简化成逐项非空标注。
+- 建议解法：master把timeout改为`integer?`，call/send cmd改为`integer|string`并与`CLUSTER-017`修复后的uint32范围说明配套；`c.pop`使用overload或首返回`integer?`并令后续返回在fd存在时有效。raw-string分支同步pop修正。以API contract fixture对省略字段、union参数与empty/nonempty tuple执行LuaLS检查。
+- 回归检查：修复阶段运行最小LuaLS fixture，要求默认serve、string/numeric cmd及`if not fd then`drain loop无误报；错误类型仍被拒绝，空pop不得被推断为必有string/session。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4253,6 +4264,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
+- 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

@@ -125,6 +125,7 @@ test/testcluster.lua
 - `DOC-040`适用于两版文档：API/timeout段把错误写成`silly.errno`并点名`errno.TIMEDOUT`，Error Handling又禁止把cluster错误与errno比较；分支改造未统一这项契约。
 - `NET-007`在逐adapter复核后对cluster排除：cluster remote-close callback进入`close_fd`并再次调用`net.close(fd)`，该函数在底层重复close返回前先删除data/close registry；TCP/TLS/UDP wrapper没有这一步，仍受主报告问题影响。
 - master文档遗漏`DOC-041`在本分支已修复：raw-string reference的serve参数表同时列出hardlimit和softlimit及默认值。
+- `DOC-042`在分支部分修复：timeout已标optional且cmd已删除；但native `c.pop`空ring会零返回，分支stub仍把fd/data/session标成必有tuple。
 
 第三轮明确排除、未另立问题的路径：
 

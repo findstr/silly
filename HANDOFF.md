@@ -312,6 +312,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-039 | P3 | master cluster reference一处称connect是无yield的同步handle构造，另一处又称直接调用报错且必须task.fork。 |
 | DOC-040 | P3 | cluster文档一处承诺silly.errno/errno.TIMEDOUT，另一处又把全部错误定义为禁止比较的opaque string。 |
 | DOC-041 | P3 | master cluster双语reference遗漏实现/LuaLS已支持的hardlimit与softlimit，用户无法发现唯一frame预算入口。 |
+| DOC-042 | P3 | cluster LuaLS把master可选timeout标必填、numeric cmd标string-only，并把两版空队列pop错误标成必有tuple。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
