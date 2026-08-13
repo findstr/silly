@@ -1769,6 +1769,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：checkout分别计算`idle_expired=returned_at<=idle_since`与`lifetime_expired=created_at<=created_since`，任一命中都通过统一destroy/capacity路径淘汰；归还时也可标记超过lifetime、直接销毁而非入池。时间边界统一定义等号语义并使用同一monotonic单位，和`MYSQL-001/016`一起保证计数及waiter唤醒。
 - 回归测试：修复阶段用fake monotonic clock覆盖lifetime前1秒、恰好边界、超过边界，分别让连接长时间checked-out、刚归还立即checkout及等待timer；断言均按created_at轮换而max_idle仍按returned_at，open_count/waiter保持一致。本轮不运行计时测试。
 
+### MYSQL-020 — P2 — 初始 `sha256_password` 握手错误发送 native SHA-1 token，合法账号无法认证
+
+- 状态：已确认；认证plugin分派与MySQL官方client/server认证流程静态核对。本轮不创建`sha256_password`账号或建立连接。
+- 规范：[MySQL Connection Phase](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html)要求initial handshake中client选择与声明plugin兼容的认证response；[MySQL `sha256_password`](https://dev.mysql.com/doc/refman/8.4/en/sha256-pluggable-authentication.html)规定非TLS连接必须使用RSA password exchange，[MySQL Router的协议实现](https://dev.mysql.com/doc/dev/mysql-server/9.4.0/classAuthSha256Password.html)明确其public-key request为单byte `0x01`。不能在声明`sha256_password`时发送`mysql_native_password`的SHA-1 challenge token。
+- 位置：initial plugin选择与token构造在`lualib/silly/store/mysql.lua:390-465`；只有AuthSwitchRequest分支实现`sha256_password` public-key request/RSA exchange在`:482-604`；测试只覆盖`caching_sha2_password`，见`test/testmysql.lua:900-966`。
+- 触发：server initial HandshakeV10把`sha256_password`作为optimistic auth plugin，目标账号也使用该plugin，且password非空；常见于把server默认authentication plugin配置为sha256，因双方plugin已匹配，server无需再发送AuthSwitchRequest。
+- 影响：driver在HandshakeResponse中仍宣告plugin name为`sha256_password`，auth response却是20-byte native SHA-1 token。server把该payload交给sha256 plugin后拒绝认证或终止exchange；代码中已经存在的RSA实现完全不可达。双语reference所称MySQL 5.x/8.x完全兼容因此对这一合法MySQL配置不成立，部署迁移或账号策略切换会造成连接全面失败。
+- 证据：token分派只有`if auth_plugin_name == "caching_sha2_password" then compute_token_sha256(...) else compute_token(...) end`；`compute_token`明确实现native的`SHA1(password) XOR SHA1(scramble || SHA1(SHA1(password)))`。随后packet尾部写入原始`auth_plugin_name`，造成payload algorithm与plugin标识矛盾。`sha256_password`专用`\x01`请求、public-key读取和OAEP加密只位于收到`0xfe` auth switch之后；初始plugin已经匹配时不会靠该分支纠正。
+- 根因：认证实现以“caching SHA-2或其他”二分，未知/sha256均静默回落native；plugin handler只在switch路径完整分派，initial fast path没有复用同一状态机。
+- 建议解法：按plugin name统一选择显式handler，initial和auth-switch共享；`mysql_native_password`生成native token，`caching_sha2_password`走其fast/full流程，非TLS `sha256_password`发送public-key request并完成RSA exchange，未知plugin在发送不匹配payload前明确失败。结合`MYSQL-002`提供TLS与可信server-public-key配置，不能继续默认信任线上取得的key。
+- 回归测试：修复阶段分别让server initial plugin和账号plugin为native/caching/sha256，覆盖plugin匹配与auth switch、空/非空password、TLS/固定key/在线取key；断言sha256首个client payload为规范请求或加密值而非20-byte native token，未知plugin零凭据payload后失败。当前不进行认证交互。
+
 ### ETCD-001 — P1 — mutation RPC 在结果未知的失败后盲重试，可重复提交写操作
 
 - 状态：已确认；etcd API语义、gRPC模糊失败边界与确定性retry loop静态推导。本阶段不注入“server已提交、response丢失”的网络故障。
@@ -3644,7 +3656,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为292项：P0为0，P1为105，P2为162，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为293项：P0为0，P1为105，P2为163，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 20、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3942,6 +3954,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成gRPC封板审计：7个Lua模块、native protobuf收发/descriptor、四类RPC、9组测试、LuaLS及双语1758行reference全部映射；新增`GRPC-025`至`GRPC-038`与`DOC-026`，health/reflection/keepalive/automatic retry因无公开承诺列为可选能力而非缺陷，阶段无未归档候选。
 - 2026-08-13：确认RESP aggregate把嵌套error降为普通string并只保留整组AND状态，EXEC/nested结果无法定位错误或区分同文正常值；归档为`REDIS-010`，未执行事务。
 - 2026-08-13：完成Redis封板审计：`redis.lua`全部353行、18组`testredis.lua`、134行fake server及双语各851行reference均已逐项映射；`MONITOR`/RESP3 push并入`REDIS-007/001`而不重复计数，阻塞命令、pipeline写序、断线后不重放已排除为新问题，阶段无未归档候选。
+- 2026-08-13：确认initial handshake宣告`sha256_password`时driver仍生成mysql_native SHA-1 token，只有auth-switch分支实现RSA exchange，合法账号可确定性认证失败；归档为`MYSQL-020`，未创建账号或连接server。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

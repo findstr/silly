@@ -247,6 +247,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQL-017 | P1 | transaction conn无command并发门禁，第二协程可先写命令再触发single-reader断言并错配响应。 |
 | MYSQL-018 | P2 | pool waiter按LIFO handoff，持续新请求可让最早排队的调用无限饥饿。 |
 | MYSQL-019 | P2 | checkout用returned_at而非created_at判断max_lifetime，繁忙连接可永不轮换。 |
+| MYSQL-020 | P2 | initial sha256_password握手仍发送mysql_native SHA-1 token，合法MySQL账号无法认证。 |
 | ETCD-001 | P1 | mutation RPC在结果未知的transport失败后无条件重放，可产生重复revision/watch事件和孤儿lease。 |
 | ETCD-002 | P1 | watch公开revision参数未映射到start_revision，承诺的历史事件回放被静默忽略。 |
 | ETCD-003 | P1 | watch重连不记录created/progress revision且忽略fragment边界，可静默漏掉断线窗口事件。 |
@@ -424,7 +425,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为292条：P1 105、P2 162、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
+当前统计为293条：P1 105、P2 163、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 20、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
