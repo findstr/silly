@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档327项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档328项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2625,6 +2625,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先在H1/H2公共stream层提供强制的实际header/body/connection预算与安全默认，超限立即按协议终止且释放buffer；应用级接口可提供`readall(max_bytes)`或累计迭代读取。教程应说明Content-Length只能用于早拒绝，必须拒绝重复/冲突值并对chunked及无长度正文按实际bytes实施同一1 MiB上限，不能把header检查描述成完整防护。
 - 回归检查：修复阶段覆盖小/大Content-Length、chunked跨多个chunk越界、TE+CL、重复相同/不同CL、无长度EOF正文和H2 DATA；断言所有路径在实际第`limit+1`字节前后按定义停止、返回413或协议错误、连接与buffer资源归零。当前不构造请求。
 
+### DOC-049 — P3 — HTTP 最佳实践的压缩、流式、timeout 与健康检查示例调用不存在的 API
+
+- 状态：已确认；双语guide全部require/调度符号与仓库公开Lua/C模块静态核对。本轮不执行文档代码块或构建站点。
+- 位置：双语指南的gzip示例require并调用`silly.compress.zlib.deflate`，见`docs/src/{en/,}guides/http-best-practices.md:101-162`；流式示例调用`silly.sleep`在`:164-211`；timeout示例只导入`silly/http`却调用未定义local `task.fork`与`time.after/cancel/sleep`在`:503-576`；健康检查调用`silly.timeout`在`:1535-1630`。真实顶层导出仅见`lualib/silly.lua:1-39`，sleep/after/cancel属于`lualib/silly/time.lua`，fork属于`lualib/silly/task.lua`；压缩模块真实导出为`luaclib-src/lcompress.c:14-119`的`silly.compress.gzip.compress/decompress`。
+- 触发：用户复制任一标为gzip、HTTP/1.1 streaming、协程timeout或生产健康检查的中英文代码块并走到首个相关调用；不需要网络异常或特殊输入。
+- 影响：gzip块在require阶段报module not found；流式块在第一轮发送后报nil `silly.sleep`；timeout块在首次`task.fork`报全局nil，健康检查在启动注册周期任务时报nil `silly.timeout`。压缩、慢响应保护与健康状态刷新均不会按文档工作，完整生产部署可能因此无压缩、返回500或根本无法启动。timeout设计即使补齐import仍有独立生命周期问题，另行记录而不在本条提高严重度。
+- 证据：Makefile与全部Lua/type文件没有`luaopen_silly_compress_zlib`或`silly/compress/zlib.lua`，只有gzip模块的两个one-shot函数；`silly.lua`没有sleep/timeout字段。`task`和`time`在timeout fenced block内没有local定义，代码块也不是承接同一Lua文件的省略片段，而是自行重新require `silly/http`的standalone示例。中英文逐字复制相同错误。
+- 根因：指南使用了其他Lua生态的streaming zlib和旧版顶层调度API，并把多个未经doc-test的草稿片段拼为生产建议；文档构建的`lua`代码围栏没有静态解析require/export或未声明全局。
+- 建议解法：gzip改用`local gzip=require "silly.compress.gzip"`及`gzip.compress(data)`并检查`nil,error`；流式块导入`time`并用`time.sleep`；timeout块显式导入`task/time`；周期健康检查用可取消、显式重排的`time.after`或新增并文档化真正的interval API。所有standalone块列出完整imports，禁止依赖隐式全局。
+- 回归检查：修复阶段提取双语Lua fenced blocks，在stubbed listen/业务依赖下至少加载到每个公开API调用；静态比较所有`require`与module manifest、检查未声明`task/time`及不存在的`silly.*`字段。当前不运行这些示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4039,7 +4050,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为327项：P0为0，P1为111，P2为174，P3为42。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 48。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为328项：P0为0，P1为111，P2为174，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 49。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；174项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4397,4 +4408,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成性反查低层net双语reference确认所有接收示例误用只复制不释放的`silly.tostring`，且虚构callback return/yield自动失效规则；官方成功路径逐包泄漏，归档为`DOC-046`。
 - 2026-08-13：完成性反查双语文件集合确认英文已发布完整`silly.net.http.url`页面并加入索引，而中文页面和导航均不存在，归档为`DOC-047`。
 - 2026-08-13：完成性反查HTTP server双语教程确认其“防恶意大上传”示例只检查单值Content-Length，chunked、TE+CL和重复CL均可跳过且实际readall仍无界，归档为`DOC-048`。
+- 2026-08-13：逐段复核双语HTTP最佳实践，确认gzip、流式sleep、协程timeout和周期健康检查分别调用不存在模块、顶层方法或未导入local，归档为`DOC-049`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
