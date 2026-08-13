@@ -387,16 +387,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分离协议/operation hard limit与transport高低水位。登记read时若固定`n`超过允许上限应立即返回明确`LIMIT`错误；delimiter模式应在达到hard cap且仍未匹配时终止/关闭，而不是暂停等待。若limit只表达backpressure，则当前唯一reader必须能流式消费/匹配并让buffer降到低水位，或临时保证其完成所需的有界输入预算；timeout/close后统一恢复或关闭，不能留下永久paused状态。
 - 回归测试：修复阶段覆盖`n`在limit-1/limit/limit+1、delimiter位于边界前/边界/边界后/永不出现、单chunk与多chunk、TCP/TLS、带/不带timeout及timeout后下一次read；断言所有路径有限终止，read-enable状态与buffer预算一致且无busy loop。当前只保存静态证据。
 
-### NET-007 — P1 — 被动关闭永不删除底层 data/close callback，远端可按连接数永久扩大全局表
+### NET-007 — P1 — TCP/TLS/UDP 被动关闭不删除底层 data/close callback，可按连接数永久扩大全局表
 
-- 状态：已确认；共享net callback生命周期、TCP/TLS/UDP/cluster close adapters及socket id代际静态核对。本轮不建立连接或循环断开。
-- 位置：三张callback表定义和listener/connect成功发布在`lualib/silly/net.lua:32-49,55-148`；主动`M.close`会清除三表，见`:150-166`，但CLOSE dispatcher只读取并调用`close_callback[fd]`，见`:180-188`，没有删除任何entry。TCP、TLS、UDP及cluster的被动close回调分别位于`lualib/silly/net/tcp.lua:100-125`、`tls.lua:214-246`、`udp.lua:79-105`和`cluster.lua:164-167`，均未也不能访问底层私有callback表。
+- 状态：已确认；共享net callback生命周期、TCP/TLS/UDP close adapters及socket id代际静态核对。本轮不建立连接或循环断开。cluster明确排除：其`close_fd`会再次调用`net.close(fd)`，清表发生在底层重复close返回之前。
+- 位置：三张callback表定义和listener/connect成功发布在`lualib/silly/net.lua:32-49,55-148`；主动`M.close`会清除三表，见`:150-166`，但CLOSE dispatcher只读取并调用`close_callback[fd]`，见`:180-188`，没有删除任何entry。TCP、TLS、UDP的被动close adapters分别位于`lualib/silly/net/tcp.lua:100-125`、`tls.lua:214-246`和`udp.lua:79-105`，只写高层socket状态；cluster的相反路径见`cluster.lua:115-132,164-167`。
 - 触发：任一远端连接在本地未先主动调用`net.close(fd)`时正常FIN、RST或发生transport error；对公开listener重复connect→remote close即可。UDP connected socket收到导致close的错误、TLS/cluster连接被peer关闭也命中。
 - 影响：每个历史socket sid至少在`data_callback`与`close_callback`各留下一个强table entry；accepted连接还继承listener的两个function值。sid携带generation且持续变化，旧key不会被新连接覆盖，远端可用低成本连接抖动使Lua hash与integer keys无界增长，最终增加GC扫描/内存并导致进程耗尽。旧callback还使底层“是否已close”的能力判断与真实socket生命周期分叉，并可能在异常duplicate/late message时重复分发已终止generation。
 - 证据：代码全仓对这三表赋nil的唯一位置是主动`M.close`；CLOSE路径没有finally清理。高层close adapters只清各自pool/peer状态或唤醒reader，不能回收net.lua局部表。函数值虽是共享closure，table node和integer key仍按每个sid分配且保持强引用；socket slot复用会生成不同sid，因此自然复用不回收历史entry。
 - 根因：callback registry既承担active socket dispatch又被当成主动close capability，但被动终局只通知上层、没有统一的幂等registry teardown；资源所有权分散在底层和各protocol adapter。
 - 建议解法：CLOSE dispatcher在取得所需回调后、调用用户代码前原子删除该fd的accept/data/close entries；无论回调成功、异常或不存在都保持已清理。抽取单一幂等`detach(fd)`供主动close、connect/listen失败、被动close和shutdown复用，并以sid generation确保late旧事件不会碰到新socket。上层pool teardown继续独立执行。
-- 回归测试：修复阶段暴露只读registry计数或测试hook，循环大量TCP/TLS/cluster accepted连接由peer关闭及UDP error close，断言每轮终局后callback计数回基线；覆盖close callback抛错、无callback、active/passive相邻、late DATA/CLOSE和sid slot复用，确保回调至多一次、payload释放且新generation不受影响。当前不运行连接抖动。
+- 回归测试：修复阶段暴露只读registry计数或测试hook，循环大量TCP/TLS accepted连接由peer关闭及UDP error close，断言每轮终局后callback计数回基线；另保留cluster用例确认adapter层重复`net.close`仍幂等。覆盖close callback抛错、无callback、active/passive相邻、late DATA/CLOSE和sid slot复用，确保回调至多一次、payload释放且新generation不受影响。当前不运行连接抖动。
 
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
@@ -4249,7 +4249,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
 - 2026-08-13：确认两版`cluster.serve`会无保护替换所有listener/peer共享的global parser/handler/context；官方多节点示例连续调用三次后全部listener使用最后节点配置，活跃重配还会错接半包/在途RPC；归档为`CLUSTER-018`，未执行重配。
-- 2026-08-13：沿cluster被动断线反查共享net registry，确认CLOSE dispatcher只调用callback却不删除data/close表项；远端连接抖动可按历史sid永久扩表，TCP/TLS/UDP/cluster共同受影响；归档为`NET-007`，未建立或循环关闭连接。
+- 2026-08-13：沿cluster被动断线反查共享net registry，确认TCP/TLS/UDP的CLOSE adapter不删除data/close表项，连接抖动可按历史sid永久扩表；归档为`NET-007`。随后逐adapter复核排除cluster：其`close_fd`会调用`net.close`完成清表。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
