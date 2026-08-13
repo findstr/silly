@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共318项（P1 111、P2 169、P3 38），另有4项cluster分支独有问题。当前进入跨模块deadline/cancel/GC/resource-budget/platform组合审计与最终测试、文档、LuaLS、编号统计核账。
+当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共317项（P1 110、P2 169、P3 38），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除。当前进入跨模块deadline/cancel/GC/resource-budget/platform组合审计与最终测试、文档、LuaLS、编号统计核账。
 
 ## 1. 目标和边界
 

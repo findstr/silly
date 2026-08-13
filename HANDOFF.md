@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线318项（P1 111、P2 169、P3 38）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线317项（P1 110、P2 169、P3 38）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -144,7 +144,6 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | NET-004 | P2 | 低层listen/connect在socket发布后才校验event回调；缺字段异常会遗留不可达fd，无accept listener还可被远端重复触发。 |
 | NET-005 | P1 | TCP/TLS单reader门禁晚于缓存fast path，并发read可偷走旧operation字节并令其永久挂起。 |
 | NET-006 | P1 | TCP/TLS buffer limit可在当前read满足前暂停transport，唯一reader无法降水位而永久自锁。 |
-| NET-007 | P1 | TCP/TLS/UDP被动CLOSE不删底层data/close registry，连接抖动可按历史sid永久扩表；cluster因adapter重复net.close已排除。 |
 | UDP-001 | P2 | bound socket缺destination仍返回成功后静默丢包，connected socket的显式destination又被C层忽略。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
 | TLS-002 | P1 | accepted TLS不保活SNI callback ctx，reload/close+GC后在途ClientHello可访问失效userdata。 |
