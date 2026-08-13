@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档376项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档377项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3578,6 +3578,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为 `connect` 增加向后兼容 opts（保留 header 的明确位置），至少提供 absolute deadline/cancel 与可选 dial/handshake timeout。入口计算 monotonic deadline，将剩余时间贯穿 DNS、所有地址尝试、TCP、TLS 和 Upgrade response header；到期/取消必须关闭当前 generation 的连接并返回明确错误。不要让每一阶段重新获得完整 timeout。
 - 后续回归条件：修复阶段用注入式阶段阻塞分别覆盖 DNS、TCP、TLS 和 response-line/header，断言同一 absolute deadline 内返回、socket/timer/task 清理且取消不会关闭已被新连接复用的 generation；另覆盖正常成功、即时失败和接近 deadline 的竞态。当前不执行网络或时序测试。
 
+### WS-011 — P2 — `OPENSSL=off` 会移除 WebSocket 必需的通用 utils，使明文 `ws://` 也无法加载
+
+- 状态：已确认；Make feature gate、native module exports与WebSocket顶层依赖的确定性静态核对。本轮不执行无OpenSSL构建或require模块。
+- 公开契约：Getting Started把OpenSSL列为optional并正式提供`make OPENSSL=off`；关闭TLS可以禁用`wss://`和证书功能，但不能意外移除与TLS无关的key/mask helper而让纯明文WebSocket模块在load阶段失败。feature gate应按能力而非源目录批量裁剪。
+- 位置：`Makefile:104-107`仅在`OPENSSL=ON`时把整个`luaclib-src/crypto/*.c`加入`silly.so`，其中`crypto/lutils.c:15-55`才注册`silly.crypto.utils`的`randomkey/xor`。`lualib/silly/net/websocket.lua:1-5`在module顶层无条件`require "silly.crypto.utils"`；双语Getting Started `tutorials/getting-started.md:56-61,116-128`则称OpenSSL optional并提供关闭命令，紧接的Echo完整教程也在`:156-161` require同一utils。
+- 触发：从干净目录执行文档支持的`make OPENSSL=off`，随后require `silly.net.websocket`以提供`ws://` client/server或运行完整Echo教程。
+- 影响：loader找不到`silly.crypto.utils`，整个WebSocket模块在任何API调用前失败；纯明文WS能力被未声明地绑定到TLS build flag，关闭一项optional依赖会破坏无关协议和入门教程。最小/无OpenSSL部署无法按文档确定真实功能集合，测试也因多份基础net test依赖utils而难以覆盖该配置。
+- 证据：非OpenSSL分支没有替代Lua/C module或延迟require；`lutils.c`虽位于crypto目录，`randomkey/xor`本身只使用C runtime/Lua API，但因目录级wildcard被一起排除。WebSocket的server upgrade路径也必须先加载整个file，不能因不发起wss而绕过依赖。
+- 根因：build gate以物理目录代替功能依赖图，把通用随机/异或helper与OpenSSL cipher/hash/pkey绑定；supported build variants没有module-load smoke matrix。
+- 建议解法：把不依赖OpenSSL的utils移到always-built source并提供适合WebSocket的系统CSPRNG；只有真正OpenSSL-backed模块受flag控制。WebSocket在TLS不可用时应继续支持ws、对wss返回明确unsupported。同步列出每个build flag的module capability并让autoload/LuaLS反映可选性。
+- 回归测试：修复阶段对`OPENSSL=ON/OFF`做干净build module-load matrix；OFF下tcp/udp/http/ws/echo utils可加载且ws handshake可用，tls/wss清晰失败，ON下全部保留。当前不编译或运行协议流量。
+
 ### H2-001 — P2 — client 接受 server 非法启用 PUSH 的 SETTINGS
 
 - 状态：已确认；RFC 9113 与确定性角色/分支推导。本阶段只做静态 review，不新增复现代码。
@@ -4593,7 +4605,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为376项：P0为0，P1为114，P2为204，P3为58。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 81。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为377项：P0为0，P1为114，P2为205，P3为58。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 11、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 81。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4990,6 +5002,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：getting-started首个TCP coroutine反查确认connect/read均丢弃nullable error并把nil继续解引用或交给write，普通拒绝/EOF升级为task异常，归档为`DOC-079`。
 - 2026-08-13：getting-started版本围栏反查确认两处仍固定0.6，当前CLI由宏输出v0.7.1、Lua字段输出0.7；安装验证与Hello golden均不匹配，归档为`DOC-080`。
 - 2026-08-13：getting-started CLI反查确认module path、loglevel及help中的长选项使用旧/下划线拼写，真实getopt只注册hyphenated names且unknown option静默忽略，归档为`DOC-081`。
+- 2026-08-13：沿getting-started的optional OpenSSL构建反查确认OFF会移除整个crypto目录中的utils，而WebSocket顶层无条件require该模块；明文ws也无法加载，归档为`WS-011`，未执行variant build。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

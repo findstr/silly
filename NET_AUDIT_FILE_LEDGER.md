@@ -150,7 +150,7 @@
 | `lualib/silly/net/tcp.lua` | 已审有归档 | NET-005至008、SOCK-012/020、DOC-076 | connect/listen/read/write/limit/timeout/close |
 | `lualib/silly/net/tls.lua` | 已审有归档 | TLS-001至018、NET-005至007 | ctx/handshake/read/write/reload/close |
 | `lualib/silly/net/udp.lua` | 已审有归档 | UDP-001、SOCK/NET共享项 | endpoint/connect/send/recv/close |
-| `lualib/silly/net/websocket.lua` | 已审有归档 | WS-001至010 | handshake/frame/fragment/control/close/concurrency |
+| `lualib/silly/net/websocket.lua` | 已审有归档 | WS-001至011 | handshake/frame/fragment/control/close/concurrency/build dependency |
 | `lualib/silly/store/etcd.lua` | 已审有归档 | ETCD-001至017 | KV/lease/watch/retry/generation/cancel/close |
 | `lualib/silly/store/etcd/v3/proto.lua` | 已审有归档 | DOC-035/036/043、GRPC-039 | generated descriptor与presence/type |
 | `lualib/silly/store/mysql.lua` | 已审有归档 | MYSQL-001至020 | auth/packet/result/prepare/pool/transaction |
@@ -198,7 +198,7 @@
 | `lualib/types/silly/crypto/hash.lua` | 已审无新增 | WebSocket/MySQL hash调用 | 方法与native返回已核对 |
 | `lualib/types/silly/crypto/hmac.lua` | 范围外 | JWT/application HMAC | 不在内建net调用图 |
 | `lualib/types/silly/crypto/pkey.lua` | 已审有归档 | DOC-045、MYSQL auth项 | verify/encrypt/decrypt与返回契约 |
-| `lualib/types/silly/crypto/utils.lua` | 已审有归档 | WS-008、DOC-045 | random与bit conversion |
+| `lualib/types/silly/crypto/utils.lua` | 已审有归档 | WS-008/011、DOC-045 | random、build availability与bit conversion |
 | `lualib/types/silly/debugger/helper.lua` | 范围外 | debugger types | 不参与net协议 |
 | `lualib/types/silly/encoding/base64.lua` | 已审有归档 | WS-001 | decode返回与handshake严格性 |
 | `lualib/types/silly/encoding/json.lua` | 范围外 | application/example codec | 非内建HTTP/gRPC framing |
@@ -369,7 +369,7 @@
 | `docs/src/en/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/en/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
 | `docs/src/en/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
-| `docs/src/en/tutorials/getting-started.md` | 审阅中 | DOC-079至081、first network app | 继续核build与平台说明 |
+| `docs/src/en/tutorials/getting-started.md` | 审阅中 | WS-011、DOC-079至081 | 继续核平台/benchmark说明 |
 | `docs/src/en/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/en/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
 
@@ -433,7 +433,7 @@
 | `docs/src/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
 | `docs/src/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
-| `docs/src/tutorials/getting-started.md` | 审阅中 | DOC-079至081、first network app | 继续核build与平台说明 |
+| `docs/src/tutorials/getting-started.md` | 审阅中 | WS-011、DOC-079至081 | 继续核平台/benchmark说明 |
 | `docs/src/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
 
