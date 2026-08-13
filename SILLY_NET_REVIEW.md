@@ -2289,6 +2289,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有示例显式`local task=require "silly.task"`、`local time=require "silly.time"`并调用`time.sleep/time.now`；预热改用`waitgroup:fork/wait`，健康检查保存stop/join owner并在pool close前结束。将`lua validate`块加入最小stub/LuaLS执行检查，禁止未声明global和不存在member。
 - 回归检查：逐个提取双语MySQL代码块，在stub pool上推进一次fork/sleep/wakeup/close，断言无unknown member/global且关闭发生在background task结束后；中英文调用序列保持一致。当前不执行示例。
 
+### DOC-029 — P3 — MySQL 双语 reference 错称 row 列名会转小写，实际 alias 大小写原样保留
+
+- 状态：已确认；公开row契约、column definition decoder与测试alias静态核对。本轮不执行查询。
+- 位置：中英文row数据类型说明在`docs/src/reference/store/mysql.md:555-568`与`docs/src/en/reference/store/mysql.md:555-568`；column alias取值和row key写入在`luaclib-src/mysql/lmysql.c:217-257,431-471`；现有integration tests的alias几乎全为小写，见`test/testmysql.lua:438-1472`。
+- 触发：SQL返回包含大写或混合大小写label，例如`SELECT 1 AS UserID`，调用方依据文档以`row.userid`访问。
+- 影响：decoder实际创建`row.UserID`，文档所示的小写key不存在并返回nil；Lua读取缺失字段不报错，业务可把真实非NULL结果误当作缺失/NULL。ORM映射、JSON序列化和跨数据库代码若依赖文档的大小写规范会静默丢字段；重复alias的覆盖问题另由`MYSQLC-006`覆盖。
+- 证据：`lparse_column_def`把wire上的column alias bytes直接保存到definition，没有`tolower`或collation处理；`lparse_row_data_binary`再原样取该string并`lua_settable`。Lua层没有后处理。双语文档唯一明确契约却写“列名（小写）/Column names (lowercase)”，测试未使用混合case来暴露偏差。
+- 根因：文档把部分server/query常见的小写alias当作client归一化行为，而实现选择保留wire label且没有定义collision/case策略。
+- 建议解法：优先修正文档为“key是server返回的column label，大小写原样保留”，建议业务显式稳定alias；若要提供lowercase模式，必须是显式option并处理两个label折叠到同一key的collision，不能静默覆盖。
+- 回归检查：使用`lower`、`UPPER`、`MixedCase`及只按case不同的两个alias核对返回key集合；默认精确保真，任何可选归一化遇collision明确报错/返回ordinal values。当前不运行SQL。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3691,7 +3702,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为296项：P0为0，P1为106，P2为163，P3为27。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 28。
+当前滚动统计为297项：P0为0，P1为106，P2为163，P3为28。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 29。
 
 建议按依赖关系分五批修复：
 
@@ -3993,6 +4004,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认capability协商前initial ERR没有SQLSTATE，但native parser无条件消费一个marker byte且不回退，message首字节丢失、空message抛异常；归档为`MYSQLC-008`，未构造packet。
 - 2026-08-13：确认MySQL双语连接池指南在Lost connection后重连并无条件重放任意SQL，commit后丢回包可重复执行非幂等写并丢失session状态；归档为`DOC-027`，未执行SQL或断线。
 - 2026-08-13：确认MySQL双语reference/连接池guide的健康检查、预热和监控调用不存在的`silly.wait/sleep/time`并遗漏task import，首次运行即失败；归档为`DOC-028`，未执行示例。
+- 2026-08-13：确认MySQL双语reference声明row key为小写，但native codec原样使用server column alias，混合case字段按文档访问会静默得到nil；归档为`DOC-029`，未执行查询。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
