@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：两轮全量纯静态审计、重点协议查漏及1.0封板的storage/cluster逐文件阶段已完成；跨模块组合与发布收口进行中
+> 状态：1.0 `net` 全量纯静态封板审计已完成；323项master问题与4项cluster分支独有问题均已归档，进入修复与动态回归阶段
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3997,13 +3997,15 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 当前滚动统计为323项：P0为0，P1为110，P2为172，P3为41。模块分布：CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45。
 
+静态审计完成不等于当前代码可发布：110项P1默认全部阻断1.0；172项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。当前基线没有未归档的高置信候选，但按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer仍可能发现新问题。
+
 建议按依赖关系分五批修复：
 
-1. 内存安全和generation所有权：优先`SOCK-006/008/009/011`、`MYSQLC-001/005`、`HPACK-002`、`TLS-002`、`CLUSTER-005`；任何上层互操作测试都应在这些路径稳定后进行。
+1. engine同步、内存安全和generation所有权：优先`CORE-001`至`004`、`CORE-007`、`NET-003/005/006`、`SOCK-006/008/009/011/015/018/019`、`MYSQLC-001/005/007`、`HPACK-002/004`、`TLS-002`、`CLUSTER-005`；任何上层互操作测试都应在这些路径稳定后进行。
 2. 安全身份与输入边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、`HTTP1-007/008/009`、`WS-001/002/005/008`、`H2-003/013/019/025`、`GRPC-005`、`ETCD-005/009`。
 3. transport状态机和取消：统一socket/engine同步后处理HTTP/1 framing、HTTP/2 stream/flow-control/GOAWAY、TLS shutdown、gRPC status/deadline，以及Redis/MySQL/etcd贯穿DNS→connect→handshake→request→body的absolute deadline。
 4. driver数据正确性：Redis parser/null与connection generation；MySQL pool lease/transaction/multi-result/packet codec；etcd mutation ambiguity、watch revision checkpoint和lease scheduler。
-5. 互操作与文档：用Go/OpenSSL/Redis/MySQL 8/MariaDB/etcd官方client-server矩阵验证，执行RFC畸形输入与sanitizer；最后同步LuaLS、中英文reference和所有示例。
+5. 平台、互操作与公开契约：先修`CORE-008/009`与`NET-007`的跨平台/跨层基础语义，再用Go/OpenSSL/Redis/MySQL 8/MariaDB/etcd官方client-server矩阵验证，执行RFC畸形输入与sanitizer；最后同步`DOC-001`至`045`、LuaLS、中英文reference和所有示例。
 
 修复阶段的最低门槛是：每项有独立回归、ASan/UBSan/TSAN适用项清零、资源上限可配置且有安全默认、跨连接/stream错误不污染其他请求；协议项必须至少与一个独立实现双向互操作。
 
@@ -4331,7 +4333,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
 - 2026-08-13：确认两版`cluster.serve`会无保护替换所有listener/peer共享的global parser/handler/context；官方多节点示例连续调用三次后全部listener使用最后节点配置，活跃重配还会错接半包/在途RPC；归档为`CLUSTER-018`，未执行重配。
 - 2026-08-13：确认master的request/response marshal/unmarshal均在公开error tuple之外直接调用；codec throw会逃出client API或只终止server processor并令caller超时，归档为`CLUSTER-019`，raw-string分支不适用。
-- 2026-08-13：沿cluster被动断线反查共享net registry；进一步核对TCP/TLS/UDP的`__gc = conn.close`与`net.close`清表顺序后，确认closed handle不可达时finalizer会在底层重复close返回前删除callback，registry也不反向保活handle，故撤回`NET-007`候选。
+- 2026-08-13：沿cluster被动断线反查共享net registry；进一步核对TCP/TLS/UDP的`__gc = conn.close`与`net.close`清表顺序后，确认closed handle不可达时finalizer会在底层重复close返回前删除callback，registry也不反向保活handle，故撤回“被动close registry永久泄漏”候选（当时暂用`NET-007`，与随后正式归档的大timeout问题无关）。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
@@ -4347,3 +4349,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：最终time契约复核确认`time.now()`仅在启动时采样一次墙钟，此后始终以monotonic tick推算；系统校时后不再是双语reference/LuaLS承诺的当前Unix时间戳，归档为`CORE-009`。
 - 2026-08-13：最终protobuf类型复核确认`pb.option`、conv、type/field iterator、slice多返回、unsafe use与protoc path API的LuaLS契约均偏离真实Lua/C返回，归档为`DOC-045`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
+- 2026-08-13：完成发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。24小时计划的源码、native、测试、双语文档、LuaLS、跨模块和平台账本全部终态；当前静态范围无未归档高置信候选，但P1/P2阻断项尚未修复，1.0不得据此直接发布。
