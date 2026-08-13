@@ -174,9 +174,45 @@
 | `lualib/silly/logger.lua` | 已审无新增 | net/trace日志wrapper | formatter与native sink已核对 |
 | `lualib/silly/console.lua` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc观测输出 |
 
-## 5. 下一批台账工作
+## 5. LuaLS / native 类型声明
+
+| 路径 | 状态 | 问题/证据 | 尚需动作或排除理由 |
+|---|---|---|---|
+| `lualib/types/pb/parser.lua` | 已审有归档 | DOC-045 | descriptor parser返回与presence契约 |
+| `lualib/types/pb/pb.lua` | 已审有归档 | DOC-045、GRPC protobuf项 | encode/decode/option/iterator/slice/path API |
+| `lualib/types/silly/adt/buffer.lua` | 已审有归档 | NET-008、DOC-044 | buffer读写返回与size宽度 |
+| `lualib/types/silly/adt/queue.lua` | 已审无新增 | task/channel/cluster native queue | 空pop与所有权由调用方/cluster stub覆盖 |
+| `lualib/types/silly/c.lua` | 审阅中 | core native总入口 | 需完成exit/tostring/error/version公开返回核对 |
+| `lualib/types/silly/compress/gzip.lua` | 已审有归档 | HTTPC-001、COMP-001 | output budget、flush/end/error与签名 |
+| `lualib/types/silly/crypto/cipher.lua` | 范围外 | caller-selected cipher API | 不参与内建TLS record实现 |
+| `lualib/types/silly/crypto/hash.lua` | 已审无新增 | WebSocket/MySQL hash调用 | 方法与native返回已核对 |
+| `lualib/types/silly/crypto/hmac.lua` | 范围外 | JWT/application HMAC | 不在内建net调用图 |
+| `lualib/types/silly/crypto/pkey.lua` | 已审有归档 | DOC-045、MYSQL auth项 | verify/encrypt/decrypt与返回契约 |
+| `lualib/types/silly/crypto/utils.lua` | 已审有归档 | WS-008、DOC-045 | random与bit conversion |
+| `lualib/types/silly/debugger/helper.lua` | 范围外 | debugger types | 不参与net协议 |
+| `lualib/types/silly/encoding/base64.lua` | 已审有归档 | WS-001 | decode返回与handshake严格性 |
+| `lualib/types/silly/encoding/json.lua` | 范围外 | application/example codec | 非内建HTTP/gRPC framing |
+| `lualib/types/silly/env.lua` | 已审无新增 | resolver/示例配置读取 | 同步key/value API，无网络状态 |
+| `lualib/types/silly/errno.lua` | 已审有归档 | DOC-040/044 | native errno类型与公开比较契约 |
+| `lualib/types/silly/hive/c.lua` | 范围外 | hive codec | 不在当前调用图 |
+| `lualib/types/silly/http2/framebuilder.lua` | 已审有归档 | DOC-045、H2 sender项 | frame methods、多返回与size |
+| `lualib/types/silly/http2/hpack.lua` | 已审有归档 | DOC-045、HPACK项 | encoder/decoder/table API |
+| `lualib/types/silly/logger/c.lua` | 已审无新增 | net/trace log sink | level/format/write签名已核对 |
+| `lualib/types/silly/metrics/c.lua` | 已审有归档 | CORE-008、METRIC-003/005 | stat tuple顺序、平台能力与net counters |
+| `lualib/types/silly/net/addr.lua` | 已审有归档 | ADDR-001/002、DOC-044 | parse/format/interface契约 |
+| `lualib/types/silly/net/c.lua` | 已审有归档 | DOC-044、NET/SOCK项 | native导出、pointer、multicast、ntop |
+| `lualib/types/silly/net/cluster/c.lua` | 已审有归档 | DOC-042、CLUSTER native项 | request/pop返回、cmd/trace/queue |
+| `lualib/types/silly/net/dns/c.lua` | 已审有归档 | DOC-044、DNS codec项 | answer nil、query/parse返回 |
+| `lualib/types/silly/perf.lua` | 范围外 | profiler types | 不参与net运行路径 |
+| `lualib/types/silly/signal/c.lua` | 范围外 | signal binding types | 不参与协议状态机 |
+| `lualib/types/silly/time/c.lua` | 已审有归档 | CORE-006/009、NET-007 | integer timeout与clock返回 |
+| `lualib/types/silly/tls/ctx.lua` | 已审有归档 | TLS-001至018中的context项 | cert/key/verify/SNI/ALPN/session API |
+| `lualib/types/silly/tls/tls.lua` | 已审有归档 | TLS-001至018中的connection项 | handshake/read/write/error/GC |
+| `lualib/types/silly/trace/c.lua` | 已审有归档 | CORE-010 | node/trace整数与spawn/attach/resume |
+
+## 6. 下一批台账工作
 
 1. 先收口所有`审阅中`运行时文件；新问题独立进入主报告并提交。
-2. 从实际 `lualib/types/silly/**`、`test/**`、`docs/src/**` 与 `docs/src/en/**` 集合逐文件追加，不用目录级描述替代。
+2. 从实际 `test/**`、`docs/src/**` 与 `docs/src/en/**` 集合逐文件追加，不用目录级描述替代；`lualib/types/**`第一版已列全。
 3. 对每个章节执行集合差：仓库实际路径减台账反引号路径必须为空，范围外路径也必须有理由。
 4. 最后核对每个`已审有归档`ID真实存在、每个`已审无新增`都有调用边界说明，再允许更新完成状态。
