@@ -2266,6 +2266,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：拆成三套精确签名和示例：server-stream=`Method(req,timeout?)→{read,close}`；client-stream=`Method()→{write,closewrite,read,close}`；bidi=`Method()→{write,closewrite,read,close}`。upload必须检查每次write、调用closewrite、读取唯一response/status再close；server-stream在构造时传req且只read，server handler用第二参数`out:write`并返回nil/error。同步说明read timeout实际限制，依赖`GRPC-012`修复。
 - 回归测试：修复阶段抽取双语三类示例，按生成descriptor做LuaLS方法集合检查并以stub记录调用序列；断言无不存在的方法、正常路径产生request EOS而非RST、client-stream消费final response、server-stream逐条输出且status OK。当前不执行示例。
 
+### DOC-027 — P1 — MySQL 指南对任意断线 SQL 自动重放，结果未知的写入可被重复提交
+
+- 状态：已确认；指南代码、driver错误边界与MySQL官方重连警告静态核对。本轮不执行写SQL或注入断线。
+- 权威依据：[MySQL Connector/J troubleshooting](https://dev.mysql.com/doc/connector-j/en/connector-j-usagenotes-troubleshooting.html)明确指出通信失败后没有安全的透明重连/重发方法，transaction和database state可能损坏；[MySQL C API automatic reconnect](https://dev.mysql.com/doc/c-api/8.0/en/c-api-auto-reconnect.html)也说明重连会丢失transaction、temporary table、prepared statement、session variable、lock等连接状态且该功能已弃用。
+- 位置：双语连接池指南“重连机制/实现自动重连”的`DBPool:query`在`docs/src/guides/mysql-connection-pool.md:579-686`与`docs/src/en/guides/mysql-connection-pool.md:579-686`；底层query在请求写出后任一response read失败只返回transport错误，见`lualib/silly/store/mysql.lua:876-945`。
+- 触发：应用照抄wrapper执行INSERT/UPDATE/DELETE、DDL或调用procedure；server已执行/提交该statement，但OK/result在返回途中丢失，driver返回包含`Lost connection`或`MySQL server has gone away`的错误文本。
+- 影响：示例关闭整个pool、重连并最多三次无条件重发相同SQL。非幂等写可重复扣款、发号、追加记录、触发器/outbox事件或DDL副作用；如果第一次仍在旧server session执行，新连接重放还可并发产生两份结果。与此同时session/temporary table/lock状态已丢失，重放即使只执行一次也未必保持原语义。指南把这种危险行为包装成通用自动恢复，属于1.0数据一致性release blocker。
+- 证据：retry入口只按英文message substring分类连接错误，不区分SQL类别、packet是否写出、server是否已执行、autocommit/transaction状态或幂等键；`self:reconnect()`成功后loop直接再次`self.pool:query(sql,...)`。没有outcome-unknown结果、stable operation ID、transaction compare或read-only allowlist。driver本身没有自动重放，风险完全由官方指南新增。
+- 根因：把“下一次新操作使用新连接”与“重放结果未知的上一操作”混成同一个retry loop，并假设transport failure等价于server未执行。
+- 建议解法：删除通用SQL自动重放示例；连接失败后淘汰旧pool/connection只供**后续**操作使用，本次调用返回结构化`outcome_unknown`。只允许在可证明write前失败或调用方明确标记幂等read时自动重试；写操作必须由业务使用唯一请求ID/unique constraint、幂等表或可验证transaction设计，并显式处理session state丢失。
+- 回归检查：文档测试建立read-only重试与unknown-write两条API示例；修复阶段在write前、server execute前、commit后OK前分别断链，只有第一类可透明重试，后两类向调用方暴露不确定结果且数据库最多出现一次业务效果。当前不执行SQL或fault injection。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3668,7 +3680,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为294项：P0为0，P1为105，P2为163，P3为26。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 26。
+当前滚动统计为295项：P0为0，P1为106，P2为163，P3为26。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 27。
 
 建议按依赖关系分五批修复：
 
@@ -3968,6 +3980,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成Redis封板审计：`redis.lua`全部353行、18组`testredis.lua`、134行fake server及双语各851行reference均已逐项映射；`MONITOR`/RESP3 push并入`REDIS-007/001`而不重复计数，阻塞命令、pipeline写序、断线后不重放已排除为新问题，阶段无未归档候选。
 - 2026-08-13：确认initial handshake宣告`sha256_password`时driver仍生成mysql_native SHA-1 token，只有auth-switch分支实现RSA exchange，合法账号可确定性认证失败；归档为`MYSQL-020`，未创建账号或连接server。
 - 2026-08-13：确认capability协商前initial ERR没有SQLSTATE，但native parser无条件消费一个marker byte且不回退，message首字节丢失、空message抛异常；归档为`MYSQLC-008`，未构造packet。
+- 2026-08-13：确认MySQL双语连接池指南在Lost connection后重连并无条件重放任意SQL，commit后丢回包可重复执行非幂等写并丢失session状态；归档为`DOC-027`，未执行SQL或断线。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC与Redis阶段已收口；共294项（P1 105、P2 163、P3 26）。当前审计MySQL，新增`MYSQL-020`、`MYSQLC-008`后继续codec/认证/池/文档收口；etcd随后复核。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC与Redis阶段已收口；共295项（P1 106、P2 163、P3 26）。当前审计MySQL，新增`MYSQL-020`、`MYSQLC-008`、`DOC-027`后继续codec/认证/池/文档收口；etcd随后复核。
 
 ## 1. 目标和边界
 
