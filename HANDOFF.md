@@ -330,7 +330,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | WS-010 | P1 | client opening handshake没有端到端deadline/cancel，silent peer可长期占住task和socket。 |
 | H2-001 | P2 | HTTP/2 client 接受 server 非法发送的 `SETTINGS_ENABLE_PUSH=1`，未触发 `PROTOCOL_ERROR`。 |
 | H2-002 | P2 | 通用 frame reader 把非 padding frame 的 unused 0x08 当成 PADDED，改写 payload 或错误断连。 |
-| H2-003 | P1 | HTTP/2 接收方不维护 connection/stream receive window，超额 DATA 仍被缓存。 |
+| H2-003 | P1 | HTTP/2不维护receive window且按剥离padding后的长度回补；超额DATA被缓存，合法padded DATA也会永久耗尽credit。 |
 | H2-004 | P2 | peer 的 HEADER_TABLE_SIZE 被应用到本端 decoder，而非约束本端 encoder。 |
 | HPACK-001 | P2 | encoder 改变 maximum table size 后不在下一 header block 开头发送 dynamic table size update。 |
 | H2-005 | P2 | server 用 client 广告的并发上限反向限制该 client 自己的 request streams。 |

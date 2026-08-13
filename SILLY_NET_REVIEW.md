@@ -138,7 +138,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-6.5.2-ENABLE-PUSH-ROLE | MUST | `lualib/silly/net/http/h2.lua:1211-1278,1500-1537,1651-1710` | client recipient | 偏离 | client/server 共用 `frame_settings`；收到值 1 时只设 `ch.enablepush=true`，没有识别发送方是 server 并发送 `PROTOCOL_ERROR`。server 发送值 0 符合 RFC，不属于偏离 | 现有测试只覆盖双方发送值 0，没有 server→client 值 1 | H2-001 |
 | RFC9113-4.1-UNUSED-FLAGS | MUST | `lualib/silly/net/http/h2.lua:270-307` | client/server recipient | 偏离 | `read_frame` 对任意 frame type 的 flag 0x08 都执行 padding 解析；该位在 SETTINGS/PING 等类型未定义，本应忽略，却会删除 payload 字节或触发错误 | 现有测试没有在非 padding frame 上设置 unused flag | H2-002 |
 | RFC9113-6.1/6.2-PAD-LENGTH-REQUIRED | MUST | `lualib/silly/net/http/h2.lua:268-307,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | payload长度为0时完全跳过PADDED解析；缺失强制Pad Length字段的DATA可被当作合法空DATA并用END_STREAM结束消息 | 现有测试没有zero-length PADDED DATA/HEADERS或错误作用域断言 | H2-041 |
-| RFC9113-5.2/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-263,479-482,502-542,1177-1204` | client/server recipient | 偏离 | channel/stream 没有剩余 receive-window 状态；DATA 无条件 append，仅累计将来回补的 debt，超过已广告 credit 也不会报 `FLOW_CONTROL_ERROR` | 现有测试只覆盖守规发送方和正常 1 MiB 消息，没有超 window DATA | H2-003 |
+| RFC9113-5.2/6.1/6.9-RECV-FLOW-CONTROL | MUST/security | `lualib/silly/net/http/h2.lua:151-207,239-307,479-482,502-542,757-771,1177-1204` | client/server recipient | 偏离 | 不维护receive-window remaining，超额DATA仍缓存；padding又在记账前被剥离，合法padded DATA消耗的credit永不完整回补 | 现有测试只覆盖无padding守规发送方和正常1 MiB消息，没有超window或padding耗尽 | H2-003 |
 | RFC9113-6.5.2-HEADER-TABLE-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-170,239-263,1211-1278` | client/server | 偏离 | 收到 peer 的 HEADER_TABLE_SIZE 后错误地 hard-limit `recvhpack` decoder；该 setting 描述 peer decoder 的上限，应约束本端 `sendhpack` encoder | HPACK 单测只同时修改 encoder/decoder；HTTP/2 测试没有非默认 peer setting | H2-004 |
 | RFC7541-4.2/6.3-TABLE-SIZE-UPDATE | MUST | `luaclib-src/lhttp.c:246-260,489-548,782-791` | HPACK encoder | 偏离 | `hardlimit` 只改本地 limit/evict；`pack` 不保存或编码 pending dynamic table size update，下一 header block 不会以 0x20 update 开头 | Test 12 同时手改 encoder/decoder，Test 15 的 decoder 保持较大表；都没有断言 wire update | HPACK-001 |
 | RFC9113-5.1.2/6.5.2-MAX-CONCURRENT-DIRECTION | MUST | `lualib/silly/net/http/h2.lua:151-160,239-263,618-659,1211-1278,1555-1648` | server recipient | 偏离 | server 收到 client setting 后覆盖用于限制 inbound request 的 `ch.streammax`；client setting 只限制 server 发起的 streams | 现有双方恰好都发送 100，没有非对称/运行时变更覆盖 | H2-005 |
@@ -2509,9 +2509,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 状态：已确认；RFC 9113 与确定性状态/数据路径推导。本阶段只做静态 review，不新增复现代码。
 - 规范：RFC 9113 §5.2 将 flow control 定义为 receiver 广告、sender 必须遵守的 connection/stream 双层 credit；初始值均为 65,535 octets。§6.1/§6.9 要求完整 DATA payload 计入两层 window，receiver 必须持续记账，才能识别 peer 超出可用 credit 的 `FLOW_CONTROL_ERROR`；流控正是限制未消费资源承诺的协议边界。
 - 位置：channel/stream 字段与初始化在 `lualib/silly/net/http/h2.lua:151-207,239-263,479-482`；credit 回补在 `:502-542,760-771`；DATA 接收在 `:1177-1204`。
-- 触发：peer 在没有收到足够 stream WINDOW_UPDATE 时，向同一 open stream 发送累计超过已广告 65,535 octets 的 DATA；connection 方向同样可发送超过当时有效 credit 的连续 DATA。应用尚未读取该 stream 时最清晰，因为实现不会发送 stream-level 回补。
-- 影响：Silly 不会以 stream/connection `FLOW_CONTROL_ERROR` 拒绝超额数据，而会继续把 payload append 到 `s.recvbuf`。不守规或恶意 peer 因而能绕过 HTTP/2 为慢消费者提供的每流内存上限；结合多个 stream 和没有消息体上限，可持续消耗服务端或 client 内存。connection-level 自动回补也不能替代对已用 credit 的校验。
-- 证据：channel 只有发送窗口 `sendwindow` 和名为 `recvwindebt` 的待回补累计值；stream 同样只有 `sendwindow` 与待回补 `recvwindebt`，没有 receive-window remaining。`frame_data` 只调用 `channel_windebt(ch, #dat)`，随后无条件 `s.recvbuf:append(dat)`；两者都不减窗口、不检查负值、不调用 `FLOW_CONTROL_ERROR`。stream debt 只有应用消费/等待读取时才由 `stream_flush` 生成 WINDOW_UPDATE，因此超出 65,535 的未读 DATA 路径确定成立。
+- 触发：路径A：peer在没有收到足够stream WINDOW_UPDATE时，向同一open stream发送累计超过已广告65,535 octets的DATA；connection方向同样可超过当时有效credit。路径B：守规peer持续发送带padding的DATA，应用持续读取；最小化例子可让每个frame主要由Pad Length和padding构成，直到其合法发送窗口耗尽。
+- 影响：路径A中Silly不会以stream/connection `FLOW_CONTROL_ERROR`拒绝超额数据，而继续append到`s.recvbuf`，恶意peer可绕过慢消费者内存边界。路径B中Silly只回补content bytes，Pad Length和padding消耗的credit永久丢失；即使应用已消费全部content，守规peer最终仍把两层window降到0并停止发送，形成确定性stream乃至整连接停顿。connection-level自动回补不能替代正确的完整payload记账。
+- 证据：channel只有发送窗口`sendwindow`和待回补`recvwindebt`；stream同样没有receive-window remaining。`read_frame`先从payload删除1-byte Pad Length和全部padding，之后`frame_data`才以裁剪后的`#dat`调用`channel_windebt`、累计stream debt并append；规范要求计入的是裁剪前完整DATA payload。两层都不减remaining、不检查负值；stream debt又只有应用读取时由`stream_flush`回补。因而超额未读DATA被接受与合法padding永不完整返还两个路径都确定成立。
 - 根因：实现了 outbound sender window 和 inbound WINDOW_UPDATE 回补机制，但把 receiver accounting 简化成“收到多少以后就回多少”，遗漏了独立的已广告 credit/remaining window 状态与违规检测。
 - 建议解法：为 connection 和每个 stream 分别维护 receive-window remaining。读取 DATA header 后按原始完整 payload 长度先扣 connection window，再按合法 stream 状态扣 stream window；connection 负值触发 connection `FLOW_CONTROL_ERROR`，stream 负值触发 stream `FLOW_CONTROL_ERROR`。应用消费后生成 WINDOW_UPDATE 时再增加本地 remaining，并保证 31-bit 边界；错误/关闭 stream 的 DATA 仍须按 RFC 更新 connection accounting。
 - 后续回归条件：修复阶段在不读取 body 的单 stream 上覆盖恰好 65,535、65,536、多 frame 超限；覆盖多 stream 共享 connection window、消费后恢复 credit、closed/error stream DATA、padding 计入和 SETTINGS 初始窗口变化，分别断言正确的 stream/connection 错误作用域。本轮不新增测试代码。
@@ -3391,6 +3391,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H2 sender不累计实际DATA长度，request/response可在Content-Length失配时仍排END_STREAM并报告成功；归档为`H2-040`。
 - 2026-08-13：确认32位HPACK table-size setting未经checked conversion窄化进C int，动态表非空时容量减法可触发signed overflow；归档为`HPACK-004`。
 - 2026-08-13：确认zero-length H2 frame会在检查PADDED前按空payload短路，缺失Pad Length的DATA仍可正常END_STREAM；归档为`H2-041`。
+- 2026-08-13：补强`H2-003`：padding在flow-control记账前已被剥离，守规peer发送padded DATA也会因Pad Length/padding credit永不回补而停顿；不重复计数。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
