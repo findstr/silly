@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档345项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档346项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2830,6 +2830,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：级别切换使用不与logger/worker内部控制冲突的明确配置入口、管理socket或专用信号；若必须复用，保存旧handler并在新handler中可靠调用，但handler异常/顺序仍需定义。更稳妥地让logger提供组合后的官方control API，并在signal/logger reference列出保留信号与覆盖后果；启动日志不得给同一命令两个动作。
 - 回归检查：修复阶段覆盖require logger后重复注册、轮转rename→signal→新文件写入、级别切换、custom handler异常及两操作组合；断言reopen与toggle各有唯一明确控制、旧fd释放且日志不丢。文档静态检查禁止未组合地覆盖保留SIGUSR1。当前不发送信号。
 
+### DOC-059 — P3 — logging 指南把 `trace.spawn()` 的旧上下文返回值当成新 trace ID
+
+- 状态：已确认；双语trace示例、task wrapper与native双返回语义的确定性静态核对。本轮不创建或传播trace。
+- 位置：`docs/src/{en/,}guides/logging-monitoring.md:521-570`的服务B在没有`x-trace-id`时执行`trace_id = trace.spawn()`并把变量注释/命名为新ID。实际`task._tracespawn`把native第一个返回的新ID存入当前task，却返回第二个旧ID，见`lualib/silly/task.lua:263-268`；双语trace reference已正确声明返回“之前的trace ID”并在需要新传播值时使用`trace.propagate()`，见`docs/src/{en/,}reference/trace.md:68-93,134-160`。
+- 触发：服务B收到不含合法`x-trace-id`的请求。handler会进入else并把spawn返回值赋给局部`trace_id`。
+- 影响：当前协程内部logger会使用真正的新上下文，但局部变量保存的是0或进入handler前的旧trace。读者照该模式把变量写入response header、下游请求、结构化日志或错误报告时，会传播错误ID，使同一请求的本地日志与外部关联字段分裂；首次请求通常传播0，复用上下文时还可能错误关联前一链路。当前展示片段未继续使用该变量，故定为P3文档契约错误。
+- 证据：`_tracespawn`明确执行`task_traceid[task_running] = nid; return oid`，而`_tracepropagate`才读取当前task的新ID并替换node位。指南同页完整生产示例在else中采用`trace.spawn(); trace_id = trace.propagate()`，证明前一片段不是有效的另一种用法，而是页内自相矛盾。
+- 根因：API同时承担“生成新上下文”和“返回旧上下文供恢复”，函数名让示例作者误以为返回生成值；文档代码片段未按返回值数据流做类型/语义检查。
+- 建议解法：else分支改为先保存可选旧值`local old = trace.spawn()`，需要传播时再`local trace_id = trace.propagate()`；请求终局按结构化上下文策略恢复old，避免协程复用污染。考虑提供语义更清晰的`start()`返回`new,restore_token`或scope API，减少同类误用。
+- 回归检查：修复阶段以已知旧ID覆盖无上游/有上游两条路径，断言局部传播ID等于当前logger上下文而非old，终局恢复正确；静态扫描赋值形态`trace_id = trace.spawn()`并人工确认用途。当前不运行trace。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4244,7 +4255,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为345项：P0为0，P1为112，P2为189，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 58。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为346项：P0为0，P1为112，P2为189，P3为45。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 59。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；189项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
