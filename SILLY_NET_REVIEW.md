@@ -2171,6 +2171,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client使用`createElement`并对所有远端text赋`textContent`，不把昵称/消息/错误拼入`innerHTML`；图片使用`URL`解析、限定`https:`/允许域并以DOM property赋值，必要时使用可信的CSP。server仍应按产品规则验证Unicode长度和昵称字符，但不能替代每个输出上下文的编码。教程显式加入安全说明。
 - 回归测试：修复阶段将昵称、sender、message、error和image URL分别输入HTML标签、attribute quote、entity、SVG/event payload及普通Unicode；断言DOM只产生文本或允许的安全元素、无event attribute/脚本执行。双语完整示例与扩展代码纳入浏览器安全doc-test。本轮不执行payload。
 
+### DOC-023 — P2 — WebSocket 教程把浏览器可选 Ping 当作自动心跳，server 没有主动探测或失联 deadline
+
+- 状态：已确认；双语教程与WHATWG WebSockets Standard控制帧/API契约静态对照。本轮不启动浏览器或等待失联连接。
+- 权威依据：[WHATWG WebSockets Standard §5](https://websockets.spec.whatwg.org/#ping-and-pong-frames)说明Ping/Pong不暴露给浏览器WebSocket API；user agent可以按自身需要发送，但不得用它帮助server，标准明确假定server在需要时自行solicit Pong。可选实现行为不能成为应用心跳保证。
+- 位置：教程server只在收到ping后回pong，见`docs/src/{en/,}tutorials/websocket-chat.md:759-863`；随后在`:1642-1652`把它命名为心跳保活并断言浏览器会自动发送ping。公开WebSocket socket没有read deadline，既有连接/消息deadline缺口见`WS-005/010`。
+- 触发：浏览器/user agent不主动发送protocol Ping，或只为自己的NAT/latency策略偶尔发送；网络发生half-open、客户端休眠/断网但TCP没有及时产生close event。教程server持续阻塞于`sock:read()`。
+- 影响：所谓“心跳保活”没有周期、server-initiated challenge、Pong correlation或deadline，无法检测silent peer。失联连接继续留在`clients`表并占用socket、coroutine及广播遍历成本；连接数和在线列表均可能长期包含幽灵用户。不同浏览器/网络环境下表现不一致，部署者会错误依赖一个标准不保证的客户端行为。
+- 证据：完整browser client只创建`new WebSocket`并收发JSON，没有application heartbeat；browser API也不能由页面发送protocol Ping。server循环只有在远端先发opcode 9时才回Pong，且从不主动`sock:write(...,"ping")`、记录nonce/time或使read有界。页面的自动重连只能在`onclose`触发后工作，不能检测未产生close event的half-open。
+- 根因：混淆了协议要求“收到Ping必须回Pong”和应用为自身健康检查“主动发Ping并等待Pong”，又把user-agent MAY行为写成必然。
+- 建议解法：教程改为server周期性发送带nonce/timestamp的Ping，记录last-pong并在absolute deadline后关闭/移除连接；或设计application-level heartbeat并让browser JS定期发送，同时说明它是text消息而非protocol Ping。心跳task、reader和close必须有单一owner，避免并发read；停止/异常时取消timer。删除浏览器自动Ping保证。
+- 回归测试：修复阶段用可控clock覆盖及时Pong、错误payload、无Pong、只有业务data、browser tab休眠及close竞态；断言健康连接保留、silent连接在deadline后恰好清理、timer/task无泄漏。文档契约检查禁止再把user-agent MAY写成保证。本轮不运行时序场景。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3405,7 +3417,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为273项：P0为0，P1为100，P2为150，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 22。
+当前滚动统计为274项：P0为0，P1为100，P2为151，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 23。
 
 建议按依赖关系分五批修复：
 
@@ -3490,6 +3502,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认WebSocket双语教程的广播优化调用channel不存在的`recv/send`方法，consumer与producer首次调用均会异常；归档为`DOC-020`。
 - 2026-08-13：确认WebSocket教程对单调ID稀疏`clients`表使用`#clients`做在线统计和连接资源上限，断开产生hole后可持续低估并放行超额连接；归档为`DOC-021`。
 - 2026-08-13：确认WebSocket完整聊天室把远端昵称原样拼入浏览器`innerHTML`，20字节server限制仍允许可执行SVG payload并形成跨用户XSS；归档为`DOC-022`。
+- 2026-08-13：依据WHATWG确认browser Ping是不可依赖的user-agent可选行为；教程只被动回Pong却宣称自动心跳，没有主动探测或失联deadline，归档为`DOC-023`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
