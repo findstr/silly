@@ -358,6 +358,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在任何buffer/SSL读取之前检查并占用per-connection reader token，并让token在同步成功、异步成功、timeout、close和error的所有终局统一释放；更清晰的是用operation对象绑定co、delimiter、timer与generation。若只支持单reader，第二调用稳定返回明确`BUSY`错误而非assert；若要支持多reader，则实现FIFO队列并明确拆分语义。
 - 回归测试：修复阶段用可控分片覆盖A等待100/B读1、A delimiter/B fixed-size、TLS decrypted partial buffer、B在0/1/99/100字节时进入，以及timeout/close与第二reader交错；断言第二调用永不消费A的字节、A有限完成或得到明确终态、timer不误唤醒新operation。当前只记录静态时序。
 
+### NET-006 — P1 — TCP/TLS buffer limit 可在满足当前 read 前暂停输入并形成自锁
+
+- 状态：已确认；read、data callback与高/低水位状态机的确定性静态推导。本轮不发送大数据或运行等待复现。
+- 公开契约：`conn:limit(size)`被双语文档推荐用于限制接收缓存并在消费后恢复；启用资源保护不能让一个语法和长度都合法的在途read失去取得剩余字节的机会。API至少必须规定单次read与limit的关系，并以明确错误替代无限等待。
+- 位置：TCP水位切换在`lualib/silly/net/tcp.lua:85-98`，data callback先尝试完整read、失败后按buffer size暂停在`:127-148`，公开read/恢复逻辑在`:213-225,263-300`；TLS对应路径在`lualib/silly/net/tls.lua:124-137,242-278,398-447`。双语TCP reference在`docs/src/{en/,}reference/net/tcp.md`多次建议设置limit，TLS reference的`conn:limit`说明位于两文件`:528-530`。
+- 触发：设置`conn:limit(64KiB)`后调用`read(1MiB)`；或者调用`read("\\n")`而peer在前64KiB没有发送LF。接收buffer达到limit时，当前请求尚不能返回。
+- 影响：data callback执行完整读取失败，随后`readenable(fd,false)`停止socket输入；等待协程仍是唯一能消费该请求的reader，但它只有在完整长度/分隔符满足后才会被唤醒。恢复读取的`check_limit(...size < limit)`只在另一次成功read或调用`limit(nil)`时发生，因此正常单reader程序自锁。无timeout永久占用连接和task；有timeout只返回TIMEDOUT并留下已满、仍暂停的buffer，后续相同大read会重复失败。TLS明文buffer路径完全相同。
+- 证据：TCP/TLS callback都先以当前`s.delim`调用all-or-nothing reader；返回nil后仍对未消费总量运行`check_limit`。达到阈值用`readenable(false)`，等待operation没有partial delivery或内部低水位drain。公开read从wait恢复前不会执行任何恢复分支；文档也没有要求`limit >= 每次定长读取/最大delimiter距离`。该问题与`SOCK-012`的“默认无资源上限”独立：开启现有保护反而破坏合法读取的liveness。
+- 根因：把application undecoded buffer的高水位直接当作transport pause阈值，却没有为当前解析operation预留进度预算；hard cap、backpressure watermark和单次消息上限被混成一个数值。
+- 建议解法：分离协议/operation hard limit与transport高低水位。登记read时若固定`n`超过允许上限应立即返回明确`LIMIT`错误；delimiter模式应在达到hard cap且仍未匹配时终止/关闭，而不是暂停等待。若limit只表达backpressure，则当前唯一reader必须能流式消费/匹配并让buffer降到低水位，或临时保证其完成所需的有界输入预算；timeout/close后统一恢复或关闭，不能留下永久paused状态。
+- 回归测试：修复阶段覆盖`n`在limit-1/limit/limit+1、delimiter位于边界前/边界/边界后/永不出现、单chunk与多chunk、TCP/TLS、带/不带timeout及timeout后下一次read；断言所有路径有限终止，read-enable状态与buffer预算一致且无busy loop。当前只保存静态证据。
+
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
 - 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
@@ -2775,7 +2787,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为219项：P0为0，P1为91，P2为118，P3为10。模块分布：CORE 7、NET 5、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为220项：P0为0，P1为92，P2为118，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2802,6 +2814,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认低层net在socket成功发布后才assert事件回调，缺字段配置会遗留不可达fd；文档允许无accept listener又可被远端重复触发；归档为`NET-004`。
 - 2026-08-13：确认TCP/TLS双语reference、guide与benchmark共10处使用底层明确拒绝的多字节`"\\r\\n"` delimiter；归档为`DOC-007`。
 - 2026-08-13：确认TCP/TLS single-reader门禁位于buffer fast path之后，并发reader可按分片时序偷走旧operation字节并使其永久等待；归档为`NET-005`。
+- 2026-08-13：确认TCP/TLS buffer limit会在当前定长/分隔符read满足前暂停transport，唯一reader无法消费或恢复，形成永久自锁；归档为`NET-006`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
