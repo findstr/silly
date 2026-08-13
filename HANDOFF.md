@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线317项（P1 110、P2 169、P3 38）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线318项（P1 110、P2 170、P3 38）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -144,6 +144,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | NET-004 | P2 | 低层listen/connect在socket发布后才校验event回调；缺字段异常会遗留不可达fd，无accept listener还可被远端重复触发。 |
 | NET-005 | P1 | TCP/TLS单reader门禁晚于缓存fast path，并发read可偷走旧operation字节并令其永久挂起。 |
 | NET-006 | P1 | TCP/TLS buffer limit可在当前read满足前暂停transport，唯一reader无法降水位而永久自锁。 |
+| NET-007 | P2 | 大于UINT32_MAX的合法Lua整数timeout在fd/waiter发布后令native timer抛错，可毒化TCP/TLS/UDP/H2对象并遗留connect/gRPC资源。 |
 | UDP-001 | P2 | bound socket缺destination仍返回成功后静默丢包，connected socket的显式destination又被C层忽略。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
 | TLS-002 | P1 | accepted TLS不保活SNI callback ctx，reload/close+GC后在途ClientHello可访问失效userdata。 |
@@ -449,7 +450,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为309条：P1 110、P2 166、P3 33。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 16、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37；以主报告中的编号和证据为准。
+当前统计为318条：P1 110、P2 170、P3 38。模块分布为CORE 7、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 42；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

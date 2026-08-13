@@ -387,6 +387,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分离协议/operation hard limit与transport高低水位。登记read时若固定`n`超过允许上限应立即返回明确`LIMIT`错误；delimiter模式应在达到hard cap且仍未匹配时终止/关闭，而不是暂停等待。若limit只表达backpressure，则当前唯一reader必须能流式消费/匹配并让buffer降到低水位，或临时保证其完成所需的有界输入预算；timeout/close后统一恢复或关闭，不能留下永久paused状态。
 - 回归测试：修复阶段覆盖`n`在limit-1/limit/limit+1、delimiter位于边界前/边界/边界后/永不出现、单chunk与多chunk、TCP/TLS、带/不带timeout及timeout后下一次read；断言所有路径有限终止，read-enable状态与buffer预算一致且无busy loop。当前只保存静态证据。
 
+### NET-007 — P2 — 大 timeout 在 waiter/fd 发布后抛异常，可毒化连接并遗留在途资源
+
+- 状态：已确认；公开timeout类型、native timer范围与TCP/TLS/UDP/H2/connect状态发布顺序的确定性静态推导。本轮不创建socket、timer或执行边界调用。
+- 公开契约：`time.after`以及各网络read/connect API都把毫秒值声明为`integer`，双语time reference没有32-bit上限；一个合法Lua整数即使不受实现支持，也应在改变连接/waiter状态前被拒绝，并按各API既有error tuple返回或保持对象可继续使用。
+- 位置：native `time.after`对`timeout > UINT32_MAX`调用`luaL_argerror`，见`luaclib-src/ltime.c:14-25`。底层connect先保存`socket_pending[fd]`再调用timer，见`lualib/silly/net.lua:117-132`；TCP、TLS、UDP分别先写`s.co/delim`再调用timer，见`tcp.lua:275-294`、`tls.lua:169-185`、`udp.lua:148-163`；H2先写`readtype/readneed/readco`，见`http/h2.lua:779-798`。gRPC server-streaming还在创建并注册H2 stream后才创建timer，见`grpc/client/service.lua:184-197`。
+- 触发：向上述公开API传入`UINT32_MAX + 1`至`math.maxinteger`之间的毫秒timeout；例如约49.7天以上的TCP connect/read或H2/gRPC read deadline。该值满足文档和LuaLS的`integer`类型，但timer binding同步抛出`bad argument`。
+- 影响：connect路径已经创建native fd且`socket_pending`强持有当前协程，异常跳过清表和close；迟到CONNECT还会尝试resume已退出协程。TCP/TLS/UDP保留指向异常调用协程的唯一waiter，后续read断言失败，DATA/CLOSE则可能对非WAIT协程执行`task.wakeup`并再次抛错。H2 stream被channel强表保活且read waiter永久占用，后续读取被覆盖或触发既有并发读取破坏；gRPC server-streaming异常路径又没有to-be-closed局部量，会遗留active stream/quota。调用者即使以`pcall`处理参数异常，也无法恢复对象到调用前状态。
+- 证据：所有列出的路径都在`time.after`返回session之前写入共享状态，且没有`pcall`、预校验或异常清理；`luaL_argerror`不会返回到后续`wait`、清槽、`time.cancel`或`net.close`分支。负值虽被native压成0，本条只依赖明确会抛出的超大合法Lua整数。DNS的类似“先发布singleflight waiter再建timer”已由`DNS-011`覆盖，不重复计数；H1在建timer前没有发布其底层reader waiter，因此不纳入本条资源污染范围。
+- 根因：timeout范围属于timer实现细节，却没有在公共边界统一规范化；各异步operation又把“发布waiter/资源”和“成功取得timer”拆成非事务顺序，并假设timer构造永不失败。
+- 建议解法：统一提供deadline/timeout规范化函数，在任何connect、stream或waiter状态变更前验证类型与支持范围；超界返回稳定`INVAL`或文档化的错误，不抛出跨越资源边界的异常。更稳妥的是先成功创建timer，再以不可yield的事务发布operation；若后续发布失败，立即cancel timer并关闭/回滚fd、stream和waiter。把支持的最大毫秒值补入time与所有透传API的双语文档/LuaLS。
+- 回归测试：修复阶段覆盖`UINT32_MAX-1`、`UINT32_MAX`、`UINT32_MAX+1`、`math.maxinteger`及错误类型，对connect、TCP/TLS/UDP read、H2 read/waitresponse和gRPC unary/server-streaming逐一断言：不遗留pending fd/waiter/timer/active stream，原对象保持可用或被明确关闭，迟到DATA/CLOSE/CONNECT不会二次唤醒；当前不运行timer或网络复现。
+
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
 - 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
@@ -4267,6 +4279,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
 - 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
 - 2026-08-13：完成cluster封板审计：master Lua 331行、native 553行、类型stub 54行、`testcluster.lua`24组/604行、中英文reference 1127/1126行及raw-string分支7个变更文件均已映射；新增`CLUSTER-016`至`019`、`DOC-038`至`042`，断线registry候选则经GC/finalizer反查排除。其余候选归入既有19项、4项分支独有问题或静态排除，阶段收口。
+- 2026-08-13：跨模块timeout事务复核确认native timer拒绝大于`UINT32_MAX`的整数，但connect、TCP/TLS/UDP/H2均先发布fd/waiter，gRPC也先占stream；同步参数异常会跳过回滚并毒化对象或遗留资源，归档为`NET-007`。DNS同类顺序已由`DNS-011`覆盖，H1因尚未发布底层waiter而排除。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

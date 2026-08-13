@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共317项（P1 110、P2 169、P3 38），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除。当前进入跨模块deadline/cancel/GC/resource-budget/platform组合审计与最终测试、文档、LuaLS、编号统计核账。
+当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共318项（P1 110、P2 170、P3 38），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除；跨层大timeout在operation发布后抛错的问题归档为`NET-007`。当前继续deadline/cancel/GC/resource-budget/platform组合审计与最终测试、文档、LuaLS、编号统计核账。
 
 ## 1. 目标和边界
 
@@ -67,7 +67,7 @@
 
 ### 3.2 Lua transport 和协议层
 
-- `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005/006`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重。
+- `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005/006/007`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重；`NET-007`同时覆盖TLS/H2/connect在大timeout timer异常前发布operation的跨层事务缺口。
 - `lualib/silly/net/tls.lua`：已审有归档；配置、connect/listen/reload、握手三态、timeout、read/write、buffer limit、close、GC、SNI/ALPN与native所有权均已完成；transport交叉项见`NET-005/006`，TLS独有项为`TLS-001`至`TLS-018`。
 - `lualib/silly/net/dns.lua`：已审有归档；完成UDP/TCP fallback、singleflight、timer、CNAME/search、cache/TTL、reconfigure、平台bootstrap与close/wakeup交错矩阵，新增`DNS-011/012/015/018`，Windows边界见`DNS-016/017`。共享TCP旧recv覆盖新连接候选已按worker每消息后清空wakeup queue的顺序排除。
 - `lualib/silly/net/cluster.lua`：已审有归档；331行逐路径完成serve/connect/listen/call/send、codec/handler、waiter/timer、trace、reconnect、active/passive close及全局context生命周期核对，问题由`CLUSTER-001`至`019`覆盖；raw-string分支状态与4项独有问题另见专项报告。
