@@ -58,8 +58,9 @@ test/testcluster.lua
 | CLUSTER-016 | 仍存在 | 分支仍固定明文TCP，raw-string wire无TLS、节点认证、MAC或防重放；任意可达主机可调用handler，链路方可读写payload。 |
 | CLUSTER-017 | 不适用 | 该问题属于master的32-bit `cmd`字段；raw-string改造已删除marshal/cmd及对应wire字段，不存在command窄化路径。 |
 | CLUSTER-018 | 仍存在 | `serve`仍无条件替换所有listener/peer共享的global handler/timeout/native ctx；raw-string只删除codec/cmd，没有建立实例或generation。 |
+| CLUSTER-019 | 不适用 | raw-string API已删除内置marshal/unmarshal；handler异常仍被pcall记录且无remote error envelope，但不再存在本条codec异常越过tuple的路径。 |
 
-矩阵结论：18项master问题中，17项在分支仍有对应路径；其中1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余14项仍存在；`CLUSTER-017`因cmd字段删除而不适用。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
+矩阵结论：19项master问题中，17项在分支仍有对应路径；其中1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余14项仍存在；`CLUSTER-017/019`因cmd/codec删除而不适用。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
 
 ## 4. 分支独有问题
 
@@ -148,3 +149,4 @@ test/testcluster.lua
 - 2026-08-13：1.0封板复核确认master与分支都没有TLS、节点认证、消息完整性或防重放，新增共同问题`CLUSTER-016`；未建立peer或发送frame。
 - 2026-08-13：master的marshal command无范围检查并窄化为uint32，新增`CLUSTER-017`；raw-string分支已删除cmd字段，矩阵标记不适用。
 - 2026-08-13：确认两版serve均可无保护替换所有listener共享的global context/handler，官方多节点示例确定由最后配置接管全部端口；新增共同问题`CLUSTER-018`。
+- 2026-08-13：master codec调用缺少protected boundary，新增`CLUSTER-019`；raw-string分支删除内置marshal/unmarshal，矩阵标记不适用。

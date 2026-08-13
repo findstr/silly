@@ -1032,6 +1032,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：优先把`serve(conf)`改为返回独立cluster server/context，listener和peer显式绑定其codec、callbacks、timeout、parser及pending map；多实例互不共享。若1.0只能支持singleton，则第二次serve必须在任何字段变更前fail fast，文档明确每进程一次，并删除/改写多节点示例为多个进程。未来热更新需先阻止新流量、等待/取消旧generation、释放其全部parser/waiter，再原子发布新generation。
 - 回归测试：修复阶段创建两个不同codec/handler标识的listener并交错call，断言各自只命中owner；覆盖partial header/body、queued complete frame、pending request、yielding handler和serve重入，要求要么安全隔离，要么第二次调用零副作用失败。检查旧ctx/timer/waiter/fd最终归零。当前不运行多实例或重配置测试。
 
+### CLUSTER-019 — P2 — master 的 marshal/unmarshal 异常越过公开错误 tuple，server 侧只留日志并让 caller 超时
+
+- 状态：已确认；master三个codec调用点、task异常边界、timer/waiter收尾和双语错误契约静态核对。本轮不让codec抛错或发送请求。raw-string分支已删除内置codec，因此不适用。
+- 位置：server request unmarshal与response marshal在`lualib/silly/net/cluster.lua:64-100`均不受`pcall`保护，只有业务`call`被保护；client request marshal在`:274-300`、response unmarshal在`:261-271`也直接调用。task异常只记录并关闭当前子协程，见`lualib/silly/task.lua:45-64`。双语reference却在`docs/src/{en/,}reference/net/cluster.md:47-66,325-345`声明unmarshal返回可选error、call失败返回marshal/unmarshal字符串。
+- 触发：zproto/protobuf/msgpack等codec因缺required字段、错误Lua value type、未知tag、损坏response body或内部异常而throw，而不是按约定返回nil,err；用户自定义marshal/unmarshal中任何普通Lua异常同样命中。合法peer发送业务codec无法解码的payload即可触发server路径。
+- 影响：client request marshal异常在任何wire发送前直接越过`cluster.call/send`的`result,err`契约；response已收到后的unmarshal异常也直接抛出，调用方不能按文档统一处理。server request/response codec异常发生在预先fork successor之后，只由task框架记录traceback并终止当前processor，连接保持但该RPC没有response，远端只能等待完整timeout；response marshal异常还可能发生在handler已提交副作用后，使caller把本地codec失败误判为网络timeout并重试，造成重复业务效果。异常路径的诊断也没有session/cmd/peer结构化返回。
+- 证据：四个codec调用均是普通函数调用；`silly.pcall`只包围`call` handler，不能捕获其前后的unmarshal/marshal。client waitfor在取消timer后才调用response unmarshal，所以不会遗留waiter，但异常仍取代返回tuple。server `process`在处理当前frame前已`task.fork(process)`，因此框架吞掉异常后后续frame仍可运行，进一步把故障表现为单次无解释timeout而不是明显连接失败。
+- 根因：可插拔codec被当作不会throw的纯函数，同时API又允许其用返回tuple报告错误；异常和普通失败没有进入同一RPC finalizer，server协议也没有稳定的remote error envelope。
+- 建议解法：为每次codec调用建立不yield的protected boundary，统一把throw与`nil,err`归一成结构化local/remote codec error；client始终返回契约化tuple。server在能安全识别session时发送有上限的error envelope，否则关闭该连接使pending立即结束，不能静默等待timeout；handler已执行后的response encode失败必须标记outcome-unknown并建议幂等operation ID。trace/peer/session清理使用finally式终局。
+- 回归测试：修复阶段让四个codec位置分别return nil,error和throw，覆盖请求写前、请求解码、handler成功后响应编码、响应解码；断言client不抛裸异常、server task无未观察traceback、pending/timer清零且错误类型区分pre-execution与outcome-unknown。当前不执行异常注入。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -4260,6 +4271,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
 - 2026-08-13：确认两版`cluster.serve`会无保护替换所有listener/peer共享的global parser/handler/context；官方多节点示例连续调用三次后全部listener使用最后节点配置，活跃重配还会错接半包/在途RPC；归档为`CLUSTER-018`，未执行重配。
+- 2026-08-13：确认master的request/response marshal/unmarshal均在公开error tuple之外直接调用；codec throw会逃出client API或只终止server processor并令caller超时，归档为`CLUSTER-019`，raw-string分支不适用。
 - 2026-08-13：沿cluster被动断线反查共享net registry，确认TCP/TLS/UDP的CLOSE adapter不删除data/close表项，连接抖动可按历史sid永久扩表；归档为`NET-007`。随后逐adapter复核排除cluster：其`close_fd`会调用`net.close`完成清表。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。

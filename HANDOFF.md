@@ -200,6 +200,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-016 | P1 | master与raw-string分支均固定明文TCP且无节点认证/消息完整性，可达主机即可调用RPC或篡改重放。 |
 | CLUSTER-017 | P2 | master允许任意Lua integer命令ID并静默窄化为uint32，低32位相同的不同命令会在远端碰撞错投。 |
 | CLUSTER-018 | P2 | 重复serve会静默替换所有listener/peer共享的parser与handler；官方多节点示例因此全部使用最后配置，活跃重配还会错接在途状态。 |
+| CLUSTER-019 | P2 | master codec异常越过call/send错误tuple；server marshal/unmarshal throw只留task日志并让远端等到timeout。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | ADDR-002 | P2 | `addr.parse("[::1]")`等无端口bracket输入构造`se+1`指针并比较，公开正常路径触发C未定义行为。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
