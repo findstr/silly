@@ -1183,14 +1183,14 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 ### HTTPC-008 — P2 — H2 pool 没有记录真实 idle 起点，新连接会提前淘汰
 
 - 状态：已确认；pool entry初始化、timer扫描、stream close与时间源静态推导。本轮不建立H2连接或等待idle timer。
-- 契约：`idle_timeout`公开含义是连接保持空闲后再淘汰的毫秒数；计时必须从active→idle转换开始，不能从零值、请求开始或上一次扫描估算。duration还应使用monotonic clock，避免wall-clock校时改变资源生命周期。
+- 契约：`idle_timeout`公开含义是连接保持空闲后再淘汰的毫秒数；计时必须从active→idle转换开始，不能从零值、请求开始或上一次扫描估算。`time.now()`由启动wall基准加内部monotonic tick组成，适合当前进程内做duration比较。
 - 位置：client默认值和pool timer在`lualib/silly/net/http/client.lua:57-158`；H1准确release时间对照在`:160-181`；H2 entry创建在`:245-271`；H2 stream close只更新channel count在`lualib/silly/net/http/h2.lua:1041-1080`。双语公开配置见`docs/src/{en/,}reference/net/http.md:254-270,383-404`。
-- 触发：在进程启动任意时刻新建H2 channel，完成其第一个request并在首次pool scan前使channel idle；默认timer在创建约15秒后运行。长请求在两次timer tick之间结束、或系统wall clock向前/后调整，也会触发不同程度的提前/延后。
-- 影响：新entry的`lastfree=0`，首次扫描使用Unix毫秒`time.now()`，因此条件`0+idle_timeout>=now`恒false；刚空闲的新H2连接在默认配置下最多约15秒就被关，而不是承诺的30秒。连接复用率下降、TLS/H2握手和DNS负载上升，突发流量更易形成连接风暴；长请求的idle起点只能近似为最近timer tick，系统时间跳变还可让H1/H2池立即清空或超期保留。
-- 证据：H1在stream release时执行`entry.lastfree=time.now()`，但H2 entry固定以0发布，`S.close`没有pool callback或时间字段。timer仅在channel non-idle时把lastfree刷新为扫描时的now；若首个request已完成，它从未走该分支，直接进入expired分支。后续复用只在acquire时更新时间，也不是请求结束/真正idle的时刻。`silly.time`另有`monotonic()`，当前pool却使用wall-clock `now()`。
-- 根因：H1有明确的connection release事件，H2却把多stream channel简化为周期性`isidle()`采样，没有保存前一active状态或最后一个stream释放事件；初始化哨兵又与绝对wall-clock直接比较。
-- 建议解法：让H2 channel在`streamcount`从1降到0时通知所属pool并记录`time.monotonic()`；创建entry时若channel已active只标active，不伪造idle timestamp。timer同样使用monotonic duration，并基于精确idle_since淘汰；acquire不应重置仍active channel的idle计时。统一验证idle_timeout为正且处理client close/generation。
-- 回归测试：修复阶段用可控monotonic clock覆盖新channel首请求立即完成、跨多个tick的长请求、多个并发stream最后一个关闭、复用后再次idle、wall-clock前后跳及边界`timeout-1/timeout/timeout+1`；断言只按真实idle duration关闭且H1/H2一致。当前只保存静态证据。
+- 触发：在进程启动任意时刻新建H2 channel，完成其第一个request并在首次pool scan前使channel idle；默认timer在创建约15秒后运行。长请求在两次timer tick之间结束也会让真实idle起点被扫描周期近似。
+- 影响：新entry的`lastfree=0`，首次扫描使用带启动epoch偏移的`time.now()`，因此条件`0+idle_timeout>=now`恒false；刚空闲的新H2连接在默认配置下最多约15秒就被关，而不是承诺的30秒。连接复用率下降、TLS/H2握手和DNS负载上升，突发流量更易形成连接风暴；后续长请求的idle起点也只能近似为最近timer tick。
+- 证据：H1在stream release时执行`entry.lastfree=time.now()`，但H2 entry固定以0发布，`S.close`没有pool callback或时间字段。timer仅在channel non-idle时把lastfree刷新为扫描时的now；若首个request已完成，它从未走该分支，直接进入expired分支。后续复用只在acquire时更新时间，也不是请求结束/真正idle的时刻。`src/timer.c:218-227`确认`time.now()`是固定启动wall基准加monotonic累计，不受运行中wall-clock校时跳变；此前附带的校时风险论据已撤回，不影响`lastfree=0`这一确定性缺陷。
+- 根因：H1有明确的connection release事件，H2却把多stream channel简化为周期性`isidle()`采样，没有保存前一active状态或最后一个stream释放事件；初始化哨兵又与绝对时间戳直接比较。
+- 建议解法：让H2 channel在`streamcount`从1降到0时通知所属pool并记录精确idle timestamp；创建entry时若channel已active只标active，不伪造idle timestamp。timer基于同一时间源和精确idle_since淘汰；acquire不应重置仍active channel的idle计时。统一验证idle_timeout为正且处理client close/generation。
+- 回归测试：修复阶段用可控clock覆盖新channel首请求立即完成、跨多个tick的长请求、多个并发stream最后一个关闭、复用后再次idle及边界`timeout-1/timeout/timeout+1`；断言只按真实idle duration关闭且H1/H2一致。当前只保存静态证据。
 
 ### HTTPC-009 — P2 — 奇数/非正 idle timeout 在资源发布后触发 timer 异常或即时循环
 
@@ -4280,6 +4280,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
 - 2026-08-13：完成cluster封板审计：master Lua 331行、native 553行、类型stub 54行、`testcluster.lua`24组/604行、中英文reference 1127/1126行及raw-string分支7个变更文件均已映射；新增`CLUSTER-016`至`019`、`DOC-038`至`042`，断线registry候选则经GC/finalizer反查排除。其余候选归入既有19项、4项分支独有问题或静态排除，阶段收口。
 - 2026-08-13：跨模块timeout事务复核确认native timer拒绝大于`UINT32_MAX`的整数，但connect、TCP/TLS/UDP/H2均先发布fd/waiter，gRPC也先占stream；同步参数异常会跳过回滚并毒化对象或遗留资源，归档为`NET-007`。DNS同类顺序已由`DNS-011`覆盖，H1因尚未发布底层waiter而排除。
+- 2026-08-13：跨模块duration时钟复核确认`time.now()`由固定启动wall基准加monotonic tick构成，运行中系统校时不会直接影响HTTP pool、DNS TTL、MySQL pool或etcd keepalive比较；据此撤回`HTTPC-008`中的附带wall-clock论据，保留由`lastfree=0`确定触发的核心问题。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
