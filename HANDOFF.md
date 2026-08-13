@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线322项（P1 110、P2 172、P3 40）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0发布封板的engine、transport、HTTP/WebSocket/gRPC、Redis/MySQL/etcd与cluster逐文件阶段已收口，跨模块组合和发布核账进行中；当前确认master基线323项（P1 110、P2 172、P3 41）及4项cluster分支独有问题。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -318,6 +318,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-042 | P3 | cluster LuaLS把master可选timeout标必填、numeric cmd标string-only，并把两版空队列pop错误标成必有tuple。 |
 | DOC-043 | P3 | etcd generated LuaLS把可缺失Event.prev_kv标必有、给空WatchProgressRequest虚构字段，双语watch表还漏真实prev_kv选项。 |
 | DOC-044 | P3 | net/DNS native LuaLS把multipack返回、multicast参数、errno和answer nil分支标反，并漏掉真实multifree/ntop导出。 |
+| DOC-045 | P3 | protobuf/protoc LuaLS把option setter、bit conversion、iterator/slice多返回及path API标成错误契约。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -454,7 +455,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为322条：P1 110、P2 172、P3 40。模块分布为CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 44；以主报告中的编号和证据为准。
+当前统计为323条：P1 110、P2 172、P3 41。模块分布为CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

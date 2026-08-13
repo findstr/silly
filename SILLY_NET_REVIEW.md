@@ -2570,6 +2570,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为`multipack`声明精确重载与`---@return lightuserdata ptr, integer size`，`tcp_multicast`只保留三参数，所有错误统一为`silly.errno?`；补`multifree/ntop`并将dangerous raw ownership标internal。`dns.answer`用overload表达`nil`或完整tuple。建立native API manifest，静态核对导出名、最小/最大参数、返回arity与error representation；长期应以opaque full userdata取代裸multicast pointer。
 - 回归检查：修复阶段用LuaLS fixture覆盖两个multipack返回值、三参multicast、errno identity、multifree/ntop可见性及DNS nil guard；另用只读native contract测试比较导出集合和return arity。当前不发送数据或解析packet。
 
+### DOC-045 — P3 — protobuf/protoc LuaLS 把 setter、bit conversion 和多返回 API 标成错误契约
+
+- 状态：已确认；`pb`/`protoc`类型桩与Lua parser、native注册表及每条push/return路径静态对照。本轮不运行LuaLS、加载schema或编码protobuf。
+- 位置：类型桩在`lualib/types/pb/pb.lua:1-374`与`lualib/types/pb/parser.lua:1-60`；真实parser的`new/reset/addpath/reload/load`位于`lualib/protoc.lua:303-325,1143-1190`。native conversion注册/实现位于`luaclib-src/pb.c:626-696`，buffer/slice多返回在`:844-907,1073-1199`，type/field iterator在`:1312-1370`，defaults/hook/typefmt在`:1477-1575`，option/state/unsafe use在`:200-239,2064-2200`。
+- 触发：依赖LuaLS编写自定义gRPC schema/codec工具：读取`pb.option(name)`，把`pb.conv.encode_*`结果当binary string并接收decode位置，按stub只接收type/field iterator的前两三个结果，以`slice:level(n)`/`leave()`的声明解构，或链式调用`protoc:addpath(...):loadfile(...)`。
+- 影响：`pb.option`实际是只接收固定枚举名且零返回的setter，stub却宣称任意name的getter；`pb.conv`实际接收/返回整数bit pattern（float decode返回number）且均只有一个结果，stub却声明string codec和额外position。`types()`真实迭代三值，`fields()/field()`真实返回5值或oneof时7值，stub漏掉basename/label/oneof index并把第5值误称oneof；`slice:level(n)`真实返回三个位置而`leave()`返回self与level，stub分别只写一个integer/self。`unsafe.use`真实返回global-state boolean却无返回声明，`protoc:addpath`反而实际返回nil却标self。IDE会隐藏合法字段、鼓励对nil/string做错误操作并把正常解构标错；gRPC服务生成、descriptor检查和自定义protobuf工具的静态契约因此不可信。
+- 证据：C注册表把`decode_uint32/decode_int32`也直接映射到integer conversion函数，全部conv实现只push一次；`Lpb_option`switch后直接`return 0`。`lpb_pushtype`push三值，`lpb_pushfield`固定push五值、oneof再push两值；slice的分支return arity与stub逐项相反。Lua `Parser:addpath`只调用`insert_tab`而没有return，`Parser.reload`是公开table成员却完全未声明。上述差异均不依赖运行环境或协议输入。
+- 根因：vendored protobuf运行时升级后，手写LuaLS把底层bit conversion误理解成字节codec，并把条件多返回/只写配置API简化成常规getter；parser与native stub没有从真实导出和return stack生成，也没有最小type-check fixture。
+- 建议解法：按实际API为`option`声明受限literal setter及零返回；conv统一声明integer/number单返回；为types/fields/field与slice level/leave写精确多返回/overload，补`unsafe.use`boolean和`Parser.reload`，并将`addpath`改为nil或让实现真正返回self。长期从native注册表和parser公开表生成manifest，再由manifest校验LuaLS名称、参数、返回arity与条件分支。
+- 回归检查：修复阶段建立不执行wire的LuaLS fixture，覆盖option每个合法literal、全部conv、type/field普通与oneof解构、slice level/leave、unsafe.use及protoc路径配置；合法用法零告警，虚构getter/string/链式用法必须报错。当前不运行type checker。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3984,7 +3995,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为322项：P0为0，P1为110，P2为172，P3为40。模块分布：CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 44。
+当前滚动统计为323项：P0为0，P1为110，P2为172，P3为41。模块分布：CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45。
 
 建议按依赖关系分五批修复：
 
@@ -4334,4 +4345,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：平台metrics复核确认macOS openfds固定读Linux procfs、Windows硬编码0，两平台RSS又退化为heap计数；运行时监控错误且TCP fd leak用例可0→0假通过，归档为`CORE-008`。
 - 2026-08-13：最终time契约复核确认`time.now()`仅在启动时采样一次墙钟，此后始终以monotonic tick推算；系统校时后不再是双语reference/LuaLS承诺的当前Unix时间戳，归档为`CORE-009`。
+- 2026-08-13：最终protobuf类型复核确认`pb.option`、conv、type/field iterator、slice多返回、unsafe use与protoc path API的LuaLS契约均偏离真实Lua/C返回，归档为`DOC-045`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
