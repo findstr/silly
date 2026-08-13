@@ -2805,7 +2805,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 ### DOC-051 — P2 — 官方 HTTP 监控把原始 path 作为永久 label，唯一 URL 可远程耗尽指标内存
 
 - 状态：已确认；双语metrics示例、vector label cache与gather遍历的确定性静态核对。本轮不生成高基数请求或采集metrics。
-- 位置：性能指标示例直接调用`http_request_duration_seconds:labels(stream.method,stream.path)`与`http_requests_total:labels(stream.method,stream.path,"200")`，见`docs/src/{en/,}guides/http-best-practices.md:1198-1277`；末尾“生产级HTTP服务”对包括404在内的所有原始path重复该模式，见`:1656-1830`。同样模式还复制到logging指南的完整监控/生产示例，见`docs/src/{en/,}guides/logging-monitoring.md:368-450,865-1073`，以及Prometheus reference两个HTTP示例，见`docs/src/{en/,}reference/metrics/prometheus.md:340-374,400-451`。label键永久缓存于`lualib/silly/metrics/labels.lua:7-38`，counter/histogram实例永久保存在各自`metrics` table，见`lualib/silly/metrics/counter.lua:30-66`与`histogram.lua:49-105`；gather遍历全部series在`prometheus.lua:131-177`。
+- 位置：性能指标示例直接调用`http_request_duration_seconds:labels(stream.method,stream.path)`与`http_requests_total:labels(stream.method,stream.path,"200")`，见`docs/src/{en/,}guides/http-best-practices.md:1198-1277`；末尾“生产级HTTP服务”对包括404在内的所有原始path重复该模式，见`:1656-1830`。同样模式还复制到logging指南的完整监控/生产示例，见`docs/src/{en/,}guides/logging-monitoring.md:368-450,865-1073`，Prometheus reference两个HTTP示例在`reference/metrics/prometheus.md:340-374,400-451`，Counter完整集成在`counter.md:486-553`，Histogram完整监控在`histogram.md:632-700`。label键永久缓存于`lualib/silly/metrics/labels.lua:7-38`，counter/histogram实例永久保存在各自`metrics` table，见`lualib/silly/metrics/counter.lua:30-66`与`histogram.lua:49-105`；gather遍历全部series在`prometheus.lua:131-177`。
 - 触发：部署任一上述示例后，远端连续请求`/missing/1`、`/missing/2`等从未重复的path；路由是否存在、请求是否成功都不影响完整示例在handler尾部记录原始`stream.path`。
 - 影响：每个唯一path为duration histogram和request counter各永久创建一条series，同时在多级labelcache保留原始字符串；没有TTL、上限或删除API。攻击者可用普通短请求让heap与GC集合线性增长，`prometheus.gather()`的遍历、格式化和响应体也越来越大，最终造成监控端点延迟、内存耗尽或服务不可用。动态ID、query未入path但任意不存在路径已经足够。
 - 证据：`labels.key`遇新value就向cache插table/序列化key；vector `labels()`再以该key向`metrics`插submetric，两者只增不减。多个完整示例先处理任意404，再无条件调用两组`:labels(stream.method,stream.path,...)`。同仓`docs/src/{en/,}reference/metrics/{counter,labels}.md`明确警告user ID/IP等高基数值会造成内存问题，证明官方应用示例与指标契约自相矛盾。
@@ -4805,4 +4805,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Histogram exporter所有权反查确认所有历史bucket数值/字符串进入无界module-level强缓存；动态Histogram注销/GC后仍永久保留，归档为`METRIC-011`。
 - 2026-08-13：隔离Registry导出反查确认runtime已有`gather(r)`，双语reference却漏掉参数并教用户手写不支持Histogram/转义的formatter，归档为`DOC-068`。
 - 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
+- 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
