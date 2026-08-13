@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档377项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档376项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3123,17 +3123,6 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为全部client设置start barrier，使用channel/latch收集恰好100个完成结果并分别统计成功/失败，最后由单独coordinator打印；耗时使用`time.monotonic()`毫秒差并转换单位，显式处理零时长。吞吐还应区分completed round trips、attempts和bytes。
 - 回归检查：修复阶段用可控调度让最后创建的client最先/最后完成并注入若干连接/I/O失败；断言只在全部结果收集后打印、计数守恒、duration正且单位正确。当前不运行压力测试。
 
-### DOC-078 — P2 — Echo 活动超时示例在 data 已到达后仍可由旧 timer 关闭连接
-
-- 状态：已确认；双语timeout围栏、TCP data wakeup、task ready queue与timer EXPIRE同步dispatch顺序的确定性静态核对。本轮不构造相邻data/timer事件。
-- 位置：`docs/src/{en/,}tutorials/echo-server.md:479-515`为connection创建独立`time.after`，只有阻塞的`conn:read("\n")`返回后才cancel旧timer并重排；TCP data path在`lualib/silly/net/tcp.lua:127-143`清reader字段后调用`task.wakeup`，而`task.lua:189-199`只把reader放入ready queue。timer EXPIRE却在`lualib/silly/time.lua:51-65`立即`task_resume` callback，callback会直接`conn:close()`。
-- 触发：完整line/data event先被处理并唤醒reader，但在worker下一次`task._dispatch_wakeup`真正恢复该reader之前，旧timeout的EXPIRE event到达/被dispatch；常见于activity恰好靠近30秒边界或ready queue繁忙。
-- 影响：已经按时到达的有效请求仍被旧timer关闭；reader稍后恢复拿到data并cancel时timer mapping已经被EXPIRE删除，只能在closed conn上继续write/read。客户端表现为边界附近随机断连，且日志错误写成“Connection timeout”，难以从业务日志区分真实idle与调度延迟。
-- 证据：data callback没有访问教程局部`timeout_timer`或更新activity generation；`time.cancel`只有mapping仍存在才调用native cancel，一旦EXPIRE创建并resume callback便不可撤销。框架内置`conn:read(n,timeout)`在data path先清`s.co`，其`read_timer`会检查`s.co`，说明正确模式需要可验证的pending generation，而教程callback只持conn。
-- 根因：idle timeout以“reader恢复并执行cancel”的时间作为activity确认点，而非I/O到达点；one-shot callback没有generation/deadline复核，取消与callback dispatch之间没有线性化协议。
-- 建议解法：教程优先直接使用`conn:read("\n",30000)`并按`errno.TIMEDOUT`处理；若实现跨多次read的idle timer，维护generation/absolute last-activity deadline，callback执行时再次核对generation和monotonic deadline，只允许当前generation关闭。close/cancel/重排必须幂等并在统一finally收尾。
-- 回归检查：修复阶段以可控event order覆盖data-before-expire但reader-late、expire-before-data、cancel-before-expire和连续reset；前者必须保活并echo，只有真实超过deadline的current generation关闭，timer/reader最终清零。当前不运行时序barrier。
-
 ### DOC-079 — P2 — Getting Started 首个 TCP coroutine 忽略 connect/read 错误并把 nil 继续解引用/写出
 
 - 状态：已确认；双语入门围栏与TCP公开tuple契约、write参数边界的确定性静态核对。本轮不发起连接。
@@ -4605,7 +4594,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为377项：P0为0，P1为114，P2为205，P3为58。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 11、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 81。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为376项：P0为0，P1为114，P2为204，P3为58。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 11、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 80。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4997,8 +4986,8 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：echo-server accept ownership反查确认wrapper只在callback异常时立即close；正常return不做同步收尾，只由弱pool对象稍后的`__gc`关闭，与教程“返回自动关闭”的确定时序相反，归档为`DOC-076`。
 - 2026-08-13：echo-server性能围栏反查确认其把最后创建的client当成全部完成屏障，并以秒级os.time计算短测吞吐；可报告部分结果或除零为inf，归档为`DOC-077`。
 - 2026-08-13：沿echo write语义反查socket发送入口，确认TCP outbound queue没有soft/hard limit；live sid的每次write均无条件复制、增加wlbytes并入队，教程承诺的queue-full错误不存在，归档为`SOCK-020`。
-- 2026-08-13：echo idle timer调度反查确认data callback只把reader放入ready queue；其执行cancel前旧EXPIRE可同步运行并关闭已有activity的连接，归档为`DOC-078`，并发barrier留待修复阶段。
-- 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，映射到`SOCK-020`及`DOC-075`至`078`；randomkey只产小写字母，不构成delimiter候选。
+- 2026-08-13：撤回`DOC-078`：完整读取`CLAUDE.md`与worker dispatch后确认每条message后必先执行`task._dispatch_wakeup()`；data message唤醒的reader会在下一条EXPIRE message前运行并cancel旧timer，原候选错误忽略该跨message顺序，统计相应减一。
+- 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，有效问题映射到`SOCK-020`及`DOC-075`至`077`；randomkey只产小写字母，不构成delimiter候选。
 - 2026-08-13：getting-started首个TCP coroutine反查确认connect/read均丢弃nullable error并把nil继续解引用或交给write，普通拒绝/EOF升级为task异常，归档为`DOC-079`。
 - 2026-08-13：getting-started版本围栏反查确认两处仍固定0.6，当前CLI由宏输出v0.7.1、Lua字段输出0.7；安装验证与Hello golden均不匹配，归档为`DOC-080`。
 - 2026-08-13：getting-started CLI反查确认module path、loglevel及help中的长选项使用旧/下划线拼写，真实getopt只注册hyphenated names且unknown option静默忽略，归档为`DOC-081`。

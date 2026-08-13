@@ -368,7 +368,7 @@
 | `docs/src/en/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
 | `docs/src/en/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/en/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
-| `docs/src/en/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
+| `docs/src/en/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至077 | listen/connect/read/write/close/timer/concurrency逐例收口；DOC-078已撤回 |
 | `docs/src/en/tutorials/getting-started.md` | 已审有归档 | WS-011、DOC-007/079至081 | build/platform/version/CLI/first TCP逐段收口 |
 | `docs/src/en/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/en/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
@@ -432,7 +432,7 @@
 | `docs/src/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
 | `docs/src/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
-| `docs/src/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至078 | listen/connect/read/write/close/timer/concurrency逐例收口 |
+| `docs/src/tutorials/echo-server.md` | 已审有归档 | SOCK-020、DOC-075至077 | listen/connect/read/write/close/timer/concurrency逐例收口；DOC-078已撤回 |
 | `docs/src/tutorials/getting-started.md` | 已审有归档 | WS-011、DOC-007/079至081 | build/platform/version/CLI/first TCP逐段收口 |
 | `docs/src/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
