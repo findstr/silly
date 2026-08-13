@@ -2883,6 +2883,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为每个方向建立独立、单调的message phase（awaiting-initial、informational、final-headers、body、trailers、ended/reset）；client在final HEADERS前收到任何DATA都只reset该stream(PROTOCOL_ERROR)，唤醒所有waiter并禁止返回partial success。高层组装response前再防御性要求validated final status，以typed protocol error收尾。
 - 回归测试：修复阶段覆盖DATA/空DATA在initial HEADERS前、带/不带END_STREAM、先informational再DATA、正常final→DATA及两个并发streams；`waitresponse/read/readall/get/post`都必须对malformed sequence返回错误且只reset目标stream，永不产生status=nil的成功对象。当前只保存静态证据。
 
+### H2-037 — P2 — RST 后 `readall` 优先返回缓冲的 partial body 并吞掉 terminal error
+
+- 状态：已确认；H2 DATA buffer、RST/terminal state、等待与延迟readall两条路径静态推导。本轮不发送DATA后RST。
+- 位置：DATA append在`lualib/silly/net/http/h2.lua:1177-1205`；RST终态在`:858-892,1336-1352`；read/readall返回顺序在`:1088-1124`；channel teardown设置RST在`:563-590`。
+- 触发：peer先在合法response/request stream发送一段DATA但不设END_STREAM，随后发送RST_STREAM；应用在RST之后才调用`readall()`，或原本正在`readall()`、首次收到reset error后再次调用以尝试收尾。connection GOAWAY/EOF把stream置RST且buffer已有数据时也相同。
+- 影响：`readall()`返回残缺body和nil error，丢弃`Stream cancelled`、protocol error或`Channel goaway`等终态。应用可能把被peer明确取消/失败的request body当完整指令执行，或把不完整response当成功解析、缓存和验证；同一stream仅因读取调用发生在RST之前或之后就得到相反结果。reset仍留在对象但buffer被消费，后续调用才重新暴露error，通常已经晚于业务提交。
+- 证据：当`remotestate>=STATE_CLOSE`时，`S.readall`第一步无条件`dat=s.recvbuf:readall()`，只要`#dat>0`就立刻`return dat,nil`；只有buffer为空才区分normal END与RST。若readall正在等待，RST会先以nil唤醒并返回`s.errstr`但不清buffer，第二次调用进入同一partial-success分支。`S.read`同样先消费足量buffer再看RST，说明终态与data交付没有显式组合契约。
+- 根因：normal END与error/reset共享同一“closed后先drain buffer”分支，API又不能同时表达partial data和terminal error；实现默认任何非空数据都足以覆盖消息完整性失败。
+- 建议解法：`readall`只在normal END时返回完整buffer成功；RST/GOAWAY/protocol error必须稳定返回terminal error并明确丢弃或通过structured incomplete result附带partial bytes，不能返回`data,nil`。若streaming `read(n)`保留“先交付已收bytes、下次报错”的语义，需文档化且每个byte/error只交付一次；gRPC/message层不得把partial frame视为EOS。
+- 回归测试：修复阶段覆盖0/1/N个DATA后remote RST各error code、local reset、GOAWAY/EOF、readall在reset前等待与reset后调用、首次错误后重试，以及正常DATA+END；client/server两向均断言RST永不产生完整成功，partial策略可观察且一致。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3208,7 +3219,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为256项：P0为0，P1为99，P2为139，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 36、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为257项：P0为0，P1为99，P2为140，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 37、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3275,6 +3286,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1读取失败会保留已缓冲正文，而后续readall只要缓冲非空便返回`data,nil`并吞掉cached error；归档为`HTTP1-023`。
 - 2026-08-13：确认idle H2 channel close只异步排队GOAWAY后即同步关闭transport，flush task随后因conn=nil丢弃graceful shutdown wire；归档为`H2-035`。
 - 2026-08-13：确认H2 client允许DATA在任何final response HEADERS前进入body/readall，高层可返回status=nil、body非空且无error的response对象；归档为`H2-036`。
+- 2026-08-13：确认H2 stream进入RST/GOAWAY error终态后，readall只要buffer非空就返回partial data,nil并吞掉终态错误；归档为`H2-037`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
