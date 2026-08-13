@@ -410,8 +410,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-025 | P1 | protobuf decoder把截断tag/unknown value当正常EOF，gRPC可执行业务或接受非法response。 |
 | GRPC-026 | P2 | 多target round-robin不隔离坏endpoint，单点DNS/dial故障会阻断建池或周期性打失败RPC。 |
 | GRPC-027 | P1 | protobuf embedded-message解析无递归深度限制，远端可在消息预算内耗尽C stack。 |
+| GRPC-028 | P2 | protobuf string与bytes共用裸字节codec，gRPC收发均不验证schema要求的UTF-8。 |
 
-当前统计为279条：P1 102、P2 153、P3 24。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 27、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25；以主报告中的编号和证据为准。
+当前统计为280条：P1 102、P2 154、P3 24。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 28、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

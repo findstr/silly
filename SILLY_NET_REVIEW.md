@@ -3446,6 +3446,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在每次进入embedded message/group前以decoder context递增depth，超过安全默认值（可参考100）即返回受控parse error，并用finally式路径保证所有退出递减；limit必须非负、可配置且同时应用顶层/嵌套/map/group与decode hook。gRPC捕获错误并映射INTERNAL，不调用业务；同时按`GRPC-005`补client大小预算，但不要用size代替depth。
 - 回归测试：修复阶段以生成式builder覆盖limit-1/limit/limit+1、递归message、静态嵌套、repeated/map/group及decode hook抛错，断言边界稳定、depth不串到下一call且无C stack增长失控；四类RPC双向确认超限只终止当前call并返回非OK。ASan/UBSan和小stack线程下验证，当前不执行。
 
+### GRPC-028 — P2 — protobuf `string` 与 `bytes` 共用裸字节路径，收发均不验证 UTF-8
+
+- 状态：已确认；protobuf field type、native scalar codec与gRPC双向调用链的确定性静态核对。本轮不编码或发送非法UTF-8。
+- 规范：[Protocol Buffers Encoding](https://protobuf.dev/programming-guides/encoding/)的wire reference明确`string`必须是有效UTF-8，而`bytes`才允许任意8-bit序列。parser/serializer不能把两种schema类型无差别当作裸字节，否则同一descriptor在不同实现间具有不同接受域。
+- 位置：native encoder把`PB_Tbytes/PB_Tstring`合并在`luaclib-src/pb.c:406-483`，decoder再把`PB_Tbytes/PB_Tstring/PB_Tmessage`合并push为Lua string在`:486-533`；gRPC统一调用入口在`lualib/silly/net/grpc/helper.lua:16-68`。
+- 触发：peer在任一protobuf `string` field的LEN payload中放入非法UTF-8字节序列；反向上，Silly handler或client request table把任意Lua byte string赋给schema的`string`字段。`bytes`字段是合法任意数据，不应受影响。
+- 影响：server把其他规范实现应拒绝的message交给业务并可回OK，client接受非法response；Silly sender也能主动产生严格peer拒绝的protobuf，造成跨语言gRPC互操作失败。业务若把schema `string`直接交给Unicode normalization、JSON、日志、数据库或UI，非法序列还会触发替换、截断或不同层解释分裂，破坏校验和审计一致性。
+- 证据：encode的两个case都只执行`lpb_toslice`和`pb_addbytes`，decode的三个case只读LEN slice并`lua_pushlstring`，没有UTF-8 DFA、过长编码/surrogate/range检查或按`type_id`分支。`pb_Field`保留`type_id`，因此并非缺少schema信息，而是明确合并路径。`testgrpc.lua`消息只使用ASCII文本，未覆盖多字节合法边界或非法序列。
+- 根因：Lua字符串可承载任意bytes，binding把宿主表示相同误当成protobuf wire语义相同，没有在schema边界执行`string`不变量。
+- 建议解法：仅对`PB_Tstring`在encode和decode时执行完整、无替换的UTF-8 validation；非法入站由protected decoder返回parse failure并映射INTERNAL，非法本地对象在写任何gRPC bytes前返回受控encode error。`PB_Tbytes`保持透明；嵌套/repeated/map string key/value使用相同validator，并提供明确的错误field path。
+- 回归测试：修复阶段覆盖ASCII、1–4字节合法码点、NUL、截断序列、孤立continuation、overlong、surrogate与大于U+10FFFF，分别用于普通/repeated/map/nested string以及bytes对照；四类RPC双向断言非法string不调用业务/不上wire，bytes逐字节保持。当前不执行输入。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3475,7 +3487,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为279项：P0为0，P1为102，P2为153，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 27、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为280项：P0为0，P1为102，P2为154，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 28、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3755,6 +3767,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：修正并补强`GRPC-007/015`的protobuf证据：known-field decode失败会抛Lua异常而非返回nil；server unary/sstream因此叠加`H2-027`配额泄漏，client公开read则越过status契约直接抛错。不重复计数。
 - 2026-08-13：确认多target client在任一DNS失败时整体拒绝构造，运行期也机械选择未连接endpoint并在其dial失败后终止本次RPC，不在READY backends间轮询；归档为`GRPC-026`。
 - 2026-08-13：确认native protobuf embedded-message解析直接C递归且没有depth budget，4 MiB request内即可形成远超安全stack的层数；归档为`GRPC-027`，未生成深层payload。
+- 2026-08-13：确认native protobuf codec把schema `string`与`bytes`合并为同一裸字节路径，收发均不验证UTF-8；归档为`GRPC-028`，未编码非法序列。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
