@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档325项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档326项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2603,6 +2603,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有接收示例与正文改用`net.tostring(ptr,size)`并明确其复制后立即释放、pointer随后不可再用；零拷贝转移只能调用一次buffer append或显式`net.c.free`。文档应说明callback在独立task中可以yield，但未消费pointer会一直占有native内存，异常路径风险另见`NET-002`。更根本地将payload改成带`__gc/__close`和consume状态的opaque userdata，避免依赖同名函数与人工一次性释放。
 - 回归检查：修复阶段为双语文档代码块做API/ownership lint，禁止接收callback中的`silly.tostring(ptr,size)`；以allocator计数覆盖`net.tostring`、buffer接管、显式free、yield后消费和callback异常，断言每个payload恰好释放一次。当前不执行示例或网络测试。
 
+### DOC-047 — P3 — 中文 reference 完全缺失公开 URL 工具模块
+
+- 状态：已确认；中英文reference文件清单、索引与公开Lua模块的静态差集核对。本轮不构建文档站点。
+- 位置：英文页面`docs/src/en/reference/net/url.md:1-152`完整记录`parse/resolve/build/parsequery/queryescape/queryunescape/pathescape/pathunescape`，英文索引`docs/src/en/reference/net/README.md:29`也链接该页；中文目录`docs/src/reference/net/`没有`url.md`，中文索引`docs/src/reference/net/README.md`没有对应条目。真实公开实现位于`lualib/silly/net/http/url.lua:1-273`并被HTTP/WebSocket client调用。
+- 触发：中文用户从中文Network API索引查找URL解析、相对引用解析或query/path escaping接口；或按中英文文档应等价的发布约定切换语言。
+- 影响：整个公开模块及八个入口在中文reference不可发现，用户只能阅读源码或切换英文；容易重复实现escaping/resolve，或错误混用query与path规则。该缺口不会直接改变运行时结果，故定为P3，但它违反1.0公开API的双语覆盖要求。
+- 证据：两边reference/net目录除`url.md`外文件集合一一对应；英文README明确列出URL条目，中文README零命中`url`且文件不存在。模块不是内部helper：其返回对象直接构成HTTP/WebSocket endpoint和request target，英文页面也将其作为独立API Reference发布。
+- 根因：新增英文URL reference时没有同步中文页面和索引，也没有文档CI检查语言目录的页面/导航对称性。
+- 建议解法：新增与当前实现及英文页逐入口对齐的中文`reference/net/url.md`，补中文README导航；同步校正默认port、authority、fragment/query语义与错误返回。CI对中英文公开reference做相对路径集合差分，并允许仅通过显式豁免清单存在单语页面。
+- 回归检查：修复阶段静态构建两种语言站点，检查中文URL页和八个入口均可从Network索引到达，所有内部链接有效；以API manifest核对Lua导出、英文、中文标题集合。当前不构建文档。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4017,7 +4028,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为325项：P0为0，P1为111，P2为173，P3为41。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 46。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为326项：P0为0，P1为111，P2为173，P3为42。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 47。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；173项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4373,4 +4384,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
 - 2026-08-13：完成性反查共享ADT确认TCP默认无界接收buffer以signed int累计所有node字节；远端backlog超过INT_MAX会触发UB，并使read永久nil或readall断言终止，归档为`NET-008`。
 - 2026-08-13：完成性反查低层net双语reference确认所有接收示例误用只复制不释放的`silly.tostring`，且虚构callback return/yield自动失效规则；官方成功路径逐包泄漏，归档为`DOC-046`。
+- 2026-08-13：完成性反查双语文件集合确认英文已发布完整`silly.net.http.url`页面并加入索引，而中文页面和导航均不存在，归档为`DOC-047`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
