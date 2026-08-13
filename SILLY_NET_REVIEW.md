@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档368项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档369项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3090,6 +3090,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把handler改为`function M.handle_request(stream)`，从`stream.path/header`读取请求，以`stream:respond(code,headers)`和`stream:closewrite(body)`响应；分别覆盖H1/H2返回契约并保证异常收尾。若提供adapter，必须在示例中完整定义而不能假设存在。
 - 回归检查：修复阶段对修改后的双语围栏做LuaLS/符号检查，并在H1与H2各执行更新前后请求；断言旧计数保留、400/200正文正确、stream恰好关闭一次。当前不运行网络示例。
 
+### DOC-075 — P2 — Echo 教程把 `tcp.listen` 失败写成异常，全部服务示例又丢弃真实 `nil, errno`
+
+- 状态：已确认；双语教程所有listen调用、TCP公开实现/LuaLS返回契约的确定性静态核对。本轮不占用端口或创建listener。
+- 位置：`docs/src/{en/,}tutorials/echo-server.md:327-348`声明listen成功返回listener、失败“Throws error”；实际`lualib/silly/net/tcp.lua:157-175`在`net.tcplisten`失败时返回`nil, err`，只有缺addr/accept才assert。教程`:56-89,164-194,327-366,458-589`的基础、完整及五个扩展示例均直接调用`tcp.listen{...}`而不接收或检查两个返回值。
+- 触发：端口已被占用、地址不可绑定、fd/socket资源耗尽或native listen返回其他普通errno；无需异常输入。
+- 影响：教程程序继续执行并可能启动测试clients或打印正常启动流程，但实际上没有listener；同进程client得到连接错误，纯server部署则静默无服务。健康检查前的启动器无法获得非零退出/明确日志，发布、重启和端口迁移故障会被误判为成功。
+- 证据：`M.listen`只对配置shape抛错，native失败分支明确`return nil,err`；每个围栏都没有`local listener,err`或assert。文档的“failure throws”因此同时错误描述返回契约并诱导省略必须的启动错误处理。
+- 根因：教程把配置断言与运行期listen errno混为一类，示例只覆盖happy path；没有以LuaLS签名`listener?, silly.errno?`校验代码围栏。
+- 建议解法：所有服务示例接收`local listener,err=tcp.listen{...}`，失败时记录结构化endpoint/errno并终止启动，成功时保存listener供shutdown；reference明确只有无效必需参数会抛错，系统调用失败返回tuple。更稳妥是在应用启动辅助层提供统一fail-fast helper。
+- 回归检查：修复阶段静态检查教程每个listen结果均被处理，并覆盖address-in-use、invalid address、resource error与正常close；失败不启动clients/不打印ready，成功listener在shutdown关闭。当前不创建socket。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4504,7 +4515,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为368项：P0为0，P1为113，P2为200，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 74。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为369项：P0为0，P1为113，P2为201，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 75。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4892,6 +4903,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：hot-reload首个完整网络示例反查确认其套用不存在的`res:status/res:send`双对象API，真实Silly只传单个stream并要求respond/closewrite，归档为`DOC-074`。
 - 2026-08-13：沿生产hotfix入口反查console，确认TCP连接在零认证/授权下即可调用INJECT/DEBUG，且custom command认证因built-in优先无法保护敏感命令；归档为`CORE-013`，未启动或连接管理端口。
 - 2026-08-13：完成hot-reload双语guide依赖闭包：patch混合export、load/cache transaction、export迁移、rollback、timer ownership、真实HTTP API及production console均已映射到`CORE-012/013`与`DOC-071`至`074`，两份页面转为已审有归档。
+- 2026-08-13：echo-server监听契约反查确认runtime在普通listen失败时返回nil/errno，教程却称抛异常且全部server围栏丢弃返回；端口占用时静默无服务，归档为`DOC-075`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
