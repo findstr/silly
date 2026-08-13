@@ -663,6 +663,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把transaction key与cache entry分离，inflight用canonical `(server-generation,name,qtype,class)` key；只在完整可缓存response提交时创建cache RRset。实现按deadline的expiry queue/timing wheel或有界LRU，命中/周期扫描时删除过期RR及空name bucket，并设置per-server/global entry/byte hard cap与可观测eviction；TTL=0和失败仅保留当前operation结果，不持久化。
 - 回归测试：修复阶段用小cap/可控clock覆盖大量唯一成功、TTL0、NX、timeout、send失败、CNAME/additional与重复热key；过期/失败对象回到基线，cache entries/bytes不超过cap，singleflight仍合并同key且eviction不破坏在途request。当前只保存静态证据。
 
+### DNS-016 — P2 — Windows resolver 配置扩容分配未检查，OOM 时把 NULL 传给系统 API
+
+- 状态：已确认；Windows resolver bootstrap 的两次调用契约与本地分配路径静态核对。本轮不做allocator故障注入或启动Windows进程。
+- API契约：[Microsoft `GetNetworkParams` 文档](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getnetworkparams)要求调用方为`FIXED_INFO`输出缓冲区分配内存；官方示例在第二次调用前明确检查分配结果。不能把`NULL`作为所需长度的输出buffer再次调用。
+- 位置：`src/win/win.c:295-329`，尤其`ERROR_BUFFER_OVERFLOW`分支的`malloc(buf_len)`与紧随其后的第二次`GetNetworkParams(info,&buf_len)`。
+- 触发：初始栈上`FIXED_INFO`不足，API按正常约定返回`ERROR_BUFFER_OVERFLOW`和所需大小；随后heap分配因进程内存压力、地址空间碎片或allocator故障返回`NULL`。
+- 影响：实现仍以`info==NULL`调用系统API，违反其输出缓冲区前置条件；具体系统版本可能返回错误，也可能在native调用内触发access violation，使`require("silly.net.dns")`或进程启动直接终止。即使系统恰好返回错误，调用方只得到nil并退回硬编码resolver，真实原因没有结构化诊断，系统DNS配置也被静默绕过。
+- 证据：分支对`malloc`结果没有任何判断；第二次调用无条件发生。后续仅按API result区分成功/nil，无法识别本地OOM；`free(NULL)`本身安全，但不能补救此前的无效API调用。仓库其他可增长buffer使用受检分配器，而这条Windows专用bootstrap路径直接使用raw `malloc`。
+- 根因：采用Win32常见的probe-size/reallocate/retry模板时遗漏了中间allocation failure状态，把“获得required size”误当作“已获得可用buffer”。
+- 建议解法：分配后立即检查；失败时不要再次调用API，返回明确的Lua错误或至少记录OOM并让上层决定是否使用fallback。更稳妥的是使用项目统一的checked allocator，同时为异常大`buf_len`设置`SIZE_MAX`/合理上限检查，并保证所有退出路径只有一个owner释放buffer。
+- 回归测试：修复阶段以Windows allocator shim令第二次分配确定失败，断言不会再次调用`GetNetworkParams`、不会解引用NULL、错误可诊断且无泄漏；再覆盖栈buffer一次成功、overflow后二次成功、二次API失败。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2883,7 +2895,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为228项：P0为0，P1为93，P2为125，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 15、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为229项：P0为0，P1为93，P2为126，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 16、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2919,6 +2931,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：按RFC 6891确认DNS主动发送OPT却跳过response OPT，extended RCODE/version丢失并会把扩展错误当成功空答案；归档为`DNS-013`。
 - 2026-08-13：按RFC 2181确认DNS cache只采用RRset首条TTL，未将异TTL组收紧到最低值，缓存寿命受wire顺序控制；归档为`DNS-014`。
 - 2026-08-13：确认DNS为每个查询名字永久intern cache节点，expired/TTL0/timeout/send failure均无逐项删除或容量预算；归档为`DNS-015`。
+- 2026-08-13：确认Windows DNS bootstrap在`GetNetworkParams`要求扩容后不检查`malloc`结果，OOM时仍把NULL作为输出buffer传回系统API；归档为`DNS-016`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
