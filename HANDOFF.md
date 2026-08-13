@@ -287,6 +287,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-023 | P2 | WebSocket教程把浏览器可选Ping当作自动心跳，server无主动探测/Pong deadline，silent连接可长期残留。 |
 | DOC-024 | P2 | WebSocket完整server不验证JSON schema；合法primitive/错型字段可抛异常并跳过clients registry清理。 |
 | DOC-025 | P3 | WebSocket双语入门示例记录wrapper不存在的`sock.fd`，断线连接标识恒为nil。 |
+| DOC-026 | P3 | gRPC双语reference混用三类streaming API；示例调用不存在的方法并以RST取消上传。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -414,7 +415,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-029 | P2 | protobuf descriptor丢弃proto2 required label，缺字段request/response仍可被收发为成功。 |
 | GRPC-030 | P2 | 四类RPC无metadata/context API，认证、trace及`-bin` initial/trailing metadata无法互操作。 |
 
-当前统计为282条：P1 102、P2 156、P3 24。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25；以主报告中的编号和证据为准。
+当前统计为283条：P1 102、P2 156、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

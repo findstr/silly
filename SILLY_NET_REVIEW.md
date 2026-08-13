@@ -2205,6 +2205,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：不要暴露或打印裸OS fd作为应用身份；示例在accept/upgrade后生成并保存稳定的`client_id`或记录`stream.remoteaddr`，断线时输出该值。若产品确实需要连接标识，应设计明确、只读且close后仍稳定的公开字段，并同步LuaLS/reference，而不是让教程穿透`conn`。
 - 回归测试：修复阶段提取最小教程代码做LuaLS unknown-field检查，并以stub socket触发read错误，断言日志包含显式client id/remote address且不访问package字段；双语代码块保持结构一致。本轮不执行示例。
 
+### DOC-026 — P3 — gRPC 双语 reference 混用三种 streaming API，示例调用不存在的方法并取消上传
+
+- 状态：已确认；双语reference全部streaming代码块、动态method constructor与H2 close语义逐项静态对照。本轮不运行文档示例或RPC。
+- 位置：统一但错误的`StreamMethod/read/write/close`说明在`docs/src/{en/,}reference/net/grpc.md:397-638`，client-stream upload示例在`:461-519`，server-stream完整示例在`:1139-1211`；真实对象方法集合在`lualib/silly/net/grpc/client/service.lua:95-132,178-257`，server wrapper在`grpc/registrar.lua:116-154`。
+- 触发：读者复制upload示例写完chunks后调用`stream:close()`；或复制server-stream示例，调用`client:Subscribe()`后再`stream:write(...)`，server handler以`return {event...}`提供输出。遗漏`service_name`的更早失败已由`DOC-004`记录，本条描述修正它后仍必现的独立错误。
+- 影响：client-stream的`close()`走H2 RST CANCEL，不会发送正常request EOS，也不读取唯一response，server可能已消费部分chunks却只看到取消，文件/批处理留下部分副作用。server-stream client对象只有`read/close`，首次`write`即抛nil-method；它本应在method调用时传唯一request。server handler也必须通过第二参数stream逐条write，示例返回table却被wrapper当成error对象并最终发UNKNOWN。文档宣称四类streaming可用但关键示例不能完成一次调用。
+- 证据：`cs`方法为`write/closewrite/read/close`，`ss`只有`read/close`，`bs`才同时read/write。`stream_close`直接调用H2 `close`，已发送header/data时该方法发CANCEL reset；它不等价于`closewrite`。`sstreaming(self,req,timeout)`立即编码并END_STREAM发送req，然后返回只读`ss`；示例省略req使helper用空table编码，再调用不存在的write。server `local ok,err=pcall(fn,req,s)`会把示例返回table放入err分支，而不是输出message。
+- 根因：reference用一个理想化“全双工stream”模板描述client-stream/server-stream/bidi三种不同半边能力，并把连接销毁、request half-close与RPC final read混为同一close动作；代码块未按descriptor cardinality做静态检查。
+- 建议解法：拆成三套精确签名和示例：server-stream=`Method(req,timeout?)→{read,close}`；client-stream=`Method()→{write,closewrite,read,close}`；bidi=`Method()→{write,closewrite,read,close}`。upload必须检查每次write、调用closewrite、读取唯一response/status再close；server-stream在构造时传req且只read，server handler用第二参数`out:write`并返回nil/error。同步说明read timeout实际限制，依赖`GRPC-012`修复。
+- 回归测试：修复阶段抽取双语三类示例，按生成descriptor做LuaLS方法集合检查并以stub记录调用序列；断言无不存在的方法、正常路径产生request EOS而非RST、client-stream消费final response、server-stream逐条输出且status OK。当前不执行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3511,7 +3522,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为282项：P0为0，P1为102，P2为156，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为283项：P0为0，P1为102，P2为156，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3794,6 +3805,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native protobuf codec把schema `string`与`bytes`合并为同一裸字节路径，收发均不验证UTF-8；归档为`GRPC-028`，未编码非法序列。
 - 2026-08-13：确认native descriptor把proto2 required/optional共同折叠为非repeated，codec无法执行required presence检查，缺字段message仍可进入业务/上wire；归档为`GRPC-029`。
 - 2026-08-13：确认四类RPC均无公开metadata/call-context入口，server也无法正常读取request或发送initial/trailing metadata，`-bin`没有Base64语义；归档为`GRPC-030`。
+- 2026-08-13：确认gRPC双语reference把client/server/bidi streaming混成统一API，server-stream调用不存在的write，client-stream upload以RST close代替EOS/final response；归档为`DOC-026`。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
