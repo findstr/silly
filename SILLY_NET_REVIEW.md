@@ -2323,6 +2323,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在driver内分别围绕connection checkout、connect/login、statement write/read埋点，并公开结构化metrics/hook；文档在该API落地前只报告端到端query latency，不虚构阶段拆分。等待直方图应同时记录成功、超时/close唤醒，并避免高基数SQL原文标签。
 - 回归检查：修复阶段以可控clock和单连接pool覆盖立即命中idle、排队后唤醒、新建连接失败、query慢、pool close等路径；断言checkout+execution近似端到端耗时，慢等待只在真实排队时触发且不会被记成慢SQL。当前不运行计时或并发barrier。
 
+### DOC-032 — P1 — MySQL 死锁重试示例丢弃 callback 返回错误并提交部分事务
+
+- 状态：已确认；中文错误处理指南、`silly.pcall`多返回值、driver错误tuple与transaction状态静态核对。本轮不执行事务或制造死锁。
+- 权威依据：[MySQL 8.4 deadlock handling](https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks-handling.html)要求应用准备在事务因deadlock回滚时重新执行**整个事务**；这要求在事务任一语句返回deadlock时识别失败，而不是只检查COMMIT。
+- 位置：`transaction_with_deadlock_retry`在`docs/src/guides/error-handling.md:921-978`；driver的`tx:query/commit`都以`result,nil`或`nil,err_packet`返回而不抛异常，见`lualib/silly/store/mysql.lua:872-983`；`silly.pcall`只是`xpcall`包装并保留callee多返回值，见`lualib/silly.lua:15-21`。英文guide在736行结束，没有对应数据库章节，另构成内容缺失但不改变本条触发。
+- 触发：callback先成功执行一条UPDATE，再执行一条返回duplicate-key、constraint、deadlock或其他ERR的SQL，并按常见Lua约定`return nil,err`；wrapper用`local ok,result=silly.pcall(...)`调用它。callback含外部副作用后遇deadlock并被retry也是另一危险路径。
+- 影响：`pcall`实际返回`true,nil,err`，wrapper只接前两项，因此把SQL失败当成“callback正常完成”，丢弃err并继续COMMIT。对只回滚当前statement的错误，之前成功的写会被部分提交；wrapper随后仅返回nil且没有error，调用方甚至不知道数据库已产生部分效果。对InnoDB deadlock，事务可能已由server整体回滚，但wrapper仍先COMMIT并且只在commit自身恰好返回1213时重试，所以典型语句阶段deadlock不会按文档承诺恢复。若callback含消息发送/文件写等外部副作用，真正重试又会重复它们。
+- 证据：代码只以`if not ok`处理Lua异常，没有检查`result`或接收callback的第二返回值；driver所有合法server ERR均为普通返回tuple。deadlock errno判断仅位于`tx:commit()`失败分支，不包围`func(tx)`内每条query。示例也未约束callback必须无外部副作用、可安全重放或携带幂等operation id；缺失的`time`导入另已归入`DOC-028`，production commit失败归池问题另由`MYSQL-005`覆盖。
+- 根因：把语言层“函数没有抛异常”和数据库层“事务业务成功”混成同一个boolean，并假设deadlock只会在commit暴露；retry API没有定义callback result和幂等契约。
+- 建议解法：callback必须返回明确`value,nil`或`nil,err`，wrapper完整接收并在任一err时rollback；仅当结构化errno为1213/按策略包含1205时，确认旧transaction已安全丢弃后从BEGIN重跑整个**纯数据库且可重放**callback。其他错误原样返回。外部副作用放到成功commit后的outbox/幂等步骤；commit transport failure按`outcome_unknown`处理，绝不能自动重放。
+- 回归检查：修复阶段覆盖callback抛异常、首/中/末statement返回普通ERR、语句阶段1213、commit阶段错误、rollback失败、callback外部副作用标记与重试上限；断言普通错误不提交任何先前写、deadlock重跑整个事务且业务效果至多一次、返回值始终包含真实error。当前不执行SQL或deadlock barrier。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3725,7 +3737,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为299项：P0为0，P1为107，P2为163，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 31。
+当前滚动统计为300项：P0为0，P1为108，P2为163，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 32。
 
 建议按依赖关系分五批修复：
 
@@ -4036,6 +4048,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`MYSQLC-002`：OK packet的affected_rows和last_insert_id同样是unsigned lenenc，超过Lua signed范围也会wrap为负，影响业务行数/主键判断；不重复计数。
 - 2026-08-13：补强`MYSQL-015`：prepare非OK首包一律按ERR解码，metadata reader完全忽略已声明param/field count而读到EOF，少/多definition均可跨phase反同步；不重复计数。
 - 2026-08-13：补强`MYSQL-010`：握手无条件宣告MULTI_STATEMENTS/MULTI_RESULTS，名为multi support的Test 27却明确只测单条SELECT，无法覆盖stored-program多结果与response drain；不重复计数。
+- 2026-08-13：确认MySQL死锁重试示例只捕获Lua异常，丢弃driver按正常返回值交付的callback SQL错误并继续commit，可部分提交事务且语句阶段1213不会重试；归档为`DOC-032`，未执行事务。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
