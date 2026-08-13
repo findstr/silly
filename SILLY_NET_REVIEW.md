@@ -191,6 +191,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-LISTEN-CONFIG | API/security | `lualib/silly/net/grpc/server.lua:29-55`; `lualib/silly/net/tls.lua:326-365`; `lualib/silly/net/tcp.lua:152-175`; `docs/src/en/reference/net/grpc.md:146-166` | server | 偏离 | 公开ciphers/backlog配置被adapter静默丢弃，TLS policy与listen queue不按调用方设置生效 | 默认配置自测不会检查实际ctx/listener option | GRPC-023 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-PROTOBUF-ENCODE-FINALIZE | API/safety | `lualib/silly/net/grpc/helper.lua:53-67`; `grpc/client/service.lua:12-23,134-213`; `grpc/registrar.lua:83-191`; `luaclib-src/pb.c:1597-1777` | client/server sender | 偏离 | `pb.encode`类型/schema错误直接抛Lua异常；多个wrapper没有protected encode/finalizer，异常可绕过timer取消、grpc-status及H2 stream回收 | 现有测试只编码字段类型正确的对象，没有错误输出、请求对象或资源归零断言 | GRPC-032 |
+| PROTOBUF-SCALAR-DOMAIN | schema/data integrity | `luaclib-src/pb.c:316-359,406-470,1616-1668`; `lualib/silly/net/grpc/helper.lua:53-67` | client/server sender | 偏离 | 32位整数静默取低32位、signed/unsigned 64位不查范围，enum接受fractional number并转整数，bool把任意truthy值编码为true | gRPC测试只用小范围int32和正确Lua类型，没有边界外值或encode→decode等值断言 | GRPC-033 |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
 | GRPC-AUTOMATIC-RETRY | safety | `lualib/silly/net/grpc/client/conn.lua:82-100`; `lualib/silly/net/grpc/client/service.lua:134-257` | client | 不适用/安全 | 实现没有automatic retry，不会无条件重放非幂等RPC；GOAWAY/REFUSED_STREAM可靠性与status mapping缺口见H2-008/GRPC-013 | 无retry tests | — |
@@ -3518,6 +3519,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在写任何envelope前以统一protected encode返回`nil,error`；为每个RPC建立单一call finalizer，负责timer摘除/取消、唯一status、half-close或RST、stream map/quota回收，正常返回和任意Lua/C异常都走它。client本地请求编码失败应在发送request HEADERS前完成并返回参数错误；server输出失败映射INTERNAL且不得再发送部分message。`stream:write`维持文档化`false,error`，不能要求用户自行pcall后猜测stream状态。
 - 回归测试：修复阶段对四类RPC分别覆盖错误scalar/enum/nested/repeated请求及response，含有/无timeout；断言不抛出公开边界、handler调用次数正确、只出现一个final status、timer table/stream map/quota立即归零且连接上其他RPC可继续。当前不执行编码或网络路径。
 
+### GRPC-033 — P2 — protobuf scalar encoder 不校验类型/范围并静默改变字段值
+
+- 状态：已确认；protobuf scalar schema、native转换和gRPC sender统一入口的确定性静态核对。本轮不编码边界外数值。
+- 规范：[Protocol Buffers scalar value types](https://protobuf.dev/programming-guides/editions/#scalar)把`int32/sint32/sfixed32`映射为有符号32位、`uint32/fixed32`映射为无符号32位，64位类型同理，`bool`映射为boolean；enum number也限定在32位整数范围。typed serializer必须拒绝宿主值域之外的对象，不能通过截断、补码重解释或truthiness生成另一个业务值。
+- 位置：Lua integer/string转换在`luaclib-src/pb.c:316-359`；scalar encode switch在`:406-470`；enum转换在`:1616-1641`；字段分发在`:1644-1668`；所有gRPC request/response统一经`lualib/silly/net/grpc/helper.lua:53-67`。
+- 触发：给`int32/sint32/sfixed32`传大于`INT32_MAX`或小于`INT32_MIN`，给`uint32/fixed32`传负数或大于`UINT32_MAX`；给signed 64位传`#`字符串表示的`UINT64_MAX`、给unsigned 64位传负Lua integer；给enum传1.5等非整数number；或给bool传字符串`"false"`、空table等非boolean truthy值。普通/repeated/map/nested field都共用这些路径。
+- 影响：encoder不报错却在wire上发送与调用者对象不同的值。例如`uint32=-1`变成4294967295，`int32=4294967297`变成1，signed 64位的大正数字符串可在接收端变成负数，字符串`"false"`变成boolean true。ID、金额、revision、权限开关和enum操作类型会在RPC边界静默改变；Silly自身encode→decode也不保持值，严格peer只能看到已经损坏但wire层合法的数据，无法识别原始调用错误。
+- 证据：32位case先把结果写入union的`u64`后直接读取`u32`或显式cast`(uint32_t)`，没有上下界比较；64位signed/unsigned共享同一个无符号parser且不按field类型检查符号/range。enum number分支用`lua_tonumber`后直接cast为`uint64_t`，既不要求Lua integer也不验证int32范围；bool只执行`lua_toboolean`，任意非nil/false对象都变1。仅无法转换的部分类型才走`argcheck`，因此上述输入都被当成功编码。
+- 根因：binding把wire位宽转换当成schema validation，并利用C cast/Lua truthiness做便利强制转换；但protobuf wire兼容中的截断规则适用于跨schema解析，不授权serializer悄悄改变typed API输入。
+- 建议解法：按`type_id`在写tag/body前验证宿主类型和闭区间；32/64位signed、unsigned分别处理，并为Lua不能直接表达的uint64保留严格十进制/十六进制字符串通道。enum只接受整数且验证32位范围（是否允许未声明proto3值可按edition决定），bool只接受Lua boolean。错误通过`GRPC-032`建议的protected encode返回field path和受控错误，不发送HEADERS/envelope。
+- 回归测试：修复阶段对每个整数scalar覆盖min-1/min/min+1、-1/0/1、max-1/max/max+1及Lua integer/`#`字符串；enum覆盖fractional、边界和未知整数，bool覆盖true/false/0/1/string/table；普通/repeated/map/nested与四类RPC sender均断言合法值round-trip等值、非法值不上wire且资源立即收尾。当前不执行encode。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3547,7 +3560,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为285项：P0为0，P1为103，P2为157，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 32、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为286项：P0为0，P1为103，P2为158，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 33、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3833,6 +3846,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认gRPC双语reference把client/server/bidi streaming混成统一API，server-stream调用不存在的write，client-stream upload以RST close代替EOS/final response；归档为`DOC-026`。
 - 2026-08-13：确认`grpc.listen`直接返回只拥有listen fd的底层listener，accepted H2 channels无server owner；close返回后既有连接仍可无限创建新RPC，归档为`GRPC-031`。
 - 2026-08-13：确认protobuf encode类型/schema错误直接抛异常，多个gRPC wrapper因此越过公开错误tuple、timer取消、final status与H2 stream回收；归档为`GRPC-032`，未编码错误对象或建立RPC。
+- 2026-08-13：确认native protobuf scalar encoder对32/64位整数、enum与bool缺少schema域校验，边界外/错误类型输入会被静默截断或改义；归档为`GRPC-033`，未编码这些输入。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
