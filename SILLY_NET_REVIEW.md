@@ -3470,6 +3470,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在`pb_Field`保留完整label/required bit，并在decode完成每个顶层/嵌套message前递归验证所有required presence；encode在生成gRPC envelope前执行同一初始化检查并返回可定位field path的受控错误。若1.0明确不支持proto2，应在protoc/service注册阶段fail fast并同步文档，而不是静默接受后偏离wire语义。
 - 回归测试：修复阶段覆盖顶层/嵌套required scalar/message、多个required只缺一个、显式默认值、合法全字段、encode/decode及四类RPC双向；缺字段不调用handler、不发送成功message且映射INTERNAL/本地参数错误，proto3 optional不被误判。当前不运行。
 
+### GRPC-030 — P2 — 四类 RPC 没有公开 metadata/context API，认证与 `-bin` metadata 无法互操作
+
+- 状态：已确认；gRPC HTTP/2 metadata grammar、四类client/server公开签名与header/trailer构造的确定性静态核对。本轮不调用带metadata的独立服务。
+- 规范：[gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)把Custom-Metadata纳入Request-Headers、Response-Headers和Trailers，并规定以`-bin`结尾的Binary-Header使用Base64编码；authorization、trace和应用metadata都依赖这条标准通道。实现可以暂不提供高级拦截器，但若声称通用gRPC client/server，必须有办法逐call收发合法metadata或明确拒绝/声明限制。
+- 位置：client四类方法签名/header literal在`lualib/silly/net/grpc/client/service.lua:134-257`；server只按path传`req`或薄stream对象在`lualib/silly/net/grpc/server.lua:8-26`与`grpc/registrar.lua:80-228`；双语公开API位于`docs/src/{en/,}reference/net/grpc.md:266-638`。
+- 触发：调用要求`authorization`、traceparent、tenant id或任意custom request metadata的标准gRPC服务；server业务需要读取client metadata、发送initial metadata或在最终status附加trailing metadata；或任一方向使用`foo-bin`。
+- 影响：Silly client没有参数可加入任何自定义header，因而无法调用大量需要credential/tenant/routing metadata的实际服务；server unary handler只收到protobuf table，stream对象也未公开metadata/context，正常业务无法可靠读取。server response/trailer由wrapper固定构造，应用错误对象只能给code/message，无法发送initial/trailing metadata。即使穿透package-private H2 table，`-bin`也不会按gRPC规则Base64 encode/decode，跨语言值会错误。
+- 证据：所有client constructors都传同一个只含`content-type`的table，公开动态method签名最多只有request/timeout；没有metadata/options/credentials/interceptor参数。server dispatch读取header仅用于`:path`，wrappers不构造call context；application只获得req或含package-private `h2stream`的stream。所有final trailers都是固定`grpc-status/grpc-message` literal。仓库没有gRPC metadata key validator、reserved namespace规则或binary codec，双语reference全文也没有对应API。
+- 根因：实现把gRPC call抽象成protobuf message+status，未建模initial metadata、message stream、status metadata组成的完整双向call state；直接暴露/复用H2内部table又不足以承担binary与reserved-key语义。
+- 建议解法：引入per-call options/context：client接受并校验request metadata，server context公开decoded request/initial metadata与cancellation/deadline；server可在首message前发送一次initial metadata并在唯一finalizer附加trailing metadata。统一ASCII key/value、重复值、顺序、`-bin` Base64、`grpc-`保留key与size budget；credentials/interceptor在写HEADERS前注入。若1.0延期，应把公开能力标为不支持并对误传选项fail fast。
+- 回归测试：修复阶段四类RPC双向覆盖ASCII/重复/空值/多值metadata、合法/非法key、`-bin` padded/unpadded Base64、initial与trailing位置、authorization和超预算；与独立gRPC client/server互通并断言应用不需访问H2私有字段。当前不建立peer。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3499,7 +3511,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为281项：P0为0，P1为102，P2为155，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 29、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为282项：P0为0，P1为102，P2为156，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 30、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3781,6 +3793,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native protobuf embedded-message解析直接C递归且没有depth budget，4 MiB request内即可形成远超安全stack的层数；归档为`GRPC-027`，未生成深层payload。
 - 2026-08-13：确认native protobuf codec把schema `string`与`bytes`合并为同一裸字节路径，收发均不验证UTF-8；归档为`GRPC-028`，未编码非法序列。
 - 2026-08-13：确认native descriptor把proto2 required/optional共同折叠为非repeated，codec无法执行required presence检查，缺字段message仍可进入业务/上wire；归档为`GRPC-029`。
+- 2026-08-13：确认四类RPC均无公开metadata/call-context入口，server也无法正常读取request或发送initial/trailing metadata，`-bin`没有Base64语义；归档为`GRPC-030`。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
