@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档340项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档341项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2775,6 +2775,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：core reference改为`tostring(ptr,size)`并明确“复制size字节、不释放pointer、仅用于明确拥有生命周期的native buffer”；若没有安全公共用例，移出顶层public API或改成内部命名。网络payload文档统一使用会消费所有权的`net.tostring`，两者名称应体现copy与consume差异。
 - 回归检查：修复阶段对双语API围栏做签名lint，分别验证缺size明确失败、合法copy不free、`net.tostring` copy后恰好free一次；文档不得再出现“hex pointer representation”。当前不调用函数。
 
+### DOC-054 — P2 — 监控示例用进程 CPU 时钟测量异步操作，HTTP/DB/缓存 SLO 时延系统性失真
+
+- 状态：已确认；双语监控示例、Lua时钟语义、Silly协程yield边界和公开指标单位的确定性静态核对。本轮不启动服务、数据库或采集指标。
+- 位置：HTTP最佳实践在日志、access log、Prometheus middleware和生产handler中以`os.clock()`之差作为请求耗时，见`docs/src/{en/,}guides/http-best-practices.md:1064-1070,1175-1186,1245-1273,1809-1825`；logging/monitoring指南同样在请求观察与完整handler中使用它，见`docs/src/{en/,}guides/logging-monitoring.md:360-362,400-430,988-1049`。Prometheus双语reference又把该模式扩展到HTTP、job、DB query、cache和queue操作，见`docs/src/{en/,}reference/metrics/prometheus.md:353-369,422-446,547-549,646-648,726-766,871-873`。正确的产品计时入口是返回单调毫秒的`time.monotonic()`，见`lualib/silly/time.lua:17-20`、`luaclib-src/ltime.c:45-49`及双语time reference。
+- 触发：被观测操作发生任意协程让出，例如读取请求正文、等待HTTP/gRPC/MySQL/Redis、`time.sleep`、queue/channel或socket backpressure；即使没有异常网络，正常异步业务也会触发。等待期间worker处理其他ready task时偏差还会随并发负载改变。
+- 影响：`os.clock()`累计的是整个进程消耗的CPU时间，不是当前请求从开始到结束的单调墙钟。网络/数据库等待可能几乎不增加观测值，导致真实慢请求落入极小bucket、p95/p99和SLO错误偏低；同时同进程其他协程的CPU又可能被计入当前请求，使结果反向偏高。告警、容量规划、延迟回归和超时阈值因此都基于不可解释且负载相关的数据；直方图虽然名为`*_seconds`，值也不再代表端到端seconds。
+- 证据：Silly的I/O与timer API通过task yield等待事件，而示例在这些业务操作外只读取两次`os.clock()`；该Lua API不绑定当前协程，也不读取Silly timer的monotonic值。仓库自己的time reference明确把`time.monotonic()`定义为不受系统时间调整影响且适合性能测量的毫秒时钟。crypto/hash页面使用`os.clock()`做纯CPU吞吐benchmark，不属于异步端到端时延，故未错误扩大本条范围。
+- 根因：文档沿用了同步Lua脚本的CPU benchmark惯例，没有按协程调度模型区分CPU time与elapsed time；中英文多页复制同一片段又缺少统一的观测middleware或代码片段校验。
+- 建议解法：所有端到端耗时以`local start = time.monotonic()`开始，并用`(time.monotonic() - start) / 1000`写入seconds直方图；若确实需要CPU消耗，另建明确命名/单位的process CPU metric，不能冒充request latency。抽取一份可复用且能在成功、错误和提前返回时恰好观察一次的middleware，并让双语页面引用同一已验证片段。
+- 回归检查：修复阶段用可控monotonic clock覆盖纯CPU、长I/O yield、等待期间其他task忙碌、异常和提前返回；断言请求直方图等于端到端毫秒差除以1000且每请求只记录一次。对全部net/metrics文档做静态零命中检查，仅允许明确标注CPU benchmark的`os.clock()`。当前不运行这些场景。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4189,9 +4200,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为340项：P0为0，P1为112，P2为184，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 53。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为341项：P0为0，P1为112，P2为185，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 54。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；184项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；185项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
