@@ -675,6 +675,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分配后立即检查；失败时不要再次调用API，返回明确的Lua错误或至少记录OOM并让上层决定是否使用fallback。更稳妥的是使用项目统一的checked allocator，同时为异常大`buf_len`设置`SIZE_MAX`/合理上限检查，并保证所有退出路径只有一个owner释放buffer。
 - 回归测试：修复阶段以Windows allocator shim令第二次分配确定失败，断言不会再次调用`GetNetworkParams`、不会解引用NULL、错误可诊断且无泄漏；再覆盖栈buffer一次成功、overflow后二次成功、二次API失败。当前只保存静态证据。
 
+### DNS-017 — P3 — Windows hosts 路径拼接复用 MAX_PATH 缓冲区，合法长系统目录会被静默截断
+
+- 状态：已确认；Win32 path-length返回契约与固定缓冲区拼接的算术静态核对。本轮不修改系统目录或读取真实hosts文件。
+- API契约：[Microsoft `GetSystemDirectoryA` 文档](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemdirectorya)说明成功返回值只是不含NUL的系统目录长度；只有目录本身超出传入buffer时才返回required size。它不为调用方随后追加的路径片段预留空间。
+- 位置：`src/win/win.c:351-362`；`syspath`和`hostspath`都固定为`MAX_PATH`，入口只验证`len < MAX_PATH`，然后用未检查返回值的`snprintf(hostspath,sizeof(hostspath),"%s\\drivers\\etc\\hosts",syspath)`追加18字符后缀。
+- 触发：`GetSystemDirectoryA`成功返回长度242至259字符的合法system-directory路径。目录本身及NUL能通过现有检查，但追加18字符后缀及NUL需要261至278字节，超过260字节的传统`MAX_PATH`缓冲区。
+- 影响：标准`snprintf`会保证终止但截断目标路径，返回值完全未检查；随后的`fopen`读取错误位置并通常返回nil。DNS模块继续初始化，不给出截断诊断，系统hosts中的本地名称、运维覆盖和安全阻断规则被静默忽略，查询转而发给resolver；短默认安装路径不受影响。
+- 证据：两个数组容量相同，而目标串严格长于源串；`len >= MAX_PATH`检查只能证明`syspath`未截断，不能证明目标拼接可容纳。代码不比较`snprintf`返回值与`sizeof(hostspath)`，`push_file`也把所有open失败统一折叠为nil，故无法在上层区分“没有hosts文件”和“内部路径截断”。
+- 根因：把producer API的source-buffer成功条件误用为derived-path的容量证明，并沿用固定`MAX_PATH`而未按实际长度分配目标字符串。
+- 建议解法：用`len + sizeof("\\drivers\\etc\\hosts")`做checked size计算并动态分配，或使用支持长路径的Unicode Win32 path API；必须检查格式化返回值并把截断/打开失败作为可诊断状态传给Lua。不要仅把目标数组再放大一个常量而继续忽略返回值。
+- 回归测试：修复阶段stub `GetSystemDirectory`覆盖长度241、242、259、required-size及failure，断言生成路径完整、无截断/越界，且打开失败保留可区分原因；另覆盖非ASCII/Unicode系统路径。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2895,7 +2907,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为229项：P0为0，P1为93，P2为126，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 16、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为230项：P0为0，P1为93，P2为126，P3为11。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 17、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2932,6 +2944,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：按RFC 2181确认DNS cache只采用RRset首条TTL，未将异TTL组收紧到最低值，缓存寿命受wire顺序控制；归档为`DNS-014`。
 - 2026-08-13：确认DNS为每个查询名字永久intern cache节点，expired/TTL0/timeout/send failure均无逐项删除或容量预算；归档为`DNS-015`。
 - 2026-08-13：确认Windows DNS bootstrap在`GetNetworkParams`要求扩容后不检查`malloc`结果，OOM时仍把NULL作为输出buffer传回系统API；归档为`DNS-016`。
+- 2026-08-13：确认Windows hosts路径只验证system directory本身能装入MAX_PATH，追加固定后缀后可静默截断并忽略hosts配置；归档为`DNS-017`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

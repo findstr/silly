@@ -170,6 +170,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DNS-014 | P2 | RRset cache只采用wire首条TTL，未按RFC 2181取组内最低值，缓存寿命受记录顺序控制。 |
 | DNS-015 | P1 | 每个查询名字永久intern到server cache，expired/TTL0/timeout/send failure均不删除且无容量预算。 |
 | DNS-016 | P2 | Windows resolver配置扩容不检查malloc结果，OOM时仍把NULL输出buffer传给GetNetworkParams。 |
+| DNS-017 | P3 | Windows hosts路径只验证system directory自身长度，追加后缀后可截断并静默忽略hosts配置。 |
 | CLUSTER-001 | P1 | cluster response只按全局session匹配，任一peer或wrap后的late ACK可跨连接完成其他RPC。 |
 | CLUSTER-002 | P2 | cluster peer断线/主动close不结束其pending RPC，waiter与timer只能保留到全局timeout。 |
 | CLUSTER-003 | P2 | unknown/late/duplicate ACK会对nil coroutine执行wakeup，连接保持并可持续制造异常/日志。 |
@@ -361,7 +362,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为229条：P1 93、P2 126、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 16、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
+当前统计为230条：P1 93、P2 126、P3 11。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 17、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
