@@ -2456,6 +2456,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：master文档删除connect的fork要求，明确只有可能进入lazy dial/wait的`call/send`需要yieldable task；若1.0最终采用raw-string分支，则按eager实现保留connect要求并在迁移说明突出breaking yield boundary。为每个公开函数维护机器可读yield属性，由实现调用图或静态断言校验文档。
 - 回归检查：修复阶段对master直接在bootstrap构造peer并断言当前task未切换、无socket/DNS副作用；对eager分支则用受控connector断言connect确实yield且文档只出现对应一种说法。中英文同段落做一致性扫描。当前不运行调度测试。
 
+### DOC-040 — P3 — cluster 文档同时承诺可比较的 `silly.errno` 和禁止比较的不透明字符串
+
+- 状态：已确认；master/raw-string实现、cluster双语reference、全局errno契约和现有测试静态对照。本轮不触发timeout或传输错误。
+- 位置：cluster API返回值与timeout章节把错误标为`silly.errno|string`并明确写`errno.TIMEDOUT`，见`docs/src/{en/,}reference/net/cluster.md:325-345,1049-1057`；同一文档的Error Handling在`:1094-1112`又称所有call/send错误都是opaque string且禁止`err == errno.X`。全局`docs/src/{en/,}reference/errno.md:22-76`也明确把cluster列入禁止比较名单；runtime timeout在`lualib/silly/net/cluster.lua:251-271`直接返回`errno.TIMEDOUT`，测试则做identity/equality断言，见`test/testcluster.lua:11-18,344-355,471-480`。
+- 触发：调用方需要对RPC timeout、connection refused和marshal错误采取不同重试/降级策略，并依照cluster reference任一段落决定是否与`errno`常量比较。
+- 影响：按API/timeout段比较在当前版本可工作，但与文末声明的兼容契约冲突，未来“rewrap”会无编译提示地破坏重试逻辑；按opaque建议则无法可靠区分确定的deadline与其他错误，只能放弃合理的timeout/fallback策略或脆弱解析字符串。两种官方规则不能同时满足，使1.0错误处理行为不可稳定依赖。
+- 证据：`ETIMEDOUT`在module加载时取自同一`require "silly.errno"`表，timer路径原样返回，没有wrap；C errno module从全局error table推入字符串常量，因此当前`err == errno.TIMEDOUT`正是cluster test验证的行为。与此同时test文件注释又称这种比较只可用于white-box、公开contract是string，直接复刻了文档层与实现层的冲突。
+- 根因：传输errno被直接透传以便实现简单，但公开文档试图在不改变返回结构的情况下把高层错误降级为“不透明”；API类型、示例、测试和兼容策略没有统一的结构化错误模型。
+- 建议解法：1.0前选择并固定一种契约。推荐返回结构化cluster error（稳定kind/code/cause，transport cause可保留`silly.errno`），让调用方可靠区分timeout/closed/encode/remote，同时不依赖平台字符串；若短期保留当前tuple，则明确哪些errno identity是稳定承诺并删掉相反文本。中英文、LuaLS、errno reference和测试注释必须由同一错误schema生成/校验。
+- 回归检查：修复阶段覆盖response timeout、dial timeout/refused、active/passive close、marshal/unmarshal失败和remote handler失败，断言每类稳定可分支且message仅用于诊断；静态扫描禁止同一API同时出现“errno可比较”和“opaque不可比较”。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4205,6 +4216,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
+- 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

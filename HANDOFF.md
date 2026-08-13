@@ -308,6 +308,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-037 | P3 | etcd双语reference共32处示例调用不存在的silly.sleep，等待后的watch/lease/清理流程不会执行。 |
 | DOC-038 | P3 | cluster双语reference称listen backlog默认128，master与raw-string分支实际都继承通用默认256。 |
 | DOC-039 | P3 | master cluster reference一处称connect是无yield的同步handle构造，另一处又称直接调用报错且必须task.fork。 |
+| DOC-040 | P3 | cluster文档一处承诺silly.errno/errno.TIMEDOUT，另一处又把全部错误定义为禁止比较的opaque string。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
