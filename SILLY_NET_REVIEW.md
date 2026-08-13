@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档357项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档358项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -471,6 +471,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：为了减少分配复用了全局scratch table，却把cleanup绑定到唯一成功出口；producer schema未验证与exporter非异常安全叠加，把单次调用错误升级为持久全局状态损坏。
 - 建议解法：每次gather使用局部buffer，或在入口先清空并以受保护/finally路径保证所有出口复位；先把collect结果验证/格式化到调用私有buffer，成功后再返回。Gauge/Histogram/Counter与custom metric边界集中验证finite number、descriptor和kind，错误应标明collector且不泄漏旧输出；不要用共享可变scratch跨请求保存状态。
 - 回归测试：修复阶段让Gauge及custom collector分别产生boolean/table/nil/throw，捕获首轮错误后修正/注销并再次gather；断言第二轮只有当前合法metrics、无旧片段、buffer/内存回基线。并覆盖两个任务交错发起scrape与collector异常，确认互不污染。当前不执行。
+
+### METRIC-010 — P2 — Registry 在 live 数组上采集，期间注销会跳过 collector 并调用 `nil:collect()`
+
+- 状态：已确认；Lua numeric-for边界、registry mutation API、custom collector与单worker yield语义的确定性静态核对。本轮不创建自注销collector或并发barrier。
+- 并发/生命周期契约：一次collection应基于稳定snapshot，或在采集期间明确拒绝register/unregister；公开动态注销不能因collector回调重入或yield后的另一任务操作而把数组迭代器置于失效位置，导致整个scrape崩溃。
+- 位置：`lualib/silly/metrics/registry.lua:35-40`以`for i = 1, #self do self[i]:collect(metrics) end`直接遍历registry数组；numeric-for在进入时固定上界。`:24-31`的`unregister`用`table.remove`立即左移后续元素，没有collecting状态、snapshot或deferred mutation。双语registry reference公开动态注册/移除与custom collector，见`reference/metrics/registry.md:187-229,377-466`；collector reference只建议避免慢操作，没有定义mutation禁令。
+- 触发：registry含A、B两个collector，A的`:collect()`通过closure调用`reg:unregister(A或B)`；或A在collect中执行可yield操作，挂起期间另一task注销任一剩余collector。内置collector不这样做，但公开custom collector接口可直接到达。
+- 影响：数组长度从2降到1，而for仍继续到i=2，`self[2]`为nil并抛“attempt to index a nil value”；若有更多元素，左移还会先跳过一个collector，再在旧上界尾端异常。整个`prometheus.gather()`失败，部分metrics漏采；若与`METRIC-009`的format阶段无关，重试仍可能持续失败或得到不同集合，生产动态启停instrumentation时表现为间歇scrape down。
+- 证据：Lua numeric-for的limit表达式只在循环初始化时求值，`table.remove`则同步压缩array；代码每轮既不重新检查长度，也不保存当前对象。register在采集中固定上界而延迟到下次可接受，但unregister会使旧索引失效。现有`test/testprometheus.lua:315-345`只在collect调用之间register/unregister，没有collector内部重入、yield或并行注销。
+- 根因：registry同时把可变collector集合和当前iteration storage当成同一数组，没有定义collection epoch与mutation可见性；单worker被误等同于不可重入，忽略collector是任意Lua代码且可以yield/回调registry。
+- 建议解法：collect入口复制collector引用snapshot并仅遍历snapshot，明确本轮包含入口时已注册对象；或设置collecting epoch，把register/unregister排队到本轮完成后原子应用。snapshot中的已注销对象是否仍采一次需写入契约；collector异常也应按策略隔离/标注，不能留下半轮全局状态。
+- 回归测试：修复阶段覆盖first/middle/last collector自注销、注销next/previous、采集中register、collector yield期间另一task mutation及嵌套collect；断言无nil调用/跳过/重复，当前轮集合符合snapshot契约，下轮准确反映mutation。当前不运行这些时序。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4379,7 +4391,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为357项：P0为0，P1为112，P2为194，P3为51。模块分布：CORE 11、METRIC 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为358项：P0为0，P1为112，P2为195，P3为51。模块分布：CORE 11、METRIC 10、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4755,4 +4767,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Histogram双语完整监控示例反查确认其调用未导出的`silly.time.now/sleep`，任一请求在记录指标前即异常，归档为`DOC-067`。
 - 2026-08-13：共享labels fast path反查确认非空schema调用零参数`:labels()`会在arity assert前返回空key；三类vector均静默建立缺失全部标签的series，归档为`METRIC-008`。
 - 2026-08-13：Exporter异常收尾反查确认gather复用module-level buffer且只在concat成功后清空；一个坏Gauge/custom metric值可永久毒化后续全部scrape并持续追加内存，归档为`METRIC-009`。
+- 2026-08-13：Registry mutation时序反查确认collect固定旧上界遍历live array；custom collector重入注销或yield期间被另一task注销会跳过对象并最终调用nil，归档为`METRIC-010`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
