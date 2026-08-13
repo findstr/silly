@@ -2445,6 +2445,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：以1.0选定的真实契约为准统一实现、inline LuaLS和双语reference；若保留256，文档明确默认来自通用TCP listener。把共享listen option/default集中为一个可导出的schema，并在文档测试中断言各wrapper的nil与显式backlog传递结果。
 - 回归检查：修复阶段用stub listener捕获cluster在省略、128、256及边界值时传入的backlog，断言中英文reference默认值与nil路径一致；master/raw-string分支同步校验。当前只保存静态证据。
 
+### DOC-039 — P3 — master cluster reference 同时声明 `connect` 不会 yield 和必须在 `task.fork` 中调用
+
+- 状态：已确认；master实现、API专节、文末协程要求及中英文版本静态对照。本轮不调用connect或调度task。raw-string分支把connect改为eager dial并确实会yield，因此不适用本条。
+- 位置：master `M.connect`只构造table并立即返回，见`lualib/silly/net/cluster.lua:220-231`；中英文reference的`cluster.connect`专节正确说明“同步、可在任何上下文调用、不会yield”，见`docs/src/{en/,}reference/net/cluster.md:252-324`。同一两份文档末尾“协程要求”却把connect列为异步操作，并给出“直接调用会报错”的反例，见`:1012-1031`。
+- 触发：读者先按API专节在bootstrap/普通回调直接创建peer，或先读文末要求而为每次纯handle构造额外fork；两段都是同一公开reference中的规范性说明。
+- 影响：用户无法判断真实yield边界。相信错误段落会把立即返回的handle创建拆进无人管理的子task，增加调度和生命周期复杂度，并可能让后续代码在peer尚未由子task赋值时读取nil；相信正确专节却在未来无意切换到eager分支时，又会遇到真实yield语义变化。该项不改变当前wire行为，严重度为P3，但1.0协程契约必须唯一。
+- 证据：`M.connect(addr)`没有DNS、TCP、task.wait或任何间接yield，只写`fd=nil/addr/remoteaddr`并return；真正的`connect(peer)`只由首次call/send触发。reference专节逐字描述该lazy行为，而文末示例注释却写“direct call will error”，两种说法不可能同时成立。中英文内容一致地复制了矛盾。
+- 根因：文末通用“所有网络操作都需fork”模板没有随master lazy-handle设计更新；分支又采用eager connect，使同名API在两个版本上的yield语义相反而缺少版本化契约检查。
+- 建议解法：master文档删除connect的fork要求，明确只有可能进入lazy dial/wait的`call/send`需要yieldable task；若1.0最终采用raw-string分支，则按eager实现保留connect要求并在迁移说明突出breaking yield boundary。为每个公开函数维护机器可读yield属性，由实现调用图或静态断言校验文档。
+- 回归检查：修复阶段对master直接在bootstrap构造peer并断言当前task未切换、无socket/DNS副作用；对eager分支则用受控connector断言connect确实yield且文档只出现对应一种说法。中英文同段落做一致性扫描。当前不运行调度测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4193,6 +4204,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`CLUSTER-005`：允许的`psize > INT_MAX`即会从uint32窄化为负`packet.size`并以巨大external-string长度pop；`UINT32_MAX`的allocation/total回绕只是更晚边界，不重复计数。
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
+- 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

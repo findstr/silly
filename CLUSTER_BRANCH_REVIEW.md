@@ -120,6 +120,7 @@ test/testcluster.lua
 - 未运行任何代码；因此大端peer、黑洞dial、partial frame、跨peer ACK、断链竞态和资源上限仍只保留确定性静态证据，动态验证继续延期到修复阶段。
 - “未发现更多分支独有问题”只表示上述提交与调用链在当前静态范围内没有剩余可确认候选，不表示cluster或整个仓库绝对无bug。
 - 共同文档问题另在主报告归档：`DOC-038`确认两版cluster reference均把默认backlog写成128，而共享TCP listener实际使用256；它不是raw-string迁移独有问题。
+- master文档问题`DOC-039`不适用于本分支：master的connect专节与文末对“lazy handle是否yield”自相矛盾，而本分支eager connect确实需要yieldable task。
 
 第三轮明确排除、未另立问题的路径：
 
