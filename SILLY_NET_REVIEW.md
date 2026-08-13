@@ -329,6 +329,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：macOS用`proc_pidinfo`/`proc_pid_rusage`或等价系统API获取fd/RSS，Windows用`GetProcessHandleCount`与`GetProcessMemoryInfo`并明确socket/handle口径；若能力不可用则返回`nil,error`或暴露availability，collector省略/标记指标而非伪造0。leak测试先断言observer可用且baseline合理，否则明确skip/fail；跨平台socket资源最好另有engine内部active-slot计数作为确定性断言。
 - 回归测试：修复阶段三平台分别打开/关闭普通文件与socket，断言openfds按定义变化且恢复；分配allocator内存、线程stack和mmap/VirtualAlloc，断言RSS与heap不被强制等同。故意注入一条connect/listen fd泄漏，保证Test 16/17在每个声明支持的平台都会失败；当前不运行平台测试。
 
+### CORE-009 — P2 — `time.now()` 只在启动时采样墙钟，系统校时后不再是当前 Unix 时间戳
+
+- 状态：已确认；公开契约、timer时钟源与全部network/storage调用点的确定性静态核对。本轮不调整系统时钟或运行timer测试。
+- 公开契约：中英文`time.now()` reference和native LuaLS都承诺“当前Unix时间戳/当前wall clock milliseconds”，并以`time.monotonic()`作为明确“不受系统时间调整影响”的另一接口；两者不能在进程启动后始终只相差一个固定常数而仍同时满足该契约。
+- 位置：timer初始化仅调用一次`walltime()`并保存`startwall`在`src/timer.c:366-398,550-566`；运行期`timer_now()`只返回`startwall + monotonic`在`:218-227`，而`monotonic`仅由timer tick推进在`:501-539`。Lua导出位于`luaclib-src/ltime.c:38-58`与`lualib/silly/time.lua:1-20`，类型和双语文档位于`lualib/types/silly/time/c.lua:17-25`、`docs/src/{en/,}reference/time.md:24-47`。HTTP pool与etcd lease调用点分别在`lualib/silly/net/http/client.lua:93,175,190`和`lualib/silly/store/etcd.lua:156-168,546`。
+- 触发：进程启动后由NTP、管理员、虚拟机guest time sync或其他系统机制向前/向后调整`CLOCK_REALTIME`；之后调用`time.now()`并与文件时间、证书/JWT期限、日志、其他进程或真实Unix时间比较。
+- 影响：`time.now()`永久保留启动时墙钟与单调时钟的固定偏移，完全看不到后续校时；返回值可持续领先或落后真实Unix时间。network/storage内部当前主要用差值，因而不会随NTP跳变，但任何依赖文档契约做绝对期限、签名防重放、跨进程时间戳或审计关联的调用方会得到错误结果。API又没有另一个实时墙钟入口，用户无法在Silly内取得文档承诺的当前时间。
+- 证据：`timer_init`将`startwall=walltime()`后不再有任何写入；`timer_now`不调用`walltime()`，而`timer_monotonic`返回同一个累计tick字段。因此进程运行任意时长后恒有`now-monotonic == 启动时startwall`，系统实时钟变化不会进入结果。双语reference把`now`定义为Unix timestamp，并专门把“不受系统时间调整影响”只写给`monotonic`，排除了把当前行为解释为已公开的monotonic epoch接口。
+- 根因：实现为了让elapsed计算不受墙钟跳变影响，把“启动墙钟 + 单调elapsed”暴露成了`now`，但同时又提供了专门的`monotonic`且保留了wall-clock契约，没有区分realtime与monotonicized epoch。
+- 建议解法：让`time.now()`每次读取平台realtime clock并保持Unix epoch语义，耗时、timeout、lease interval和pool idle统一使用`time.monotonic()`；若确实需要平滑epoch，新增名称与契约明确的独立API。调用方不得用realtime差值做deadline，文档/LuaLS应明确各时钟是否可跳变及适用场景。
+- 回归测试：修复阶段用可注入clock覆盖realtime前跳/后跳而monotonic连续，断言`now`跟随新Unix时间、`monotonic`不回退，HTTP pool和etcd lease等相对调度不受墙钟调整影响；三平台核对epoch、单位和长期运行溢出。当前不修改系统时间或运行测试。
+
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
 - 状态：已确认；worker消息顺序、callback table生命周期与socket ownership的确定性推导。本阶段不新增accept/close barrier复现。
@@ -3972,7 +3984,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为309项：P0为0，P1为110，P2为166，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 16、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
+当前滚动统计为322项：P0为0，P1为110，P2为172，P3为40。模块分布：CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 44。
 
 建议按依赖关系分五批修复：
 
@@ -4321,4 +4333,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：平台metrics复核确认macOS openfds固定读Linux procfs、Windows硬编码0，两平台RSS又退化为heap计数；运行时监控错误且TCP fd leak用例可0→0假通过，归档为`CORE-008`。
+- 2026-08-13：最终time契约复核确认`time.now()`仅在启动时采样一次墙钟，此后始终以monotonic tick推算；系统校时后不再是双语reference/LuaLS承诺的当前Unix时间戳，归档为`CORE-009`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

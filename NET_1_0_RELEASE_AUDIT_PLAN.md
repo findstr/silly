@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共321项（P1 110、P2 171、P3 40），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除；跨层大timeout在operation发布后抛错的问题归档为`NET-007`，macOS/Windows资源观测退化归档为`CORE-008`。当前继续最终测试、文档、LuaLS、编号统计核账。
+当前滚动进度（2026-08-13）：底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd及cluster逐文件阶段均已收口；共322项（P1 110、P2 172、P3 40），另有4项cluster分支独有问题。断线registry候选已在核对GC/finalizer与清表顺序后排除；跨层大timeout在operation发布后抛错的问题归档为`NET-007`，macOS/Windows资源观测退化归档为`CORE-008`，墙钟契约偏差归档为`CORE-009`。当前继续最终测试、文档、LuaLS、编号统计核账。
 
 ## 1. 目标和边界
 
