@@ -2486,12 +2486,12 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；RFC 6455 与确定性 API/连接状态推导。本阶段只做静态 review，不新增复现代码。Ping/Pong 被 API 明确委托给应用并有文档示例，不作为本问题。
 - 规范：RFC 6455 §5.5.1 要求非空 Close payload 至少包含 2-byte 合法 status，reason 为 UTF-8；发送或收到 Close 后进入 CLOSING，发送 Close 后不得再发送 data，收到未响应的 Close 必须回 Close。双方都发送和收到 Close 后才完成 handshake 并关闭 TCP；server 立即关闭，client 通常等待 server，异常时才按合理 timeout 退出。
-- 位置：`lualib/silly/net/websocket.lua:139-223`；公开契约为 `docs/src/reference/net/websocket.md:160-224`。
-- 触发：收到或发送长度为 1 的 Close、保留/越界 status、Close 后继续读写 data；或任一方调用 `sock:close()` 主动结束正常连接。
-- 影响：非法 close data 被原样交付/发送，应用无法可靠获得 close code/reason；Close 后仍可发送应用数据，违反连接状态边界。主动关闭总是在写出 Close 后立即关闭 TCP，peer 的 Close response 无法被读取，因此正常关闭不能确认完成，容易表现为 abnormal/unclean closure，丢失对端状态并造成严格实现互操作失败。
-- 证据：reader 对 opcode 8 与其他类型一样返回 raw `dat`，不解析长度/status，也不改变 socket 状态。`s.write(..., "close")` 只受控制帧 125-byte 检查，返回后仍可继续调用 write。`s.close` 调用 `sock:write("", "close")` 后立刻 `conn:close()` 并置 nil，没有等待 peer Close、角色区分或 deadline。现有 Test 3 的接收方由应用读到 Close 后再调用 close，接近响应路径；但最初发送方已经立即断开，测试未验证 clean handshake。
-- 建议解法：为 socket 引入 OPEN/CLOSING/CLOSED 及 sent_close/received_close。集中编码/解析合法 status 与 reason；收到首个 Close 自动或由受控 API 回应，禁止后续 data write。`close()` 发起 handshake 后等待 peer Close，并按角色执行 TCP close；加入有限 deadline 防止对端不响应。协议错误使用适当 status，底层异常则标记 unclean。
-- 后续回归条件：修复阶段覆盖空 payload、1 byte、合法 code/reason、1005/1006/1015 等禁止 code、未知合法范围、双方同时 close、Close 后 write/read、peer 不响应 timeout，以及 client/server 谁先 TCP close；断言 clean/unclean 结果。本轮不新增测试代码。
+- 位置：`lualib/silly/net/websocket.lua:139-223,268-271`；公开契约为 `docs/src/reference/net/websocket.md:160-224`。
+- 触发：收到或发送长度为 1 的 Close、保留/越界 status、Close 后继续读写 data；或任一方调用 `sock:close()` 主动结束正常连接。另一个确定性本地路径是把socket保存为Lua 5.4 to-be-closed变量、又在作用域内显式调用`close()`，或任何cleanup重复调用close。
+- 影响：非法 close data 被原样交付/发送，应用无法可靠获得 close code/reason；Close 后仍可发送应用数据，违反连接状态边界。主动关闭总是在写出 Close 后立即关闭 TCP，peer 的 Close response 无法被读取，因此正常关闭不能确认完成，容易表现为 abnormal/unclean closure，丢失对端状态并造成严格实现互操作失败。重复关闭不会稳定返回“已关闭”，而会在nil connection上抛Lua异常；当`__close`发生在异常展开期间，这个cleanup错误还可能替代或掩盖原业务错误。
+- 证据：reader 对 opcode 8 与其他类型一样返回 raw `dat`，不解析长度/status，也不改变 socket 状态。`s.write(..., "close")` 只受控制帧 125-byte 检查，返回后仍可继续调用 write。`s.close` 调用 `sock:write("", "close")` 后立刻 `conn:close()` 并置 nil，没有等待 peer Close、角色区分或 deadline。metatable同时把同一函数注册为`__close`，但下次调用先进入`sock:write`，后者取得nil `sock.conn`并在`write_frame`执行`conn:write(...)`时抛异常，closed guard甚至晚于不可达。现有测试只做单次显式close，既未验证clean handshake，也未覆盖重复close/to-be-closed组合。
+- 建议解法：为 socket 引入 OPEN/CLOSING/CLOSED 及 sent_close/received_close。集中编码/解析合法 status 与 reason；收到首个 Close 自动或由受控 API 回应，禁止后续 data write。`close()` 发起 handshake 后等待 peer Close，并按角色执行 TCP close；加入有限 deadline 防止对端不响应。CLOSED上的`close/__close`必须幂等且不抛异常，write/read返回稳定closed错误；协议错误使用适当 status，底层异常则标记 unclean。
+- 后续回归条件：修复阶段覆盖空 payload、1 byte、合法 code/reason、1005/1006/1015 等禁止 code、未知合法范围、双方同时 close、Close 后 write/read、peer 不响应 timeout，以及 client/server 谁先 TCP close；另覆盖手动close两次、只用`<close>`、显式close后作用域退出及异常展开，断言资源只关闭一次且原异常不被cleanup覆盖。本轮不新增测试代码。
 
 ### WS-008 — P1 — client masking key 来自可预测的小空间弱随机源
 
@@ -3441,6 +3441,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认双语HTTP/2最佳实践示例遗漏tls开关和server ALPN，原样实际启动明文H1且证书不生效；归档为`DOC-017`并按安全误导定为P2。
 - 2026-08-13：确认双语WebSocket教程在`sock:read()`完整缓冲后才检查10 KiB并错误声称可防恶意大消息；归档为`DOC-018`，实现侧根因仍由`WS-005`覆盖。
 - 2026-08-13：补强`TLS-009`：WebSocket frame reader对零payload仍调用`read(0)`，故WSS收到合法空Close/Ping/Pong/data frame会永久等待；现有WSS测试只读非空消息，未覆盖该分叉。不重复计数。
+- 2026-08-13：补强`WS-007`：WebSocket把非幂等close直接注册为`__close`，显式close后作用域退出或重复cleanup会在nil connection上抛异常并可能掩盖原错误。不重复计数。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。

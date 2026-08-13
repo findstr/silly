@@ -328,7 +328,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | WS-004 | P2 | fragmentation 状态机接受 standalone continuation 和进行中插入的新 data message。 |
 | WS-005 | P1 | frame 与 fragmented message 没有大小上限或 deadline，可被远端耗尽内存。 |
 | WS-006 | P2 | text message 与 Close reason 的收发均不验证 UTF-8。 |
-| WS-007 | P2 | Close payload/status 与 CLOSING handshake 没有状态机，主动 close 立即断 TCP。 |
+| WS-007 | P2 | Close payload/status 与 CLOSING/CLOSED状态机缺失；主动close立即断TCP，重复close/`__close`会抛异常。 |
 | WS-008 | P1 | client masking key 与 handshake nonce 使用 time-seeded、小空间弱随机源。 |
 | WS-009 | P2 | client hostname固定单次A lookup且只连首地址，IPv6-only或首地址故障服务不可用。 |
 | WS-010 | P1 | client opening handshake没有端到端deadline/cancel，silent peer可长期占住task和socket。 |
