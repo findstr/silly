@@ -1417,14 +1417,14 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义公开且唯一的`redis.null` sentinel（或typed reply对象），array/pipeline内部一律保存sentinel并保持dense sequence；顶层命令可为兼容性选择继续返回nil，但文档须区分。pipeline最好返回每项`{ok=..., value=...}`而非含nil的flat tuple，并提供迁移策略。
 - 回归测试：修复阶段覆盖首/中/尾/全null、nested arrays、空array与null array、pipeline null/error混合；断言元素count、顺序和null identity可精确round-trip。当前仅作静态语义核对。
 
-### REDIS-007 — P2 — Pub/Sub push 没有专用 reader，后续消息会与命令响应错配
+### REDIS-007 — P2 — server-push/持续输出模式没有专用 reader，消息会与命令响应错配
 
-- 状态：已确认；RESP2 subscribed-mode语义、单response command wrapper与公开文档的确定性静态核对。本轮不连接Redis或发布消息。
+- 状态：已确认；RESP2 subscribed/monitor mode语义、单response command wrapper与公开文档的确定性静态核对。本轮不连接Redis或发布消息。
 - 规范：Redis RESP2在`SUBSCRIBE/PSUBSCRIBE`后进入subscribed mode：首次返回订阅确认，之后server可在没有对应request的情况下持续推送`message/pmessage/subscribe/...`数组；client必须以独立push reader交付这些消息，并只允许该模式规定的命令，不能继续按严格request→one response配对。
 - 位置：所有命令共用的一次write/一次`read_response` wrapper在`lualib/silly/store/redis.lua:266-303`，reader token队列在`:238-264`；对象没有push/read subscription API，文件到`:351`结束。中英文文档宣称所有标准命令并给出Pub/Sub章节，见`docs/src/reference/store/redis.md:49-57,224-232,665-701`与英文同名文档。
-- 触发：调用`subscriber:subscribe("news")`取得确认后，server推送一条message；应用随后调用订阅态允许的`PING`、`UNSUBSCRIBE`或再次`SUBSCRIBE`，或错误地尝试普通命令以读取下一结果。
+- 触发：调用`subscriber:subscribe("news")`取得确认后，server推送一条message；应用随后调用订阅态允许的`PING`、`UNSUBSCRIBE`或再次`SUBSCRIBE`，或错误地尝试普通命令以读取下一结果。`MONITOR`取得OK后持续收到无request对应的simple-string流时存在相同错配。若调用文档所说的“任意标准命令”执行`HELLO 3`，RESP3 map前缀会先进入`REDIS-001`的unknown-type异常路径；即便未来只补map解析，`>` push/client tracking仍需要本条所述的独立owner。
 - 影响：第一条SUBSCRIBE只消费确认并执行`wakeup_next_reader`，后续push留在socket buffer且没有公开读取入口。下一命令的`read_response`会消费最早push并把它作为该命令结果返回，真实command response继续滞后，之后每次调用都可能错一拍；消息无法可靠交付，unsubscribe count/state也无法跟踪。若应用从不再调用命令，push则在无上限TCP buffer路径持续积累。
-- 证据：动态method对任何命令完全相同：write一次、取得reader ownership、read一个RESP value、立即释放ownership。代码没有subscribe mode flag、后台read loop、push callback/channel、allowed-command gate或reconnect后的resubscribe逻辑。reference的“发布订阅”示例创建subscriber但从未调用subscribe或读取message，只用另一连接publish，因此无法验证所宣称能力。
+- 证据：动态method对任何命令完全相同：write一次、取得reader ownership、read一个RESP value、立即释放ownership。代码没有subscribe/monitor/protocol-version mode flag、后台read loop、push callback/channel、allowed-command gate或reconnect后的resubscribe逻辑；type dispatch也固定只有RESP2的`+-:*$`五种前缀。双语reference开篇仍宣称“完整RESP”和“所有标准命令”，其“发布订阅”示例创建subscriber但从未调用subscribe或读取message，只用另一连接publish，因此无法验证并扩大了所宣称能力边界。
 - 根因：driver建立在“每个request恰有一个按序response”的普通RESP2模型上，却无条件把会改变连接为server-push状态的命令也暴露为相同动态method。
 - 建议解法：提供独立subscription对象/connection owner：握手后由唯一reader loop持续解析push，按channel/pattern交付并维护subscription count，只允许规范列出的订阅态命令；close/cancel/reconnect有明确语义与有界push queue。普通client应在发送SUBSCRIBE类命令前拒绝并引导使用该API，避免污染通用response队列。
 - 回归测试：修复阶段覆盖subscribe确认后message、message先于PING reply、多channel/pattern、unsubscribe至0恢复普通模式、server disconnect/reconnect及consumer背压；断言每个push与command response归属准确、队列有界。当前不运行Pub/Sub交互。
@@ -3941,6 +3941,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认bundled protoc拒绝合法proto2 group语法，外部descriptor即便加载后native codec也对known group收发抛unknown type；归档为`GRPC-038`，未加载schema或构造wire。
 - 2026-08-13：完成gRPC封板审计：7个Lua模块、native protobuf收发/descriptor、四类RPC、9组测试、LuaLS及双语1758行reference全部映射；新增`GRPC-025`至`GRPC-038`与`DOC-026`，health/reflection/keepalive/automatic retry因无公开承诺列为可选能力而非缺陷，阶段无未归档候选。
 - 2026-08-13：确认RESP aggregate把嵌套error降为普通string并只保留整组AND状态，EXEC/nested结果无法定位错误或区分同文正常值；归档为`REDIS-010`，未执行事务。
+- 2026-08-13：完成Redis封板审计：`redis.lua`全部353行、18组`testredis.lua`、134行fake server及双语各851行reference均已逐项映射；`MONITOR`/RESP3 push并入`REDIS-007/001`而不重复计数，阻塞命令、pipeline写序、断线后不重放已排除为新问题，阶段无未归档候选。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

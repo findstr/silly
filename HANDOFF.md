@@ -68,7 +68,7 @@ git merge-base HEAD master
 | 13 | HTTP client/server 聚合与互操作设计 | 静态完成；独立peer回归待修复阶段 |
 | 14 | WebSocket + RFC 6455/8441 | 两轮静态复核完成 |
 | 15 | gRPC over HTTP/2 | 两轮静态复核完成；独立peer回归待修复阶段 |
-| 16 | Redis driver | 两轮静态复核完成 |
+| 16 | Redis driver | 封板静态复核完成；10项均已归档 |
 | 17 | MySQL C codec | 两轮静态复核完成 |
 | 18 | MySQL Lua driver | 两轮静态复核完成 |
 | 19 | etcd、跨模块取消/超时 | 静态完成；故障注入按用户要求延期 |
