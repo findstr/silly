@@ -581,6 +581,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：拆成内部`*_destroy_if_live`与严格公开wrapper；`__gc`只raw-test userdata并在live时释放，closed时no-op，绝不抛。公开free/close可选择重复返回false/closed error或幂等true，但需与type/doc一致；销毁后清空所有owned pointer/count并保持GC安全。
 - 回归测试：修复阶段覆盖ctx/tls的只GC、手动一次后GC、手动两次、部分构造失败后GC及错误类型参数；资源只释放一次、无finalizer warning/double-free，显式返回契约稳定。当前只保存静态证据。
 
+### TLS-018 — P2 — 非法 ALPN 被静默清空，配置可无告警降级
+
+- 状态：已确认；Lua wire encoder、client/server native入口与OpenSSL ALPN格式/返回契约静态核对。本轮不发起握手或构造畸形协议向量。
+- 位置：无校验编码在`lualib/silly/net/tls.lua:54-65`，client忽略设置结果在`luaclib-src/ltls.c:445-466`，server直接保存同一向量并交给选择器在`:236-255,398-443`；公开参数说明在`docs/src/{en/,}reference/net/tls.md:319-325,356-374`。
+- 触发：`tls.connect(...,{alpnprotos={"", "h2"}})`，或server listen/reload给出含空字符串的动态协议列表。公开契约只写`string[]`，runtime没有非空/长度校验。
+- 影响：Lua把空名字编码成`\0`；OpenSSL规定protocol-list每项必须是1..255字节，client的`SSL_set_alpn_protos`会以非零返回拒绝该向量，但binding丢弃返回值。TCP/TLS握手随后可继续且不携带预期ALPN，调用方只看到“成功”；依赖ALPN隔离HTTP/2、gRPC或安全策略时会静默走无协议/错误协议路径。server也把非法向量保留到握手回调才解析，配置阶段无法诊断。超过255字节虽由`string.char`抛出，但又落入`TLS-007/012`已记录的初始化后异常泄漏，本项不重复计算。
+- 证据：OpenSSL官方[`SSL_CTX_set_alpn_select_cb`](https://docs.openssl.org/3.0/man3/SSL_CTX_set_alpn_select_cb/)契约明确wire vector由“nonempty, 8-bit length-prefixed”字符串组成，长度0无效；`SSL_set_alpn_protos`成功返回0、失败返回非0，并特别警告其返回惯例相反。当前C代码仅调用函数而不保存/检查返回；Lua encoder仅做`char(#k)..k`，没有`#k>=1 and #k<=255`断言。
+- 根因：ALPN序列化分散在Lua，而格式合法性和native API返回检查两端都缺失；成功建立TLS被错误地当成ALPN配置也成功。
+- 建议解法：在任何socket/listener创建前一次性验证数组连续、元素为string且长度1..255、总wire长度不超native unsigned-int，并缓存编码结果；native仍必须检查`SSL_set_alpn_protos != 0`并把明确配置错误返回Lua。server ctx创建时用同一validator，禁止把非法向量延迟到peer握手。
+- 回归测试：修复阶段增加空名称、256字节、稀疏数组、非string、空列表及合法多协议用例；stub native返回失败时断言connect关闭已建TCP且listen不发布，合法配置再覆盖match/no-overlap与协商值。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -3059,7 +3070,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为243项：P0为0，P1为95，P2为132，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为244项：P0为0，P1为95，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3112,6 +3123,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS双语reference的validate示例一处漏必填listener addr、另一处把hostname直接传给numeric-only connect并静默退出；归档为`DOC-009`。
 - 2026-08-13：确认TLS底层LuaLS仍声明文件路径ctx与boolean handshake，真实C ABI却要求PEM表并返回`1/0/-1`三态整数；归档为`DOC-010`。
 - 2026-08-13：确认TLS双语指南把OpenSSL能力误写为Silly自动session resumption/0-RTT收益，而binding没有client session复用或early-data API；归档为`DOC-011`。
+- 2026-08-13：确认ALPN encoder允许零长度协议，client又忽略OpenSSL反向返回约定，非法配置被静默清空并可降级；归档为`TLS-018`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
