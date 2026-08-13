@@ -2401,6 +2401,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在当前默认策略下把公开类型定义为`"PUT"|"DELETE"|integer`，其中integer仅表示未知enum；更稳妥地为EventType生成literal alias并固定etcd client自己的codec policy，避免进程全局`pb.option`使API类型运行时改变。文档说明unknown value的处理。
 - 回归检查：修复阶段让LuaLS fixture对PUT/DELETE字符串分支无告警，已知wire值解码为对应名字、未知值保留integer；若允许全局enum模式变化，则构造client时隔离或拒绝不兼容模式。当前只保存静态证据。
 
+### DOC-037 — P3 — etcd 双语 reference 的 32 处示例调用不存在的 `silly.sleep`
+
+- 状态：已确认；双语全部etcd代码块与顶层`silly`导出面静态比对。本轮不运行doc-test或等待timer。
+- 位置：中文reference有16处`silly.sleep`，位于`docs/src/reference/store/etcd.md:648-1512`；英文对应16处位于`docs/src/en/reference/store/etcd.md:658-1522`。真实顶层导出见`lualib/silly.lua:1-39`，sleep属于`lualib/silly/time.lua`模块。
+- 触发：复制任一包含等待的watch、服务发现、配置版本、心跳、优雅关闭、自动keepalive说明或性能建议示例；这些代码块只导入`local silly=require "silly"`，没有导入`silly.time`。
+- 影响：示例在第一次等待处抛`attempt to call a nil value (field 'sleep')`，后续put/watch/cancel/revoke/close均不执行。watch示例可能把后台reader和client遗留到进程退出，lease/服务发现示例则在注册后异常、跳过撤销与清理；用户还会误以为顶层`silly`提供通用timer API，并把相同错误复制到生产代码。
+- 证据：`lualib/silly.lua`仅导出runtime信息、genid/register/pcall/exit及内部dispatcher，没有`sleep`字段；仓库正常代码统一通过`local time=require "silly.time"; time.sleep(ms)`。两份etcd reference分别grep出16个调用且零个`silly.time`导入，所有这些围栏均标成`lua validate`，说明当前validate流程没有执行或类型检查公开member。
+- 根因：示例沿用了不存在的便利别名，文档验证只覆盖Markdown/语法而未在真实导出面下加载运行或启用LuaLS unknown-member检查；中英文复制把同一错误完整扩散。
+- 建议解法：所有示例显式`local time=require "silly.time"`并改用`time.sleep(ms)`；更好的watch-ready示例应等待created/业务同步信号而非固定sleep。CI抽取全部`lua validate`块，在最小runtime或LuaLS环境检查require、成员存在性与作用域，并确保异常路径用to-be-closed/finally清理client/watch/lease。
+- 回归检查：修复阶段静态断言两份文档不再出现`silly.sleep`，逐块检查正确导入；doc-test至少执行不依赖外部etcd的前置路径，外部集成块用stub确认会走到首个client调用且cleanup注册成功。当前不运行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3803,7 +3814,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为306项：P0为0，P1为109，P2为165，P3为32。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 36。
+当前滚动统计为307项：P0为0，P1为109，P2为165，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
 
 建议按依赖关系分五批修复：
 
@@ -4130,6 +4141,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认etcd watch原地改写并长期保存caller request table，同table复用或调用后修改会覆盖watch ID及重连范围，导致事件错投、漏投或永久等待；归档为`ETCD-017`，未建立watch或断链。
 - 2026-08-13：确认etcd `DeleteRangeResponse.deleted`实际为int64数量，但wrapper LuaLS及中英文reference均标成boolean；Lua中0为truthy会让照文档判断的调用方误报删除成功，归档为`DOC-035`，未发送删除请求。
 - 2026-08-13：确认etcd `Event.type`的生成LuaLS标成integer，但默认protobuf codec、真实集成断言和双语示例均交付/使用`PUT`、`DELETE`字符串；归档为`DOC-036`，未解码event。
+- 2026-08-13：确认etcd中英文reference各16处`lua validate`示例调用顶层并不存在的`silly.sleep`，watch/lease/关闭等流程会在首次等待处异常；归档为`DOC-037`，未运行文档示例。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
