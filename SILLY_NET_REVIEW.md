@@ -2617,10 +2617,10 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 ### DOC-048 — P2 — HTTP 教程的“恶意大上传”防护可被 chunked 或重复 Content-Length 绕过
 
 - 状态：已确认；双语教程安全示例、H1 header表示和body读取状态机的确定性静态核对。本轮不发送chunked/重复header请求或运行server。
-- 位置：中英文HTTP server教程明确以“防止恶意大文件上传”为目标，却只执行`tonumber(stream.header["content-length"]) > 1 MiB`，见`docs/src/{en/,}tutorials/http-server.md:703-715`。H1重复header聚合为table并在存在Transfer-Encoding时删除Content-Length，见`lualib/silly/net/http/h1.lua:130-168`；chunked/read-to-EOF与固定长度正文均由无总量上限的`readall`累计，见`:174-340,534-545,835-846`。
+- 位置：中英文HTTP server教程明确以“防止恶意大文件上传”为目标，却只执行`tonumber(stream.header["content-length"]) > 1 MiB`，见`docs/src/{en/,}tutorials/http-server.md:703-715`；双语“最佳实践”又把相同模式作为生产请求大小限制和完整中间件发布，见`docs/src/{en/,}guides/http-best-practices.md:455-500,1758-1767`。H1重复header聚合为table并在存在Transfer-Encoding时删除Content-Length，见`lualib/silly/net/http/h1.lua:130-168`；chunked/read-to-EOF与固定长度正文均由无总量上限的`readall`累计，见`:174-340,534-545,835-846`。
 - 触发：攻击者用`Transfer-Encoding: chunked`发送超过1 MiB正文，此时可不带Content-Length且parser还会删除并存的Content-Length；或发送重复Content-Length，使公开header值成为table而`tonumber(table)`返回nil。应用随后按教程其他路径调用`stream:readall()`。
 - 影响：示例条件为false，413分支不执行，服务继续读取并在内存累计任意大的正文；攻击者可用少量并发连接耗尽worker内存。维护者会误以为已按官方教程部署上传上限，风险比单纯遗漏提示更高。运行时缺少header/body/stream预算已由`HTTP1-007`覆盖；本条独立记录官方安全缓解本身可稳定绕过。
-- 证据：`read_header`将第二个同名字段改为数组、后续继续append；Lua`tonumber`对table返回nil。只要Transfer-Encoding字段存在，实现就把`header["content-length"]`置nil，而合法chunked reader会逐chunk将数据append到`recvbuf`直到零块，没有累计上限检查。教程只在读取前检查声明值，既不拒绝不可信/重复framing，也不对实际读取bytes计数。
+- 证据：`read_header`将第二个同名字段改为数组、后续继续append；Lua`tonumber`对table返回nil。只要Transfer-Encoding字段存在，实现就把`header["content-length"]`置nil，而合法chunked reader会逐chunk将数据append到`recvbuf`直到零块，没有累计上限检查。教程和最佳实践指南都只在读取前检查声明值，既不拒绝不可信/重复framing，也不对实际读取bytes计数；指南末尾所谓完整`body_size_middleware`仍原样复制该缺陷。
 - 根因：安全示例把攻击者声明的单个header值当成资源预算，而API没有提供限额读取或server级body cap；教程没有覆盖HTTP/1的多种framing，也没有与底层parser的重复字段表示对齐。
 - 建议解法：先在H1/H2公共stream层提供强制的实际header/body/connection预算与安全默认，超限立即按协议终止且释放buffer；应用级接口可提供`readall(max_bytes)`或累计迭代读取。教程应说明Content-Length只能用于早拒绝，必须拒绝重复/冲突值并对chunked及无长度正文按实际bytes实施同一1 MiB上限，不能把header检查描述成完整防护。
 - 回归检查：修复阶段覆盖小/大Content-Length、chunked跨多个chunk越界、TE+CL、重复相同/不同CL、无长度EOF正文和H2 DATA；断言所有路径在实际第`limit+1`字节前后按定义停止、返回413或协议错误、连接与buffer资源归零。当前不构造请求。
