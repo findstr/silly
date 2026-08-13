@@ -569,6 +569,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：`len==0`时push nil，否则push非空string；Lua field保持nil。若调用方声明某协议required，另提供/执行显式`required_alpn`校验并在absence/no-overlap时关闭，而不是依赖truthiness；generic TLS仍可允许无ALPN。同步native type stub的optional返回。
 - 回归测试：修复阶段覆盖双方无配置、仅client、仅server、无交集、共同h2/http1和自定义protocol；absence必须严格`==nil`，共同项为非空string，required模式无选择时失败且连接关闭。当前只保存静态证据。
 
+### TLS-017 — P3 — native ctx/tls 显式 free 后 GC 会再次调用非幂等 finalizer 并抛类型错误
+
+- 状态：已确认；userdata metatable、手动方法、meta tombstone与GC二次进入路径静态核对。本轮不调用低层free或强制GC。
+- 生命周期契约：公开的显式`free/close`与`__gc`必须共享幂等finalizer；手动释放后GC再次进入只能no-op，不能把正常closed tombstone当成错误userdata并从GC阶段抛异常。
+- 位置：ctx/tls的`check_*`、destroy与手动free在`luaclib-src/ltls.c:154-215`；同一函数注册为`__gc`在`:676-715,718-745`。低层方法由`lualib/types/silly/tls/ctx.lua:1-21`和`lualib/types/silly/tls/tls.lua:1-44`公开描述。
+- 触发：直接使用`require("silly.tls.ctx")`创建ctx后调用`ctx:free()`，或创建低层TLS userdata后调用`:close()`；对象随后失去引用并被正常GC。重复显式free/close也立即走相同路径。
+- 影响：首次调用正确释放资源并把`meta=NULL`，第二次/GC却由`check_ctx/check_tls`调用`luaL_typeerror`；显式重复调用会打断业务，GC阶段则产生finalizer error/warning并污染日志、测试或宿主错误处理。类型文件主动把这些方法呈现为公开资源API，却没有声明“一次调用后必须阻止GC”这种不可能契约。
+- 证据：`lctx_free`与`ltls_free`入口第一句都是strict `check_*`，成功末尾将meta清空；metatable的`__gc`仍永久指向同一个函数。没有raw test、`meta==NULL` no-op分支、closed flag或移除metatable动作。高层Lua conn finalizer本身幂等，但不能保护直接导出的native对象。
+- 根因：一个函数同时承担“公开严格方法”和“不可抛的GC finalizer”，tombstone校验没有区分错误类型与已正常释放状态。
+- 建议解法：拆成内部`*_destroy_if_live`与严格公开wrapper；`__gc`只raw-test userdata并在live时释放，closed时no-op，绝不抛。公开free/close可选择重复返回false/closed error或幂等true，但需与type/doc一致；销毁后清空所有owned pointer/count并保持GC安全。
+- 回归测试：修复阶段覆盖ctx/tls的只GC、手动一次后GC、手动两次、部分构造失败后GC及错误类型参数；资源只释放一次、无finalizer warning/double-free，显式返回契约稳定。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -3014,7 +3026,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为239项：P0为0，P1为95，P2为132，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 16、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为240项：P0为0，P1为95，P2为132，P3为13。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -3063,6 +3075,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS certificate loader先创建SSL_CTX再调用可longjmp的Lua字段类型检查，异常绕过cleanup且指针尚未提交给userdata owner；归档为`TLS-015`。
 - 2026-08-13：确认OpenSSL未协商ALPN的零长度结果被binding转换为空字符串而非文档承诺的nil，Lua truthiness可误判为已协商；归档为`TLS-016`。
 - 2026-08-13：补强`TLS-001/004/006`：双语文档虚构默认certificate verification和cipher-string版本控制，testssl又把raw TCP close误注释成SSL_shutdown；不重复计数。
+- 2026-08-13：确认低层TLS ctx/ssl显式free后仍由同一strict函数执行GC，meta tombstone会被当作类型错误并在finalizer中抛出；归档为`TLS-017`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
