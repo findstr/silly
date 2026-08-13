@@ -51,8 +51,8 @@
 | `src/spinlock.h` | 已审无新增 | socket pool/wlist锁调用点 | memory order与critical section已映射 |
 | `src/timer.c` | 已审有归档 | CORE-006、CORE-009、NET-007 | wheel、session、wall/monotonic、shutdown |
 | `src/timer.h` | 已审无新增 | timer API与stats | 实现映射到`timer.c` |
-| `src/trace.c` | 审阅中 | trace ID 64-bit布局候选 | 需完成wrap/唯一性、node范围和wire consumers反查 |
-| `src/trace.h` | 审阅中 | trace typedef与API | 随`trace.c`一起收口 |
+| `src/trace.c` | 已审有归档 | CORE-010 | 16-bit node/time/sequence、wrap与唯一性 |
+| `src/trace.h` | 已审有归档 | CORE-010 | trace typedef与API宽度 |
 | `src/trigger.h` | 已审无新增 | worker/socket wakeup信号 | ownership问题映射到CORE/SOCK |
 | `src/unix/event_epoll.h` | 已审有归档 | SOCK-009/010/013 | add/mod/del/event userdata/error |
 | `src/unix/event_kevent.h` | 已审有归档 | SOCK-009/010/013 | add/mod/del/event userdata/error |
@@ -106,7 +106,7 @@
 | `luaclib-src/ltest.c` | 范围外 | test-only hooks | 产品构建不依赖其协议行为 |
 | `luaclib-src/ltime.c` | 已审有归档 | CORE-006/009、NET-007 | timeout integer、clock契约、session |
 | `luaclib-src/ltls.c` | 已审有归档 | TLS-001至018中的native项 | SSL_CTX/SSL/BIO/SNI/ALPN/GC/error |
-| `luaclib-src/ltrace.c` | 审阅中 | trace ID转换/attach/resume候选 | 等待trace唯一性与Lua signedness收口 |
+| `luaclib-src/ltrace.c` | 已审有归档 | CORE-010 | node窄化、trace整数转换、attach/resume |
 | `luaclib-src/luabuf.h` | 已审无新增 | Lua buffer growth helpers | codec调用点的size问题已分别归档 |
 | `luaclib-src/luafmt.h` | 已审无新增 | native Lua formatting helper | 无跨yield状态 |
 | `luaclib-src/luastr.h` | 已审无新增 | string view/check helpers | pointer仅在同步native调用内使用 |
@@ -170,7 +170,7 @@
 | `lualib/silly/sync/waitgroup.lua` | 已审无新增 | 测试与示例并发helper | 不被产品net路径直接require |
 | `lualib/silly/task.lua` | 已审有归档 | CORE/NET/CLUSTER/GRPC生命周期项 | scheduler、trace、wakeup、exit、pool |
 | `lualib/silly/time.lua` | 已审有归档 | CORE-006/009、NET-007、DOC-052 | timer ownership、one-shot语义、clock |
-| `lualib/silly/trace.lua` | 审阅中 | trace唯一性候选 | 随native/C trace文件收口 |
+| `lualib/silly/trace.lua` | 已审有归档 | CORE-010 | task trace API导出与唯一性契约 |
 | `lualib/silly/logger.lua` | 已审无新增 | net/trace日志wrapper | formatter与native sink已核对 |
 | `lualib/silly/console.lua` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc观测输出 |
 

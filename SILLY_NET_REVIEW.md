@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档335项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档336项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -340,6 +340,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：实现为了让elapsed计算不受墙钟跳变影响，把“启动墙钟 + 单调elapsed”暴露成了`now`，但同时又提供了专门的`monotonic`且保留了wall-clock契约，没有区分realtime与monotonicized epoch。
 - 建议解法：让`time.now()`每次读取平台realtime clock并保持Unix epoch语义，耗时、timeout、lease interval和pool idle统一使用`time.monotonic()`；若确实需要平滑epoch，新增名称与契约明确的独立API。调用方不得用realtime差值做deadline，文档/LuaLS应明确各时钟是否可跳变及适用场景。
 - 回归测试：修复阶段用可注入clock覆盖realtime前跳/后跳而monotonic连续，断言`now`跟随新Unix时间、`monotonic`不回退，HTTP pool和etcd lease等相对调度不受墙钟调整影响；三平台核对epoch、单位和长期运行溢出。当前不修改系统时间或运行测试。
+
+### CORE-010 — P2 — 64-bit trace root 只有 16-bit 秒与序号，常规长运行或突发流量会复用 ID
+
+- 状态：已确认；trace位布局、整数回绕、task保存、cluster wire传播与双语唯一性契约的确定性静态核对。本轮不生成高频trace或等待时间回绕。
+- 公开契约：中英文`trace` reference把高48位称为“全局唯一root trace ID”，`trace.spawn()`承诺每次生成全局唯一root；测试也断言连续spawn得到不同ID。唯一性至少必须覆盖单进程生命周期，不能在正常服务运行数小时或合法请求突发时确定性重复。
+- 位置：`src/trace.c:10-57`把root固定编码为16-bit `nodeid`、`(uint16_t)(timer_now()/1000)`和16-bit atomic `seq_idx`；`src/silly.h:77-78`确认宽度。native/Lua task保存与传播在`luaclib-src/ltrace.c:24-40`、`lualib/silly/task.lua:253-279`，cluster原样把traceid写入/读出frame在`luaclib-src/lcluster.c:15-49,359-442`与`lualib/silly/net/cluster.lua:62-110,286-299`。双语契约在`docs/src/{en/,}reference/trace.md:24-76`，测试只比较两次连续spawn在`test/testtask.lua:256-278`。
+- 触发：同一node在一个秒槽内调用`spawn`至少65,537次，16-bit sequence回绕而time不变；或稳定每秒生成一个trace，65,536秒后time和sequence同时各回绕一周，得到与约18.2小时前完全相同的48-bit root。传入越界node还会在`ltrace.c:18-20`无校验窄化到16位，进一步与合法node碰撞。
+- 影响：不同HTTP/RPC请求共享同一trace root，日志聚合、跨服务调用链、延迟归因和事故取证会把无关用户/操作合并；下游继续替换的只是低16位current node，无法恢复丢失的root唯一性。碰撞不会被API报告，且所有节点都把伪重复ID当作合法上游trace传播，错误可跨cluster/服务扩散。
+- 证据：root的全部可变空间只有`node(16)|time_mod_65536(16)|seq_mod_65536(16)`；同node、同time槽下第1与第65,537次的seq低16位相同。若每秒恰好一次，第`n`与`n+65536`次同时满足time和seq低16位相同。`seq_idx`的atomic不能防止宽度回绕，time来自Unix毫秒也只保留低16秒；reference没有声明概率性、速率或18小时限制。
+- 根因：为把parent/current node塞入单个64-bit integer，generator把时间和counter都压到16位，却仍把结果当作全局唯一ID；没有随机熵、持久epoch、进程instance identity或collision检测，node输入也依赖调用方自律。
+- 建议解法：采用标准128-bit W3C trace-id并以固定32位hex header传播，使用CSPRNG或足够宽的time+process-random+counter生成；若必须保留64位legacy格式，必须重新定义为非全局唯一、增加per-process随机epoch并保证counter在生命周期内不回绕，同时拒绝node超出0..65535。cluster wire需要版本化迁移，不能静默改变现有8-byte字段。
+- 回归测试：修复阶段用可注入clock/counter覆盖同秒边界、sequence wrap、time wrap、进程重启、两个同node实例及非法node；断言所有生成root唯一，HTTP header、cluster frame、task fork/attach/propagate和logger保持同一标准表示。当前不生成碰撞流量。
 
 ### METRIC-001 — P2 — Prometheus label value 未转义，网络字段可破坏或注入抓取文本
 
@@ -4130,9 +4142,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为335项：P0为0，P1为112，P2为180，P3为43。模块分布：CORE 9、METRIC 4、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为336项：P0为0，P1为112，P2为181，P3为43。模块分布：CORE 10、METRIC 4、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；180项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；181项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4496,4 +4508,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：从HTTP监控示例继续反查Histogram wire，确认内部互斥bucket被直接导出且`+Inf`只写超最大桶样本；累计分布、总数不变量与双语契约均被破坏，归档为`METRIC-002`。
 - 2026-08-13：继续核对metrics native边界，确认C按allocated/active/resident/retained返回，但Prometheus collector与console均按resident/active/allocated/retained解包，归档为`METRIC-003`。
 - 2026-08-13：继续核对metrics registry，确认只按对象引用去重；公开自动注册可导出重复同名HELP/TYPE/sample并使scrape失败，归档为`METRIC-004`。
+- 2026-08-13：逐文件台账反查trace generator，确认root只含16-bit秒与16-bit sequence；突发65,537次或稳定1次/秒约18.2小时都会复用ID，归档为`CORE-010`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
