@@ -408,7 +408,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
-| GRPC-025 | P1 | protobuf decoder把截断tag/unknown value当正常EOF，gRPC可执行业务或接受非法response。 |
+| GRPC-025 | P1 | protobuf message/map decoder把截断tag/unknown value当正常EOF，map unknown field还不skip value。 |
 | GRPC-026 | P2 | 多target round-robin不隔离坏endpoint，单点DNS/dial故障会阻断建池或周期性打失败RPC。 |
 | GRPC-027 | P1 | protobuf embedded-message解析无递归深度限制，远端可在消息预算内耗尽C stack。 |
 | GRPC-028 | P2 | protobuf string与bytes共用裸字节codec，gRPC收发均不验证schema要求的UTF-8。 |

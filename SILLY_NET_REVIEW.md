@@ -3431,13 +3431,13 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；gRPC envelope、native protobuf decode循环与官方wire grammar的确定性静态核对。本轮不构造或发送畸形payload。
 - 规范：[Protocol Buffers Encoding](https://protobuf.dev/programming-guides/encoding/)把message定义为完整`tag value`记录序列：tag本身是varint，且每个tag必须有其wire type规定的完整value；field number 0不合法。截断tag、缺失value或无法跳过的unknown field都不是正常message边界。gRPC收到无法解析的request/response message时也不能把它当作成功业务消息。
-- 位置：gRPC在`lualib/silly/net/grpc/helper.lua:16-50`直接信任`pb.decode`结果；native顶层/嵌套message循环在`luaclib-src/pb.c:1943-1988`，varint失败回滚在`luaclib-src/pb.h:410-492`，unknown wire value跳过及失败回滚在`:533-607`。
-- 触发：一个完整5-byte gRPC envelope声明的payload以未终止varint tag结尾（例如孤立continuation byte），包含field number 0，或在合法字段后追加unknown tag但省略/截断其VARINT、I32、I64或LEN value。server request与client response共享同一decoder。
+- 位置：gRPC在`lualib/silly/net/grpc/helper.lua:16-50`直接信任`pb.decode`结果；native map-entry循环在`luaclib-src/pb.c:1902-1924`，顶层/嵌套message循环在`:1943-1988`，varint失败回滚在`luaclib-src/pb.h:410-492`，unknown wire value跳过及失败回滚在`:533-607`。
+- 触发：一个完整5-byte gRPC envelope声明的payload以未终止varint tag结尾（例如孤立continuation byte），包含field number 0，或在合法字段后追加unknown tag但省略/截断其VARINT、I32、I64或LEN value；map-entry内部的截断tag/unknown field也命中，且合法完整unknown map field的value会被错误当作下一tag。server request与client response共享同一decoder。
 - 影响：decoder返回普通table，gRPC看不到任何错误。server会用缺省字段或已解析前缀调用真实handler并可能执行写入、授权或计费副作用，随后返回OK；client会把被截断的response当作可信对象。严格peer会拒绝的同一protobuf在Silly中成功，形成数据完整性、业务语义和跨实现行为分裂；`GRPC-007/015`的错误finalizer完全没有机会介入。
-- 证据：`lpbD_message`以`while (pb_readvarint32(...))`驱动；0同时表示干净EOF与非法/截断varint，循环退出后无条件返回成功table，也不检查slice是否耗尽。unknown field分支调用`pb_skipvalue(s,tag)`却忽略返回值；skip失败会恢复payload pointer，若已经到envelope末尾，下一轮tag read返回0并再次被视为正常结束。tag 0同样走unknown分支且未验证field number。`helper.readbody`的`if not resp then "Decode error"`无法捕获这些成功返回。
+- 证据：`lpbD_message`以`while (pb_readvarint32(...))`驱动；0同时表示干净EOF与非法/截断varint，循环退出后无条件返回成功table，也不检查slice是否耗尽。unknown field分支调用`pb_skipvalue(s,tag)`却忽略返回值；skip失败会恢复payload pointer，若已经到envelope末尾，下一轮tag read返回0并再次被视为正常结束。`lpbD_map`复制了同样的while-success循环，且只处理field 1/2，没有else调用`pb_skipvalue`：unknown field只消费tag，value字节被下一轮解释为tag，最终仍可产出map entry。两处都不拒绝field 0。`helper.readbody`的`if not resp then "Decode error"`无法捕获这些成功返回。
 - 根因：low-level reader用同一个0返回值表示clean EOF与malformed/truncated，并在message循环丢弃skip结果；API没有“成功且恰好消费完整slice”的不变量，gRPC层又只按Lua返回值真假判断。
 - 建议解法：protobuf decoder显式区分EOF和parse error：只有cursor恰好位于message边界时允许结束；tag varint失败、field number 0、非法wire type、known/unknown value读取或skip失败都抛受控parse error/返回结构化failure，嵌套slice也执行同一完整消费检查。gRPC用protected decode捕获失败并经统一finalizer映射INTERNAL，绝不调用handler或接受response。
-- 回归测试：修复阶段在protobuf单元层覆盖0..10字节截断tag、tag 0、每种wire type的缺失/短value、unknown field、嵌套message及合法unknown field；断言非法输入失败且合法前缀不泄漏为成功对象。再对四类RPC双向覆盖第1/第N条坏message，server不调用业务且client不产生OK。本轮不运行这些输入。
+- 回归测试：修复阶段在protobuf单元层覆盖0..10字节截断tag、tag 0、每种wire type的缺失/短value、unknown field、嵌套message，以及map-entry内合法unknown field与截断tag/value；断言非法输入失败、合法unknown完整跳过且前缀不泄漏为成功对象。再对四类RPC双向覆盖第1/第N条坏message，server不调用业务且client不产生OK。本轮不运行这些输入。
 
 ### GRPC-026 — P2 — 多 target “round-robin” 不隔离坏 endpoint，单点故障会阻断建池或周期性打失败请求
 
@@ -3903,6 +3903,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native protobuf oneof decoder只更新case而不清除旧member，sender也会编码table中的多个members，破坏last-one-wins不变量；归档为`GRPC-035`，未加载oneof schema。
 - 2026-08-13：确认native protobuf decoder对重复singular embedded message整块覆盖而非递归merge，合法拆分字段会静默丢数据；归档为`GRPC-036`，未构造重复field payload。
 - 2026-08-13：确认native protobuf parser用descriptor packed flag限制接收格式，`packed=false` repeated numeric会拒绝规范要求兼容的packed wire；归档为`GRPC-037`，未构造payload。
+- 2026-08-13：补强`GRPC-025`的map-entry证据：其循环同样接受截断tag，且unknown field不skip value、会把value误作后续tag；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
