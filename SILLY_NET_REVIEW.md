@@ -1764,6 +1764,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：增加平台级`closefd`/`trigger_close` helper，Unix调用`close`、Windows调用`closesocket`，并让初始化、错误回滚和正常销毁共用；字段初始化和有效性判断也使用平台invalid sentinel，避免把Windows handle缩成`int`。
 - 回归测试：修复阶段在Windows统计进程handle/socket资源，覆盖正常启动退出和`sp_add`失败回滚，断言控制通道两端各关闭一次；同时预先打开多个CRT文件并验证销毁不会改变它们的可读写性。当前不做handle故障注入。
 
+### SOCK-017 — P2 — Windows 的 accept 资源耗尽预留槽使用了错误的 handle 类型
+
+- 状态：已确认；Windows CRT/Winsock资源模型与accept错误分支的确定性静态推导。本轮不耗尽系统socket或运行监听服务。
+- 设计契约：reserve-fd技巧需要预先占用与耗尽资源同类的一个可关闭槽；`accept`返回`EMFILE/ENFILE`后先释放该槽，才能接受并立即关闭一条pending connection，再恢复reserve，避免level-triggered listener持续报告同一连接。Windows的`WSAEMFILE`表示无法再创建socket，必须释放Winsock `SOCKET`，CRT文件fd不满足该契约。
+- 位置：`reservefd`被声明为`int`，见`src/socket.c:242-247`；初始化、accept耗尽处理和退出分别在`:809-829,1929-1949,1977-1985`。Windows平台的socket handle类型实际为`intptr_t fd_t`，见`src/win/win.h:12-18`。
+- 触发：Windows监听进程达到Winsock socket/handle上限，`accept`返回映射后的`EMFILE`；正常退出也会执行错误的reserve清理路径。
+- 影响：初始化使用Unix专用`open("/dev/null", O_RDONLY)`；在原生Windows路径语义下通常直接得到-1，即使环境中意外成功，结果也是CRT file descriptor而不是Winsock socket。耗尽分支随后以`closesocket(reservefd)`释放错误namespace，不能腾出socket槽；第二次`accept`仍失败，pending connection留在监听队列并可能让level-triggered poller持续唤醒、记录错误和占用唯一socket线程。退出时同样不能正确关闭CRT reserve fd；若数值碰撞还可能作用于无关socket。
+- 证据：整个生命周期对`reservefd`只调用`open`和`closesocket`，没有任何`_close/close`；字段又从Windows指针宽度handle缩成`int`。与Unix上“打开文件→close文件→accept”成立的机制不同，Windows实现从未预留过一个Winsock socket，因此资源类别和close API都不匹配。
+- 根因：Unix的file-descriptor统一namespace假设被直接带到Windows；platform abstraction只覆盖主连接API，没有覆盖资源耗尽reserve策略。
+- 建议解法：按平台实现reserve对象：Unix保留`/dev/null` fd；Windows创建一个最小Winsock socket并以`fd_t/SOCKET`存储、用`closesocket`释放和重建。所有创建/释放均检查错误；若Windows无法可靠恢复，则从poller临时禁用listener并采用有界退避，避免热循环。
+- 回归测试：修复阶段在Windows以可控socket配额或API stub命中首个`accept=WSAEMFILE`，断言确实释放一个Winsock slot、只drain一条pending连接、reserve重建成功且poller不热循环；同时核对初始化失败与正常退出没有CRT fd或socket handle泄漏。当前不做资源耗尽测试。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -2691,7 +2703,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为212项：P0为0，P1为89，P2为114，P3为9。模块分布：CORE 7、NET 3、SOCK 16、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为213项：P0为0，P1为89，P2为115，P3为9。模块分布：CORE 7、NET 3、SOCK 17、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2711,6 +2723,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：用 `sendv_cap=1` 的确定性复现确认退出路径泄漏全部待发 payload；LSan 报告 32768 bytes/8 objects。
 - 2026-08-06：确认立即失败的 TCP connect 泄漏 fd；8 次失败令 open fd 从 8 增至 16。
 - 2026-08-13：1.0封板平台审计确认Windows控制唤醒通道以Winsock socket创建，却由CRT `close`销毁；归档为`SOCK-016`。
+- 2026-08-13：确认Windows accept资源耗尽路径以CRT `/dev/null` fd冒充Winsock reserve socket，无法释放对应资源槽；归档为`SOCK-017`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
