@@ -160,10 +160,10 @@
 | `lualib/silly/metrics/collector/jemalloc.lua` | 已审有归档 | METRIC-003 | native tuple与gauge字段 |
 | `lualib/silly/metrics/collector/process.lua` | 已审有归档 | CORE-008 | CPU/RSS/heap collector与平台能力 |
 | `lualib/silly/metrics/collector/silly.lua` | 已审有归档 | METRIC-005 | engine counters、gauge与sent/received语义 |
-| `lualib/silly/metrics/counter.lua` | 审阅中 | METRIC-004调用链 | descriptor/value validation仍待收口 |
-| `lualib/silly/metrics/gauge.lua` | 审阅中 | METRIC-004调用链 | descriptor/value validation仍待收口 |
+| `lualib/silly/metrics/counter.lua` | 已审有归档 | METRIC-004/006 | descriptor、labels与counter value语义 |
+| `lualib/silly/metrics/gauge.lua` | 已审有归档 | METRIC-004/006 | descriptor、labels与gauge value语义 |
 | `lualib/silly/metrics/histogram.lua` | 已审有归档 | METRIC-002/004 | bucket storage与descriptor |
-| `lualib/silly/metrics/labels.lua` | 已审有归档 | METRIC-001 | cache与wire escaping；name schema仍待收口 |
+| `lualib/silly/metrics/labels.lua` | 已审有归档 | METRIC-001/006 | cache、value escaping与label name schema |
 | `lualib/silly/metrics/prometheus.lua` | 已审有归档 | METRIC-001至004 | registration、family formatting、histogram、collectors |
 | `lualib/silly/metrics/registry.lua` | 已审有归档 | METRIC-004 | identity/name registration与collect |
 | `lualib/silly/sync/channel.lua` | 已审有归档 | ETCD channel/wakeup问题 | queue/token/close行为按etcd调用链覆盖 |

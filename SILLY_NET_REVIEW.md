@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档339项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档340项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -423,6 +423,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：实现把“应用提交给socket线程的字节”与“OS成功发送的字节”合并成一个字段，并在payload仍有完整长度的入队点计数，避免了partial-write统计却破坏公开指标语义。
 - 建议解法：在每次TCP `sendv`成功后按返回`total`增加global/per-socket sent bytes；UDP仅在返回完整datagram长度时增加，永久错误不计。若还需要submitted/queued/dropped字节，使用三个独立命名counter/gauge并分别定义；close时记录dropped bytes但不得回改单调sent counter。
 - 回归测试：修复阶段用确定性send wrapper覆盖full、partial→EAGAIN→success、partial→close、connect failure、UDP success/EAGAIN/permanent error；断言sent只累计成功OS字节、queued随排空归零、dropped单独计数，Prometheus多次gather保持单调且与wrapper成功总量一致。当前不执行I/O。
+
+### METRIC-006 — P2 — metric descriptor 未校验且 HELP/name 原样入 wire，配置字符可破坏或注入 scrape
+
+- 状态：已确认；三个constructor、label composer、gather metadata、双语公开约束与测试vectors的确定性静态核对。本轮不注册非法descriptor或抓取文本。
+- 协议契约：当前模块声明输出Prometheus text format 0.0.4，metric/label name必须符合其标识符语法，HELP中的反斜杠与换行必须转义；同一sample中label name不能重复，Histogram生成器还必须保留`le`。client API应在注册/构造时拒绝非法descriptor，不能把原字符串当作wire片段。
+- 位置：counter/gauge/histogram constructor直接保存`name,help,labelnames`，见`lualib/silly/metrics/{counter.lua:65-78,gauge.lua:82-95,histogram.lua:80-120}`；`labels.lua:7-24`把label name原样拼到`="`前。`prometheus.lua:131-165`把name/help原样放入HELP、TYPE和sample。双语文档明确要求metric/label naming convention并承认labels不验证，在`docs/src/{en/,}reference/metrics/{counter.md:75-83,labels.md:428-447,prometheus.md:100-110}`；现有`test/testprometheus.lua`只用字母数字下划线名称和普通HELP。
+- 触发：metric name含空格、`{`、换行或其他非法字节；HELP含反斜杠/换行；label name非法、重复，或Histogram labelnames包含保留的`le`。这些都是公开constructor可直接接受的Lua string/table，无需custom collector；配置拼接、插件命名或用户模块撞schema即可触发。
+- 影响：单个descriptor可结束HELP/TYPE/sample行并注入伪造exposition内容，或生成parser拒绝的标识符/重复label；Histogram的用户`le`与encoder追加的bucket `le`形成同一sample重复label。Prometheus可拒绝整个target scrape，所有内置network/process指标一起消失；错误直到`/metrics`被抓取才出现，constructor仍返回看似正常的对象。
+- 证据：三个constructor没有pattern、duplicate scan、reserved-name或help escape；composer依次append raw `lnames[i]`，gather依次append raw `m.name/m.help`。例如name `ok\nforged 1`会直接创建第二文本行，help换行会提前结束HELP，Histogram labels `{"le"}`确定输出`{le="user",le="0.1"}`。`METRIC-001`只修label **value** escaping，`METRIC-004`只修不同collector的同名family，均不会验证这些descriptor字段。
+- 根因：内部descriptor被当成可信的预格式化Prometheus token，构造/注册/导出三层都没有集中schema对象；文档把格式责任推给调用方，但API仍自称生成compliant文本且自动注册。
+- 建议解法：constructor同步验证metric name和每个label name、拒绝重复/`__`保留前缀及Histogram的`le`，复制并冻结labelnames；HELP在export时统一转义backslash/LF，name永不通过escaping修补而必须拒绝。registry保存validated descriptor并与`METRIC-004`的同名一致性检查共用。
+- 回归测试：修复阶段覆盖合法ASCII边界、非法首字符/空格/brace/quote/CR/LF、UTF-8策略、重复label、`__name__`与Histogram `le`、HELP backslash/LF；断言构造失败不注册任何对象，合法HELP round-trip且独立Prometheus parser接受全文。当前不构造非法对象。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4177,9 +4189,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为339项：P0为0，P1为112，P2为183，P3为44。模块分布：CORE 11、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 53。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为340项：P0为0，P1为112，P2为184，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 53。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；183项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；184项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4547,4 +4559,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：收口runtime metrics collector时反查socket stats，确认sent bytes在payload入队时计满，partial/失败/close未发送部分永不回滚且真正write不计成功量，归档为`METRIC-005`。
 - 2026-08-13：LuaLS/core反查确认公开`genid`只是启动归零的32-bit进程计数器，跨进程/重启立即复用且JWT指南用作唯一用户/JTI，归档为`CORE-011`。
 - 2026-08-13：core双语reference反查确认`tostring`被写成单参数pointer hex formatter，实际是需要size且不释放的内存复制，归档为`DOC-053`；net payload泄漏仍由`DOC-046`覆盖。
+- 2026-08-13：收口counter/gauge descriptor路径，确认metric/label name与HELP均未校验/转义，Histogram还允许保留label `le`；公开配置可破坏或注入scrape，归档为`METRIC-006`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
