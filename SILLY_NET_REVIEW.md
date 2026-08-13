@@ -1110,6 +1110,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在解析完成、进入业务逻辑前按field schema规范化：Location若非单一合法值则结束该redirect并返回明确响应错误；Content-Encoding按HTTP list语法合并、顺序解析coding链，只自动解码库实际支持且协商过的组合，其他作为普通响应或typed error处理。所有remote-input解析错误经统一边界返回`nil,error`，不得泄露Lua类型异常；H1/H2共用同一规范化层。
 - 回归测试：修复阶段在H1/H2分别覆盖零/一/重复Location、重复及逗号列表Content-Encoding、未知coding、空值和大小写；断言API从不抛异常、redirect选择规则明确、coding按正确逆序解码或完整保留响应，并验证stream/connection收尾。当前只保存静态证据。
 
+### HTTPC-008 — P2 — H2 pool 没有记录真实 idle 起点，新连接会提前淘汰
+
+- 状态：已确认；pool entry初始化、timer扫描、stream close与时间源静态推导。本轮不建立H2连接或等待idle timer。
+- 契约：`idle_timeout`公开含义是连接保持空闲后再淘汰的毫秒数；计时必须从active→idle转换开始，不能从零值、请求开始或上一次扫描估算。duration还应使用monotonic clock，避免wall-clock校时改变资源生命周期。
+- 位置：client默认值和pool timer在`lualib/silly/net/http/client.lua:57-158`；H1准确release时间对照在`:160-181`；H2 entry创建在`:245-271`；H2 stream close只更新channel count在`lualib/silly/net/http/h2.lua:1041-1080`。双语公开配置见`docs/src/{en/,}reference/net/http.md:254-270,383-404`。
+- 触发：在进程启动任意时刻新建H2 channel，完成其第一个request并在首次pool scan前使channel idle；默认timer在创建约15秒后运行。长请求在两次timer tick之间结束、或系统wall clock向前/后调整，也会触发不同程度的提前/延后。
+- 影响：新entry的`lastfree=0`，首次扫描使用Unix毫秒`time.now()`，因此条件`0+idle_timeout>=now`恒false；刚空闲的新H2连接在默认配置下最多约15秒就被关，而不是承诺的30秒。连接复用率下降、TLS/H2握手和DNS负载上升，突发流量更易形成连接风暴；长请求的idle起点只能近似为最近timer tick，系统时间跳变还可让H1/H2池立即清空或超期保留。
+- 证据：H1在stream release时执行`entry.lastfree=time.now()`，但H2 entry固定以0发布，`S.close`没有pool callback或时间字段。timer仅在channel non-idle时把lastfree刷新为扫描时的now；若首个request已完成，它从未走该分支，直接进入expired分支。后续复用只在acquire时更新时间，也不是请求结束/真正idle的时刻。`silly.time`另有`monotonic()`，当前pool却使用wall-clock `now()`。
+- 根因：H1有明确的connection release事件，H2却把多stream channel简化为周期性`isidle()`采样，没有保存前一active状态或最后一个stream释放事件；初始化哨兵又与绝对wall-clock直接比较。
+- 建议解法：让H2 channel在`streamcount`从1降到0时通知所属pool并记录`time.monotonic()`；创建entry时若channel已active只标active，不伪造idle timestamp。timer同样使用monotonic duration，并基于精确idle_since淘汰；acquire不应重置仍active channel的idle计时。统一验证idle_timeout为正且处理client close/generation。
+- 回归测试：修复阶段用可控monotonic clock覆盖新channel首请求立即完成、跨多个tick的长请求、多个并发stream最后一个关闭、复用后再次idle、wall-clock前后跳及边界`timeout-1/timeout/timeout+1`；断言只按真实idle duration关闭且H1/H2一致。当前只保存静态证据。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -3326,7 +3338,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为266项：P0为0，P1为100，P2为145，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 17。
+当前滚动统计为267项：P0为0，P1为100，P2为146，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 8、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 17。
 
 建议按依赖关系分五批修复：
 
@@ -3404,6 +3416,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认zero-length H2 frame会在检查PADDED前按空payload短路，缺失Pad Length的DATA仍可正常END_STREAM；归档为`H2-041`。
 - 2026-08-13：补强`H2-003`：padding在flow-control记账前已被剥离，守规peer发送padded DATA也会因Pad Length/padding credit永不回补而停顿；不重复计数。
 - 2026-08-13：确认双语HTTP/2最佳实践示例遗漏tls开关和server ALPN，原样实际启动明文H1且证书不生效；归档为`DOC-017`并按安全误导定为P2。
+- 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
