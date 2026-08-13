@@ -1214,6 +1214,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：每批输入只累计一次实际`#b`，并在加法前保证`0 <= recvbytes <= readexpect`；fixed-length读取不得请求负数，超过声明长度或计数异常必须标broken并关闭。pool release应要求明确`eof`且`recvbytes == readexpect`，不能用`not less than`把overcount当完成；client/server共用同一终态验证。
 - 回归测试：修复阶段覆盖CL=10按1/4/5/6/9/10字节组合读取、读一半后close、读完后同连接下一消息，以及client response/server request两个方向；断言计数等于wire消费、未读body从不归池、完整消息后下一条边界正确。当前只保存静态证据。
 
+### HTTP1-019 — P1 — chunked 空写会提前生成 last-chunk，双终止块可污染下一消息
+
+- 状态：已确认；共享writer的空payload、chunk encoder、close终止与持久连接复用路径静态推导。本轮不发送chunked报文。
+- 位置：chunk编码在`lualib/silly/net/http/h1.lua:367-419`，`close_write`再次生成last-chunk在`:421-438`，client/server公开write与closewrite在`:684-703,774-798`，完成检查与连接复用在`:440-464,710-729,872-890`。
+- 触发：没有显式Content-Length、因而由`flush_header(...,false)`选择chunked的client request或server response调用`write("")`；或者直接调用`closewrite("")`。空字符串在Lua中为真，因此closewrite会进入write路径。
+- 影响：`write("")`编码`format("%x",0)..CRLF`，wire正是`0\r\n\r\n` last-chunk，但stream仍保持`writeclosed=false`并允许继续write应用数据；peer已把后续字节视为下一HTTP message。`closewrite("")`先写一份last-chunk，再无条件追加第二份`0\r\n\r\n`；本地完整性检查仍成功，连接可复用，残留终止块会成为下一request/status-line之前的空行/非法起始行。client与server共用代码，均可主动造成request smuggling式边界分叉、响应反同步或稳定连接失败。
+- 证据：chunked分支没有`#data==0`特例，始终把size的十六进制值、CRLF、data、CRLF加入sendbuf；只有`close_write`应生成的终止块使用相同size 0编码。普通write不更新EOF/writeclosed状态，close_write也不检查前面是否已经意外发出zero chunk。`sendsize`增加0且完整性检查对chunked不核对任何结束计数，因此本地无法发现畸形wire。
+- 根因：实现复用了data-chunk编码公式，却遗漏RFC chunk-data必须对应非零chunk-size、zero size专用于终止状态转换的语义；空应用写没有被规范化为no-op。
+- 建议解法：公共`write("")`在任何header/body字节写出前直接成功no-op（或明确拒绝），绝不能调用chunk encoder；last-chunk只能由一次性的`closewrite`状态转换生成。closewrite(data)先传播data write失败，再原子标记closed并恰好生成一个terminal chunk/trailer；重复close稳定no-op且不追加wire。
+- 回归测试：修复阶段覆盖client/server的`write("")`、多次空写、空写后非空写、`closewrite("")`、重复close及其后同连接下一消息；捕获wire断言仅close产生一个last-chunk，空write不改变framing，下一消息从正确start-line开始。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3081,7 +3092,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为245项：P0为0，P1为96，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 18、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为246项：P0为0，P1为97，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 19、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3137,6 +3148,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认ALPN encoder允许零长度协议，client又忽略OpenSSL反向返回约定，非法配置被静默清空并可降级；归档为`TLS-018`。
 - 2026-08-13：TLS/OpenSSL阶段收口：完整覆盖`tls.lua`、`ltls.c`、`testssl.lua`、native LuaLS、双语reference/guide及构建开关；排除“同hostname多算法证书选择”（公开契约仅承诺多域SNI）和“close后TLS data callback泄漏”（通用net同步撤销callback并接管迟到payload）候选，转入HTTP common/H1。
 - 2026-08-13：确认H1 fixed-length增量读取每批把`recvbytes`累计两次，可提前通过close完整性检查并把带残留body的连接归池；归档为`HTTP1-018`。
+- 2026-08-13：确认H1 chunked普通空写会编码协议last-chunk却保持stream可写，closewrite空串还会生成双终止块并污染下一消息；归档为`HTTP1-019`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
