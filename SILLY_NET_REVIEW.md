@@ -3458,6 +3458,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：仅对`PB_Tstring`在encode和decode时执行完整、无替换的UTF-8 validation；非法入站由protected decoder返回parse failure并映射INTERNAL，非法本地对象在写任何gRPC bytes前返回受控encode error。`PB_Tbytes`保持透明；嵌套/repeated/map string key/value使用相同validator，并提供明确的错误field path。
 - 回归测试：修复阶段覆盖ASCII、1–4字节合法码点、NUL、截断序列、孤立continuation、overlong、surrogate与大于U+10FFFF，分别用于普通/repeated/map/nested string以及bytes对照；四类RPC双向断言非法string不调用业务/不上wire，bytes逐字节保持。当前不执行输入。
 
+### GRPC-029 — P2 — protobuf descriptor 丢弃 proto2 `required` label，缺字段消息仍被收发为成功
+
+- 状态：已确认；protoc descriptor、native field representation、encode/decode完整性与gRPC调用路径的确定性静态核对。本轮不加载proto2 schema或发送空message。
+- 规范：[Protocol Buffers Style Guide — Required Fields](https://protobuf.dev/programming-guides/style/#required-fields)说明required字段的不变量在解析wire bytes时执行，缺少required字段的message必须拒绝解析；虽然required已强烈不推荐，但合法proto2 schema及现有服务仍依赖该兼容契约。serializer也不能把未初始化message正常交给严格peer。
+- 位置：Lua protoc把required编码为descriptor label 2在`lualib/protoc.lua:354,474-493`；native descriptor loader只转换成`f->repeated = label == 3`在`luaclib-src/pb.c:1388-1405,1691-1701`，而`pb_Field`只保留repeated bit、没有required/presence位，见`luaclib-src/pb.h:322-333`；gRPC codec入口在`lualib/silly/net/grpc/helper.lua:16-68`。
+- 触发：gRPC service使用包含任意proto2 required字段的request或response type；peer发送缺少该字段的空/部分payload，或本地request/handler response table不设置它。嵌套required message字段同样受影响。
+- 影响：server会把严格protobuf实现拒绝的未初始化request交给业务并可能返回OK，字段在Lua中表现为nil/default而非明确parse failure；client也会接受缺required的response。反向sender能生成严格peer拒绝的消息，导致跨语言调用失败。业务若把required当作身份、版本、操作类型或幂等键的schema保证，缺值可越过预期的协议层admission并把错误推迟到任意业务分支。
+- 证据：descriptor解析阶段除`label==3`设置repeated外不保存label 1/2差异；后续`lpbD_message`只循环处理实际出现字段后无条件成功，encoder只遍历Lua table中存在的keys，二者都无法知道哪些字段required。源码没有`IsInitialized`、required count/bitmap或递归presence检查。`testgrpc.lua`只使用proto3，双语文档也只推荐proto3但没有声明proto2不受支持。
+- 根因：内部descriptor为节省状态把三值label压缩成单个repeated布尔值，丢失了之后执行初始化完整性验证所需的信息；gRPC把通用pb codec成功直接等同于schema有效。
+- 建议解法：在`pb_Field`保留完整label/required bit，并在decode完成每个顶层/嵌套message前递归验证所有required presence；encode在生成gRPC envelope前执行同一初始化检查并返回可定位field path的受控错误。若1.0明确不支持proto2，应在protoc/service注册阶段fail fast并同步文档，而不是静默接受后偏离wire语义。
+- 回归测试：修复阶段覆盖顶层/嵌套required scalar/message、多个required只缺一个、显式默认值、合法全字段、encode/decode及四类RPC双向；缺字段不调用handler、不发送成功message且映射INTERNAL/本地参数错误，proto3 optional不被误判。当前不运行。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3487,7 +3499,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为280项：P0为0，P1为102，P2为154，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 28、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为281项：P0为0，P1为102，P2为155，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 29、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3768,6 +3780,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认多target client在任一DNS失败时整体拒绝构造，运行期也机械选择未连接endpoint并在其dial失败后终止本次RPC，不在READY backends间轮询；归档为`GRPC-026`。
 - 2026-08-13：确认native protobuf embedded-message解析直接C递归且没有depth budget，4 MiB request内即可形成远超安全stack的层数；归档为`GRPC-027`，未生成深层payload。
 - 2026-08-13：确认native protobuf codec把schema `string`与`bytes`合并为同一裸字节路径，收发均不验证UTF-8；归档为`GRPC-028`，未编码非法序列。
+- 2026-08-13：确认native descriptor把proto2 required/optional共同折叠为非repeated，codec无法执行required presence检查，缺字段message仍可进入业务/上wire；归档为`GRPC-029`。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
