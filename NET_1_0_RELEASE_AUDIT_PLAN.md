@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket 与 TCP/UDP/addr 阶段已收口；共 221 项（P1 92、P2 119、P3 10）。本轮新增 `NET-003` 至 `NET-006`、`SOCK-015` 至 `SOCK-019`、`ADDR-002`、`TLS-009` 与 `DOC-007`，每项均已独立提交；正在进入 DNS 阶段。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr 与 DNS 阶段已收口；共 232 项（P1 94、P2 126、P3 12）。本轮新增 `NET-003` 至 `NET-006`、`SOCK-015` 至 `SOCK-019`、`ADDR-002`、`TLS-009`、`DNS-009` 至 `DNS-018` 与 `DOC-007/008`，每项均已独立提交；正在进入 TLS/OpenSSL 专项。
 
 ## 1. 目标和边界
 
@@ -53,20 +53,20 @@
 - `src/engine.c`、`src/worker.c`、`src/timer.c`、`src/queue.c`：已审有归档；对应 `CORE-001` 至 `CORE-007` 及 `SOCK-008`，本轮未发现可独立于既有条目的新问题。
 - `src/message.c`、`src/api.c`、`src/monitor.c` 及直接 header：已审无新增；公开转发、message id、shutdown调用顺序和monitor跨线程字段已映射到既有问题。
 - `src/array.h`、`src/flipbuf.h`、`src/trigger.h`、`src/spinlock.h`、`src/platform.h`、`src/sockaddr.h`、`src/silly.h`、`src/silly_conf.h`、`src/socket.h`：已审有归档；新增Windows控制通道问题为`SOCK-016/018`，其他结论并入`CORE-007`、`SOCK-011/012/015/017/019`。
-- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`：已审无新增；注册/修改失败、裸slot userdata和nonblocking失败已由`SOCK-009/010/013`覆盖。
-- `src/win/win.c`：已审有归档；本轮新增`SOCK-016`至`SOCK-019`。
+- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`：已审有归档；注册/修改失败、裸slot userdata和nonblocking失败已由`SOCK-009/010/013`覆盖，固定resolver路径及读取失败策略另见`DNS-018`、`DOC-008`。
+- `src/win/win.c`：已审有归档；本轮新增`SOCK-016`至`SOCK-019`及`DNS-016/017`，resolver读取失败策略另见`DNS-018`。
 - `src/win/event_iocp.h`、`src/win/wepoll.h`、`src/win/wepoll.c`：已审无新增；完整检查handle tree、reflock、poll cancel/delete、事件映射和Silly wrapper，项目侧代际及控制API偏差已归入`SOCK-009/010/016/019`。
 - `luaclib-src/lnet.c`：已审有归档；本轮新增`NET-003`，既有裸pointer/address长度问题见`NET-002`、`SOCK-006/011`。
 - `luaclib-src/laddr.c`：已审有归档；新增`ADDR-002`，既有binary sockaddr边界另见`ADDR-001`、`SOCK-011`。
 - `luaclib-src/ltls.c`：已审有归档；逐项复核context/SSL/BIO/read/write/GC与Lua调用链，新增`TLS-009`，其余风险由`TLS-001`至`TLS-008`覆盖。
-- `luaclib-src/ldns.c`：审阅中；正在重做wire边界、name compression与Lua stack/ownership矩阵。
+- `luaclib-src/ldns.c`：已审有归档；完成query/name compression、header/question、各RR/RDLENGTH、section/class、EDNS/RCODE、TTL/negative和Lua stack/offset矩阵，新增`DNS-009/010/013/014`，其余偏差由`DNS-001/002/003/008`覆盖。
 - `luaclib-src/lhttp.c`、`lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
 
 ### 3.2 Lua transport 和协议层
 
 - `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005/006`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重。
 - `lualib/silly/net/tls.lua`：已审有归档；transport交叉项见`NET-005/006`，本轮TLS独有新增`TLS-009`；TLS专门阶段仍会复核配置/握手与OpenSSL细节。
-- `lualib/silly/net/dns.lua`：审阅中。
+- `lualib/silly/net/dns.lua`：已审有归档；完成UDP/TCP fallback、singleflight、timer、CNAME/search、cache/TTL、reconfigure、平台bootstrap与close/wakeup交错矩阵，新增`DNS-011/012/015/018`，Windows边界见`DNS-016/017`。共享TCP旧recv覆盖新连接候选已按worker每消息后清空wakeup queue的顺序排除。
 - `lualib/silly/net/cluster.lua`：待审。
 - `lualib/silly/net/http.lua`、`http/client.lua`、`http/h1.lua`、`http/h2.lua`、`http/url.lua`：待审。
 - 报告当前没有直接文件证据引用的 `http/dom.lua`、`http/statusname.lua`，以及引用很少的 `http/helper.lua`：优先补审。
@@ -76,10 +76,10 @@
 
 ### 3.3 测试、类型和文档
 
-- transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testssl.lua`随TLS专门阶段复核，`testdns.lua`审阅中。
+- transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`随TLS专门阶段复核。
 - HTTP/application protocols：`testhttp.lua`、`testhttp2.lua`、`testhpack.lua`、`testwebsocket.lua`、`testgrpc.lua` 和 `test/conformance/`。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
-- `lualib/types/silly/` 下对应公开面、`docs/src/reference/` 与 `docs/src/en/reference/`、相关 guide/tutorial/example：全部待做最终一致性核对。
+- `lualib/types/silly/` 下DNS native公开面与双语DNS reference已审有归档，新增`DOC-008`且既有重试漂移由`DOC-002`覆盖；其他类型、reference、guide/tutorial/example待各专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
 
