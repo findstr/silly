@@ -2312,6 +2312,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在确定的锁顺序中锁定两个账户（例如按id排序后`SELECT ... FOR UPDATE`），验证两行均存在且`from_id ~= to_id`、金额域有效；扣款最好用`UPDATE ... WHERE id=? AND balance>=?`并要求`affected_rows==1`，到账同样要求恰好一行，否则rollback。数据库层再以非负CHECK和账本/唯一业务操作ID作纵深保护，并明确commit失败的结果未知语义。
 - 回归检查：修复阶段用barrier并发两笔共享源账户的超额转账，并覆盖目标在检查后删除、目标不存在、同账户、零/负金额、deadlock retry与commit结果未知；断言总额守恒、余额不为负、任一失败事务无部分效果，两个UPDATE都恰好影响一行。当前不执行SQL或并发barrier。
 
+### DOC-031 — P3 — MySQL 双语监控把连续时间戳当连接等待，容量告警恒失真
+
+- 状态：已确认；双语监控示例与pool checkout/query边界静态核对。本轮不运行计时或制造连接池拥塞。
+- 位置：独立“查询等待时间”示例在`docs/src/{en/,}guides/mysql-connection-pool.md:968-1001`，完整监控面板重复同一算法在`:1054-1136`；真正可能等待连接的`conn_new`在`lualib/silly/store/mysql.lua:1020-1079`，公开`pool_query`把checkout和query合并在`:1173-1189`。
+- 触发：连接池达到`max_open_conns`，新query在`conn_new`的`task.wait()`中等待数百毫秒或更久，然后执行一个很快的SQL；应用照抄指南输出slow-wait和slow-query指标。
+- 影响：`wait_start`和`query_start`都在调用`pool:query`前连续采样，中间没有任何checkout，因此`wait_time`几乎恒为零，慢等待告警永远不会触发；真实pool等待被完整算进`query_time`并误报成数据库慢查询。上线时连接池容量不足、waiter饥饿或连接创建变慢会被错误归因给SQL/server，扩容和索引优化决策可能反向加重故障。
+- 证据：两段代码都计算`query_start - wait_start`，两次`now()`之间只有注释；唯一yield发生在后面的`pool:query→conn_new`内部。当前公开pool API不暴露checkout token或阶段hook，因此外层wrapper不可能从一次总耗时中准确拆出等待与执行。完整面板把同样两个差值写入最近100条数组并标成平均等待/查询时间，使错误成为持续监控数据而非仅一条日志。
+- 根因：文档假设调用方可以在单一同步`pool:query`入口前后测出其内部两个阶段，但没有对应的观测边界或driver指标。
+- 建议解法：在driver内分别围绕connection checkout、connect/login、statement write/read埋点，并公开结构化metrics/hook；文档在该API落地前只报告端到端query latency，不虚构阶段拆分。等待直方图应同时记录成功、超时/close唤醒，并避免高基数SQL原文标签。
+- 回归检查：修复阶段以可控clock和单连接pool覆盖立即命中idle、排队后唤醒、新建连接失败、query慢、pool close等路径；断言checkout+execution近似端到端耗时，慢等待只在真实排队时触发且不会被记成慢SQL。当前不运行计时或并发barrier。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3714,7 +3725,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为298项：P0为0，P1为107，P2为163，P3为28。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 30。
+当前滚动统计为299项：P0为0，P1为107，P2为163，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 31。
 
 建议按依赖关系分五批修复：
 
@@ -4020,6 +4031,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语事务教程用普通非锁定SELECT校验余额，并把零行UPDATE当成功；并发转账可透支，收款账户缺失可只扣不加，归档为`DOC-030`，未执行SQL或并发barrier。
 - 2026-08-13：扩展`DOC-027`证据：双语通用错误处理指南还有第二个接受任意SQL的2006/2013自动重试wrapper，即使注释未实现重建，也会在结果未知后重新调用原statement；不重复计数。
 - 2026-08-13：扩展`DOC-028`到全部MySQL文档调用面：六份双语文件共60行不存在的`silly.wait/sleep/time`，另有把signal函数当object及错误`INT`名称、standalone block缺task/time import；不重复计数。
+- 2026-08-13：确认MySQL双语监控在调用pool query前连续采集wait/query时间戳，所谓等待几乎恒为零，真实checkout排队全被误算成SQL执行；归档为`DOC-031`，未运行计时或并发barrier。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

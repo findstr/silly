@@ -295,6 +295,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-028 | P3 | MySQL双语健康检查/预热/监控/关闭示例广泛调用不存在的silly wait/time/signal接口并遗漏导入。 |
 | DOC-029 | P3 | MySQL双语reference错称row key转为小写，实际server column alias大小写原样保留。 |
 | DOC-030 | P1 | MySQL双语转账教程用非锁定读校验余额且不验证UPDATE影响行数，可并发透支或只扣不加。 |
+| DOC-031 | P3 | MySQL双语监控在pool query前连续取时间戳，等待指标恒近零而真实排队被误算成慢SQL。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -430,7 +431,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为298条：P1 107、P2 163、P3 28。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 30；以主报告中的编号和证据为准。
+当前统计为299条：P1 107、P2 163、P3 29。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 31；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
