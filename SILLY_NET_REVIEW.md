@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档370项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档371项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3112,6 +3112,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：选择唯一明确契约：推荐accept wrapper无论正常/异常都以受保护finally close，若要支持handoff则要求显式detach/retain；或公开要求callback必须close并用strong owner/finalizer兜底。教程每个early-return都应在统一finally收尾，说明double-close返回值及长生命周期移交规则。
 - 回归检查：修复阶段覆盖callback正常return、early-return、throw、显式close、double-close、handoff、暂停GC与强制GC；按选定契约断言callback完成时或显式handoff后资源时序确定，fd/socket/registry最终归零且无晚到event错配。当前不建立连接。
 
+### DOC-077 — P3 — Echo 性能示例把最后创建的 task 当完成屏障，并用秒级时钟计算吞吐
+
+- 状态：已确认；双语性能围栏、task调度闭包语义与时间API精度的确定性静态核对。本轮不启动clients或采样吞吐。
+- 位置：`docs/src/{en/,}tutorials/echo-server.md:591-627`并发fork 100个client，却在每个闭包末尾以`if i==client_count`决定打印；这只标识循环最后创建的client，不表示其余99个已经完成。`:603,622-624`又用整数秒`os.time()`做短本机测试，随后无保护计算`total_messages/elapsed`。
+- 触发：client 100在至少一个较早client之前完成，或全部/第100个client在同一墙钟秒内完成；连接/写/读失败还会使某些task提前return而不参与任何completion计数。
+- 影响：报告可能只包含部分消息，却标成“Completed”；elapsed为0时吞吐为`inf`，秒边界又造成巨大量化误差。不同调度、失败率和机器速度得到的数字不可比较，示例不能作为教程声称的stress/performance验证，也可能掩盖未完成或失败clients。
+- 证据：Lua numeric-for的每个闭包保存其i值，但`i==100`只提供身份而非join关系；没有channel/latch/task handle收集完成。`os.time`按秒返回wall-clock integer，代码没有等待全部task、统计成功/失败clients或检查elapsed>0。
+- 根因：把launch order误作completion order，并用日历时钟替代monotonic高精度duration；benchmark没有明确开始barrier、结束barrier和失败账本。
+- 建议解法：为全部client设置start barrier，使用channel/latch收集恰好100个完成结果并分别统计成功/失败，最后由单独coordinator打印；耗时使用`time.monotonic()`毫秒差并转换单位，显式处理零时长。吞吐还应区分completed round trips、attempts和bytes。
+- 回归检查：修复阶段用可控调度让最后创建的client最先/最后完成并注入若干连接/I/O失败；断言只在全部结果收集后打印、计数守恒、duration正且单位正确。当前不运行压力测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4526,7 +4537,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为370项：P0为0，P1为113，P2为202，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 76。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为371项：P0为0，P1为113，P2为202，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 77。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4916,6 +4927,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成hot-reload双语guide依赖闭包：patch混合export、load/cache transaction、export迁移、rollback、timer ownership、真实HTTP API及production console均已映射到`CORE-012/013`与`DOC-071`至`074`，两份页面转为已审有归档。
 - 2026-08-13：echo-server监听契约反查确认runtime在普通listen失败时返回nil/errno，教程却称抛异常且全部server围栏丢弃返回；端口占用时静默无服务，归档为`DOC-075`。
 - 2026-08-13：echo-server accept ownership反查确认wrapper只在callback异常时立即close；正常return不做同步收尾，只由弱pool对象稍后的`__gc`关闭，与教程“返回自动关闭”的确定时序相反，归档为`DOC-076`。
+- 2026-08-13：echo-server性能围栏反查确认其把最后创建的client当成全部完成屏障，并以秒级os.time计算短测吞吐；可报告部分结果或除零为inf，归档为`DOC-077`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
