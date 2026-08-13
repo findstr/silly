@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档346项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档347项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2841,6 +2841,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：else分支改为先保存可选旧值`local old = trace.spawn()`，需要传播时再`local trace_id = trace.propagate()`；请求终局按结构化上下文策略恢复old，避免协程复用污染。考虑提供语义更清晰的`start()`返回`new,restore_token`或scope API，减少同类误用。
 - 回归检查：修复阶段以已知旧ID覆盖无上游/有上游两条路径，断言局部传播ID等于当前logger上下文而非old，终局恢复正确；静态扫描赋值形态`trace_id = trace.spawn()`并人工确认用途。当前不运行trace。
 
+### DOC-060 — P3 — logging 跨服务示例把 `stream:readall()` 的 error 返回值当成 HTTP status
+
+- 状态：已确认；双语示例、H1/H2 client readall签名及HTTP reference的确定性静态核对。本轮不发HTTP请求。
+- 位置：`docs/src/{en/,}guides/logging-monitoring.md:521-553`的service A执行`local body, status = stream:readall()`并返回`{status=status,body=body}`。H1 client实现注解与return是`string?, string? error`，见`lualib/silly/net/http/h1.lua:653-680`；H2同样返回body/error在`lualib/silly/net/http/h2.lua:1106-1124`。最终HTTP状态由response HEADERS写在`stream.status`，双语HTTP reference的readall示例也均使用`body,err`，见`docs/src/{en/,}reference/net/http.md:177-207,420-437`。
+- 触发：按示例调用service B并得到任意成功或失败response。成功时readall第二值通常为nil；transport/protocol/reset/timeout失败时第二值是错误字符串。
+- 影响：成功的200/404/500都会被包装成`status=nil`，调用方无法执行正确状态策略；失败时错误文本反而出现在status字段且示例没有单独error返回，可能被当成非数字HTTP状态继续处理。trace演示因此传播了错误的HTTP client契约，读者复制到重试、告警或授权判断时会错误分类结果。
+- 证据：H1 `h1c.readall`先waitresponse把解析出的状态保存在stream，最后只`return data,err`；H2 `S.readall`也不返回status。仓库没有针对readall的status重载，且同一reference所有正确示例均命名第二值为err。真正高层convenience API才组装含`response.status`的table，当前代码使用的是streaming request API。
+- 根因：示例把其他HTTP库常见的`body,status`tuple套用到Silly的`body,error`stream API，没有在调用前读取`stream.status`或使用封装后的response对象。
+- 建议解法：使用`local body, err = stream:readall(); if not body then return nil,err end; return {status=stream.status,body=body,header=stream.header}`，并明确非2xx仍可有合法body而transport error与HTTP status是两个正交通道。最好为streaming client提供具名response结果以减少同类型tuple误用。
+- 回归检查：修复阶段覆盖200、404、500、空body、RST/EOF/timeout，断言status始终取解析字段、error单独传播且正文不因非2xx被误判transport失败；文档静态扫描`body,status = stream:readall()`零命中。当前不建立连接。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4255,7 +4266,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为346项：P0为0，P1为112，P2为189，P3为45。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 59。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为347项：P0为0，P1为112，P2为189，P3为46。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 60。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；189项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
