@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档328项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档329项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2636,6 +2636,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：gzip改用`local gzip=require "silly.compress.gzip"`及`gzip.compress(data)`并检查`nil,error`；流式块导入`time`并用`time.sleep`；timeout块显式导入`task/time`；周期健康检查用可取消、显式重排的`time.after`或新增并文档化真正的interval API。所有standalone块列出完整imports，禁止依赖隐式全局。
 - 回归检查：修复阶段提取双语Lua fenced blocks，在stubbed listen/业务依赖下至少加载到每个公开API调用；静态比较所有`require`与module manifest、检查未声明`task/time`及不存在的`silly.*`字段。当前不运行这些示例。
 
+### DOC-050 — P2 — HTTP 指南的“请求 timeout”只结束外层等待，后台操作与业务副作用继续运行
+
+- 状态：已确认；双语timeout示例、task/channel/timer调度及H1/H2 server handler终局的确定性静态时序。本轮不启动server、制造慢请求或运行并发barrier。
+- 位置：指南`with_timeout`把业务函数放入`task.fork`，timer与完成结果竞争同一channel，但timeout分支不持有或取消子task，见`docs/src/{en/,}guides/http-best-practices.md:503-576`。task只有fork/status/wait/wakeup且无公开cancel/join，见`lualib/silly/task.lua:155-205`；channel只传值/close，不拥有producer，见`lualib/silly/sync/channel.lua:20-88`。H1 handler返回后检查未读正文并关连接在`lualib/silly/net/http/h1.lua:835-890`，H2 handler返回后closewrite/close/reset stream在`lualib/silly/net/http/h2.lua:1550-1560,1632`。
+- 触发：先按`DOC-049`补齐示例缺失的`task/time` imports，再让包裹函数在`stream:readall()`、外部HTTP/DB调用、sleep或任意异步业务步骤上超过30秒；timer结果先被外层channel pop取得。
+- 影响：外层handler发送408并返回，但原fork没有收到cancel信号，仍持有stream、业务参数及所有下游资源。H1/H2关闭或reset只会让等待正文的task收到错误；示例忽略`readall`返回后仍sleep、执行后续逻辑并尝试第二次200响应，产生异常日志。若超时点是写数据库/调用下游，操作会在客户端已见408后继续提交不可逆副作用；自动重试可造成重复写。若子task或下游永不返回，所谓timeout也没有释放该task/resource，慢请求可线性累积。
+- 证据：timeout callback唯一动作是`channel:push({completed=false})`，没有child handle、stream close、cancel token或downstream deadline。`task.fork`返回thread但示例丢弃；task API也不能安全强制终止正在运行的coroutine。timer先胜后，child最终仍执行`channel:push(completed=true)`并继续/完成全部func。H1在handler返回时会因`recvbytes < readexpect`关闭conn，H2会`S.close`发送CANCEL，但两者只影响stream I/O，不会回滚已开始的任意业务逻辑。
+- 根因：指南把“停止等待结果”误当成“取消operation”，没有结构化并发、cooperative cancellation或absolute deadline传播；HTTP response lifecycle与后台task ownership相互独立。
+- 建议解法：不要用脱离所有权的fork包装任意handler来宣称硬timeout。为request创建显式context/deadline并贯穿body read、HTTP/DB/RPC调用；所有operation在终局协作取消并join后才能让handler返回。若底层暂不支持取消，文档只能把它描述为response deadline并明确副作用继续，且超时后立即关闭/reset stream、禁止第二次响应；非幂等写应使用幂等键/事务结果确认。
+- 回归检查：修复阶段用可控operation覆盖timeout前完成、timer先胜、完成与timer同tick、正文读取、永久等待和已开始非幂等写；断言handler返回时无子task/timer/waiter、只有一个response、连接/stream按协议收尾且超时后无业务提交。H1与H2分别验证；当前不运行这些并发路径。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4050,9 +4061,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为328项：P0为0，P1为111，P2为174，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 49。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为329项：P0为0，P1为111，P2为175，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 50。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；174项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；175项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4409,4 +4420,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成性反查双语文件集合确认英文已发布完整`silly.net.http.url`页面并加入索引，而中文页面和导航均不存在，归档为`DOC-047`。
 - 2026-08-13：完成性反查HTTP server双语教程确认其“防恶意大上传”示例只检查单值Content-Length，chunked、TE+CL和重复CL均可跳过且实际readall仍无界，归档为`DOC-048`。
 - 2026-08-13：逐段复核双语HTTP最佳实践，确认gzip、流式sleep、协程timeout和周期健康检查分别调用不存在模块、顶层方法或未导入local，归档为`DOC-049`。
+- 2026-08-13：继续反查HTTP最佳实践timeout时序，确认timer只结束外层channel等待而无法取消fork中的正文/下游/业务操作；handler返回后子task仍可无限残留、提交副作用或二次响应，归档为`DOC-050`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
