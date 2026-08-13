@@ -1203,6 +1203,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：将205加入无content语义；server在写任何header前拒绝/移除会声明或发送content的配置，并让write失败；client在205 header结束时立即标EOF且不消费后续字节。用共享、按规范版本审计的response-semantics函数统一H1/H2，同时保持HEAD/304的Content-Length元数据规则。
 - 回归测试：修复阶段覆盖205有无CL0、保持/关闭连接、后续同连接200 response及server尝试写body；client必须立即完成并正确解析下一response，server不得输出content。当前不发送205响应。
 
+### HTTP1-018 — P1 — fixed-length body 成功读取后 `recvbytes` 被重复累计，可提前复用残留正文连接
+
+- 状态：已确认；fixed-length增量读取、完成判定、stream close与H1 pool归还链静态推导。本轮不建立连接或发送响应。
+- 位置：重复计数在`lualib/silly/net/http/h1.lua:205-228`，fixed-length增量读取/EOF判定在`:231-270`，close完整性与pool release在`:440-464,710-729`，pool归还在`lualib/silly/net/http/client.lua:154-181`。
+- 触发：对带`Content-Length: N`的response/request body使用`stream:read(k)`增量消费，且第一次或累计实际读取字节数达到`ceil(N/2)`但仍小于N；例如client收到`Content-Length: 10`后只调用`read(6)`再关闭stream。
+- 影响：每次成功底层read都连续执行两次`s.recvbytes = s.recvbytes + #b`，实际6字节被记为12。`check_close_error`仅判断`recvbytes < readexpect`，因此把尚余4字节的响应判为完整并将socket归还H1 pool；下一请求读取response-line时从这4字节正文开始，形成确定性跨响应串线、错误响应归属和连接污染。若继续分段读取，虚高计数还会令`left`变为0/负数、EOF永远不精确命中或把非法长度交给底层read，产生错误/挂起。server读取request body使用同一函数，也会提前认为正文完成并破坏下一request边界。
+- 证据：`read_eof`成功分支有两行完全相同的累计语句，随后返回append后的buffer size；fixed-length `read`以`left=len-recvbytes`计算下一次读取，并只在`recvbytes==len`时置EOF。stream close则用较弱的`recvbytes < readexpect`检查，所以overcount明确绕过broken判定。一次性`readall`通常请求全部left并另行置EOF，不能覆盖增量API和提前close路径。
+- 根因：成功读取的统计语句重复，完成条件又混用`==`与`>=`/`<`，没有把“native实际消费量、buffer交付量、message剩余量”置于单一checked invariant。
+- 建议解法：每批输入只累计一次实际`#b`，并在加法前保证`0 <= recvbytes <= readexpect`；fixed-length读取不得请求负数，超过声明长度或计数异常必须标broken并关闭。pool release应要求明确`eof`且`recvbytes == readexpect`，不能用`not less than`把overcount当完成；client/server共用同一终态验证。
+- 回归测试：修复阶段覆盖CL=10按1/4/5/6/9/10字节组合读取、读一半后close、读完后同连接下一消息，以及client response/server request两个方向；断言计数等于wire消费、未读body从不归池、完整消息后下一条边界正确。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3070,7 +3081,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为244项：P0为0，P1为95，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为245项：P0为0，P1为96，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 18、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3125,6 +3136,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS双语指南把OpenSSL能力误写为Silly自动session resumption/0-RTT收益，而binding没有client session复用或early-data API；归档为`DOC-011`。
 - 2026-08-13：确认ALPN encoder允许零长度协议，client又忽略OpenSSL反向返回约定，非法配置被静默清空并可降级；归档为`TLS-018`。
 - 2026-08-13：TLS/OpenSSL阶段收口：完整覆盖`tls.lua`、`ltls.c`、`testssl.lua`、native LuaLS、双语reference/guide及构建开关；排除“同hostname多算法证书选择”（公开契约仅承诺多域SNI）和“close后TLS data callback泄漏”（通用net同步撤销callback并接管迟到payload）候选，转入HTTP common/H1。
+- 2026-08-13：确认H1 fixed-length增量读取每批把`recvbytes`累计两次，可提前通过close完整性检查并把带残留body的连接归池；归档为`HTTP1-018`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
