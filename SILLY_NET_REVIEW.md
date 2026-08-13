@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档352项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档353项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -435,6 +435,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：内部descriptor被当成可信的预格式化Prometheus token，构造/注册/导出三层都没有集中schema对象；文档把格式责任推给调用方，但API仍自称生成compliant文本且自动注册。
 - 建议解法：constructor同步验证metric name和每个label name、拒绝重复/`__`保留前缀及Histogram的`le`，复制并冻结labelnames；HELP在export时统一转义backslash/LF，name永不通过escaping修补而必须拒绝。registry保存validated descriptor并与`METRIC-004`的同名一致性检查共用。
 - 回归测试：修复阶段覆盖合法ASCII边界、非法首字符/空格/brace/quote/CR/LF、UTF-8策略、重复label、`__name__`与Histogram `le`、HELP backslash/LF；断言构造失败不注册任何对象，合法HELP round-trip且独立Prometheus parser接受全文。当前不构造非法对象。
+
+### METRIC-007 — P2 — Histogram 不校验 bucket 集合，空数组部分写后崩溃且重复边界生成重复 series
+
+- 状态：已确认；Histogram构造、observe状态更新、Prometheus encoder、现有测试与双语公开约束的确定性静态核对。本轮不构造异常bucket或运行scrape。
+- 协议契约：classic Histogram的有限bucket边界必须形成可确定排序的唯一数值集合；client API至少要拒绝空集合、非数值、NaN/无穷和重复边界，不能在一次observe后留下部分更新，也不能输出同名同label set的重复`_bucket` series。
+- 位置：`lualib/silly/metrics/histogram.lua:85-120`只用`pairs`复制caller table并调用`table.sort`，没有检查非空、连续数组、元素类型、有限性或重复值；`:34-47`先增加`sum/count`，再读取`buckets[#buckets]`并比较。`lualib/silly/metrics/prometheus.lua:57-97`逐项把边界写成`le` label。双语reference声称bucket必须为正数且自动排序，见`docs/src/{en/,}reference/metrics/histogram.md:154-172`，但没有说明或实现上述失败边界。
+- 触发：公开constructor传入`{}`后第一次`:observe(v)`；传入`{1,1,5}`后observe并gather；或传入稀疏、混合类型、NaN/无穷bucket。前两种只需普通Lua table，无需custom collector或网络输入。
+- 影响：空bucket先永久增加`sum/count`，随后执行`value <= nil`抛异常，故调用方即使捕获错误也得到已被污染且无法正常继续使用的metric；重复边界会输出两个完全相同的`name_bucket{...,le="1"}` series，使target scrape因duplicate sample失败。稀疏/非数值集合则可能在构造排序或observe时延迟抛错，NaN/无穷会生成不可用的bucket顺序或非标准label，配置错误直到业务观测或生产抓取才暴露。
+- 证据：`new`对empty table得到长度0的`sortedbuckets`并正常返回；`observe`的两次状态加法发生在nil比较之前。对`{1,1,5}`排序后仍保留两个1，encoder循环对每个bucket都使用同一family name和由边界字符串生成的相同`le="1"` label，series identity确定重复。`test/testprometheus.lua:167-215,278-312,347-356`只覆盖非空、有限、唯一的普通边界和排序，没有empty/duplicate/type/non-finite构造失败或gather唯一性断言。
+- 根因：constructor把“可由table.sort处理”误当成合法Histogram schema，没有在对象发布前建立严格bucket不变量；observe也在验证可用bucket之前修改累计状态，exporter则默认上游数组已唯一规范化。
+- 建议解法：constructor先复制连续array并原子验证至少一个元素、每项number且finite、严格递增去重；无效输入同步失败且不返回/注册对象。若产品需要显式只保留`+Inf`的Histogram，应设计专门语义，不能用空有限bucket进入当前observe路径。observe在任何状态更新前验证value及对象不变量；exporter可再做防御性descriptor/series唯一性检查。
+- 回归测试：修复阶段覆盖empty、单bucket、重复、逆序、稀疏、string/table、NaN、正负无穷和caller table后续修改；断言非法构造不注册、失败observe不改变sum/count，合法排序后边界严格递增，gather中每个family/label set唯一且独立Prometheus parser接受全文。当前不运行这些vectors。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4321,7 +4333,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为352项：P0为0，P1为112，P2为191，P3为49。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 65。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为353项：P0为0，P1为112，P2为192，P3为49。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 65。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4692,4 +4704,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：LuaLS/core反查确认公开`genid`只是启动归零的32-bit进程计数器，跨进程/重启立即复用且JWT指南用作唯一用户/JTI，归档为`CORE-011`。
 - 2026-08-13：core双语reference反查确认`tostring`被写成单参数pointer hex formatter，实际是需要size且不释放的内存复制，归档为`DOC-053`；net payload泄漏仍由`DOC-046`覆盖。
 - 2026-08-13：收口counter/gauge descriptor路径，确认metric/label name与HELP均未校验/转义，Histogram还允许保留label `le`；公开配置可破坏或注入scrape，归档为`METRIC-006`。
+- 2026-08-13：继续收口Histogram schema，确认constructor不校验空、重复及非有限bucket；空数组会在sum/count已更新后崩溃，重复边界会导出重复series，归档为`METRIC-007`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
