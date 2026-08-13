@@ -1547,6 +1547,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：lenenc decoder返回`uint64_t`加明确null/status；每个长度用途先检查`value <= SIZE_MAX`和本地配置上限，再用`value <= chk.len - chk.pos`，仅在成立后推进。提供`binary_read_slice`统一返回pointer/size并禁止调用者直接修改pos；fixed-width检查也改为subtraction形式。应用整数若超Lua范围用string/decimal或显式overflow error。
 - 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`、使pos刚好/差1/wrap的值，并逐一经过OK、ERR、column及各string field；ASan/UBSan下只能得到structured protocol error，无大allocation/OOB。当前不生成lenenc输入。
 
+### MYSQLC-008 — P3 — capability 协商前 ERR 无条件吞掉 message 首字节，初始连接错误失真
+
+- 状态：已确认；ERR packet能力变体与initial connection调用链静态核对。本轮不构造server初始ERR。
+- 规范：[MySQL ERR_Packet](https://dev.mysql.com/doc/dev/mysql-server/8.4.9/page_protocol_basic_err_packet.html)规定只有协商`CLIENT_PROTOCOL_41`后才存在`#`和5-byte SQLSTATE，否则errno后全部剩余字节都是error message；[Connection Phase](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html)特别说明server在initial handshake之前返回ERR时尚未协商capability，因此该包不含SQLSTATE。
+- 位置：native ERR parser在`luaclib-src/mysql/lmysql.c:156-214`；`_mysql_login`在解析任何HandshakeV10字段前把首包ERR直接交给它，见`lualib/silly/store/mysql.lua:341-353`；现有fixture只覆盖含`#HY000`的4.1形态，见`test/testmysql.lua:64-77`。
+- 触发：server在发送HandshakeV10前以ERR拒绝连接，例如连接数耗尽、启动/关闭状态、host被阻止或proxy admission失败；payload为`0xff + errno + message`且没有SQLSTATE marker。最短的空message错误同样合法到达该分支。
+- 影响：非空message的第一个byte被永久丢弃，例如`Too many connections`暴露为`oo many connections`，日志、告警分类与基于稳定错误文本的fallback会误判；空message则在探测marker时越界并抛Lua异常，叠加`MYSQL-011`使刚建立fd和pool capacity不能按返回值路径收尾。errno仍可用，因此定为诊断级P3。
+- 证据：parser读取errno后无条件执行`binary_read_uint8(&chk)`，只有读到`#`才解析SQLSTATE；不等于`#`时既不回退`chk.pos`也不接收negotiated capability，随后从已推进一byte的位置复制remaining message。调用点在首包阶段无法假设PROTOCOL_41，而C API签名也没有variant参数。
+- 根因：typed parser把4.1 ERR grammar当成可通过内容嗅探的通用格式，但`#`字段presence由连接状态决定；用破坏性读取做嗅探又没有rewind。
+- 建议解法：让ERR parser显式接收已协商capabilities/phase；pre-handshake直接把errno后剩余内容作为message，post-handshake仅在PROTOCOL_41已协商时严格要求`#`和完整5-byte SQLSTATE。所有长度先检查，空message正常返回结构化ERR；不要用message首字符猜协议版本。
+- 回归测试：修复阶段覆盖pre-handshake空/单字节/普通/以`#`开头message，以及post-handshake合法SQLSTATE、缺marker、截断state；断言message逐byte保真、malformed post-handshake连接fatal且任何分支不抛出public API。当前不发送ERR packet。
+
 ### MYSQL-001 — P1 — idle/lifetime/GC 销毁连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -3656,7 +3668,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为293项：P0为0，P1为105，P2为163，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 20、ETCD 16、DOC 26。
+当前滚动统计为294项：P0为0，P1为105，P2为163，P3为26。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3955,6 +3967,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认RESP aggregate把嵌套error降为普通string并只保留整组AND状态，EXEC/nested结果无法定位错误或区分同文正常值；归档为`REDIS-010`，未执行事务。
 - 2026-08-13：完成Redis封板审计：`redis.lua`全部353行、18组`testredis.lua`、134行fake server及双语各851行reference均已逐项映射；`MONITOR`/RESP3 push并入`REDIS-007/001`而不重复计数，阻塞命令、pipeline写序、断线后不重放已排除为新问题，阶段无未归档候选。
 - 2026-08-13：确认initial handshake宣告`sha256_password`时driver仍生成mysql_native SHA-1 token，只有auth-switch分支实现RSA exchange，合法账号可确定性认证失败；归档为`MYSQL-020`，未创建账号或连接server。
+- 2026-08-13：确认capability协商前initial ERR没有SQLSTATE，但native parser无条件消费一个marker byte且不回退，message首字节丢失、空message抛异常；归档为`MYSQLC-008`，未构造packet。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
