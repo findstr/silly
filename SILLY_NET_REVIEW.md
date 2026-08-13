@@ -3410,6 +3410,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：dispatch只发送一次Response-Headers；所有读取/解码/runtime失败都由统一gRPC finalizer生成合法trailers，并保证恰好一个canonical grpc-status。helper返回结构化错误而不直接写response；wrapper根据错误类别选择RESOURCE_EXHAUSTED、UNIMPLEMENTED或INTERNAL并调用trailer-only终止路径。H2 `respond`还应在initial header已提交后fail fast，形成纵深保护。
 - 回归测试：修复阶段覆盖request length limit±1、compressed flag 1/2及支持/不支持encoding，捕获完整field-section序列；断言仅首个HEADERS含`:status`，final trailers无pseudo且含准确grpc-status。分别以本库和独立严格client验证，不以本库宽松parser通过作为充分条件。本轮不构造这些消息。
 
+### GRPC-025 — P1 — protobuf decoder 把截断 tag/unknown field 当作正常消息结束并交给业务
+
+- 状态：已确认；gRPC envelope、native protobuf decode循环与官方wire grammar的确定性静态核对。本轮不构造或发送畸形payload。
+- 规范：[Protocol Buffers Encoding](https://protobuf.dev/programming-guides/encoding/)把message定义为完整`tag value`记录序列：tag本身是varint，且每个tag必须有其wire type规定的完整value；field number 0不合法。截断tag、缺失value或无法跳过的unknown field都不是正常message边界。gRPC收到无法解析的request/response message时也不能把它当作成功业务消息。
+- 位置：gRPC在`lualib/silly/net/grpc/helper.lua:16-50`直接信任`pb.decode`结果；native顶层/嵌套message循环在`luaclib-src/pb.c:1943-1988`，varint失败回滚在`luaclib-src/pb.h:410-492`，unknown wire value跳过及失败回滚在`:533-607`。
+- 触发：一个完整5-byte gRPC envelope声明的payload以未终止varint tag结尾（例如孤立continuation byte），包含field number 0，或在合法字段后追加unknown tag但省略/截断其VARINT、I32、I64或LEN value。server request与client response共享同一decoder。
+- 影响：decoder返回普通table，gRPC看不到任何错误。server会用缺省字段或已解析前缀调用真实handler并可能执行写入、授权或计费副作用，随后返回OK；client会把被截断的response当作可信对象。严格peer会拒绝的同一protobuf在Silly中成功，形成数据完整性、业务语义和跨实现行为分裂；`GRPC-007/015`的错误finalizer完全没有机会介入。
+- 证据：`lpbD_message`以`while (pb_readvarint32(...))`驱动；0同时表示干净EOF与非法/截断varint，循环退出后无条件返回成功table，也不检查slice是否耗尽。unknown field分支调用`pb_skipvalue(s,tag)`却忽略返回值；skip失败会恢复payload pointer，若已经到envelope末尾，下一轮tag read返回0并再次被视为正常结束。tag 0同样走unknown分支且未验证field number。`helper.readbody`的`if not resp then "Decode error"`无法捕获这些成功返回。
+- 根因：low-level reader用同一个0返回值表示clean EOF与malformed/truncated，并在message循环丢弃skip结果；API没有“成功且恰好消费完整slice”的不变量，gRPC层又只按Lua返回值真假判断。
+- 建议解法：protobuf decoder显式区分EOF和parse error：只有cursor恰好位于message边界时允许结束；tag varint失败、field number 0、非法wire type、known/unknown value读取或skip失败都抛受控parse error/返回结构化failure，嵌套slice也执行同一完整消费检查。gRPC用protected decode捕获失败并经统一finalizer映射INTERNAL，绝不调用handler或接受response。
+- 回归测试：修复阶段在protobuf单元层覆盖0..10字节截断tag、tag 0、每种wire type的缺失/短value、unknown field、嵌套message及合法unknown field；断言非法输入失败且合法前缀不泄漏为成功对象。再对四类RPC双向覆盖第1/第N条坏message，server不调用业务且client不产生OK。本轮不运行这些输入。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3439,7 +3451,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为276项：P0为0，P1为100，P2为152，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为277项：P0为0，P1为101，P2为152，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 25、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3715,6 +3727,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：完成cluster分支第三轮静态收口；远端尖端仍为`0f2c8773`，落后的3个master提交不含共享运行时修复，当前专项范围无未归档候选。
 - 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
+- 2026-08-13：确认native protobuf message循环把截断tag、field 0和unknown value skip失败当作正常EOF，gRPC会把非法request交给业务或接受非法response；归档为`GRPC-025`，未构造畸形payload。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
