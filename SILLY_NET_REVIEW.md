@@ -2278,16 +2278,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：删除通用SQL自动重放示例；连接失败后淘汰旧pool/connection只供**后续**操作使用，本次调用返回结构化`outcome_unknown`。只允许在可证明write前失败或调用方明确标记幂等read时自动重试；写操作必须由业务使用唯一请求ID/unique constraint、幂等表或可验证transaction设计，并显式处理session state丢失。
 - 回归检查：文档测试建立read-only重试与unknown-write两条API示例，并扫描全部guide禁止通用SQL retry wrapper；修复阶段在write前、server execute前、commit后OK前分别断链，只有第一类可透明重试，后两类向调用方暴露不确定结果且数据库最多出现一次业务效果。当前不执行SQL或fault injection。
 
-### DOC-028 — P3 — MySQL 双语示例调用不存在的 `silly.wait/sleep/time`，预热和监控首次运行即失败
+### DOC-028 — P3 — MySQL 双语示例广泛调用不存在的 runtime API，预热、监控和关闭首次运行即失败
 
 - 状态：已确认；MySQL双语reference/guide与真实module export逐项静态核对。本轮不运行文档代码。
-- 位置：reference健康检查调用`silly.sleep`在`docs/src/{en/,}reference/store/mysql.md:732-785`；连接池guide的预热、活跃连接、错误率和监控面板在`docs/src/{en/,}guides/mysql-connection-pool.md:884-1120`，使用`silly.wait`、`silly.sleep`、`silly.time.now`及未导入的`task`。真实顶层export在`lualib/silly.lua:1-39`，等待/睡眠/时间API分别属于`task.wait`、`silly.time.sleep/now`与`waitgroup`。
+- 位置：reference健康检查与性能章节在`docs/src/{en/,}reference/store/mysql.md:732-785,1452-1647`；连接池guide的优雅关闭、预热、活跃连接、错误率、监控面板与慢查询在`docs/src/{en/,}guides/mysql-connection-pool.md:726-748,884-1120,1175-1200`；数据库教程性能监控在`docs/src/{en/,}tutorials/database-app.md:1187-1207`。六份文件合计60行使用不存在的`silly.wait`、`silly.sleep`或`silly.time.now`，多个standalone块还未导入`task/time`。真实顶层export在`lualib/silly.lua:1-39`，睡眠/时间API属于`silly.time`，并发join应使用`waitgroup`。
 - 触发：读者复制reference的生产连接池健康检查，或guide中任一“预热连接池/监控指标”示例；这些块被作为可直接使用的完整代码展示。
-- 影响：reference首次走到30秒暂停即抛`attempt to call a nil value (field 'sleep')`；guide预热在`task.fork`处就因全局task为nil失败，即使补import也在`silly.wait`失败。监控示例同样在fork、time或首次sleep失败，无法建立文档承诺的连接、等待任务或持续采样。reference还在health task未join时由外层关闭pool，使修正函数名后仍会让后台task访问已关闭对象。
-- 证据：`require "silly"`只导出pid/version/register/exit等runtime入口，没有`wait`、`sleep`或`time`字段；`task.fork`也不是可由`silly.wait(thread)`join的future API。guide四个代码块未`require "silly.task"`/`silly.time`，并把local loop变量命名为`task`进一步混淆module。双语文件逐行复制同一调用，因此不是单一翻译笔误。
+- 影响：reference首次走到30秒暂停即抛`attempt to call a nil value (field 'sleep')`，后五个标记为`lua validate`的performance示例都在首次计时失败；guide预热在`task.fork`处就因全局task为nil失败，即使补import也在`silly.wait`失败。监控和tutorial示例同样在fork、time或首次sleep失败，无法建立文档承诺的连接、等待任务或采样。所谓优雅关闭还调用`signal.signal`，首次注册即因索引函数值失败；即使改成直接调用，`"INT"`也不是模块支持的`"SIGINT"`，handler不会安装。reference另在health task未join时由外层关闭pool，使修正函数名后仍会让后台task访问已关闭对象。
+- 证据：`require "silly"`只导出pid/version/register/exit等runtime入口，没有`wait`、`sleep`或`time`字段；`task.fork`返回coroutine，但没有公开的thread join，正确组合原语是`waitgroup:fork/wait`。`require "silly.signal"`直接返回`signal(sig,fn)`函数而不是table，且signal map使用`SIGINT`。guide多个代码块未`require "silly.task"`/`silly.time`，并把local loop变量命名为`task`进一步混淆module；错误处理guide的MySQL连接/死锁块也分别遗漏`task`或`time`导入。中英文文件逐行复制大部分错误，因此不是单一翻译笔误。
 - 根因：文档把多个module的API聚合到想象中的`silly` façade，并用裸thread list模拟join；代码围栏只做语法展示，没有unknown-member/standalone import或生命周期检查。
-- 建议解法：所有示例显式`local task=require "silly.task"`、`local time=require "silly.time"`并调用`time.sleep/time.now`；预热改用`waitgroup:fork/wait`，健康检查保存stop/join owner并在pool close前结束。将`lua validate`块加入最小stub/LuaLS执行检查，禁止未声明global和不存在member。
-- 回归检查：逐个提取双语MySQL代码块，在stub pool上推进一次fork/sleep/wakeup/close，断言无unknown member/global且关闭发生在background task结束后；中英文调用序列保持一致。当前不执行示例。
+- 建议解法：所有示例显式`local task=require "silly.task"`、`local time=require "silly.time"`并调用`time.sleep/time.now`；预热改用`waitgroup:fork/wait`，健康检查保存stop/join owner并在pool close前结束；信号示例改为`local signal=require "silly.signal"; signal("SIGINT", fn)`并通过runtime退出流程完成有界shutdown。将所有`lua validate`块加入最小stub/LuaLS执行检查，禁止未声明global和不存在member。
+- 回归检查：逐个提取双语MySQL代码块，在stub pool上推进一次fork/sleep/wakeup/signal/close，断言无unknown member/global、SIGINT handler实际安装且关闭发生在background task结束后；中英文调用序列保持一致。当前不执行示例。
 
 ### DOC-029 — P3 — MySQL 双语 reference 错称 row 列名会转小写，实际 alias 大小写原样保留
 
@@ -4019,6 +4019,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语reference声明row key为小写，但native codec原样使用server column alias，混合case字段按文档访问会静默得到nil；归档为`DOC-029`，未执行查询。
 - 2026-08-13：确认MySQL双语事务教程用普通非锁定SELECT校验余额，并把零行UPDATE当成功；并发转账可透支，收款账户缺失可只扣不加，归档为`DOC-030`，未执行SQL或并发barrier。
 - 2026-08-13：扩展`DOC-027`证据：双语通用错误处理指南还有第二个接受任意SQL的2006/2013自动重试wrapper，即使注释未实现重建，也会在结果未知后重新调用原statement；不重复计数。
+- 2026-08-13：扩展`DOC-028`到全部MySQL文档调用面：六份双语文件共60行不存在的`silly.wait/sleep/time`，另有把signal函数当object及错误`INT`名称、standalone block缺task/time import；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

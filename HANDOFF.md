@@ -292,7 +292,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-025 | P3 | WebSocket双语入门示例记录wrapper不存在的`sock.fd`，断线连接标识恒为nil。 |
 | DOC-026 | P3 | gRPC双语reference混用三类streaming API；示例调用不存在的方法并以RST取消上传。 |
 | DOC-027 | P1 | MySQL连接池指南断线后重放任意SQL，结果未知的非幂等写可被重复提交。 |
-| DOC-028 | P3 | MySQL双语健康检查/预热/监控示例调用不存在的silly.wait/sleep/time并遗漏task导入。 |
+| DOC-028 | P3 | MySQL双语健康检查/预热/监控/关闭示例广泛调用不存在的silly wait/time/signal接口并遗漏导入。 |
 | DOC-029 | P3 | MySQL双语reference错称row key转为小写，实际server column alias大小写原样保留。 |
 | DOC-030 | P1 | MySQL双语转账教程用非锁定读校验余额且不验证UPDATE影响行数，可并发透支或只扣不加。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
