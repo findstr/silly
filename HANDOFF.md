@@ -365,7 +365,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-073 | P2 | 热更新加载失败没有finally恢复package.loaded，后续require可产生另一份module/singleton状态。 |
 | DOC-074 | P3 | 热更新HTTP route示例调用不存在的res:status/res:send，真实server只传单个stream。 |
 | DOC-075 | P2 | Echo教程把tcp.listen普通失败写成抛异常，全部server示例又丢弃真实nil/errno而静默无服务。 |
-| DOC-076 | P2 | Echo教程声称accept callback正常返回自动close，runtime只关异常路径且弱pool/无finalizer会遗留socket。 |
+| DOC-076 | P2 | Echo教程声称accept callback正常返回自动close，runtime只立即关闭异常路径，正常返回依赖不确定GC。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
