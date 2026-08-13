@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档367项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档368项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -376,6 +376,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：测试fixture把“module table”简化为纯function map，实现把该隐含约束写进遍历器但API/文档未声明；scalar字段的替换/保留策略也没有被设计。
 - 建议解法：table分支只收集function字段，并在返回结构中明确区分可patch函数与普通exports；替换阶段对scalar/table字段定义copy、preserve或迁移hook策略。若只支持纯function map，应在入口同步验证并改名/文档化，但这与版本/配置示例不兼容。加载与`package.loaded`恢复必须用finally式保护。
 - 回归测试：修复阶段覆盖string/number/boolean/table/userdata/function混合exports、metatable module、遍历不同顺序及require失败；断言只分析functions、普通字段按契约迁移且package.loaded始终恢复。保留现有closure/timer tests并新增指南真实module shape。当前不执行hot reload。
+
+### CORE-013 — P1 — TCP console 在认证前开放代码注入和调试，公开的“自定义命令认证”无法保护内置命令
+
+- 状态：已确认；console accept/dispatch顺序、内置命令能力与双语生产部署说明的确定性静态核对。本轮不启动console、不连接端口、不注入代码。
+- 公开契约：生产管理面在执行任意代码、进入调试器、读取任务栈或触发全局GC前必须先完成强认证与授权，并提供加密/本机可信通道；安全建议必须真实覆盖所有内置和自定义命令，不能把无认证管理端口描述成可通过普通custom command补救。
+- 位置：`lualib/silly/console.lua:126-144`的`INJECT`以客户端提供的path执行`loadfile`结果，`:146-153`直接进入debugger；`:157-174`先查`console[cmd]`，只有不存在内置命令时才查`config.cmd[cmd]`，accept loop`:176-216`在欢迎语后立即处理命令，没有auth/TLS/session gate。双语console reference `reference/console.md:267-277`建议“在自定义命令中实现认证”，但该机制无法覆盖INJECT/DEBUG等内置名；hot-reload guide`:1021-1101`又把console injection和跨server直连batch脚本作为生产常用方案。
+- 触发：应用把console绑定到可被非完全可信主体访问的内网/容器/主机接口，或为批量脚本开放直连；任一能建立TCP连接的主体无需credential即可使用全部内置命令。即使应用增加login/auth自定义命令，dispatch仍允许绕过它直接调用内置命令。
+- 影响：未授权主体可让进程加载执行本机Lua文件、进入交互调试、读取全部task栈/网络元数据或触发stop-the-world GC；这是管理面权限边界失效，可导致服务与数据完整性、凭据和可用性全面受损。明文TCP还不能保护管理命令和返回数据免受同网段监听/篡改。
+- 证据：config shape只有`addr/cmd`，没有authenticate/authorize/TLS/peer credential字段；process函数没有authenticated session状态，且built-in优先级使用户无法以同名custom handler包装敏感命令。loopback示例能降低暴露面但不构成认证，batch示例的`nc server:port`又要求非本机可达。
+- 根因：console被实现为调试便捷工具，却同时被文档提升为生产热更新控制面；安全说明把认证错误下放给无法拦截内置命令的扩展点，也没有secure-by-default绑定或transport策略。
+- 建议解法：1.0默认只允许显式loopback/Unix-domain socket并拒绝wildcard；在读取/dispatch任何命令前建立统一认证session，所有命令经过同一authorization policy，敏感能力默认关闭并独立授权。远程批量管理应使用mTLS或SSH受控通道、审计身份/命令/result，而不是裸telnet/nc；若短期无法提供这些能力，明确标为development-only并删除生产推荐。
+- 回归测试：修复阶段覆盖未认证PING/INFO/TASK/INJECT/DEBUG、自定义login后权限层级、同名命令不可绕过、错误credential、连接复用、并发session与TLS/Unix peer identity；断言认证前零敏感副作用且默认配置不可远程到达。当前不建立管理连接。
 
 ### METRIC-001 — P2 — Prometheus label value 未转义，网络字段可破坏或注入抓取文本
 
@@ -4492,7 +4504,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为367项：P0为0，P1为112，P2为200，P3为55。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 74。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为368项：P0为0，P1为113，P2为200，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 74。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4878,6 +4890,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：hot-reload导出策略反查确认全部流程只写回function字段，但版本段要求普通`VERSION/BUILD_TIME`同步并断言新值；旧module及package.loaded必然仍报告旧代际，归档为`DOC-072`。
 - 2026-08-13：hot-reload加载事务反查确认所有示例在清空package.loaded后才调用可能抛错的require，且rollback不恢复cache；失败后续require可产生第二singleton，归档为`DOC-073`。
 - 2026-08-13：hot-reload首个完整网络示例反查确认其套用不存在的`res:status/res:send`双对象API，真实Silly只传单个stream并要求respond/closewrite，归档为`DOC-074`。
+- 2026-08-13：沿生产hotfix入口反查console，确认TCP连接在零认证/授权下即可调用INJECT/DEBUG，且custom command认证因built-in优先无法保护敏感命令；归档为`CORE-013`，未启动或连接管理端口。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

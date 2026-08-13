@@ -174,7 +174,7 @@
 | `lualib/silly/time.lua` | 已审有归档 | CORE-006/009、NET-007、DOC-052 | timer ownership、one-shot语义、clock |
 | `lualib/silly/trace.lua` | 已审有归档 | CORE-010 | task trace API导出与唯一性契约 |
 | `lualib/silly/logger.lua` | 已审无新增 | net/trace日志wrapper | formatter与native sink已核对 |
-| `lualib/silly/console.lua` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc观测输出 |
+| `lualib/silly/console.lua` | 已审有归档 | CORE-008/013、METRIC-003 | 观测输出与production hotfix control plane |
 | `lualib/silly/debugger.lua` | 范围外 | debugger orchestration | 不参与产品net协议路径 |
 | `lualib/silly/hive.lua` | 范围外 | optional hive codec wrapper | cluster只接收caller-supplied marshal |
 | `lualib/silly/internal/autoload.lua` | 已审无新增 | native module searcher | net/codec native加载与types路径已核对 |
@@ -310,7 +310,7 @@
 | `docs/src/en/concepts/README.md` | 范围外 | 英文概念索引 | 无net契约 |
 | `docs/src/en/guides/README.md` | 已审无新增 | guide索引 | 页面集合与链接 |
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/en/guides/hot-reload.md` | 审阅中 | CORE-012、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
+| `docs/src/en/guides/hot-reload.md` | 审阅中 | CORE-012/013、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
 | `docs/src/en/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/en/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
@@ -375,7 +375,7 @@
 
 | `docs/src/guides/README.md` | 已审无新增 | 中文guide索引 | 页面集合与链接 |
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/guides/hot-reload.md` | 审阅中 | CORE-012、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
+| `docs/src/guides/hot-reload.md` | 审阅中 | CORE-012/013、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
 | `docs/src/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
