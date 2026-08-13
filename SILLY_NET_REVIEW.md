@@ -2045,6 +2045,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：不要单独补一个只覆盖read的相对timer来伪装完整保护；按`HTTPC-002`建立跨DNS/connect/TLS/redirect/header/body的absolute request deadline与cancel，并明确idle/progress timeout是否另设。实现前从中文文档删除该字段或明确“不支持/无限等待”，构造器对unknown option返回参数错误；中英文配置表由同一schema生成。
 - 回归测试：修复阶段增加双语doc/schema lint，逐项断言公开option被构造器消费；deadline实现后分别停在DNS、connect、TLS、header、body和redirect，验证同一预算。另覆盖未知字段、0/负数/边界值在资源创建前失败。当前只保存静态证据。
 
+### DOC-014 — P3 — HTTP 文档把未实现且明确禁用的 HTTP/2 server push 宣称为已支持
+
+- 状态：已确认；双语能力表/guide、H2 SETTINGS、frame dispatch与公开API逐项静态核对。本轮不发送PUSH_PROMISE。
+- 位置：双语reference能力声明在`docs/src/en/reference/net/http.md:21-30`与`docs/src/reference/net/http.md:22-30`，中文guide明确“Silly支持”在`docs/src/guides/http-best-practices.md:65-71`；实现禁用/无API的证据在`lualib/silly/net/http/h2.lua:1499-1546,1651-1667`及全部公开`C/S/M`方法。
+- 触发：用户依据1.0文档设计/preload资源、寻找push API或预期server可主动建立promised stream；也包括把Silly作为client连接会发送push的peer。
+- 影响：server侧没有创建偶数push stream、PUSH_PROMISE编码或应用入口，功能无法使用；client握手明确发送`SETTINGS_ENABLE_PUSH=0`。文档会让架构、性能评估和兼容测试建立在不存在的能力上，且掩盖现有`H2-026`——peer违反禁用设置发送push时client还会错误地静默忽略而非协议拒绝。
+- 证据：client initial SETTINGS固定包含`ENABLE_PUSH=0`；`frame_client`没有PUSH_PROMISE handler，`frame_server`收到PUSH_PROMISE直接GOAWAY。channel只允许client本地以奇数id `openstream`，server没有push/open方法，frame builder也没有PUSH_PROMISE。与此相反两份reference逐字列“supports server push”，中文最佳实践进一步标注“Silly 支持”。
+- 根因：文档复制HTTP/2一般特性列表，未从当前实现的协商设置与公开API生成能力矩阵，也没有用unsupported feature负向测试约束发布声明。
+- 建议解法：1.0若不实现，删除server push承诺并明确“禁用/不支持”，同时按`H2-026`正确拒绝违规peer；若以后实现，必须补偶数stream id、promised request验证、HPACK/state/flow-control/quota、缓存安全策略和application accept/cancel API后再更新能力表。不要把协议理论特性等同产品功能。
+- 回归测试：最终文档CI应把能力声明映射到公开symbol、initial SETTINGS和正/负向conformance；当前版本断言广告push=0、无push API且违规PUSH_PROMISE得到connection PROTOCOL_ERROR。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3231,7 +3242,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为258项：P0为0，P1为99，P2为141，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为259项：P0为0，P1为99，P2为141，P3为19。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 14。
 
 建议按依赖关系分五批修复：
 
@@ -3300,6 +3311,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H2 client允许DATA在任何final response HEADERS前进入body/readall，高层可返回status=nil、body非空且无error的response对象；归档为`H2-036`。
 - 2026-08-13：确认H2 stream进入RST/GOAWAY error终态后，readall只要buffer非空就返回partial data,nil并吞掉终态错误；归档为`H2-037`。
 - 2026-08-13：确认remote RST只终止当前waiter/remote half，之后respond/write/closewrite仍排HEADERS/DATA并报告成功；归档为`H2-038`。
+- 2026-08-13：确认HTTP双语reference/中文guide把server push列为Silly已支持，但H2无push API且client SETTINGS明确禁用；归档为`DOC-014`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
