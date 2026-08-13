@@ -290,9 +290,156 @@
 | `test/testwebsocket.lua` | 已审有归档 | WS-001至010 | handshake与11组frame data vectors |
 | `test/testxor.lua` | 范围外 | application XOR helper | 不在net协议实现 |
 
-## 7. 下一批台账工作
+## 7. 双语文档、教程与导航
 
-1. 先收口所有`审阅中`运行时文件；新问题独立进入主报告并提交。
-2. 从实际 `docs/src/**` 与 `docs/src/en/**` 集合逐文件追加，不用目录级描述替代；`lualib/types/**`与`test/**`第一版已列全。
+静态图片、favicon、logo和SCSS只影响展示，不表达API/协议契约，按规则排除；其余133个Markdown页面与6个VuePress TypeScript配置逐路径列入。中文缺失的URL页面不存在可列路径，差异由`DOC-047`和两份sidebar映射。
+
+| 路径 | 状态 | 问题/证据 | 尚需动作或排除理由 |
+|---|---|---|---|
+| `docs/src/.vuepress/config.ts` | 已审无新增 | locale/theme入口 | 中英文路由装配已核对 |
+| `docs/src/.vuepress/navbar.en.ts` | 已审无新增 | 英文导航 | net入口存在 |
+| `docs/src/.vuepress/navbar.ts` | 已审无新增 | 中文导航 | net入口存在 |
+| `docs/src/.vuepress/sidebar.en.ts` | 已审有归档 | DOC-047 | 英文URL reference已挂载 |
+| `docs/src/.vuepress/sidebar.ts` | 已审有归档 | DOC-047 | 中文URL reference及导航缺失 |
+| `docs/src/.vuepress/theme.ts` | 已审无新增 | 双语theme/navigation assembly | 无API契约 |
+| `docs/src/README.md` | 范围外 | 中文站点首页 | 不描述net API或协议 |
+| `docs/src/benchmark.md` | 范围外 | benchmark展示 | 非正确性/契约文档 |
+| `docs/src/concepts/README.md` | 范围外 | 概念索引 | 无net契约 |
+| `docs/src/en/README.md` | 范围外 | 英文站点首页 | 不描述net API或协议 |
+| `docs/src/en/benchmark.md` | 范围外 | benchmark展示 | 非正确性/契约文档 |
+| `docs/src/en/concepts/README.md` | 范围外 | 英文概念索引 | 无net契约 |
+| `docs/src/en/guides/README.md` | 已审无新增 | guide索引 | 页面集合与链接 |
+| `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
+| `docs/src/en/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
+| `docs/src/en/guides/http-best-practices.md` | 审阅中 | DOC-048至052、METRIC项 | 仍需逐段收口status/clock/proxy/cleanup |
+| `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、METRIC-002至006 | 仍需逐例核对clock/status/trace/metrics名称 |
+| `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
+| `docs/src/en/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
+| `docs/src/en/reference/README.md` | 已审无新增 | 英文reference索引 | net/store/core链接集合 |
+| `docs/src/en/reference/adt/buffer.md` | 已审有归档 | NET-006/008 | size/limit/read ownership契约 |
+| `docs/src/en/reference/adt/list.md` | 范围外 | 独立list API | 产品net调用图不依赖 |
+| `docs/src/en/reference/adt/queue.md` | 已审无新增 | task/channel queue契约 | native queue返回已核对 |
+| `docs/src/en/reference/console.md` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc字段 |
+| `docs/src/en/reference/crypto/cipher.md` | 范围外 | application cipher | 非内建TLS record API |
+| `docs/src/en/reference/crypto/hash.md` | 已审无新增 | WS/MySQL hash dependency | 所用SHA方法与返回契约 |
+| `docs/src/en/reference/crypto/hmac.md` | 范围外 | application HMAC | 不在内建net调用图 |
+| `docs/src/en/reference/crypto/pkey.md` | 已审有归档 | DOC-045、MYSQL auth项 | key load/encrypt/verify返回 |
+| `docs/src/en/reference/debugger.md` | 范围外 | debugger API | 不参与net协议 |
+| `docs/src/en/reference/encoding/base64.md` | 已审有归档 | WS-001 | decoder严格性与handshake调用 |
+| `docs/src/en/reference/encoding/json.md` | 范围外 | application JSON codec | 非HTTP wire parser |
+| `docs/src/en/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
+| `docs/src/en/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
+| `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
+| `docs/src/en/reference/logger.md` | 审阅中 | trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
+| `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
+| `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
+| `docs/src/en/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006 | cumulative bucket契约与vectors |
+| `docs/src/en/reference/metrics/labels.md` | 审阅中 | METRIC-001/006 | cache/cardinality/name/value wire |
+| `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至006、CORE-008 | constructor/gather/HTTP examples |
+| `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004 | duplicate family与custom collector |
+| `docs/src/en/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
+| `docs/src/en/reference/net/README.md` | 已审有归档 | DOC-047 | net子模块索引含URL |
+| `docs/src/en/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |
+| `docs/src/en/reference/net/cluster.md` | 已审有归档 | DOC-038至042、CLUSTER项 | 1127行API/wire/timeout/trace |
+| `docs/src/en/reference/net/dns.md` | 已审有归档 | DNS/DOC对应项 | resolver/cache/record/platform契约 |
+| `docs/src/en/reference/net/grpc.md` | 已审有归档 | DOC-004/026/045、GRPC项 | 1758行四类RPC/protobuf/status |
+| `docs/src/en/reference/net/http.md` | 已审有归档 | HTTP/DOC对应项 | client/server/H1/H2/url公开契约 |
+| `docs/src/en/reference/net/tcp.md` | 已审有归档 | NET/SOCK/DOC对应项 | connect/read/write/close/timeout |
+| `docs/src/en/reference/net/tls.md` | 已审有归档 | TLS/DOC对应项 | ctx/listener/verify/SNI/ALPN/reload |
+| `docs/src/en/reference/net/udp.md` | 已审有归档 | UDP/SOCK/DOC对应项 | bind/connect/send/recv/multicast |
+| `docs/src/en/reference/net/url.md` | 已审有归档 | URL-001至003、DOC-047 | 英文唯一URL API页面 |
+| `docs/src/en/reference/net/websocket.md` | 已审有归档 | WS/DOC对应项 | handshake/frame/close/concurrency |
+| `docs/src/en/reference/patch.md` | 范围外 | Lua patch API | 不在net调用图 |
+| `docs/src/en/reference/perf.md` | 范围外 | profiler API | 不参与net运行路径 |
+| `docs/src/en/reference/security/jwt.md` | 已审有归档 | CORE-011 | genid作为unique user/JTI的安全示例 |
+| `docs/src/en/reference/signal.md` | 范围外 | process signal API | 非net协议 |
+| `docs/src/en/reference/silly.md` | 已审有归档 | CORE-011、DOC-053 | genid/tostring/core导出 |
+| `docs/src/en/reference/store/README.md` | 已审无新增 | storage索引 | etcd/mysql/redis页面链接 |
+| `docs/src/en/reference/store/etcd.md` | 已审有归档 | ETCD、DOC-035至037/043 | 1554行KV/lease/watch契约 |
+| `docs/src/en/reference/store/mysql.md` | 已审有归档 | MYSQL/MYSQLC、DOC-029/033/034 | 1657行auth/query/pool/transaction |
+| `docs/src/en/reference/store/redis.md` | 已审有归档 | REDIS对应项 | 851行RESP/commands/pipeline/close |
+| `docs/src/en/reference/sync/channel.md` | 已审有归档 | ETCD channel项 | send/recv/close/waiter契约 |
+| `docs/src/en/reference/sync/mutex.md` | 已审无新增 | DNS/cluster/gRPC/Redis lock | owner/FIFO/yield语义 |
+| `docs/src/en/reference/sync/singleflight.md` | 已审有归档 | DNS singleflight项 | leader/waiter/error共享 |
+| `docs/src/en/reference/sync/waitgroup.md` | 范围外 | application/test sync helper | 产品net不require |
+| `docs/src/en/reference/task.md` | 已审有归档 | CORE/NET并发项 | fork/wait/wakeup/trace/exit |
+| `docs/src/en/reference/time.md` | 已审有归档 | CORE-006/009、NET-007 | wall/monotonic/timer/cancel |
+| `docs/src/en/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
+| `docs/src/en/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
+| `docs/src/en/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
+| `docs/src/en/tutorials/echo-server.md` | 审阅中 | TCP/UDP ownership与failure examples | 需最终核nil/error/close分支 |
+| `docs/src/en/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
+| `docs/src/en/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
+| `docs/src/en/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
+
+| `docs/src/guides/README.md` | 已审无新增 | 中文guide索引 | 页面集合与链接 |
+| `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
+| `docs/src/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
+| `docs/src/guides/http-best-practices.md` | 审阅中 | DOC-048至052、METRIC项 | 仍需逐段收口status/clock/proxy/cleanup |
+| `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、METRIC-002至006 | 仍需逐例核对clock/status/trace/metrics名称 |
+| `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
+| `docs/src/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
+| `docs/src/reference/README.md` | 已审无新增 | 中文reference索引 | net/store/core链接集合 |
+| `docs/src/reference/adt/buffer.md` | 已审有归档 | NET-006/008 | size/limit/read ownership契约 |
+| `docs/src/reference/adt/list.md` | 范围外 | 独立list API | 产品net调用图不依赖 |
+| `docs/src/reference/adt/queue.md` | 已审无新增 | task/channel queue契约 | native queue返回已核对 |
+| `docs/src/reference/console.md` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc字段 |
+| `docs/src/reference/crypto/cipher.md` | 范围外 | application cipher | 非内建TLS record API |
+| `docs/src/reference/crypto/hash.md` | 已审无新增 | WS/MySQL hash dependency | 所用SHA方法与返回契约 |
+| `docs/src/reference/crypto/hmac.md` | 范围外 | application HMAC | 不在内建net调用图 |
+| `docs/src/reference/crypto/pkey.md` | 已审有归档 | DOC-045、MYSQL auth项 | key load/encrypt/verify返回 |
+| `docs/src/reference/debugger.md` | 范围外 | debugger API | 不参与net协议 |
+| `docs/src/reference/encoding/base64.md` | 已审有归档 | WS-001 | decoder严格性与handshake调用 |
+| `docs/src/reference/encoding/json.md` | 范围外 | application JSON codec | 非HTTP wire parser |
+| `docs/src/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
+| `docs/src/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
+| `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
+| `docs/src/reference/logger.md` | 审阅中 | trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
+| `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
+| `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
+| `docs/src/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006 | cumulative bucket契约与vectors |
+| `docs/src/reference/metrics/labels.md` | 审阅中 | METRIC-001/006 | cache/cardinality/name/value wire |
+| `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至006、CORE-008 | constructor/gather/HTTP examples |
+| `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004 | duplicate family与custom collector |
+| `docs/src/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
+| `docs/src/reference/net/README.md` | 已审有归档 | DOC-047 | 中文net索引缺URL |
+| `docs/src/reference/net/addr.md` | 已审有归档 | ADDR-001/002、DOC-044 | endpoint/address/interface契约 |
+| `docs/src/reference/net/cluster.md` | 已审有归档 | DOC-038至042、CLUSTER项 | 1126行API/wire/timeout/trace |
+| `docs/src/reference/net/dns.md` | 已审有归档 | DNS/DOC对应项 | resolver/cache/record/platform契约 |
+| `docs/src/reference/net/grpc.md` | 已审有归档 | DOC-004/026/045、GRPC项 | 1758行四类RPC/protobuf/status |
+| `docs/src/reference/net/http.md` | 已审有归档 | HTTP/DOC对应项 | client/server/H1/H2公开契约 |
+| `docs/src/reference/net/tcp.md` | 已审有归档 | NET/SOCK/DOC对应项 | connect/read/write/close/timeout |
+| `docs/src/reference/net/tls.md` | 已审有归档 | TLS/DOC对应项 | ctx/listener/verify/SNI/ALPN/reload |
+| `docs/src/reference/net/udp.md` | 已审有归档 | UDP/SOCK/DOC对应项 | bind/connect/send/recv/multicast |
+| `docs/src/reference/net/websocket.md` | 已审有归档 | WS/DOC对应项 | handshake/frame/close/concurrency |
+| `docs/src/reference/patch.md` | 范围外 | Lua patch API | 不在net调用图 |
+| `docs/src/reference/perf.md` | 范围外 | profiler API | 不参与net运行路径 |
+| `docs/src/reference/security/jwt.md` | 已审有归档 | CORE-011 | genid作为unique user/JTI的安全示例 |
+| `docs/src/reference/signal.md` | 范围外 | process signal API | 非net协议 |
+| `docs/src/reference/silly.md` | 已审有归档 | CORE-011、DOC-053 | genid/tostring/core导出 |
+| `docs/src/reference/store/README.md` | 已审无新增 | storage索引 | etcd/mysql/redis页面链接 |
+| `docs/src/reference/store/etcd.md` | 已审有归档 | ETCD、DOC-035至037/043 | 1564行KV/lease/watch契约 |
+| `docs/src/reference/store/mysql.md` | 已审有归档 | MYSQL/MYSQLC、DOC-029/033/034 | 1657行auth/query/pool/transaction |
+| `docs/src/reference/store/redis.md` | 已审有归档 | REDIS对应项 | 851行RESP/commands/pipeline/close |
+| `docs/src/reference/sync/channel.md` | 已审有归档 | ETCD channel项 | send/recv/close/waiter契约 |
+| `docs/src/reference/sync/mutex.md` | 已审无新增 | DNS/cluster/gRPC/Redis lock | owner/FIFO/yield语义 |
+| `docs/src/reference/sync/singleflight.md` | 已审有归档 | DNS singleflight项 | leader/waiter/error共享 |
+| `docs/src/reference/sync/waitgroup.md` | 范围外 | application/test sync helper | 产品net不require |
+| `docs/src/reference/task.md` | 已审有归档 | CORE/NET并发项 | fork/wait/wakeup/trace/exit |
+| `docs/src/reference/time.md` | 已审有归档 | CORE-006/009、NET-007 | wall/monotonic/timer/cancel |
+| `docs/src/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
+| `docs/src/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
+| `docs/src/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
+| `docs/src/tutorials/echo-server.md` | 审阅中 | TCP/UDP ownership与failure examples | 需最终核nil/error/close分支 |
+| `docs/src/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
+| `docs/src/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
+| `docs/src/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
+
+## 8. 下一批台账工作
+
+1. 收口文档章节标为`审阅中`的双语页面；新问题独立进入主报告并提交。
+2. 文档Markdown与导航第一版列全后执行实际集合差，不用目录级描述替代逐路径证据。
 3. 对每个章节执行集合差：仓库实际路径减台账反引号路径必须为空，范围外路径也必须有理由。
 4. 最后核对每个`已审有归档`ID真实存在、每个`已审无新增`都有调用边界说明，再允许更新完成状态。
