@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档369项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档370项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3101,6 +3101,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有服务示例接收`local listener,err=tcp.listen{...}`，失败时记录结构化endpoint/errno并终止启动，成功时保存listener供shutdown；reference明确只有无效必需参数会抛错，系统调用失败返回tuple。更稳妥是在应用启动辅助层提供统一fail-fast helper。
 - 回归检查：修复阶段静态检查教程每个listen结果均被处理，并覆盖address-in-use、invalid address、resource error与正常close；失败不启动clients/不打印ready，成功listener在shutdown关闭。当前不创建socket。
 
+### DOC-076 — P2 — Echo 教程声称 accept callback 返回会自动关连接，正常返回路径实际不 close 且没有 finalizer
+
+- 状态：已确认；双语callback生命周期说明、TCP accept wrapper、弱引用pool与connection metatable的确定性静态核对。本轮不接受连接或触发GC。
+- 位置：`docs/src/{en/,}tutorials/echo-server.md:345-349`称callback“returns or encounters an error”时framework自动关闭connection；实际`lualib/silly/net/tcp.lua:103-111`只在`silly.pcall(lc.accept,s)`返回失败时调用`s:close()`，成功返回没有收尾。`:51`的`conn_pool`是弱value表，`:55-59`又明确把`conn_mt.__gc/__close`设为nil，因此callback正常return后也没有finalizer兜底。
+- 触发：accept callback在校验失败、限流、协议分支或业务early-return时没有显式`conn:close()`；也包括用户依据教程文字认为正常return足以释放connection。
+- 影响：底层socket/fd继续打开但Lua owner可被GC，pool弱引用随之消失；后续close/data事件找不到connection对象，应用失去管理该socket的入口，资源可一直残留到peer关闭或进程退出。大量短连early-return可持续消耗fd/socket slot，且教程承诺会让代码review误判ownership已由框架接管。
+- 证据：accept wrapper的唯一close语句受`if not ok`保护，正常`ok=true`直接return；conn metatable没有`__gc`，pool不强保活对象。教程自己的大多数示例显式close恰好说明运行时要求应用所有权，与同页文字冲突。
+- 根因：文档把“callback异常由wrapper关闭”扩大成“callback生命周期自动管理”；runtime又同时使用weak registry且取消finalizer，没有提供scope guard/defer或server-owned connection集合。
+- 建议解法：选择唯一明确契约：推荐accept wrapper无论正常/异常都以受保护finally close，若要支持handoff则要求显式detach/retain；或公开要求callback必须close并用strong owner/finalizer兜底。教程每个early-return都应在统一finally收尾，说明double-close返回值及长生命周期移交规则。
+- 回归检查：修复阶段覆盖callback正常return、early-return、throw、显式close、double-close、handoff和GC；每条路径fd/socket/registry计数归零且无晚到event访问失效owner。当前不建立连接。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4515,7 +4526,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为369项：P0为0，P1为113，P2为201，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 75。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为370项：P0为0，P1为113，P2为202，P3为55。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 76。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4904,6 +4915,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：沿生产hotfix入口反查console，确认TCP连接在零认证/授权下即可调用INJECT/DEBUG，且custom command认证因built-in优先无法保护敏感命令；归档为`CORE-013`，未启动或连接管理端口。
 - 2026-08-13：完成hot-reload双语guide依赖闭包：patch混合export、load/cache transaction、export迁移、rollback、timer ownership、真实HTTP API及production console均已映射到`CORE-012/013`与`DOC-071`至`074`，两份页面转为已审有归档。
 - 2026-08-13：echo-server监听契约反查确认runtime在普通listen失败时返回nil/errno，教程却称抛异常且全部server围栏丢弃返回；端口占用时静默无服务，归档为`DOC-075`。
+- 2026-08-13：echo-server accept ownership反查确认wrapper只在callback异常时close；正常return不close，弱conn pool且无__gc兜底，与教程“返回自动关闭”相反，归档为`DOC-076`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
