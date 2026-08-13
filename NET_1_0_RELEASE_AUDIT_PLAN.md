@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC、Redis与MySQL阶段已收口；共303项（P1 108、P2 165、P3 30）。MySQL新增`MYSQL-020`、`MYSQLC-008/009`、`DOC-027`至`DOC-034`并完成源码/native/test/双语文档映射；当前转入etcd复核。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC、Redis与MySQL阶段已收口；共304项（P1 109、P2 165、P3 30）。etcd复核新增`ETCD-017`，确认watch长期借用caller table会污染身份和重连请求；当前继续核对unary关闭语义、watch option/schema、generation与测试文档盲区。
 
 ## 1. 目标和边界
 

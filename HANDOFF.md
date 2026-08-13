@@ -266,6 +266,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | ETCD-014 | P2 | 旧watch recv的无generation迟到EOS可关闭已发布的新stream并触发额外重连。 |
 | ETCD-015 | P2 | client关闭后keepalive仍静默登记但无存活owner，lease会在调用“成功”后过期。 |
 | ETCD-016 | P2 | watch compaction取消丢弃完整响应、恢复revision与server cancel reason。 |
+| ETCD-017 | P1 | watch长期借用并改写caller table，复用或后改会污染watch ID、观察范围与重连请求。 |
 | DOC-001 | P3 | etcd双语文档的构造返回、timeout、自动keepalive、失联处理和watch close均偏离API。 |
 | DOC-002 | P3 | DNS中英文文档宣称默认三次递增重试，与实现默认两次固定5秒及同页配置表冲突。 |
 | DOC-003 | P3 | HTTP中英文文档虚构respond close参数，且统一返回承诺与H1 nil/H2 boolean实现不符。 |
@@ -435,7 +436,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为303条：P1 108、P2 165、P3 30。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 16、DOC 34；以主报告中的编号和证据为准。
+当前统计为304条：P1 109、P2 165、P3 30。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 34；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

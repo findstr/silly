@@ -1989,6 +1989,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义结构化watch终态，至少包含`kind`、`watch_id`、`compact_revision`、`cancel_reason`及最后确认revision；可以先把完整canceled response交付一次再关闭，或让`read()`返回typed error。compaction恢复策略必须由调用方明确选择snapshot/restart，不能库内无信息盲重试；本地cancel也应有独立kind。
 - 回归测试：修复阶段覆盖显式本地cancel、server普通cancel、auth error及已压缩revision；断言调用方精确取得compact revision/reason且watch恰好终止一次。再从边界执行snapshot+watch并验证无重复/缺口，当前不请求compaction。
 
+### ETCD-017 — P1 — watch 长期借用并改写 caller table，复用或后改会污染 watcher 身份与重连请求
+
+- 状态：已确认；公开watch构造、control queue与重连重发路径确定性静态推导。本轮不建立watch、断链或运行并发barrier。
+- 位置：`M.watch`原地转换option、写入`watch_id`并把同一`req`保存为`w.createreq`在`lualib/silly/store/etcd.lua:568-600`；watch manager清空队列并从所有watcher重发该引用在`:269-283`；正常response仅按`watch_id`查registry并交付在`:211-238`。
+- 触发：把同一个合法request table依次或在manager首次调度前传给两次`client:watch(req)`；第二次调用会覆盖第一次写入的`req.watch_id`。另一触发是watch返回后调用方继续修改`key/range_end/filters/start_revision`等字段，随后连接重建。
+- 影响：两个本地watcher虽然取得不同`watchid`并分别进入registry，却共享同一`createreq`；首次发送或重连枚举时两条create可携带相同的最后一个`watch_id`。server可能拒绝/取消重复ID，或只有后一个registry entry能收到event，前一个`read()`永久等待；cancel也可能终止错误的服务端watch。调用方后续修改table还会让重连后的观察范围、filter或恢复revision静默漂移，造成配置/服务发现事件错投或漏投。
+- 证据：函数没有复制`req`，`apply_options(req)`和filter循环先原地删除/改写字段，随后`req.watch_id=id`；`w.createreq=req`、初次`push({create_request=req})`与重连的`create_request=w.createreq`均保留同一个Lua table identity。`task.fork`只排队manager，因此背靠背调用可在任何wire write前完成覆盖；即使已经发送，长期保存的引用仍决定下一代stream的请求。测试中的多个watch总是传新table literal，没有覆盖复用或调用后修改。
+- 根因：把caller拥有的临时参数对象同时当作可变option输入、wire message和跨重连的session state，没有建立ownership boundary；本地registry ID与请求内watch ID也因此不是不可变的一一映射。
+- 建议解法：入口校验后构造client拥有的全新`WatchCreateRequest`，显式映射`revision`到`start_revision`、复制key/range/filter等字段并分配唯一`watch_id`；初次发送和每次重连只使用该不可变owned snapshot，不修改或保留caller table。若需要更新checkpoint，应在watcher私有状态上原子生成下一份request，并与stream generation绑定。
+- 回归测试：修复阶段用同一个table背靠背建立两个watch，断言编码请求对象和watch ID均独立、事件只进入对应watcher；创建后修改原table并重连，断言观察范围不漂移。再覆盖分别cancel、重复重连与caller table含prefix/filter的情况。当前不执行协议流量。
+
 ### DOC-001 — P3 — etcd 中英文文档的构造、timeout、watch 与 lease 契约多处偏离实现
 
 - 状态：已确认；中英文reference与公开Lua对象逐项对照。不修改产品文档正文，只在审计报告记录契约差异。
@@ -3770,7 +3781,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为303项：P0为0，P1为108，P2为165，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 16、DOC 34。
+当前滚动统计为304项：P0为0，P1为109，P2为165，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 34。
 
 建议按依赖关系分五批修复：
 
@@ -4094,6 +4105,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认HTTP/2合法SETTINGS下调可使stream window为负，下一次write把负值作为DATA length交给builder并抛异常，记录为`H2-033`；未发送frame或运行互操作。
 - 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
+- 2026-08-13：确认etcd watch原地改写并长期保存caller request table，同table复用或调用后修改会覆盖watch ID及重连范围，导致事件错投、漏投或永久等待；归档为`ETCD-017`，未建立watch或断链。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
