@@ -160,11 +160,11 @@
 | `lualib/silly/metrics/collector/jemalloc.lua` | 已审有归档 | METRIC-003 | native tuple与gauge字段 |
 | `lualib/silly/metrics/collector/process.lua` | 已审有归档 | CORE-008 | CPU/RSS/heap collector与平台能力 |
 | `lualib/silly/metrics/collector/silly.lua` | 已审有归档 | METRIC-005 | engine counters、gauge与sent/received语义 |
-| `lualib/silly/metrics/counter.lua` | 已审有归档 | METRIC-004/006 | descriptor、labels与counter value语义 |
-| `lualib/silly/metrics/gauge.lua` | 已审有归档 | METRIC-004/006 | descriptor、labels与gauge value语义 |
-| `lualib/silly/metrics/histogram.lua` | 已审有归档 | METRIC-002/004/007 | bucket storage、schema与descriptor |
-| `lualib/silly/metrics/labels.lua` | 已审有归档 | METRIC-001/006 | cache、value escaping与label name schema |
-| `lualib/silly/metrics/prometheus.lua` | 已审有归档 | METRIC-001至004/007 | registration、family formatting、histogram、collectors |
+| `lualib/silly/metrics/counter.lua` | 已审有归档 | METRIC-004/006/008 | descriptor、labels与counter value语义 |
+| `lualib/silly/metrics/gauge.lua` | 已审有归档 | METRIC-004/006/008 | descriptor、labels与gauge value语义 |
+| `lualib/silly/metrics/histogram.lua` | 已审有归档 | METRIC-002/004/007/008 | bucket storage、schema与descriptor |
+| `lualib/silly/metrics/labels.lua` | 已审有归档 | METRIC-001/006/008 | cache、value escaping与label arity/name schema |
+| `lualib/silly/metrics/prometheus.lua` | 已审有归档 | METRIC-001至004/007/008 | registration、family formatting、histogram、collectors |
 | `lualib/silly/metrics/registry.lua` | 已审有归档 | METRIC-004 | identity/name registration与collect |
 | `lualib/silly/sync/channel.lua` | 已审有归档 | ETCD channel/wakeup问题 | queue/token/close行为按etcd调用链覆盖 |
 | `lualib/silly/sync/mutex.lua` | 已审无新增 | DNS/cluster/gRPC/Redis互斥 | FIFO owner/wakeup/error路径已核对 |
@@ -274,7 +274,7 @@
 | `test/testmutex.lua` | 已审无新增 | DNS/cluster/gRPC/Redis互斥 | FIFO/owner/wakeup正常与错误路径 |
 | `test/testmysql.lua` | 已审有归档 | MYSQL/MYSQLC全部项 | 41组auth/pool/prepare/result/transaction/data type |
 | `test/testpatch.lua` | 范围外 | Lua patch helper | 不在net调用图 |
-| `test/testprometheus.lua` | 已审有归档 | METRIC-001至007、CORE-008 | counter/gauge/histogram/registry正常路径与wire盲区 |
+| `test/testprometheus.lua` | 已审有归档 | METRIC-001至008、CORE-008 | counter/gauge/histogram/registry正常路径与wire盲区 |
 | `test/testredis.lua` | 已审有归档 | REDIS-001至010 | 18组RESP/pipeline/concurrency/reconnect/close |
 | `test/testrsa.lua` | 已审有归档 | MYSQL auth/pkey依赖 | RSA encrypt/decrypt/sign/verify正常路径 |
 | `test/testsignal.lua` | 已审有归档 | DOC-058 | 验证replacement返回旧handler；未覆盖logger保留信号组合 |
@@ -332,10 +332,10 @@
 | `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
 | `docs/src/en/reference/logger.md` | 已审有归档 | DOC-057/058/063 | level/formatter/eager args/SIGUSR1/reopen与native逐项对账 |
 | `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
-| `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
-| `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006、DOC-065/066 | descriptor/value/label examples与截断EOF |
-| `docs/src/en/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006/007、DOC-067 | cumulative bucket契约、vectors与完整示例 |
-| `docs/src/en/reference/metrics/labels.md` | 审阅中 | METRIC-001/006 | cache/cardinality/name/value wire |
+| `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006/008 | descriptor、cardinality与output examples |
+| `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006/008、DOC-065/066 | descriptor/value/label examples与截断EOF |
+| `docs/src/en/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006/007/008、DOC-067 | cumulative bucket契约、vectors与完整示例 |
+| `docs/src/en/reference/metrics/labels.md` | 审阅中 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
 | `docs/src/en/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至007、CORE-008、DOC-051/054 | constructor/gather/HTTP examples |
 | `docs/src/en/reference/metrics/registry.md` | 审阅中 | METRIC-004 | duplicate family与custom collector |
 | `docs/src/en/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |
@@ -397,10 +397,10 @@
 | `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
 | `docs/src/reference/logger.md` | 已审有归档 | DOC-057/058/063 | level/formatter/eager args/SIGUSR1/reopen与native逐项对账 |
 | `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
-| `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
-| `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006、DOC-065 | descriptor/value/label examples |
-| `docs/src/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006/007、DOC-067 | cumulative bucket契约、vectors与完整示例 |
-| `docs/src/reference/metrics/labels.md` | 审阅中 | METRIC-001/006 | cache/cardinality/name/value wire |
+| `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006/008 | descriptor、cardinality与output examples |
+| `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006/008、DOC-065 | descriptor/value/label examples |
+| `docs/src/reference/metrics/histogram.md` | 审阅中 | METRIC-002/004/006/007/008、DOC-067 | cumulative bucket契约、vectors与完整示例 |
+| `docs/src/reference/metrics/labels.md` | 审阅中 | METRIC-001/006/008 | cache/cardinality/arity/name/value wire |
 | `docs/src/reference/metrics/prometheus.md` | 审阅中 | METRIC-001至007、CORE-008、DOC-051/054 | constructor/gather/HTTP examples |
 | `docs/src/reference/metrics/registry.md` | 审阅中 | METRIC-004 | duplicate family与custom collector |
 | `docs/src/reference/net.md` | 已审有归档 | DOC-046 | raw payload ownership与callback yield |

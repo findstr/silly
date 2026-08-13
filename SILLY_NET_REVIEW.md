@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档355项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档356项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -447,6 +447,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：constructor把“可由table.sort处理”误当成合法Histogram schema，没有在对象发布前建立严格bucket不变量；observe也在验证可用bucket之前修改累计状态，exporter则默认上游数组已唯一规范化。
 - 建议解法：constructor先复制连续array并原子验证至少一个元素、每项number且finite、严格递增去重；无效输入同步失败且不返回/注册对象。若产品需要显式只保留`+Inf`的Histogram，应设计专门语义，不能用空有限bucket进入当前observe路径。observe在任何状态更新前验证value及对象不变量；exporter可再做防御性descriptor/series唯一性检查。
 - 回归测试：修复阶段覆盖empty、单bucket、重复、逆序、稀疏、string/table、NaN、正负无穷和caller table后续修改；断言非法构造不注册、失败observe不改变sum/count，合法排序后边界严格递增，gather中每个family/label set唯一且独立Prometheus parser接受全文。当前不运行这些vectors。
+
+### METRIC-008 — P2 — Vector 的零参数 `labels()` 绕过 arity 校验，静默导出缺失全部声明标签的 series
+
+- 状态：已确认；共享label key、三类vector、gather格式化、测试与双语API契约的确定性静态核对。本轮不调用缺参labels或执行scrape。
+- 公开契约：CounterVec/GaugeVec/HistogramVec的label value数量必须与构造时`labelnames`一一对应；维度缺失应在创建submetric前同步失败，不能把本应按method/status等维度拆分的数据写入另一个无标签series。
+- 位置：`lualib/silly/metrics/labels.lua:27-31`以`#values == 0`直接返回空字符串，早于`compose`在`:8-10`执行的arity assert。Counter/Gauge/Histogram的`:labels(...)`分别在`lualib/silly/metrics/{counter.lua:40-53,gauge.lua:57-70,histogram.lua:56-77}`用该空key创建并缓存submetric；`prometheus.lua:154-163`把空字符串当truthy label并格式化。双语labels reference明确保证`#lnames != #values`触发assert，Counter/Histogram页面也要求数量匹配。
+- 触发：创建任一带至少一个label name的vector，例如`counter(...,{"method","status"})`，随后误调用`:labels():inc()`；Gauge set与Histogram observe同样可达。无需异常类型、custom collector或网络输入。
+- 影响：调用成功并永久建立key `""`的submetric，后续gather导出缺失method/status的样本；该样本与正常label组合属于同一family却语义不同，`sum by(method)`、错误率和SLO会丢失这部分流量或把它聚合到空维度。因为没有错误，应用无法在初始化/测试阶段发现漏传参数，labelcache和series会一直保留。
+- 证据：Lua空字符串为truthy，故gather的`if label then`分支会生成空label block而不是回退simple metric；无论parser最终接受`name{}`还是拒绝它，结果都违反“两个必需值”的API契约并可能使scrape失败。`test/testprometheus.lua:68-75`只验证空`lnames`配空values的合法内部情况，三类vector测试全部传足值，没有非空schema加零值的反例。
+- 根因：为无label schema设置的fast path只检查values长度，没有同时检查labelnames长度；arity invariant被放在仅非空values才调用的composer中，validation与serialization顺序错误。
+- 建议解法：`key`入口首先原子检查`#lnames == #values`，两者均为0时才返回空字符串；公开constructor最好把空`labelnames={}`规范化为simple metric或拒绝，以免制造只能经`:labels()`访问的伪vector。对稀疏/nil varargs还需用显式参数计数而非不可靠的`#table`，并在创建cache节点前完成验证。
+- 回归测试：修复阶段对三类vector覆盖0/少1/多1/正确数量、空schema和中间nil；断言失败不新增labelcache/metrics、不改变数值，合法series始终包含声明的全部标签，gather由独立parser接受。当前不运行这些调用。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4355,7 +4367,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为355项：P0为0，P1为112，P2为192，P3为51。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为356项：P0为0，P1为112，P2为193，P3为51。模块分布：CORE 11、METRIC 8、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4729,4 +4741,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：继续收口Histogram schema，确认constructor不校验空、重复及非有限bucket；空数组会在sum/count已更新后崩溃，重复边界会导出重复series，归档为`METRIC-007`。
 - 2026-08-13：双语结构反查发现英文Gauge reference在首个usage示例后直接EOF，并保留“长度限制、后续另发”的生成占位句，缺少中文后半页565行内容，归档为`DOC-066`。
 - 2026-08-13：Histogram双语完整监控示例反查确认其调用未导出的`silly.time.now/sleep`，任一请求在记录指标前即异常，归档为`DOC-067`。
+- 2026-08-13：共享labels fast path反查确认非空schema调用零参数`:labels()`会在arity assert前返回空key；三类vector均静默建立缺失全部标签的series，归档为`METRIC-008`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
