@@ -533,6 +533,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：Lua入口先要求plain dense array或复制到受控candidate并限制合理certificate count；C层把`luaL_len`保存在`lua_Integer/size_t`，验证`1<=n<=MAX_CERTS`，用checked `size_t`乘加后再分配，最后才安全窄化循环count。`ltls_open`同时拒绝`entry_count<1`或空entry，任何错误发生在listener发布前或可靠rollback。
 - 回归测试：修复阶段覆盖普通0/1/MAX证书、MAX+1、`INT_MAX+1`、`2^32`、负/非整数/抛错`__len`及稀疏table；全部非法输入只返回错误，listener/fd/context不发布，ASan/UBSan无overflow/OOB。当前只保存静态证据。
 
+### TLS-014 — P2 — vectored write 后段失败会把前段 ciphertext 留到下一次调用再发送
+
+- 状态：已确认；table element校验、逐段`SSL_write`、out BIO drain与Lua连接状态的确定性静态推导。本轮不写入TLS连接或制造OpenSSL retry状态。
+- 写入契约：一次返回失败/抛异常的vectored write不能在未来无关write中悄悄提交其前缀；若底层已接受部分plaintext，API必须显式报告partial progress或把连接转为不可继续使用的确定状态，并立即处理所有生成的protocol output。
+- 位置：Lua直接转发table在`lualib/silly/net/tls.lua:449-457`；native逐元素检查/写入在`luaclib-src/ltls.c:558-595`，错误早退在`:596-600`，唯一`flushwrite`位于所有元素成功后的`:602-608`。out BIO创建/绑定在`:478-487`。
+- 触发：调用`conn:write({"prefix", false})`等让第二/后续元素的`luaL_checklstring`抛类型错误；或前面一个或多个非空string已成功后，后续`SSL_write`返回WANT_READ/WANT_WRITE/fatal error。无需大payload，第一种只依赖动态Lua输入。
+- 影响：早先成功的`SSL_write`已推进TLS record/sequence state并把encrypted prefix写入memory out BIO，但异常或`ret<=0`分支都在`flushwrite`之前离开。连接没有设置`s.err`或关闭；若调用方捕获异常/false后继续写，下一次成功调用末尾的`flushwrite`会把旧prefix与新ciphertext一起发送。业务可能在已判失败、回滚或重试后仍执行旧命令/请求，造成重复写、协议帧拼接或事务状态与调用方认知分叉。
+- 证据：element类型在循环内才校验，不是先完整验证；每个成功`SSL_write`的out BIO从不按段清空。失败分支只push error并return，没有`BIO_reset`（即使reset也不能回滚SSL sequence）、flush alert、close或partial byte count。Lua wrapper只检查fd，native false不会写`s.err`，所以后续write被允许并确定会drain此前pending BIO。
+- 根因：把memory BIO当作一次Lua调用的临时output buffer，但它实际属于长期SSL状态；vectored write又没有预验证或定义partial-write语义，错误处理误以为失败前没有可观察副作用。
+- 建议解法：调用任何`SSL_write`前先验证/固定整张string vector和每段长度；明确API为all-or-connection-fatal或返回accepted-prefix。每次OpenSSL调用后都统一检查state并drain必须发送的ciphertext/alert；一旦后段失败且已有plaintext被接受，应标记connection不可重用并关闭，而不是让未来write提交旧prefix。更稳妥可把vector合并/使用支持的write_ex循环，但仍需总量cap和partial语义。
+- 回归测试：修复阶段覆盖首/中/末元素类型错误、空元素、第二段WANT_READ/WANT_WRITE/fatal、flush transport失败及随后再次write；断言失败调用的prefix绝不在未来成功调用中出现，或连接已确定关闭且报告准确partial状态。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2978,7 +2990,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为236项：P0为0，P1为95，P2为129，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 13、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为237项：P0为0，P1为95，P2为130，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 14、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -3023,6 +3035,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS plaintext buffer以signed int累计并做无检查加法/倍增，远端长期输入接近表示上限时可回绕并污染SSL_read写地址/长度；归档为`TLS-011`。
 - 2026-08-13：确认TLS client在TCP已注册后才编码ALPN/创建SSL，配置或native构造异常发生在conn owner发布前且无cleanup guard；归档为`TLS-012`。
 - 2026-08-13：确认TLS native将可由`__len`提供的Lua证书数量直接窄化为int并以int计算flexible-array大小，可形成零entry ctx或越界写；归档为`TLS-013`。
+- 2026-08-13：确认TLS vectored write逐段进入SSL后才校验后续元素，后段异常/错误会把已生成prefix ciphertext留在out BIO并由未来write迟发；归档为`TLS-014`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
