@@ -3124,6 +3124,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS底层LuaLS仍声明文件路径ctx与boolean handshake，真实C ABI却要求PEM表并返回`1/0/-1`三态整数；归档为`DOC-010`。
 - 2026-08-13：确认TLS双语指南把OpenSSL能力误写为Silly自动session resumption/0-RTT收益，而binding没有client session复用或early-data API；归档为`DOC-011`。
 - 2026-08-13：确认ALPN encoder允许零长度协议，client又忽略OpenSSL反向返回约定，非法配置被静默清空并可降级；归档为`TLS-018`。
+- 2026-08-13：TLS/OpenSSL阶段收口：完整覆盖`tls.lua`、`ltls.c`、`testssl.lua`、native LuaLS、双语reference/guide及构建开关；排除“同hostname多算法证书选择”（公开契约仅承诺多域SNI）和“close后TLS data callback泄漏”（通用net同步撤销callback并接管迟到payload）候选，转入HTTP common/H1。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
