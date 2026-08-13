@@ -210,9 +210,79 @@
 | `lualib/types/silly/tls/tls.lua` | 已审有归档 | TLS-001至018中的connection项 | handshake/read/write/error/GC |
 | `lualib/types/silly/trace/c.lua` | 已审有归档 | CORE-010 | node/trace整数与spawn/attach/resume |
 
-## 6. 下一批台账工作
+## 6. 测试、fake peer 与 conformance 资产
+
+| 路径 | 状态 | 问题/证据 | 尚需动作或排除理由 |
+|---|---|---|---|
+| `test/adt/testbuffer.lua` | 已审有归档 | NET-006/008 | 正常读写覆盖，缺少overflow/limit自锁边界 |
+| `test/adt/testlist.lua` | 范围外 | 独立Lua list测试 | 产品net调用图不依赖该list |
+| `test/adt/testqueue.lua` | 已审无新增 | task/channel native queue | push/pop/empty/GC正常路径 |
+| `test/conformance.lua` | 已审有归档 | HTTP/H2 conformance缺口 | Go peer启动、case dispatch与结果汇总 |
+| `test/conformance/go/control/conn.go` | 已审有归档 | HTTP conformance transport | 控制连接framing与case生命周期 |
+| `test/conformance/go/control/dispatch.go` | 已审有归档 | HTTP conformance dispatch | case/error/result通道 |
+| `test/conformance/go/go.mod` | 已审无新增 | Go独立peer依赖版本 | 无产品实现逻辑 |
+| `test/conformance/go/httpclient/client.go` | 已审有归档 | HTTP client独立peer覆盖 | request/response互操作范围已映射 |
+| `test/conformance/go/httpserver/handlers.go` | 已审有归档 | HTTP server独立peer覆盖 | handler vectors与缺口已映射 |
+| `test/conformance/go/httpserver/server.go` | 已审有归档 | HTTP server独立peer覆盖 | listener/TLS/H2配置与case lifecycle |
+| `test/conformance/go/main.go` | 已审无新增 | conformance peer入口 | control/client/server装配 |
+| `test/conformance/testhttp.lua` | 已审有归档 | HTTP1/H2互操作项 | Silly侧vectors、framing与错误缺口 |
+| `test/etcdcheck.lua` | 已审有归档 | ETCD-001至017、GRPC项 | 真实etcd 15组正常路径与盲区 |
+| `test/fake_etcd_server.lua` | 已审有归档 | ETCD watch/lease/generation项 | fake状态机能力与偏差已映射 |
+| `test/fake_redis_server.lua` | 已审有归档 | REDIS-001至010 | partial/disconnect/restart fake peer能力 |
+| `test/mock_dns_server.lua` | 已审有归档 | DNS-009至018 | UDP/TCP/record fake peer能力与盲区 |
+| `test/prepare.lua` | 已审无新增 | suite环境/fixture准备 | 不改变协议语义 |
+| `test/print.lua` | 范围外 | 手工输出helper | 不在自动net验证链 |
+| `test/test.conf` | 已审无新增 | suite配置 | net测试选择与默认项已核对 |
+| `test/test.lua` | 已审无新增 | suite调度入口 | module顺序/exit处理已核对 |
+| `test/test.sh` | 已审无新增 | 跨配置test runner | 本轮按约束不执行 |
+| `test/testaddr.lua` | 已审有归档 | ADDR-001/002、DOC-044 | IPv4/IPv6/Unix/interface/mask覆盖 |
+| `test/testaux.lua` | 已审有归档 | CLUSTER-014等helper问题 | assert/async case/exit辅助语义 |
+| `test/testbase64.lua` | 已审有归档 | WS-001 | permissive decode正常vectors与严格性缺口 |
+| `test/testchannel.lua` | 已审有归档 | ETCD channel lifecycle项 | send/recv/close与waiter覆盖 |
+| `test/testcipher.lua` | 范围外 | application cipher API | 不验证内建TLS record层 |
+| `test/testcluster.lua` | 已审有归档 | CLUSTER-001至019 | 24组parser/RPC/concurrency/timeout/close |
+| `test/testcompress.lua` | 已审有归档 | COMP-001、HTTPC-001 | gzip正常/错误与output budget缺口 |
+| `test/testdns.lua` | 已审有归档 | DNS-001至018 | 31组codec/resolver/cache/fallback |
+| `test/testdom.lua` | 已审无新增 | HTTP DOM helper | protected parse与normal input |
+| `test/testearlyexit.lua` | 已审有归档 | CORE/SOCK shutdown项 | 启动早退与cleanup顺序 |
+| `test/testec.lua` | 范围外 | application EC crypto | 不在内建net协议 |
+| `test/testendless.lua` | 已审有归档 | CORE monitor项 | endless hook/monitor行为 |
+| `test/testerrno.lua` | 已审有归档 | DOC-040/044 | errno identity/string/type契约 |
+| `test/testetcd.lua` | 已审有归档 | ETCD-001至017、DOC-035/036/043 | fake etcd 17组与资源/错误盲区 |
+| `test/testexit.lua` | 已审有归档 | CORE/SOCK exit项 | normal exit与pending state |
+| `test/testexit2.lua` | 已审有归档 | CORE/SOCK exit项 | alternate shutdown ordering |
+| `test/testgrpc.lua` | 已审有归档 | GRPC-001至039 | 九组同库四类RPC/timeout/concurrency/large message |
+| `test/testhash.lua` | 已审无新增 | WebSocket/MySQL hash dependency | digest vectors与API |
+| `test/testhive.lua` | 范围外 | hive codec | cluster不固定使用hive |
+| `test/testhmac.lua` | 范围外 | application HMAC | 不在内建net调用图 |
+| `test/testhpack.lua` | 已审有归档 | HPACK-001/002/004、H2项 | 18组static/dynamic/Huffman/table vectors |
+| `test/testhttp.lua` | 已审有归档 | HTTPC/HTTP1/URL项 | H1/common全部case与错误盲区 |
+| `test/testhttp2.lua` | 已审有归档 | H2-001至041 | 36组同库frame/state/flow-control覆盖 |
+| `test/testjson.lua` | 范围外 | application JSON codec | 非HTTP wire parser |
+| `test/testjwt.lua` | 范围外 | application JWT | 非内建net认证协议 |
+| `test/testlog.lua` | 已审有归档 | CORE-010、MYSQLC-008等日志路径 | trace/log formatting与payload producer边界 |
+| `test/testmutex.lua` | 已审无新增 | DNS/cluster/gRPC/Redis互斥 | FIFO/owner/wakeup正常与错误路径 |
+| `test/testmysql.lua` | 已审有归档 | MYSQL/MYSQLC全部项 | 41组auth/pool/prepare/result/transaction/data type |
+| `test/testpatch.lua` | 范围外 | Lua patch helper | 不在net调用图 |
+| `test/testprometheus.lua` | 已审有归档 | METRIC-001至005、CORE-008 | counter/gauge/histogram/registry正常路径与wire盲区 |
+| `test/testredis.lua` | 已审有归档 | REDIS-001至010 | 18组RESP/pipeline/concurrency/reconnect/close |
+| `test/testrsa.lua` | 已审有归档 | MYSQL auth/pkey依赖 | RSA encrypt/decrypt/sign/verify正常路径 |
+| `test/testsignal.lua` | 范围外 | process signal API | 不验证net协议或socket lifecycle |
+| `test/testsingleflight.lua` | 已审有归档 | DNS singleflight项 | leader/waiter/error共享正常路径 |
+| `test/testssl.lua` | 已审有归档 | TLS-001至018 | cert/ALPN/reload/read-write/close与failure缺口 |
+| `test/testtask.lua` | 已审有归档 | CORE-010及跨模块task项 | scheduler/wakeup/trace/fork/wait/status |
+| `test/testtcp.lua` | 已审有归档 | NET/SOCK transport项 | connect/listen/read/write/close正常路径 |
+| `test/testtcp2.lua` | 已审有归档 | NET/SOCK并发/FD项 | partial/EAGAIN/multicast/close/metrics checks |
+| `test/testtimer.lua` | 已审有归档 | CORE-006/009、NET-007 | schedule/cancel/sleep/clock与边界盲区 |
+| `test/testudp.lua` | 已审有归档 | UDP-001、SOCK-001/011/012 | bind/connect/send/recv/address/multicast |
+| `test/testwaitgroup.lua` | 范围外 | test/application同步helper | 产品net路径不require waitgroup |
+| `test/testwakeup.lua` | 已审有归档 | CORE task/worker wakeup项 | ready queue与message后drain顺序 |
+| `test/testwebsocket.lua` | 已审有归档 | WS-001至010 | handshake与11组frame data vectors |
+| `test/testxor.lua` | 范围外 | application XOR helper | 不在net协议实现 |
+
+## 7. 下一批台账工作
 
 1. 先收口所有`审阅中`运行时文件；新问题独立进入主报告并提交。
-2. 从实际 `test/**`、`docs/src/**` 与 `docs/src/en/**` 集合逐文件追加，不用目录级描述替代；`lualib/types/**`第一版已列全。
+2. 从实际 `docs/src/**` 与 `docs/src/en/**` 集合逐文件追加，不用目录级描述替代；`lualib/types/**`与`test/**`第一版已列全。
 3. 对每个章节执行集合差：仓库实际路径减台账反引号路径必须为空，范围外路径也必须有理由。
 4. 最后核对每个`已审有归档`ID真实存在、每个`已审无新增`都有调用边界说明，再允许更新完成状态。
