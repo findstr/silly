@@ -141,6 +141,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | NET-001 | P2 | listener close与已排队ACCEPT竞态时只assert，不关闭已注册的accepted fd，形成孤儿连接。 |
 | NET-002 | P2 | raw data callback异常时C message已放弃payload ownership，task错误路径不会释放，形成可重复内存泄漏。 |
 | NET-003 | P1 | multipack裸refcount在send失败重试或fanout偏小时可提前释放仍由异步send引用的共享buffer。 |
+| NET-004 | P2 | 低层listen/connect在socket发布后才校验event回调；缺字段异常会遗留不可达fd，无accept listener还可被远端重复触发。 |
 | UDP-001 | P2 | bound socket缺destination仍返回成功后静默丢包，connected socket的显式destination又被C层忽略。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
 | TLS-002 | P1 | accepted TLS不保活SNI callback ctx，reload/close+GC后在途ClientHello可访问失效userdata。 |
@@ -348,7 +349,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为216条：P1 90、P2 117、P3 9。模块分布为CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
+当前统计为217条：P1 90、P2 118、P3 9。模块分布为CORE 7、NET 4、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

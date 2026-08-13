@@ -334,6 +334,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：改为full userdata/opaque multicast buffer，内部保存alive与原始size；每次`tcpmulticast`在验证handle和sid后原子acquire一个独立send reference，operation终局release，Lua handle的GC/close只释放owner reference。这样无需调用方预报fanout。若保留旧API，至少要求`1 <= fanout <= UINT32_MAX`、拒绝重复超过配额、明确失败消费语义并使handle终局失效，但裸pointer仍难以安全验证。size也必须来自handle，不能由调用方再次声明。
 - 回归测试：修复阶段覆盖fanout 0/负/边界、closed sid后retry、少发、多发、重复fd、发送中GC/close和不同完成顺序；ASan/LSan下buffer只能在最后一个真实operation与Lua owner均释放后销毁，失败不留下悬空可用handle或泄漏。当前不运行这些ownership场景。
 
+### NET-004 — P2 — 事件回调在 socket 发布后才校验，配置错误会遗留不可达 fd
+
+- 状态：已确认；Lua异常顺序、callback表发布与C socket ownership的确定性静态推导。本轮不创建缺字段listener或触发accept。
+- 公开契约：低层`tcplisten/tcpconnect/udpbind/udpconnect`接收event table；无论选择要求哪些callback，都应在分配OS/C资源前完整验证。若文档声明callback可选，实现就不能在正常事件上断言其存在。
+- 位置：公共listen/connect wrapper在`lualib/silly/net.lua:55-148`，回调注册和assert位于`:73-83,119-138`；ACCEPT handler在`:168-178`；低层关闭又要求已有`close_callback`，见`:150-166`。中文/英文`docs/src/{en/,}reference/net.md:48-62`把TCP `event.accept`写成可选。底层listener/connect在`src/socket.c:1279-1559`完成创建、pool发布和poll注册后才向Lua报告成功。
+- 触发：event为nil或缺少`data/close`时调用任一公开listen/connect；或者按文档给`tcplisten`传入没有`accept`、但具有data/close的event，随后远端建立连接。
+- 影响：前一类调用先等待native成功，再在读取/assert callback时抛错；`socket_pending`已经清除，fd没有作为返回值交给调用方，C slot和OS socket继续存在。若缺`close`，`M.close`也因callback表为空而拒绝关闭；可重复调用持续泄漏listener/connection。缺`accept`的listener会成功返回，但每个远端连接到达时handler执行`assert(cb)`，accepted socket已在C pool/poller注册却没有Lua owner，形成可远程重复的孤儿fd；该后果与`NET-001`的late-accept清理缺失相同，但本条触发是稳定公开配置而非close竞态。
+- 证据：listen成功分支依次写`accept_callback`、`assert(event.close)`、`assert(event.data)`，connect分支依次assert data/close；任一步异常都没有protected cleanup或`socket_close(fd)`。ACCEPT在继承data/close之前先assert listener accept callback，失败后也没有关闭消息携带的new fd。
+- 根因：event schema校验与资源获取顺序颠倒，同时callback表被当作close capability；“可选accept”文档和实现的mandatory断言相互矛盾。
+- 建议解法：入口在地址解析/任何native调用之前验证event table及该socket模式要求的全部function；TCP listener必须明确要求accept，或为nil定义立即拒绝并关闭accepted fd。所有成功后发布步骤用受保护的transaction：任意异常都调用底层close并清空已写表项；`M.close`不应仅凭callback存在判断底层fd是否可关闭。
+- 回归测试：修复阶段覆盖nil event、逐个缺accept/data/close、字段非function、callback table写入中异常，以及无accept listener收到多连接；断言调用在分配前失败或每个fd立即关闭，pool/open-fd/callback表回到基线。当前不新增误配置复现。
+
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
 - 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
@@ -2739,7 +2751,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为216项：P0为0，P1为90，P2为117，P3为9。模块分布：CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为217项：P0为0，P1为90，P2为118，P3为9。模块分布：CORE 7、NET 4、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2763,6 +2775,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认Windows控制socket路径拼接未检查Win32 required length和`snprintf`截断，长目录可在启动期形成栈越界写；归档为`SOCK-018`。
 - 2026-08-13：确认TCP listen/connect/accept及stat将Win64指针宽度`SOCKET`存入`int`，合法高位handle会被截断；归档为`SOCK-019`。
 - 2026-08-13：确认`addr.parse`处理无端口bracket地址时构造`se+1`指针并比较，公开正常输入落入C未定义行为；归档为`ADDR-002`。
+- 2026-08-13：确认低层net在socket成功发布后才assert事件回调，缺字段配置会遗留不可达fd；文档允许无accept listener又可被远端重复触发；归档为`NET-004`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
