@@ -1284,6 +1284,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用method/status矩阵分离body许可与field规则：HEAD/304禁止实际content但保留经校验且符合would-be response约束的CL/TE；1xx/204禁止TE并按各自规则处理CL；successful CONNECT另行进入tunnel状态。H1/H2共享语义层，编码层只负责wire framing。
 - 回归测试：修复阶段覆盖HEAD/304/1xx/204/205/successful CONNECT与普通200的CL/TE/body组合；捕获H1/H2 fields，断言HEAD/304合法元数据保留但无body，禁止组合在任何header写出前失败。当前只保存静态证据。
 
+### HTTP1-023 — P2 — 读取失败后再次 `readall` 会把缓冲的残缺正文作为成功返回
+
+- 状态：已确认；H1 buffer、cached error、incremental/chunk读取与stream收尾静态推导。本轮不制造timeout、截断或错误chunk。
+- 位置：部分数据进入stream buffer在`lualib/silly/net/http/h1.lua:174-228`；`read/read_all_body`错误保存于`:231-324`；cached-error特殊分支在`:326-340`；client timeout wrapper在`:641-681`。
+- 触发：一次`read(n)`或`readall(timeout)`在若干完整chunk/部分body已写入`s.recvbuf`后遇到timeout、transport EOF、非法chunk ending或其他读取错误，调用方收到`nil,err`后为重试/收尾再次调用`readall()`。
+- 影响：第二次调用先看到`s.err`，只要buffer非空就返回全部残缺数据和nil error，永久丢弃已缓存的协议/transport错误。应用可能把截断request当完整输入执行写操作，或把截断response当可信成功结果进行解析、缓存或签名校验；错误peer只需在选定前缀后终止/破坏framing。连接最终通常会因`s.err`不归池，但业务完整性已经在错误返回形状处被破坏。
+- 证据：首次失败路径执行`s.err=err; return nil,err`且不会清掉先前append的数据；再次进入`readall`时明确执行`dat=s.recvbuf:readall()`，若`#dat>0`便`return dat,nil`，只有空buffer才返回cached error。普通`read`对不足n的数据保留buffer，chunked `read_all_body`也可在多个成功chunk后失败，所以该分支可达；现有timeout测试只让不足Content-Length的字节停留在底层conn buffer，没有覆盖已完成chunk/增量read留下的stream buffer。
+- 根因：实现试图允许错误后取回partial bytes，却使用普通成功返回通道且消费掉唯一错误状态；“partial data + terminal error”没有明确API表示或一次性状态机。
+- 建议解法：一旦进入terminal error，所有后续`read/readall`必须稳定返回同一错误；如确需暴露partial data，首次失败原子返回`nil,err,partial`或专用方法/structured result，并明确数据不完整，不能在下一调用伪装成功。error、buffer与EOF转移由统一终态函数管理，client/server一致；close仍强制broken且清理残留。
+- 回归测试：修复阶段覆盖fixed-length先`read(n)`不足后timeout/EOF、chunked完成一块后非法size/ending/timeout、close-delimited部分数据后错误，以及client/server两个方向；连续调用`readall/read`必须始终保留错误，若提供partial接口则只交付一次且带incomplete标记。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3173,7 +3184,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为253项：P0为0，P1为99，P2为136，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为254项：P0为0，P1为99，P2为137，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3237,6 +3248,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1 server把HEAD/304与1xx/204共用bodyless分支并无差别删除CL/TE，丢失规范允许的representation元数据；归档为`HTTP1-022`。
 - 2026-08-13：确认中文HTTP reference声明`http.newclient.read_timeout`默认5秒，但实现/schema完全不接收该字段且请求仍无限等待；归档为`DOC-013`。
 - 2026-08-13：确认H1/H2 parser把重复字段提升为array，而redirect/gzip仍将Location/Content-Encoding当string，远端响应可触发未捕获Lua类型异常；归档为`HTTPC-007`。
+- 2026-08-13：确认H1读取失败会保留已缓冲正文，而后续readall只要缓冲非空便返回`data,nil`并吞掉cached error；归档为`HTTP1-023`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

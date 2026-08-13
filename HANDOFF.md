@@ -314,6 +314,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTP1-020 | P1 | Content-Length用Lua tonumber宽松解析，符号/hex/指数/小数可制造与严格peer不同的消息边界。 |
 | HTTP1-021 | P1 | sender按Lua key大小写识别控制字段，常规Content-Length/Host拼写可被重复并自动生成TE+CL歧义wire。 |
 | HTTP1-022 | P2 | server把HEAD/304与1xx/204一刀切删除CL/TE，丢失规范允许且常用的representation长度元数据。 |
+| HTTP1-023 | P2 | 读取失败后若stream buffer有部分正文，第二次readall会返回残缺data,nil并吞掉cached error。 |
 | WS-001 | P1 | server 接受缺失/无效的 WebSocket opening handshake，并切换到 frame parser。 |
 | WS-002 | P1 | client 仅凭 101 status 接受握手，不验证 Accept 或 Upgrade/Connection。 |
 | WS-003 | P2 | frame parser 缺少 RSV/长度/control 校验，writer 的 125/65535 边界非规范。 |
@@ -385,7 +386,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为253条：P1 99、P2 136、P3 18。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13；以主报告中的编号和证据为准。
+当前统计为254条：P1 99、P2 137、P3 18。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
