@@ -46,7 +46,7 @@
 | `src/silly.h` | 已审有归档 | CORE、SOCK、METRIC多项ABI | public structs、counter宽度、API类型 |
 | `src/silly_conf.h` | 已审有归档 | CORE-004、SOCK-012 | worker/socket/timer默认配置 |
 | `src/sockaddr.h` | 已审有归档 | SOCK-011、ADDR-001/002 | binary sockaddr layout与长度 |
-| `src/socket.c` | 已审有归档 | SOCK-001至SOCK-019、NET-001、METRIC-005 | slot generation、poll、send/recv、close、stats |
+| `src/socket.c` | 已审有归档 | SOCK-001至SOCK-020、NET-001、METRIC-005 | slot generation、poll、send/recv、close、stats |
 | `src/socket.h` | 已审有归档 | SOCK-006/011/019 | fd/sid/size API边界 |
 | `src/spinlock.h` | 已审无新增 | socket pool/wlist锁调用点 | memory order与critical section已映射 |
 | `src/timer.c` | 已审有归档 | CORE-006、CORE-009、NET-007 | wheel、session、wall/monotonic、shutdown |
@@ -99,7 +99,7 @@
 | `luaclib-src/lhttp.c` | 已审有归档 | HPACK-001/002/004、H2多项 | HPACK/Huffman/frame builder/C-Lua边界 |
 | `luaclib-src/llogger.c` | 已审无新增 | net错误/trace日志sink | payload泄露/放大由具体producer问题覆盖 |
 | `luaclib-src/lmetrics.c` | 已审有归档 | CORE-008、METRIC-003 | native stats顺序、平台值、integer边界 |
-| `luaclib-src/lnet.c` | 已审有归档 | NET-002/003、SOCK-006/011 | pointer ownership、pack/multicast/address |
+| `luaclib-src/lnet.c` | 已审有归档 | NET-002/003、SOCK-006/011/020 | pointer ownership、pack/multicast/address/send budget |
 | `luaclib-src/lperf.c` | 范围外 | profiler binding | 不参与net运行路径 |
 | `luaclib-src/lsignal.c` | 已审有归档 | DOC-058 | logger控制依赖；注册错误/映射与replacement调用链 |
 | `luaclib-src/lsilly.c` | 已审有归档 | CORE-011 | core metadata/exit/callback、genid导出 |
@@ -147,7 +147,7 @@
 | `lualib/silly/net/http/helper.lua` | 已审有归档 | HTTP1-008/010、URL项 | target/header/status helpers |
 | `lualib/silly/net/http/statusname.lua` | 已审无新增 | status lookup | 无状态与wire parser |
 | `lualib/silly/net/http/url.lua` | 已审有归档 | URL-001至003、DOC-047 | parse/format/authority/path/fragment |
-| `lualib/silly/net/tcp.lua` | 已审有归档 | NET-005至008、SOCK-012 | connect/listen/read/write/limit/timeout/close |
+| `lualib/silly/net/tcp.lua` | 已审有归档 | NET-005至008、SOCK-012/020、DOC-076 | connect/listen/read/write/limit/timeout/close |
 | `lualib/silly/net/tls.lua` | 已审有归档 | TLS-001至018、NET-005至007 | ctx/handshake/read/write/reload/close |
 | `lualib/silly/net/udp.lua` | 已审有归档 | UDP-001、SOCK/NET共享项 | endpoint/connect/send/recv/close |
 | `lualib/silly/net/websocket.lua` | 已审有归档 | WS-001至010 | handshake/frame/fragment/control/close/concurrency |
@@ -368,7 +368,7 @@
 | `docs/src/en/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
 | `docs/src/en/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/en/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
-| `docs/src/en/tutorials/echo-server.md` | 审阅中 | DOC-075至077、TCP ownership/failure examples | 继续核timeout与write语义 |
+| `docs/src/en/tutorials/echo-server.md` | 审阅中 | SOCK-020、DOC-075至077 | 继续核timeout/connection计数收尾 |
 | `docs/src/en/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
 | `docs/src/en/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/en/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |
@@ -432,7 +432,7 @@
 | `docs/src/reference/trace.md` | 已审有归档 | CORE-010 | ID layout/unique/attach/propagate |
 | `docs/src/tutorials/README.md` | 已审无新增 | tutorial索引 | 网络教程页面集合 |
 | `docs/src/tutorials/database-app.md` | 已审有归档 | DOC-030/032等MySQL项 | transaction/error/retry示例 |
-| `docs/src/tutorials/echo-server.md` | 审阅中 | DOC-075至077、TCP ownership/failure examples | 继续核timeout与write语义 |
+| `docs/src/tutorials/echo-server.md` | 审阅中 | SOCK-020、DOC-075至077 | 继续核timeout/connection计数收尾 |
 | `docs/src/tutorials/getting-started.md` | 审阅中 | first network app | 需最终核connect/listen失败与API名称 |
 | `docs/src/tutorials/http-server.md` | 已审有归档 | DOC-048及HTTP项 | body limit、routing、response示例 |
 | `docs/src/tutorials/websocket-chat.md` | 已审有归档 | DOC-021至025 | schema/XSS/heartbeat/cleanup/socket字段 |

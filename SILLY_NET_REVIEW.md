@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档371项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档372项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3335,6 +3335,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有真实socket变量、helper返回值和内部统计快照统一使用`fd_t`/`SOCKET`，只与平台invalid sentinel比较；对外若必须暴露数值handle，使用`intptr_t`/`int64_t`或明确不公开原生handle。开启Win64 conversion warnings并禁止socket→int隐式赋值。
 - 回归测试：修复阶段用Winsock wrapper返回带高32位的synthetic handle验证类型传递，另在真实Win64句柄压力下覆盖listen/connect/accept/stat/close；断言每个API收到的bit pattern完整一致，不泄漏原handle、不触碰低位碰撞对象。当前不施加handle压力。
 
+### SOCK-020 — P1 — TCP outbound send queue 无任何上限，`write` 永远不会产生文档承诺的 queue-full 背压
+
+- 状态：已确认；Lua write→C binding→worker op→socket wlist调用链、queue accounting与双语Echo/write契约的确定性静态核对。本轮不发送数据或制造慢读peer。
+- 公开契约：异步TCP writer必须提供可配置的per-connection和global soft/hard budget；达到阈值要么让producer等待可取消的drain，要么在复制/接管payload前同步拒绝。公开write的成功必须说明只是accepted还是delivered，不能承诺永远不会发生的“queue full error”。
+- 位置：`lualib/silly/net/tcp.lua:306-315`把write直接转发`net.tcpsend`；`luaclib-src/lnet.c:166-197`先把任意string/table完整复制成owned buffer，再调用`silly_tcp_send`；`src/socket.c:1614-1640`对任一live sid无条件`atomic_add(wlbytes,sz)`并`op_push`，`:1642-1660`继续无条件append wlist，整个路径没有byte/node/global limit。`docs/src/{en/,}tutorials/echo-server.md:397-409`却宣称send queue满会返回error，双语TCP reference只称framework会buffer/send。
+- 触发：Echo peer持续发送但不读取响应，或任意业务producer写入速度长期高于socket drain；每次write在socket仍live时均返回true，即使已有巨量未发送bytes。
+- 影响：每次调用已在Lua C binding复制payload，op queue和per-socket wlist会持续持有heap；单个慢客户端或多连接可耗尽进程内存并增加socket-thread遍历/关闭成本。应用依据write返回值实现的错误分支永远不能施加背压，只有轮询`unsentbytes()`且自行设限的未文档化策略可缓解，仍缺全局公平预算。
+- 证据：发送入口的唯一失败条件是sid不存在/zombie；没有常量、config、comparison、condition wait或queue-full errno。`wlbytes`只用于公开统计和发送后递减，不参与admission。与`SOCK-012`的远端inbound buffer无上限不同，本条是outbound producer admission；与`METRIC-005`的sent counter语义也独立。
+- 根因：异步write被设计为fire-and-forget ownership transfer，queue byte counter只做观测没有升级为flow-control；文档随后假设了未实现的capacity error。
+- 建议解法：引入checked 64-bit per-socket/global pending bytes和node上限，在复制前预留budget；提供`write(data,deadline?)`等待low-water或`trywrite`同步返回AGAIN/FULL，close/cancel/失败恰好一次释放budget并公平唤醒waiter。Echo等示例必须展示high/low water策略，不能靠无限buffer维持“non-blocking”。
+- 回归测试：修复阶段以暂停drain的transport覆盖阈值前后、多个producer公平性、close/write竞争、partial send、failure与timeout；断言heap/queue有硬上界、budget无wrap/泄漏、waiter均收敛。再用慢读peer验证Echo不会随输入无限增长。当前不运行慢读或发送测试。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -4537,7 +4549,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为371项：P0为0，P1为113，P2为202，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 77。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为372项：P0为0，P1为114，P2为202，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 77。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4928,6 +4940,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：echo-server监听契约反查确认runtime在普通listen失败时返回nil/errno，教程却称抛异常且全部server围栏丢弃返回；端口占用时静默无服务，归档为`DOC-075`。
 - 2026-08-13：echo-server accept ownership反查确认wrapper只在callback异常时立即close；正常return不做同步收尾，只由弱pool对象稍后的`__gc`关闭，与教程“返回自动关闭”的确定时序相反，归档为`DOC-076`。
 - 2026-08-13：echo-server性能围栏反查确认其把最后创建的client当成全部完成屏障，并以秒级os.time计算短测吞吐；可报告部分结果或除零为inf，归档为`DOC-077`。
+- 2026-08-13：沿echo write语义反查socket发送入口，确认TCP outbound queue没有soft/hard limit；live sid的每次write均无条件复制、增加wlbytes并入队，教程承诺的queue-full错误不存在，归档为`SOCK-020`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
