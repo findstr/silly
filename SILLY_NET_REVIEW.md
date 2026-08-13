@@ -2335,6 +2335,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：callback必须返回明确`value,nil`或`nil,err`，wrapper完整接收并在任一err时rollback；仅当结构化errno为1213/按策略包含1205时，确认旧transaction已安全丢弃后从BEGIN重跑整个**纯数据库且可重放**callback。其他错误原样返回。外部副作用放到成功commit后的outbox/幂等步骤；commit transport failure按`outcome_unknown`处理，绝不能自动重放。
 - 回归检查：修复阶段覆盖callback抛异常、首/中/末statement返回普通ERR、语句阶段1213、commit阶段错误、rollback失败、callback外部副作用标记与重试上限；断言普通错误不提交任何先前写、deadlock重跑整个事务且业务效果至多一次、返回值始终包含真实error。当前不执行SQL或deadlock barrier。
 
+### DOC-033 — P2 — MySQL 双语指南把 `max_idle_conns=0` 写成无限，实际默认禁用连接复用
+
+- 状态：已确认；双语配置契约、pool return分支与test注释静态核对。本轮不连接数据库或测量握手次数。
+- 位置：双语连接池指南配置总览明确写0为unlimited，见`docs/src/{en/,}guides/mysql-connection-pool.md:76-87`；双语reference又声明该字段默认0，见`docs/src/{en/,}reference/store/mysql.md:56-74`；实现默认和idle return在`lualib/silly/store/mysql.lua:985-1014,1138-1160`；tests明确把0注释为`no cache/Don't cache connections`，见`test/testmysql.lua:1047-1061,1405-1420`。
+- 触发：用户按guide显式设置`max_idle_conns=0`希望不限制idle，或按reference省略该项使用默认0；顺序执行任意两次`pool:query/ping`。
+- 影响：每次lease归还时`#conns_idle < 0`恒为false，driver发送COM_QUIT并关闭physical connection；下一操作重新TCP connect、handshake和authentication，per-connection prepared cache也全部丢失。正常流量会形成连接/auth/prepare风暴，增加延迟、CPU与数据库线程压力，容易碰到连接速率、防暴力认证和资源上限；文档名义上的默认“连接池”实际不复用连接。
+- 证据：`pool_open`保存`opts.max_idle_conns or 0`；`conn_close`只有在`#conns_idle < pool.max_idle_conns`时入池，没有`<=0 means unlimited`分支。两个integration test专门以`max_idle_conns=0 -- no cache`验证/依赖现有含义，而reuse测试都显式设置1或更大，因此不是偶发实现偏差。双语guide同一配置表却把0与`max_open_conns`一样解释成unlimited。
+- 根因：两个相邻pool limit沿用了相同的“0=unlimited”文档模板，但实现为idle上限选择了“0=disable idle”语义；reference只列默认值，未把关键语义说清。
+- 建议解法：1.0前选定唯一兼容契约。基于tests和常见pool语义，优先保留`0=no idle`并修正双语guide/reference，给生产默认设置安全的正数或明确要求配置；若改成unlimited则必须设独立sentinel并评估无界idle fd风险，不能静默改变0。公开pool metrics方便发现连接 churn。
+- 回归检查：修复阶段以connection id/handshake counter覆盖省略值、0、1、N及超过N并发归还；断言文档语义和保留/关闭数量一致，默认配置不会意外制造每query重连。当前不运行连接或性能测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3737,7 +3748,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为300项：P0为0，P1为108，P2为163，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 32。
+当前滚动统计为301项：P0为0，P1为108，P2为164，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 33。
 
 建议按依赖关系分五批修复：
 
@@ -4049,6 +4060,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`MYSQL-015`：prepare非OK首包一律按ERR解码，metadata reader完全忽略已声明param/field count而读到EOF，少/多definition均可跨phase反同步；不重复计数。
 - 2026-08-13：补强`MYSQL-010`：握手无条件宣告MULTI_STATEMENTS/MULTI_RESULTS，名为multi support的Test 27却明确只测单条SELECT，无法覆盖stored-program多结果与response drain；不重复计数。
 - 2026-08-13：确认MySQL死锁重试示例只捕获Lua异常，丢弃driver按正常返回值交付的callback SQL错误并继续commit，可部分提交事务且语句阶段1213不会重试；归档为`DOC-032`，未执行事务。
+- 2026-08-13：确认MySQL双语连接池指南声称max_idle_conns=0为无限，实际return条件与两组test都明确把0当作no cache；默认配置每次query重连，归档为`DOC-033`，未建立连接。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
