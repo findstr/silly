@@ -2300,6 +2300,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：优先修正文档为“key是server返回的column label，大小写原样保留”，建议业务显式稳定alias；若要提供lowercase模式，必须是显式option并处理两个label折叠到同一key的collision，不能静默覆盖。
 - 回归检查：使用`lower`、`UPPER`、`MixedCase`及只按case不同的两个alias核对返回key集合；默认精确保真，任何可选归一化遇collision明确报错/返回ordinal values。当前不运行SQL。
 
+### DOC-030 — P1 — MySQL 双语转账教程用非锁定读校验余额，且零行到账仍提交扣款
+
+- 状态：已确认；双语教程、扩展错误处理示例、driver返回结构与InnoDB锁语义静态核对。本轮不执行转账或并发事务。
+- 权威依据：[MySQL InnoDB locking reads](https://dev.mysql.com/doc/refman/26.7/en/innodb-locking-reads.html)说明读取后再更新的数据必须使用`SELECT ... FOR UPDATE/FOR SHARE`等锁定读；[consistent nonlocking reads](https://dev.mysql.com/doc/refman/26.7/en/innodb-consistent-read.html)说明普通`SELECT`是consistent nonlocking read，不会给读取记录加锁。
+- 位置：中英文数据库教程把该段明确称为“需要保证一致性/operations requiring consistency guarantees”的事务示例，见`docs/src/{en/,}tutorials/database-app.md:909-970`；中文错误处理指南的扩展示例在`docs/src/guides/error-handling.md:1006-1076`重复相同的非锁定余额检查。OK packet公开包含`affected_rows`，教程其他CRUD示例也会检查它，但这里仅把非nil result当作成功。
+- 触发：同一源账户余额100，并发开始两笔各80的转账；两事务的普通`SELECT`都可读到100并通过检查，之后各自执行原子减法并提交。另一路径是`to_id`在检查后被并发删除，或双语短例一开始就传不存在的收款账户；到账`UPDATE`返回成功OK但`affected_rows==0`。
+- 影响：并发转账可共同花费同一份余额，使源账户变成负数或突破业务余额约束；收款目标消失时，事务仍会提交扣款而没有任何账户获得资金。示例正被描述为事务一致性的推荐写法，读者即使逐行检查所有`err`也无法发现这两种已成功提交的数据损坏，属于1.0发布阻断文档缺陷。
+- 证据：两个教程的余额SQL都没有`FOR UPDATE`，随后基于旧snapshot中的Lua数值做条件判断；更新语句也没有把`balance >= amount`放进原子谓词。双语短例不预查收款账户，三个版本都不验证两次UPDATE的`affected_rows==1`。driver对合法OK返回table，因此零行更新不会进入`if not ok/res`错误分支。中文长例虽然预查目标存在，检查与UPDATE之间仍可变化，并且余额读取仍不锁定。
+- 根因：把“语句处在同一事务中”误当作所有读后写业务条件自动串行化，同时混淆SQL执行成功与业务目标行确实存在。
+- 建议解法：在确定的锁顺序中锁定两个账户（例如按id排序后`SELECT ... FOR UPDATE`），验证两行均存在且`from_id ~= to_id`、金额域有效；扣款最好用`UPDATE ... WHERE id=? AND balance>=?`并要求`affected_rows==1`，到账同样要求恰好一行，否则rollback。数据库层再以非负CHECK和账本/唯一业务操作ID作纵深保护，并明确commit失败的结果未知语义。
+- 回归检查：修复阶段用barrier并发两笔共享源账户的超额转账，并覆盖目标在检查后删除、目标不存在、同账户、零/负金额、deadlock retry与commit结果未知；断言总额守恒、余额不为负、任一失败事务无部分效果，两个UPDATE都恰好影响一行。当前不执行SQL或并发barrier。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3702,7 +3714,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为297项：P0为0，P1为106，P2为163，P3为28。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 29。
+当前滚动统计为298项：P0为0，P1为107，P2为163，P3为28。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 30。
 
 建议按依赖关系分五批修复：
 
@@ -4005,6 +4017,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL双语连接池指南在Lost connection后重连并无条件重放任意SQL，commit后丢回包可重复执行非幂等写并丢失session状态；归档为`DOC-027`，未执行SQL或断线。
 - 2026-08-13：确认MySQL双语reference/连接池guide的健康检查、预热和监控调用不存在的`silly.wait/sleep/time`并遗漏task import，首次运行即失败；归档为`DOC-028`，未执行示例。
 - 2026-08-13：确认MySQL双语reference声明row key为小写，但native codec原样使用server column alias，混合case字段按文档访问会静默得到nil；归档为`DOC-029`，未执行查询。
+- 2026-08-13：确认MySQL双语事务教程用普通非锁定SELECT校验余额，并把零行UPDATE当成功；并发转账可透支，收款账户缺失可只扣不加，归档为`DOC-030`，未执行SQL或并发barrier。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
