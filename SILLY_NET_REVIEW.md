@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档329项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档330项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2647,6 +2647,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：不要用脱离所有权的fork包装任意handler来宣称硬timeout。为request创建显式context/deadline并贯穿body read、HTTP/DB/RPC调用；所有operation在终局协作取消并join后才能让handler返回。若底层暂不支持取消，文档只能把它描述为response deadline并明确副作用继续，且超时后立即关闭/reset stream、禁止第二次响应；非幂等写应使用幂等键/事务结果确认。
 - 回归检查：修复阶段用可控operation覆盖timeout前完成、timer先胜、完成与timer同tick、正文读取、永久等待和已开始非幂等写；断言handler返回时无子task/timer/waiter、只有一个response、连接/stream按协议收尾且超时后无业务提交。H1与H2分别验证；当前不运行这些并发路径。
 
+### DOC-051 — P2 — “生产级”HTTP 监控把原始 path 作为永久 label，唯一 URL 可远程耗尽指标内存
+
+- 状态：已确认；双语metrics示例、vector label cache与gather遍历的确定性静态核对。本轮不生成高基数请求或采集metrics。
+- 位置：性能指标示例直接调用`http_request_duration_seconds:labels(stream.method,stream.path)`与`http_requests_total:labels(stream.method,stream.path,"200")`，见`docs/src/{en/,}guides/http-best-practices.md:1198-1277`；末尾“生产级HTTP服务”对包括404在内的所有原始path重复该模式，见`:1656-1830`。label键永久缓存于`lualib/silly/metrics/labels.lua:7-38`，counter/histogram实例永久保存在各自`metrics` table，见`lualib/silly/metrics/counter.lua:30-66`与`histogram.lua:49-105`；gather遍历全部series在`prometheus.lua:131-177`。
+- 触发：部署任一示例后，远端连续请求`/missing/1`、`/missing/2`等从未重复的path；路由是否存在、请求是否成功都不影响完整示例在handler尾部记录原始`stream.path`。
+- 影响：每个唯一path为duration histogram和request counter各永久创建一条series，同时在多级labelcache保留原始字符串；没有TTL、上限或删除API。攻击者可用普通短请求让heap与GC集合线性增长，`prometheus.gather()`的遍历、格式化和响应体也越来越大，最终造成监控端点延迟、内存耗尽或服务不可用。动态ID、query未入path但任意不存在路径已经足够。
+- 证据：`labels.key`遇新value就向cache插table/序列化key；vector `labels()`再以该key向`metrics`插submetric，两者只增不减。完整示例先处理任意404，再无条件调用两组`:labels(stream.method,stream.path,...)`。同仓`docs/src/{en/,}reference/metrics/{counter,labels}.md`明确警告user ID/IP等高基数值会造成内存问题，证明生产指南与指标契约自相矛盾。
+- 根因：示例把观测属性“请求的具体URL”直接映射为维度label，没有先匹配低基数route template，也没有为未知路由设置固定值；文档review未把远程输入基数映射到metrics的永久缓存生命周期。
+- 建议解法：只在路由匹配后用固定route name/template（如`/api/users/:id`）作label，404统一为`unknown`或有限分类；status必须记录真实状态而非硬编码200。metrics库可增加series budget/drop计数和可选删除，但不能替代应用选择有界label。指南明确禁止raw path、query、user ID、IP、trace ID作为标签。
+- 回归检查：修复阶段向路由层注入大量唯一路径，断言series数量保持在method×route×status的固定上限、404共享一个label且gather大小稳定；同时验证合法模板与真实status计数。当前不发送请求或制造高基数数据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4061,9 +4072,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为329项：P0为0，P1为111，P2为175，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 50。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为330项：P0为0，P1为111，P2为176，P3为43。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 51。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；175项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；176项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4421,4 +4432,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成性反查HTTP server双语教程确认其“防恶意大上传”示例只检查单值Content-Length，chunked、TE+CL和重复CL均可跳过且实际readall仍无界，归档为`DOC-048`。
 - 2026-08-13：逐段复核双语HTTP最佳实践，确认gzip、流式sleep、协程timeout和周期健康检查分别调用不存在模块、顶层方法或未导入local，归档为`DOC-049`。
 - 2026-08-13：继续反查HTTP最佳实践timeout时序，确认timer只结束外层channel等待而无法取消fork中的正文/下游/业务操作；handler返回后子task仍可无限残留、提交副作用或二次响应，归档为`DOC-050`。
+- 2026-08-13：HTTP最佳实践监控段反查metrics生命周期，确认两处把任意远端path写入永久labelcache/series，唯一404 URL即可线性增加heap与gather成本，归档为`DOC-051`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
