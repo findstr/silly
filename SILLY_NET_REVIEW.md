@@ -1225,6 +1225,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：公共`write("")`在任何header/body字节写出前直接成功no-op（或明确拒绝），绝不能调用chunk encoder；last-chunk只能由一次性的`closewrite`状态转换生成。closewrite(data)先传播data write失败，再原子标记closed并恰好生成一个terminal chunk/trailer；重复close稳定no-op且不追加wire。
 - 回归测试：修复阶段覆盖client/server的`write("")`、多次空写、空写后非空写、`closewrite("")`、重复close及其后同连接下一消息；捕获wire断言仅close产生一个last-chunk，空write不改变framing，下一消息从正确start-line开始。当前只保存静态证据。
 
+### HTTP1-020 — P1 — `Content-Length` 用 Lua number grammar 解析，可与严格 peer 形成边界分叉
+
+- 状态：已确认；H1 sender/client/server parser、Lua数字语法与RFC Content-Length ABNF静态核对。本轮不构造或发送歧义报文。
+- 规范：RFC 9110 §8.6把`Content-Length`定义为`1*DIGIT`，接收方还必须预防整数转换溢出；符号、hex、指数、小数或其他Lua number形式都不是合法字段值。参见[RFC 9110 §8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6)。
+- 位置：sender framing选择在`lualib/silly/net/http/h1.lua:342-365`，client response解析在`:514-552`，server request解析在`:818-850`；重复字段/列表的独立问题见`HTTP1-002`。
+- 触发：peer发送单一`Content-Length: +5`、`0x10`、`1e3`、`1.0`等Lua `tonumber`可转换且结果非负/整数可用的值；反向上，应用把同类string或完全非法string作为outbound content-length。
+- 影响：receiver会按Lua数值（如16或1000）读取正文，而严格proxy/peer按规范拒绝或采用其他边界；同一持久字节流因此被拆成不同request/response，形成request smuggling、response splitting、cache poisoning或跨请求错配。sender对可转换的非十进制值按转换结果编码body却把原文本上wire；对不可转换值则以`or 0`把内部body设为禁止/空，同时仍原样发送非法header，主动产生本地状态与wire framing不一致。
+- 证据：三个入口都直接调用`tonumber`，没有`^%d+$`、逐位overflow或canonical decimal校验。receiver只检查nil/负数；Lua接受十六进制、指数、前导符号和部分整数值浮点文本。sender的`tonumber(cl) or 0`甚至把解析失败折叠成合法内部零值，`compose_header`随后照旧序列化调用方的原始字段值。
+- 根因：把HTTP十进制wire整数交给通用编程语言数字parser，且sender没有先把validated framing mode与canonical header原子化。
+- 建议解法：client/server共享专用Content-Length parser：先规范化`HTTP1-002`的重复/list形式，再要求每项非空ASCII DIGIT、逐位checked accumulation、全部值相同，输出受实现/配置上限约束的integer；sender只接受validated integer或canonical decimal并重新格式化，任何错误在写start-line前失败且连接不复用。
+- 回归测试：修复阶段覆盖0、前导零、上限/上限加一、`+/-`、hex、指数、小数、内部/首尾空白、非ASCII digit及重复/list组合；client/server parser与request/response sender四向都必须对非法值零字节fail closed，合法值采用同一边界。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3092,7 +3104,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为246项：P0为0，P1为97，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 19、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为247项：P0为0，P1为98，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3149,6 +3161,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：TLS/OpenSSL阶段收口：完整覆盖`tls.lua`、`ltls.c`、`testssl.lua`、native LuaLS、双语reference/guide及构建开关；排除“同hostname多算法证书选择”（公开契约仅承诺多域SNI）和“close后TLS data callback泄漏”（通用net同步撤销callback并接管迟到payload）候选，转入HTTP common/H1。
 - 2026-08-13：确认H1 fixed-length增量读取每批把`recvbytes`累计两次，可提前通过close完整性检查并把带残留body的连接归池；归档为`HTTP1-018`。
 - 2026-08-13：确认H1 chunked普通空写会编码协议last-chunk却保持stream可写，closewrite空串还会生成双终止块并污染下一消息；归档为`HTTP1-019`。
+- 2026-08-13：确认H1 sender/client/server均以Lua `tonumber`解释Content-Length，符号/hex/指数/小数等非法wire值可与严格peer形成消息边界分叉；归档为`HTTP1-020`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
