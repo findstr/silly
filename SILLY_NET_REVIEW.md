@@ -5003,6 +5003,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：getting-started版本围栏反查确认两处仍固定0.6，当前CLI由宏输出v0.7.1、Lua字段输出0.7；安装验证与Hello golden均不匹配，归档为`DOC-080`。
 - 2026-08-13：getting-started CLI反查确认module path、loglevel及help中的长选项使用旧/下划线拼写，真实getopt只注册hyphenated names且unknown option静默忽略，归档为`DOC-081`。
 - 2026-08-13：沿getting-started的optional OpenSSL构建反查确认OFF会移除整个crypto目录中的utils，而WebSocket顶层无条件require该模块；明文ws也无法加载，归档为`WS-011`，未执行variant build。
+- 2026-08-13：完成getting-started双语tutorial收口：first TCP tuple、版本、CLI、build variant与平台说明已映射到`WS-011`、`DOC-007/079`至`081`；Windows IOCP backend、pool容量和有据benchmark声明静态排除为新增问题。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
