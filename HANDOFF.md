@@ -333,7 +333,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-048 | P2 | HTTP server双语教程的恶意大上传防护只信单值Content-Length，可被chunked、TE+CL或重复CL绕过。 |
 | DOC-049 | P3 | HTTP双语最佳实践的gzip、流式sleep、协程timeout和健康检查示例调用不存在模块、顶层方法或未导入local。 |
 | DOC-050 | P2 | HTTP最佳实践的请求timeout只停止外层等待，fork中的正文/下游/业务操作仍继续、残留或二次响应。 |
-| DOC-051 | P2 | HTTP最佳实践把任意原始path作为永久Prometheus label，唯一404 URL可线性增加series、heap与gather成本。 |
+| DOC-051 | P2 | 多组官方HTTP监控示例把任意原始path作为永久Prometheus label，唯一404 URL可线性增加series与heap。 |
 | DOC-052 | P2 | HTTP限流示例以首冒号截断IPv6并把one-shot timer当周期cleanup，导致配额串扰和client key永久积累。 |
 | DOC-053 | P3 | 双语core reference把silly.tostring写成单参数pointer hex formatter，实际是必需size且不释放的内存复制。 |
 | DOC-054 | P2 | 双语监控示例用进程CPU时钟测异步HTTP/DB/cache等端到端耗时，等待被漏计且并发CPU混入SLO。 |
