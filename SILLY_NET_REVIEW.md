@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档364项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档365项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3045,6 +3045,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：helper返回owner对象，保存当前session和stopped/generation；每轮callback先验证generation，重排时更新session，stop先置stopped再cancel当前session。hot reload必须先确认旧owner终止再启动新owner，并处理callback正在执行的竞态。
 - 回归检查：修复阶段用确定性时钟覆盖start、连续触发、在pending/执行中stop、restart和多次hotfix；任一时刻至多一条有效周期链，stop后计数不再增长。当前不运行timer。
 
+### DOC-072 — P3 — 热更新流程只复制 function，却断言 `VERSION` 等普通导出字段已经更新
+
+- 状态：已确认；双语标准流程、版本管理示例与Lua table赋值语义的确定性静态核对。本轮不加载模块或执行hotfix。
+- 位置：`docs/src/{en/,}guides/hot-reload.md:135-140`的标准第五步及route/game/config、rollback、test、production各示例都只在`type(value)=="function"`时写回旧module；同页`:600-630`却要求module导出`VERSION="1.2.3"`和`BUILD_TIME`，并在更新后断言旧module的`VERSION`已经变成`1.2.3`。
+- 触发：旧module导出`VERSION="1.2.2"`，磁盘新版本导出`VERSION="1.2.3"`，按指南完成函数替换后执行其版本验证；即使`CORE-012`的混合export崩溃另行修复，触发仍成立。
+- 影响：旧module引用中的`VERSION`与`BUILD_TIME`保持旧值，示例断言确定失败；若部署脚本忽略验证，业务函数已经更新但诊断、审计、告警和后续补丁前置版本仍报告旧版本，形成无法可靠确认或回滚的混合代际状态。配置module的普通导出字段也会有相同遗漏。
+- 证据：替换循环对string/number/table/boolean没有任何写路径；`package.loaded[name]`又被恢复为旧table，因此重新`require`也只返回仍含旧字段的对象。该问题不是upvalue join能修复的：`VERSION`是table value，不是函数upvalue。
+- 根因：指南没有为module export定义完整迁移策略，却把“只替换函数”的窄操作当成整个module版本已发布；版本验证段与前述算法由不同假设拼接而成。
+- 建议解法：先定义export策略：函数经join后替换，immutable scalar metadata显式复制，mutable table按schema迁移或保留，删除字段也需显式策略；所有变更在验证通过后原子发布，失败时恢复完整快照。若1.0只支持function map，则删除VERSION/config示例并明确限制。
+- 回归检查：修复阶段以含function、VERSION、BUILD_TIME、配置table、新增/删除字段的双版本module覆盖成功和失败回滚；断言调用方旧引用、`package.loaded`、版本日志和业务函数始终属于同一generation。当前不执行hot reload。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4459,7 +4470,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为364项：P0为0，P1为112，P2为199，P3为53。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 71。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为365项：P0为0，P1为112，P2为199，P3为54。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 72。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4842,6 +4853,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Collector contract反查确认LuaLS/主reference要求name+new+collect，但Prometheus/Registry官方示例与runtime只要求collect，归档为`DOC-070`。
 - 2026-08-13：hot-reload依赖反查确认`patch:collectupval(table)`把每个export value无条件交给debug.getinfo；典型VERSION/config常量使官方主流程立即崩溃，归档为`CORE-012`。
 - 2026-08-13：hot-reload timer方案反查确认递归`repeat_call`既不保存也不返回after session；cancel handle恒nil，每次更新叠加永久周期任务，归档为`DOC-071`。
+- 2026-08-13：hot-reload导出策略反查确认全部流程只写回function字段，但版本段要求普通`VERSION/BUILD_TIME`同步并断言新值；旧module及package.loaded必然仍报告旧代际，归档为`DOC-072`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
