@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档375项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档376项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3156,6 +3156,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：发布前统一版本模型，推荐CLI和Lua都提供完整semver/release，另可暴露major/minor数值；教程用当前发布值或“vX.Y.Z（以构建为准）”并明确格式。CI从源码version source生成/验证文档，不允许手工散落固定版本。
 - 回归检查：修复阶段静态比较源码version、`--version` golden与Lua字段，并扫描双语安装文档中的旧版本字面量；release bump时同一检查必须失败提示更新。当前不执行binary。
 
+### DOC-081 — P3 — Getting Started 的故障排查与 help 使用了不存在的下划线 CLI 选项
+
+- 状态：已确认；双语命令围栏、`getopt_long` option table与真实help字符串的确定性静态核对。本轮不执行CLI。
+- 位置：`docs/src/{en/,}tutorials/getting-started.md:385-396`建议`--lualib_path="lualib/?.lua"`，`:437-464`建议`--loglevel=debug`并列出`--logpath`、`--pidfile`、`--lualib_path`、`--lualib_cpath`和三种`*_cpu_affinity`。实际`src/main.c:21-35,73-100`只注册hyphenated `--log-level`、`--log-path`、`--pid-file`、`--lualib-path`、`--lualib-cpath`、`--socket-affinity`、`--worker-affinity`、`--timer-affinity`。
+- 触发：用户按教程处理module-not-found、启用debug logging，或从页面复制任一长选项；所有错误拼写都进入`getopt_long`的unknown option路径。
+- 影响：目标设置不生效，module仍找不到、debug日志仍未开启、daemon路径/affinity也保持默认；parser的`case '?'`只静默break且不返回失败，用户可能继续运行并误以为配置已应用。页面还声称展示`--help`输出，却与binary自身help逐项不一致，无法作为运维基线。
+- 证据：long_options没有任何underscore alias，也没有`loglevel/logpath/pidfile`别名；真实help由同一正确option table附近的静态数组生成。错误命令不是shell等价写法，GNU getopt不会把underscore自动转成hyphen。
+- 根因：文档使用内部字段名/旧参数名手工重写CLI，而没有直接包含或测试binary生成的help；unknown option又没有显式错误退出，放大了文档漂移。
+- 建议解法：全部围栏改用真实hyphen names，help片段从单一option schema/`--help` golden自动生成；CLI对unknown/missing/invalid option输出明确stderr并非零退出，不能静默忽略安全/运维配置。若保留兼容alias，需显式注册、弃用警告并测试。
+- 回归检查：修复阶段逐一执行文档列出的短/长形式并核对boot_args或日志效果，unknown underscore形式必须报错；CI比较双语help code block与binary输出。当前不运行程序。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4582,7 +4593,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为375项：P0为0，P1为114，P2为204，P3为57。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 80。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为376项：P0为0，P1为114，P2为204，P3为58。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 81。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4978,6 +4989,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，映射到`SOCK-020`及`DOC-075`至`078`；randomkey只产小写字母，不构成delimiter候选。
 - 2026-08-13：getting-started首个TCP coroutine反查确认connect/read均丢弃nullable error并把nil继续解引用或交给write，普通拒绝/EOF升级为task异常，归档为`DOC-079`。
 - 2026-08-13：getting-started版本围栏反查确认两处仍固定0.6，当前CLI由宏输出v0.7.1、Lua字段输出0.7；安装验证与Hello golden均不匹配，归档为`DOC-080`。
+- 2026-08-13：getting-started CLI反查确认module path、loglevel及help中的长选项使用旧/下划线拼写，真实getopt只注册hyphenated names且unknown option静默忽略，归档为`DOC-081`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
