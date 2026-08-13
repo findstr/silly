@@ -1010,6 +1010,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在任何session分配、allocation或send之前要求cmd为integer且位于`0..UINT32_MAX`，超出立即返回稳定错误；Lua层与C层都保留防线。文档和LuaLS明确uint32契约，schema/tag生成器也验证唯一性。若1.0需要更宽命令空间，应版本化wire并用显式网络字节序字段升级，不能继续静默截断。
 - 回归测试：修复阶段只做binding/encoder边界检查，覆盖-1、0、1、`UINT32_MAX`、`UINT32_MAX+1`和Lua整数极值；非法值必须零字节失败且不递增session，合法边界在独立decoder上保持精确值。再用两个低32位相同的业务ID断言无法同时注册/发送。当前只保存静态证据。
 
+### CLUSTER-018 — P2 — 重复 `serve` 静默替换全局 parser/handler，现有 listener 与在途 RPC 被新配置接管
+
+- 状态：已确认；master与raw-string分支的模块全局状态、EVENT回调、pending response路径和官方多节点示例静态核对。本轮不重配server、建立listener或制造半包。
+- 位置：master的`marshal/unmarshal/accept/close/call/expire/ctx`均为module singleton，见`lualib/silly/net/cluster.lua:37-60`；所有listener/connection共享同一`EVENT`并在回调时读取这些globals，见`:64-177`，`M.serve`每次无条件整体替换它们和native ctx，见`:311-329`。raw-string分支保留相同设计，对应globals约`:35-51`、serve`:257-271`。中英文reference的“多节点集群通信”示例在`docs/src/{en/,}reference/net/cluster.md:719-754`通过`create_node`连续调用三次serve并各自listen。
+- 触发：按官方示例在一个进程配置多个逻辑节点/listener；或热更新codec/handler时再次调用serve，而旧listener、connection、partial frame、queued frame或pending call仍存在。API没有返回instance、already-served错误、quiesce步骤或generation。
+- 影响：无连接时连续配置也会让此前listener的后续accept/request全部执行最后一次serve的node handler，示例中的node1/node2/node3实际都表现为node3。活跃连接期间重配更危险：分片frame前半留在旧ctx，后半进入新ctx并被当作新length；已发送call的response由新ctx解析且waiter用新的global unmarshal解码；旧handler正在yield时又可能用新的marshal生成response。结果包括错误节点身份、跨schema错解码/错dispatch、连接关闭、RPC timeout和旧ctx队列被GC丢弃。
+- 证据：listener对象只保存fd，不绑定ctx或callback generation；`EVENT.data/process/waitfor`都直接闭包引用可变module globals。`serve`没有检查`ctx ~= nil`、fd/peer数量、wait_pool或parser是否为空，也没有关闭旧资源。官方示例的三次调用发生在同一required module singleton中，Lua `require`不会创建三个实例，因此最后一次赋值确定覆盖前两次closure。
+- 根因：配置入口具有“创建server实例”的表象和示例用法，内部却实现为进程级mutable singleton；状态没有按listener/connection/generation归属，且缺少一次性初始化或原子有界重配置协议。
+- 建议解法：优先把`serve(conf)`改为返回独立cluster server/context，listener和peer显式绑定其codec、callbacks、timeout、parser及pending map；多实例互不共享。若1.0只能支持singleton，则第二次serve必须在任何字段变更前fail fast，文档明确每进程一次，并删除/改写多节点示例为多个进程。未来热更新需先阻止新流量、等待/取消旧generation、释放其全部parser/waiter，再原子发布新generation。
+- 回归测试：修复阶段创建两个不同codec/handler标识的listener并交错call，断言各自只命中owner；覆盖partial header/body、queued complete frame、pending request、yielding handler和serve重入，要求要么安全隔离，要么第二次调用零副作用失败。检查旧ctx/timer/waiter/fd最终归零。当前不运行多实例或重配置测试。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -4215,6 +4226,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`CLUSTER-005`：允许的`psize > INT_MAX`即会从uint32窄化为负`packet.size`并以巨大external-string长度pop；`UINT32_MAX`的allocation/total回绕只是更晚边界，不重复计数。
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
+- 2026-08-13：确认两版`cluster.serve`会无保护替换所有listener/peer共享的global parser/handler/context；官方多节点示例连续调用三次后全部listener使用最后节点配置，活跃重配还会错接半包/在途RPC；归档为`CLUSTER-018`，未执行重配。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。

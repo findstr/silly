@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC及Redis/MySQL/etcd存储阶段已收口；共313项（P1 110、P2 167、P3 36）。cluster复核新增共同的`CLUSTER-016`明文无认证、`DOC-038`backlog默认值偏差、master独有`CLUSTER-017`command uint32截断及`DOC-039/040`公开契约矛盾；当前继续Lua/native/测试/双语文档与分支差异查漏。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC及Redis/MySQL/etcd存储阶段已收口；共314项（P1 110、P2 168、P3 36）。cluster复核新增共同的`CLUSTER-016/018`安全与singleton生命周期问题、`DOC-038`backlog偏差、master独有`CLUSTER-017`command截断及`DOC-039/040`契约矛盾；当前继续Lua/native/测试/双语文档与分支差异查漏。
 
 ## 1. 目标和边界
 
