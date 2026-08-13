@@ -999,6 +999,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0默认提供并要求mTLS（CA/pinned trust、hostname或节点ID SAN、client certificate、TLS版本/cipher policy），在认证和协议版本协商完成前不发布peer、不调用accept业务逻辑也不读取RPC frame；若需应用层身份，再绑定TLS exporter/channel identity做challenge/token并防重放。plaintext只能作为显式insecure opt-in且文档限定loopback/受控测试，不能静默降级。认证后的peer identity必须与`CLUSTER-001/007`一起进入pending correlation、日志和授权。
 - 回归测试：修复阶段覆盖受信双向证书、错误CA/hostname/node ID、无client cert、过期证书、plaintext downgrade、中间人和重放；断言认证失败零handler/零response、连接与parser预算立即释放，成功peer暴露稳定authenticated identity。master与raw-string分支都做跨版本/协议拒绝矩阵。当前不建立TLS或发送frame。
 
+### CLUSTER-017 — P2 — master 的任意 Lua command ID 会静默截断为 uint32，远端可能执行另一命令
+
+- 状态：已确认；公开marshal契约、Lua整数到wire字段的转换和远端dispatch路径静态核对。本轮不构造或发送边界command。该字段已被raw-string分支删除，因此是master基线问题。
+- 位置：公开`marshal`允许返回未限定范围的“命令数字”，见`docs/src/{en/,}reference/net/cluster.md:47-66`及`lualib/silly/net/cluster.lua:37-46,288-304`；native字段为`uint32_t cmd_t`，但`lrequest`直接执行`cmd = luaL_checkinteger(L,2)`，见`luaclib-src/lcluster.c:17-28,395-447`；接收端再把截断值交给`unmarshal/call`，见Lua`:64-104`。
+- 触发：业务marshal返回负command，或返回大于`UINT32_MAX`的Lua integer，例如`0x100000001`；按文档直接使用number作为命令、由hash/schema生成宽ID或升级后扩展ID空间都可命中。无需异常内存或不合法Lua类型。
+- 影响：C对Lua integer到`uint32_t`的转换按模2^32保留低32位，远端把`0x100000001`当作1、把-1当作`0xffffffff`。两个本应不同的业务命令因此在wire上碰撞，server会用错误cmd进行decode并调用错误handler；若cmd区分读写、管理权限或schema，可能形成错误操作或数据解释。client response又不携带cmd并继续用调用方原始cmd解码，使这种错投不一定在返回阶段显式失败。
+- 证据：`luaL_checkinteger`只验证Lua integer可表示性，不约束非负或32位；赋值目标明确是uint32且没有round-trip/range检查。request header原样复制该字段，receiver读取同一uint32并`lua_pushinteger`；公开文档只写string/number与“命令数字”，没有0..4294967295边界。默认zproto示例通常生成小tag，但公开API没有把这一偶然用法变成前置条件。
+- 根因：wire宽度被留在native typedef中，没有提升为Lua API schema；binding把C窄化当成输入验证，且协议没有版本/namespace阻止低位碰撞。
+- 建议解法：在任何session分配、allocation或send之前要求cmd为integer且位于`0..UINT32_MAX`，超出立即返回稳定错误；Lua层与C层都保留防线。文档和LuaLS明确uint32契约，schema/tag生成器也验证唯一性。若1.0需要更宽命令空间，应版本化wire并用显式网络字节序字段升级，不能继续静默截断。
+- 回归测试：修复阶段只做binding/encoder边界检查，覆盖-1、0、1、`UINT32_MAX`、`UINT32_MAX+1`和Lua整数极值；非法值必须零字节失败且不递增session，合法边界在独立decoder上保持精确值。再用两个低32位相同的业务ID断言无法同时注册/发送。当前只保存静态证据。
+
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
 - 状态：已确认；Lua string长度与C string调用链的确定性推导。本阶段不新增NUL endpoint连接复现。
@@ -4181,6 +4192,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：cluster封板复核确认master与raw-string分支均固定明文TCP，协议/配置无节点认证、机密性、完整性或重放保护且文档未限定受信网络；归档为共同问题`CLUSTER-016`，未建立peer或发送frame。
 - 2026-08-13：补强`CLUSTER-005`：允许的`psize > INT_MAX`即会从uint32窄化为负`packet.size`并以巨大external-string长度pop；`UINT32_MAX`的allocation/total回绕只是更晚边界，不重复计数。
 - 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
+- 2026-08-13：确认master公开marshal可返回任意Lua integer command，但native request无范围检查直接窄化为uint32，低32位相同的命令会在远端静默碰撞；归档为`CLUSTER-017`，raw-string分支因删除cmd不适用。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

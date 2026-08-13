@@ -56,8 +56,9 @@ test/testcluster.lua
 | CLUSTER-014 | 仍存在 | `serve`不验证timeout；call先send再由`time.after`拒绝超范围/非整数值，可形成远端已执行、本地抛错。 |
 | CLUSTER-015 | 仍存在 | 同批次先入ring的合法frame在后续解析错误时不回滚；Lua关闭后不process，`c.clear`又只清half frame，形成跨连接滞留。 |
 | CLUSTER-016 | 仍存在 | 分支仍固定明文TCP，raw-string wire无TLS、节点认证、MAC或防重放；任意可达主机可调用handler，链路方可读写payload。 |
+| CLUSTER-017 | 不适用 | 该问题属于master的32-bit `cmd`字段；raw-string改造已删除marshal/cmd及对应wire字段，不存在command窄化路径。 |
 
-矩阵结论：16项共同问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余13项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
+矩阵结论：17项master问题中，16项在分支仍有对应路径；其中1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余13项仍存在；`CLUSTER-017`因cmd字段删除而不适用。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
 
 ## 4. 分支独有问题
 
@@ -139,3 +140,4 @@ test/testcluster.lua
 - 2026-08-12：确认新增late-response用例不观察task异常，旧nil-wakeup路径被框架日志隔离后测试仍可假绿，记录为`CLUSTER-B004`。
 - 2026-08-12：只读确认远端`cluster`仍指向`0f2c8773`；核对落后的3个master提交与第三轮排除项后收口，当前静态范围无未归档候选。
 - 2026-08-13：1.0封板复核确认master与分支都没有TLS、节点认证、消息完整性或防重放，新增共同问题`CLUSTER-016`；未建立peer或发送frame。
+- 2026-08-13：master的marshal command无范围检查并窄化为uint32，新增`CLUSTER-017`；raw-string分支已删除cmd字段，矩阵标记不适用。

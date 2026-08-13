@@ -197,6 +197,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-014 | P2 | RPC timeout直到request发出后才验证，非法配置会造成远端已执行而本地抛错及重试歧义。 |
 | CLUSTER-015 | P1 | 同批次合法frame后的解析错误会把已完成frame留在全局ring，跨错误连接累积并可能迟延分发ACK。 |
 | CLUSTER-016 | P1 | master与raw-string分支均固定明文TCP且无节点认证/消息完整性，可达主机即可调用RPC或篡改重放。 |
+| CLUSTER-017 | P2 | master允许任意Lua integer命令ID并静默窄化为uint32，低32位相同的不同命令会在远端碰撞错投。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | ADDR-002 | P2 | `addr.parse("[::1]")`等无端口bracket输入构造`se+1`指针并比较，公开正常路径触发C未定义行为。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
