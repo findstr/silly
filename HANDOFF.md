@@ -286,6 +286,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-022 | P2 | WebSocket完整聊天室把远端昵称写入`innerHTML`，20字节限制仍可形成存储型跨用户XSS。 |
 | DOC-023 | P2 | WebSocket教程把浏览器可选Ping当作自动心跳，server无主动探测/Pong deadline，silent连接可长期残留。 |
 | DOC-024 | P2 | WebSocket完整server不验证JSON schema；合法primitive/错型字段可抛异常并跳过clients registry清理。 |
+| DOC-025 | P3 | WebSocket双语入门示例记录wrapper不存在的`sock.fd`，断线连接标识恒为nil。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |

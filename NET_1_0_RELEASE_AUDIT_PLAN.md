@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共275项（P1 100、P2 152、P3 23）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket专项新增`DOC-018`至`DOC-024`，覆盖教程无效资源防护、reference返回契约、无效channel方法、浏览器XSS、虚假心跳和JSON schema/cleanup，其余矩阵继续收口。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共276项（P1 100、P2 152、P3 24）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket专项新增`DOC-018`至`DOC-025`，覆盖教程无效资源防护、reference返回契约、无效channel方法、浏览器XSS、虚假心跳、JSON schema/cleanup及示例字段漂移，其余矩阵继续收口。
 
 ## 1. 目标和边界
 

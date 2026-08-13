@@ -2194,6 +2194,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：decode后同时检查`err`、顶层type及每种message的严格field schema/长度，再进入业务分支；所有拼接/格式化前约束string/number。用幂等`remove_client`和保护性finally/`<close>` owner保证任何decode、handler或send异常都清registry、socket和计数。文档只宣称实际存在的错误处理。
 - 回归测试：修复阶段覆盖全部JSON primitive、array、null、缺type、type为table/number、每个字段错型及decoder error；断言返回受控error或关闭策略、handler不抛、registry/count恢复基线且leave只通知一次。再注入branch内部异常验证finally。本轮不执行输入。
 
+### DOC-025 — P3 — WebSocket 双语入门示例记录不存在的 `sock.fd`，断线诊断恒为 nil
+
+- 状态：已确认；双语教程代码、WebSocket socket公开字段与底层transport字段逐项静态对照。本轮不运行教程或建立连接。
+- 位置：错误日志位于`docs/src/{en/,}tutorials/websocket-chat.md:94-99`；WebSocket socket构造与LuaLS字段在`lualib/silly/net/websocket.lua:123-134,261-277`，底层fd实际属于其package-private `conn`。
+- 触发：用户复制第一个echo server；任意`read()`错误使代码执行`print("客户端断开:", sock.fd, typ)`。
+- 影响：WebSocket socket从未定义或转发`fd`，Lua读取缺失字段只得到nil，因此每次断线日志都丢失其声称要输出的连接标识。并发连接发生EOF、reset或协议错误时，运维者无法把日志关联到具体连接；示例还会让调用者误以为`fd`是稳定的公开API，并在业务代码中依赖它。
+- 证据：`newsocket`只设置`conn/stream/rmask/wmask/stashtype/stashbuf`，方法表也没有`fd` getter；唯一fd位于`sock.conn.fd`，但`conn`被标为package字段且close后被置nil，不适合作为公开身份契约。中英文教程在同一行复制了该访问，现有`testwebsocket.lua`没有执行教程代码或断言日志字段。
+- 根因：教程沿用了TCP socket的直接字段习惯，没有按WebSocket wrapper的实际公开面更新，也没有经过unknown-field文档检查。
+- 建议解法：不要暴露或打印裸OS fd作为应用身份；示例在accept/upgrade后生成并保存稳定的`client_id`或记录`stream.remoteaddr`，断线时输出该值。若产品确实需要连接标识，应设计明确、只读且close后仍稳定的公开字段，并同步LuaLS/reference，而不是让教程穿透`conn`。
+- 回归测试：修复阶段提取最小教程代码做LuaLS unknown-field检查，并以stub socket触发read错误，断言日志包含显式client id/remote address且不访问package字段；双语代码块保持结构一致。本轮不执行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3428,7 +3439,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为275项：P0为0，P1为100，P2为152，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 24。
+当前滚动统计为276项：P0为0，P1为100，P2为152，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3515,6 +3526,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认WebSocket完整聊天室把远端昵称原样拼入浏览器`innerHTML`，20字节server限制仍允许可执行SVG payload并形成跨用户XSS；归档为`DOC-022`。
 - 2026-08-13：依据WHATWG确认browser Ping是不可依赖的user-agent可选行为；教程只被动回Pong却宣称自动心跳，没有主动探测或失联deadline，归档为`DOC-023`。
 - 2026-08-13：确认WebSocket完整server把JSON语法成功等同schema成功，合法primitive/错型字段可抛异常并跳过clients registry清理，重复连接累积幽灵对象；归档为`DOC-024`。
+- 2026-08-13：确认WebSocket双语入门示例读取wrapper不存在的`sock.fd`，所有断线日志都丢失连接标识并误导公开API；归档为`DOC-025`。
 - 2026-08-13：补强`WS-003`：127-length最高位置1经Lua `>I8`转为负integer；TCP按空payload成功导致wire重新分帧，TLS进入`TLS-009`挂起。不重复计数。
 - 2026-08-13：补强`WS-001`：缺失Upgrade/Connection的H2 GET也可通过handshake，生成H2禁止的101并返回`conn=nil` socket，常规使用异常后叠加`H2-027`泄漏；严格补齐必需H1字段即可阻断，故不另立WS编号。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
