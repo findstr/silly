@@ -2423,6 +2423,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有示例显式`local time=require "silly.time"`并改用`time.sleep(ms)`；更好的watch-ready示例应等待created/业务同步信号而非固定sleep。CI抽取全部`lua validate`块，在最小runtime或LuaLS环境检查require、成员存在性与作用域，并确保异常路径用to-be-closed/finally清理client/watch/lease。
 - 回归检查：修复阶段静态断言两份文档不再出现`silly.sleep`，逐块检查正确导入；doc-test至少执行不依赖外部etcd的前置路径，外部集成块用stub确认会走到首个client调用且cleanup注册成功。当前不运行示例。
 
+### DOC-038 — P3 — cluster 双语 reference 把默认 listen backlog 写成 128，实际为 256
+
+- 状态：已确认；master、raw-string分支、共同底层listener与双语reference静态对照。本轮不创建listener或制造连接突发。
+- 位置：master的`cluster.listen`直接转发可选backlog，见`lualib/silly/net/cluster.lua:235-248`；raw-string分支对应代码为`:191-205`，同样直接转发。两版最终都进入`lualib/silly/net.lua:52-82`，其中nil明确替换为256；master中英文reference却在`docs/src/{en/,}reference/net/cluster.md:180-192`声明默认128，raw-string分支对应`:98-110`也保留同一数值。
+- 触发：应用省略`cluster.listen(addr, backlog)`第二参数，并按官方文档用128估算listen queue、突发连接丢弃、内核参数或前置代理容量。
+- 影响：实际向native listener传入256，容量与资源保护模型相差一倍。以128为上限设计的过载保护可能容纳更多尚未accept的连接和相关内核资源；按128观测丢连接或规划压测阈值也会得出错误结论。该偏差不改变wire协议，严重度定为P3，但属于1.0公开配置契约。
+- 证据：通用`listen_wrap`只有在backlog为nil/false时赋值256，cluster wrapper没有自己的默认值；文档的128在代码树中没有对应cluster常量或转换。master与分支在这一调用链上行为一致，因此不是分支迁移差异。
+- 根因：cluster reference单独手写了常见的128默认值，没有从实际共享listener默认值或公开schema生成；底层默认修改后缺少跨层文档一致性检查。
+- 建议解法：以1.0选定的真实契约为准统一实现、inline LuaLS和双语reference；若保留256，文档明确默认来自通用TCP listener。把共享listen option/default集中为一个可导出的schema，并在文档测试中断言各wrapper的nil与显式backlog传递结果。
+- 回归检查：修复阶段用stub listener捕获cluster在省略、128、256及边界值时传入的backlog，断言中英文reference默认值与nil路径一致；master/raw-string分支同步校验。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4169,6 +4180,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成etcd封板审计：624行wrapper、KV/Lease/Watch生成descriptor、`testetcd.lua`17组/919行、692行fake server、真实etcd 15组/764行及双语reference 1554/1564行均已映射；新增`ETCD-017`、`DOC-035/036/037`并反查`GRPC-039`，其余疑点归入既有17项etcd根因或静态排除，未运行服务、断链或并发barrier。
 - 2026-08-13：cluster封板复核确认master与raw-string分支均固定明文TCP，协议/配置无节点认证、机密性、完整性或重放保护且文档未限定受信网络；归档为共同问题`CLUSTER-016`，未建立peer或发送frame。
 - 2026-08-13：补强`CLUSTER-005`：允许的`psize > INT_MAX`即会从uint32窄化为负`packet.size`并以巨大external-string长度pop；`UINT32_MAX`的allocation/total回绕只是更晚边界，不重复计数。
+- 2026-08-13：确认cluster中英文reference把默认listen backlog写成128，而master与raw-string分支都把nil透传给共享listener并实际使用256；归档为`DOC-038`，未创建listener。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
