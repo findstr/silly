@@ -1453,6 +1453,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：支持明确且默认fail-closed的TLS配置/`rediss` endpoint，至少提供required、CA trust、hostname/SAN验证和可选client cert/key；复用修复后的TLS层并在发送AUTH前完成验证，绝不静默降级明文。若保留plaintext，要求显式选择并在文档突出credential/data不保密；连接generation必须携带相同安全策略。
 - 回归测试：修复阶段覆盖受信TLS、错误CA/hostname、mTLS、TLS-only server、握手失败及明确plaintext opt-in；断言认证只在验证成功后发送、失败连接不发布/复用、日志不含password。当前不建立TLS连接或发送credential。
 
+### REDIS-010 — P2 — RESP aggregate 丢失嵌套 error 的类型与位置，事务结果无法可靠归因
+
+- 状态：已确认；RESP error作为first-class value、array decoder与pipeline/transaction返回模型的确定性静态核对。本轮不执行MULTI/EXEC或构造nested error。
+- 规范：[Redis RESP protocol](https://redis.io/docs/latest/develop/reference/protocol-spec/)允许aggregate内嵌error reply，典型场景是`EXEC`返回每条事务命令各自的结果或错误。client必须保留每个元素的type和位置；一个error元素不把array本身变成top-level error，也不能与内容相同的simple/bulk string合并成不可区分的Lua值。
+- 位置：simple/error handlers在`lualib/silly/store/redis.lua:33-43`；array递归和aggregate success折叠在`:55-82`；动态command/pipeline返回在`:266-300,310-348`。
+- 触发：`EXEC`、module command或其他array response中同时包含成功字符串、bulk string与一个或多个`-ERR ...`元素；特别是正常bulk string内容恰与error文本相同。nested array重复该问题。
+- 影响：decoder把error与普通字符串都存成同一种Lua string，只用`cmd_success = cmd_success and success`把整个aggregate压成单个false。调用方知道“某处失败”却无法定位哪一项、无法区分失败元素与同文正常数据，也会把本身合法返回的EXEC array标成top-level command失败。事务结果无法按命令序号可靠提交、补偿或审计；nested aggregate的信息损失会继续向上传播。
+- 证据：`'-'` handler返回`true,false,res`，`'+'/'$'`返回相同Lua string类型和`success=true`；array loop只保存`cmd_res[i]=data`，丢弃每个元素的success bit，最后返回所有元素AND。不存在error sentinel/typed reply或并行status数组。pipeline只在顶层为每个command保存success；若该command结果本身是array，元素级状态已永久丢失。18组Redis测试只覆盖top-level`-ERR`和pipeline中一个top-level错误，没有EXEC/nested errors。
+- 根因：三返回值parser把type压成“连接可继续/整体success/data”，这一模型只适合top-level reply；递归进入aggregate后没有保留child reply的类型标签。
+- 建议解法：parser内部使用typed RESP value（至少区分simple、error、integer、bulk、null、array），aggregate保存dense child values；公开层仅对top-level error映射`ok=false`，array本身保持成功，child error以稳定`redis.error`对象/标签保留code/message/index。pipeline返回每个top-level typed result，和`REDIS-006`的null sentinel统一设计并提供兼容迁移。
+- 回归测试：修复阶段覆盖EXEC全成功、单/多错误、error位于首中尾、与error文本相同的simple/bulk string、nested array及null混合；断言array top-level成功、每个child类型/位置完整，pipeline仍按输入命令对齐。当前不发送事务。
+
 ### MYSQLC-001 — P1 — binary result row 未验证 NULL bitmap 长度即发生 C 越界读
 
 - 状态：已确认；C pointer与官方binary row布局静态推导。本阶段不生成截断MySQL packet。
@@ -3632,7 +3644,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为291项：P0为0，P1为105，P2为161，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为292项：P0为0，P1为105，P2为162，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3928,6 +3940,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`GRPC-027`：native encoder也对递归schema的深层/自引用Lua table做无界C递归；与decoder共享depth budget根因，不重复计数。
 - 2026-08-13：确认bundled protoc拒绝合法proto2 group语法，外部descriptor即便加载后native codec也对known group收发抛unknown type；归档为`GRPC-038`，未加载schema或构造wire。
 - 2026-08-13：完成gRPC封板审计：7个Lua模块、native protobuf收发/descriptor、四类RPC、9组测试、LuaLS及双语1758行reference全部映射；新增`GRPC-025`至`GRPC-038`与`DOC-026`，health/reflection/keepalive/automatic retry因无公开承诺列为可选能力而非缺陷，阶段无未归档候选。
+- 2026-08-13：确认RESP aggregate把嵌套error降为普通string并只保留整组AND状态，EXEC/nested结果无法定位错误或区分同文正常值；归档为`REDIS-010`，未执行事务。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

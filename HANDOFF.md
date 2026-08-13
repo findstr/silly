@@ -220,6 +220,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | REDIS-007 | P2 | SUBSCRIBE后无push reader/subscription state，异步message会与后续命令response错配并无API交付。 |
 | REDIS-008 | P1 | 共享连接不隔离MULTI/WATCH会话，其他协程命令可被并入错误事务并改变EXEC结果。 |
 | REDIS-009 | P1 | client固定明文TCP，AUTH credential及全部数据无法用TLS保护，也不能连接TLS-only Redis。 |
+| REDIS-010 | P2 | RESP aggregate丢失嵌套error的type与位置，EXEC结果无法按命令可靠归因。 |
 | MYSQLC-001 | P1 | binary result row未验证NULL bitmap长度即直接索引，截断packet可造成C越界读。 |
 | MYSQLC-002 | P2 | BIGINT UNSIGNED高半区经signed lua_Integer返回为负值，合法数据发生静默wrap。 |
 | MYSQLC-003 | P2 | DATE/TIMESTAMP/TIME非法length可返回硬编码时间、跨列消费或留下字节，整行错位。 |
@@ -423,7 +424,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为291条：P1 105、P2 161、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
+当前统计为292条：P1 105、P2 162、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

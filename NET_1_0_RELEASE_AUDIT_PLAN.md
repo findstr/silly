@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket与gRPC阶段已收口；共291项（P1 105、P2 161、P3 25）。gRPC完成7个Lua模块、native protobuf codec/descriptor、四类RPC生命周期、9组测试、LuaLS及双语1758行reference复核，新增`GRPC-025`至`GRPC-038`与`DOC-026`；当前进入Redis/MySQL/etcd专项。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket与gRPC阶段已收口；共292项（P1 105、P2 162、P3 25）。当前审计Redis/MySQL/etcd，Redis新增`REDIS-010`并继续RESP/并发/文档收口。
 
 ## 1. 目标和边界
 
