@@ -3785,6 +3785,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：若保留proto2支持，在protoc实现group grammar/descriptor nested type，并在native codec用匹配field number的SGROUP/EGROUP递归收发、执行depth/required/merge规则；错误end tag必须拒绝。若1.0决定不支持group，应在schema load阶段返回明确unsupported feature、文档声明proto3-only/受限proto2，不能让外部descriptor直到RPC时才抛generic unknown type。
 - 回归测试：修复阶段覆盖optional/repeated group、nested group、unknown group skip、错误/missing/mismatched EGROUP、required子字段和跨官方runtime收发；四类RPC验证合法group或明确的注册期拒绝，均不得在调用中抛裸异常/泄漏。当前不加载schema。
 
+### GRPC-039 — P2 — protobuf 默认把高位 `uint64` 解码成负 Lua integer，合法标识值语义翻转
+
+- 状态：已确认；protobuf scalar域、native decode转换、全局默认option与etcd直接字段静态核对。本轮不构造高位varint或运行round-trip。
+- 规范：[Protocol Buffers scalar value types](https://protobuf.dev/programming-guides/editions/#scalar)定义`uint64/fixed64`的值域为0至2^64-1；宿主语言不能原生表达全域时必须使用无损替代表示或显式错误，不能把合法无符号值静默解释为负数。
+- 位置：`lpb_State`零初始化使默认`int64_mode=LPB_NUMBER`在`luaclib-src/pb.c:195-211`；uint64/fixed64读取在`:486-529`，统一交给接收`int64_t n`的`lpb_pushinteger`在`:362-381`；可选string模式在`:2069-2087`但gRPC/etcd从未设置。etcd `ResponseHeader.cluster_id/member_id/raft_term`的wire类型在`lualib/silly/store/etcd/v3/proto.lua:1964-1979`。
+- 触发：独立peer发送`uint64`或`fixed64`字段值`2^63..2^64-1`；etcd返回高位cluster/member ID或raft term即直接命中，同样适用于任意用户gRPC schema中的无符号64位ID、counter或bitmask。
+- 影响：合法值按常见二补数转换为负Lua integer，例如`18446744073709551615`变成`-1`；日志、排序、集合key、权限bitmask、游标和跨服务转发全部得到错误业务语义。重新编码可能偶然保留底层bit pattern，但数值比较与JSON/数据库等下游早已损坏；不同编译器对超范围unsigned-to-signed转换还可表现不同，形成平台差异。
+- 证据：`pb_readvarint64/fixed64`得到完整`uint64_t v.u64`，宏却调用参数类型为`int64_t`的`lpb_pushinteger(...,u=1,mode=0)`；mode 0在Lua 5.4直接`lua_pushinteger((lua_Integer)n)`，没有`UINT64_MAX`范围检查或string fallback。只有显式全局`int64_as_string/hexstring`时，`u&&n<0`分支才把bit pattern格式化为无损字符串；仓库没有任何`pb.option`调用，现有gRPC/etcd测试只使用小整数1。
+- 根因：codec用单一signed C/Lua参数承载signed与unsigned 64位域，并把表示策略设为进程全局可变option；默认策略优先便利的小整数而没有为不可表示值定义稳定API。
+- 建议解法：decode在`u=true && raw>Lua_MAXINTEGER`时返回明确的无损uint64表示（严格十进制字符串或typed userdata/table），小值可保留integer；对应encoder接受并验证同一表示，保证round-trip。gRPC service/client应固定或隔离codec policy，LuaLS为uint64声明联合/专用类型，不能依赖其他模块修改全局`pb.option`。
+- 回归测试：修复阶段对uint64/fixed64覆盖`2^63-1/2^63/2^64-1`，对int64/sfixed64覆盖两端边界；默认与显式string/hex策略均断言语义无损、encode→decode等值。用etcd header及普通unary/streaming字段验证高位值不变负，并跨GCC/Clang/MSVC检查表示一致。当前不构造wire。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3814,7 +3826,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为307项：P0为0，P1为109，P2为165，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
+当前滚动统计为308项：P0为0，P1为109，P2为166，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
 
 建议按依赖关系分五批修复：
 
@@ -4142,6 +4154,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认etcd `DeleteRangeResponse.deleted`实际为int64数量，但wrapper LuaLS及中英文reference均标成boolean；Lua中0为truthy会让照文档判断的调用方误报删除成功，归档为`DOC-035`，未发送删除请求。
 - 2026-08-13：确认etcd `Event.type`的生成LuaLS标成integer，但默认protobuf codec、真实集成断言和双语示例均交付/使用`PUT`、`DELETE`字符串；归档为`DOC-036`，未解码event。
 - 2026-08-13：确认etcd中英文reference各16处`lua validate`示例调用顶层并不存在的`silly.sleep`，watch/lease/关闭等流程会在首次等待处异常；归档为`DOC-037`，未运行文档示例。
+- 2026-08-13：etcd字段矩阵反查确认protobuf默认把`2^63..2^64-1`的合法uint64/fixed64经signed参数解码成负Lua integer，直接影响cluster/member ID等；归档为`GRPC-039`，未构造高位varint。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC、Redis与MySQL阶段已收口；共307项（P1 109、P2 165、P3 33）。etcd复核新增`ETCD-017`与`DOC-035/036/037`，确认watch ownership、返回类型及双语示例API偏差；当前继续核对watch/lease generation、proto字段与测试盲区。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、Redis与MySQL阶段已收口；共308项（P1 109、P2 166、P3 33）。etcd复核新增`ETCD-017`、`DOC-035/036/037`并反查出通用`GRPC-039`高位uint64解码偏差；当前继续核对watch/lease generation、proto字段与测试盲区。
 
 ## 1. 目标和边界
 
