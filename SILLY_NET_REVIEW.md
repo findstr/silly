@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档343项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档344项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2808,6 +2808,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：backend只监听回环/受限Unix socket或受防火墙保护的私网地址；应用仅当`remoteaddr`命中显式trusted-proxy CIDR时读取转发信息，否则忽略全部forwarding headers。让入口代理覆盖而不是盲目继承客户端身份，按已知trusted-hop数量从右向左解析和规范化XFF/RFC Forwarded，拒绝重复/非法/超长链；日志同时保留socket peer与派生client IP。
 - 回归检查：修复阶段覆盖直接连接伪造header、可信单代理、不可信代理、两级代理、客户端预置XFF、重复字段、IPv4/IPv6和非法/超长链；断言只有可信hop可改变派生IP且审计保留原始peer。部署文档检查backend监听/防火墙前提与应用算法不可拆分。当前不建立代理链。
 
+### DOC-057 — P2 — logging 指南把 `logger.*f` 当标准 printf，正常请求因 `%d`/`%.3f` 直接抛错
+
+- 状态：已确认；双语logging指南、native formatter和异常wrapper控制流的确定性静态核对。本轮不运行日志或HTTP示例。
+- 位置：`docs/src/{en/,}guides/logging-monitoring.md:109-128`明确称“使用string.format格式”，示例使用`%d`、`%.2f`；该页“完整监控示例”又在每个请求末尾调用`logger.infof("%s %s %d %.3fs",...)`，见`:368-450`。native `llogf`只接受`%s`与`%%`，遇其他转换符立即`luaL_error`，见`luaclib-src/llogger.c:190-231`；双语logger reference也正确写明只支持`%s`并把`%d/%f`列为不支持，见`docs/src/{en/,}reference/logger.md:111-156,296-312`。
+- 触发：复制前三个格式化示例中的任一个；或启动完整监控server并完成任意`/metrics`、`/api/users`、404请求。后者在response和metrics已写入后必然执行含`%d`的access log。
+- 影响：基础示例同步报`invalid option '%d'... only support '%s'`；完整server的每个正常请求都会在收尾日志处抛错。外层`silly.pcall`捕获后无条件再发送500，导致已发送200/404响应后的二次response、异常日志或连接/stream协议错误；客户端可能已见成功而服务端记录失败。运维照指南添加日志即可破坏正常请求路径，且日志/监控自身成为高频异常源。
+- 证据：C循环看到`%`后只特判第二个`%`，否则要求下一个字符精确为`s`；因此`%d`在`d`处报错，`%.3f`更早在`.`处报错，不存在Lua层改写。`logger.lua`只按level切换native函数/nop，没有转调`string.format`。`silly.pcall`是`xpcall`，只捕获异常，不会撤销已写response，随后示例确实调用第二组`respond/closewrite`。
+- 根因：指南按函数名的`f`臆测为Lua `string.format`完整语法，未与项目特制的单占位符formatter契约对账；同一仓库reference虽已修正，却没有跨页面代码片段lint。
+- 建议解法：全部`logger.*f`格式串改用`%s`/`%%`，需要定点小数时先用受控`string.format`生成单个值，或直接使用非格式化logger的原生类型序列化。HTTP示例还应让logging异常不能在response提交后触发第二次response，并采用最外层终局收尾。建立文档lint，扫描`logger.(debug|info|warn|error)f`格式串并拒绝除`%s/%%`外的转换。
+- 回归检查：修复阶段抽取双语所有logger代码围栏，验证合法`%s/%%`正常、`%d/%f/%.*`零命中；完整HTTP示例覆盖200/404并断言只有一个response、无task异常。当前不执行这些片段。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4222,9 +4233,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为343项：P0为0，P1为112，P2为187，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 56。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为344项：P0为0，P1为112，P2为188，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 57。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；187项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；188项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 

@@ -312,7 +312,7 @@
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/en/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
 | `docs/src/en/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
-| `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
+| `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/en/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
 | `docs/src/en/reference/README.md` | 已审无新增 | 英文reference索引 | net/store/core链接集合 |
@@ -330,7 +330,7 @@
 | `docs/src/en/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/en/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/en/reference/logger.md` | 审阅中 | trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/en/reference/logger.md` | 审阅中 | DOC-057、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
@@ -377,7 +377,7 @@
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
 | `docs/src/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
-| `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
+| `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
 | `docs/src/reference/README.md` | 已审无新增 | 中文reference索引 | net/store/core链接集合 |
@@ -395,7 +395,7 @@
 | `docs/src/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/reference/logger.md` | 审阅中 | trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/reference/logger.md` | 审阅中 | DOC-057、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
