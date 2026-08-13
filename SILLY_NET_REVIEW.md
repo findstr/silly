@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档338项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档339项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2752,6 +2752,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：使用公开且IPv6-safe的endpoint parser返回host，或让HTTP stream直接暴露规范化peer IP/port；反向代理场景还必须只信任已配置trusted proxy并规范化X-Forwarded-For。清理器在callback末尾显式安全重排、服务close时cancel，或采用有界TTL/LRU/token-bucket store；生产示例说明单进程内存限流不能替代共享网关策略。
 - 回归检查：修复阶段覆盖IPv4、压缩/完整IPv6、不同地址同首hextet、同地址不同port、trusted/untrusted proxy以及大量过期key；断言身份无碰撞、配额独立、周期多次清理且table保持有界。当前不运行连接或timer测试。
 
+### DOC-053 — P3 — 双语 core reference 把 `silly.tostring` 写成单参数指针格式化，实际是二参数内存复制
+
+- 状态：已确认；双语reference、Lua公开映射、LuaLS与native stack读取的确定性静态核对。本轮不调用裸pointer API。
+- 位置：`docs/src/{en/,}reference/silly.md:61-66`把签名写成`silly.tostring(ptr)`并承诺返回pointer的hexadecimal string；`lualib/silly.lua:31-42`实际直接映射`c.tostring`，`luaclib-src/lsilly.c:33-40`读取pointer和必填第二参数size后调用`lua_pushlstring`复制该内存。`lualib/types/silly/c.lua:30-34`反而正确标出`ptr,size -> string`。
+- 触发：用户照core reference只传lightuserdata，或期望取得pointer地址文本；正常调用即触发，无需网络异常。若用户根据实现猜出第二参数，则得到内存内容而非文档声称的地址表示。
+- 影响：单参数调用在`luaL_checkinteger(L,2)`同步报错，公开API按官方reference不可用；误以为它只是格式化地址的代码可能意外复制敏感内存内容，且函数不会释放网络payload。net reference的逐包泄漏已由`DOC-046`覆盖，本条关注core API自身签名/语义完全相反，即使net示例改用`net.tostring`仍需修正。
+- 证据：native没有调用`%p`、`lua_pushfstring`或任何pointer-to-hex逻辑，唯一结果构造是`lua_pushlstring(L,buff,size)`；第二参数通过`luaL_checkinteger`强制存在。LuaLS与C一致，证明两份core reference不是另一重载或旧wrapper的有效描述。
+- 根因：文档把函数名`tostring`按普通pointer formatting臆测，未从native参数和ownership语义生成/校验；同名的`net.tostring`又负责copy-and-free，使两种不同所有权API更易混淆。
+- 建议解法：core reference改为`tostring(ptr,size)`并明确“复制size字节、不释放pointer、仅用于明确拥有生命周期的native buffer”；若没有安全公共用例，移出顶层public API或改成内部命名。网络payload文档统一使用会消费所有权的`net.tostring`，两者名称应体现copy与consume差异。
+- 回归检查：修复阶段对双语API围栏做签名lint，分别验证缺size明确失败、合法copy不free、`net.tostring` copy后恰好free一次；文档不得再出现“hex pointer representation”。当前不调用函数。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4166,7 +4177,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为338项：P0为0，P1为112，P2为183，P3为43。模块分布：CORE 11、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为339项：P0为0，P1为112，P2为183，P3为44。模块分布：CORE 11、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 53。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；183项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4535,4 +4546,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：逐文件台账反查trace generator，确认root只含16-bit秒与16-bit sequence；突发65,537次或稳定1次/秒约18.2小时都会复用ID，归档为`CORE-010`。
 - 2026-08-13：收口runtime metrics collector时反查socket stats，确认sent bytes在payload入队时计满，partial/失败/close未发送部分永不回滚且真正write不计成功量，归档为`METRIC-005`。
 - 2026-08-13：LuaLS/core反查确认公开`genid`只是启动归零的32-bit进程计数器，跨进程/重启立即复用且JWT指南用作唯一用户/JTI，归档为`CORE-011`。
+- 2026-08-13：core双语reference反查确认`tostring`被写成单参数pointer hex formatter，实际是需要size且不释放的内存复制，归档为`DOC-053`；net payload泄漏仍由`DOC-046`覆盖。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

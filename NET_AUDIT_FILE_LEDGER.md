@@ -128,7 +128,7 @@
 | 路径 | 状态 | 问题/证据 | 尚需动作或排除理由 |
 |---|---|---|---|
 | `lualib/protoc.lua` | 已审有归档 | DOC-045、GRPC-038 | gRPC/protobuf codegen、path与proto2 group能力 |
-| `lualib/silly.lua` | 已审有归档 | CORE-011、DOC-046 | core公开导出、genid、tostring、exit |
+| `lualib/silly.lua` | 已审有归档 | CORE-011、DOC-046/053 | core公开导出、genid、tostring、exit |
 | `lualib/silly/net.lua` | 已审有归档 | NET-001至004、DOC-046 | callback tables、payload ownership、dispatch/close |
 | `lualib/silly/net/cluster.lua` | 已审有归档 | CLUSTER-001至019 | master逐路径与cluster分支对照已收口 |
 | `lualib/silly/net/dns.lua` | 已审有归档 | DNS-001至018 | UDP/TCP/cache/singleflight/reconfigure/close |
@@ -192,7 +192,7 @@
 | `lualib/types/pb/pb.lua` | 已审有归档 | DOC-045、GRPC protobuf项 | encode/decode/option/iterator/slice/path API |
 | `lualib/types/silly/adt/buffer.lua` | 已审有归档 | NET-008、DOC-044 | buffer读写返回与size宽度 |
 | `lualib/types/silly/adt/queue.lua` | 已审无新增 | task/channel/cluster native queue | 空pop与所有权由调用方/cluster stub覆盖 |
-| `lualib/types/silly/c.lua` | 已审有归档 | CORE-011 | exit/tostring/error/version/genid公开签名与实现 |
+| `lualib/types/silly/c.lua` | 已审有归档 | CORE-011、DOC-053 | exit/tostring/error/version/genid公开签名与实现 |
 | `lualib/types/silly/compress/gzip.lua` | 已审有归档 | HTTPC-001、COMP-001 | output budget、flush/end/error与签名 |
 | `lualib/types/silly/crypto/cipher.lua` | 范围外 | caller-selected cipher API | 不参与内建TLS record实现 |
 | `lualib/types/silly/crypto/hash.lua` | 已审无新增 | WebSocket/MySQL hash调用 | 方法与native返回已核对 |
