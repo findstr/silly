@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档334项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档335项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -375,6 +375,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：native API返回顺序在实现/类型stub与历史Lua消费方之间没有单一结构化契约，位置式tuple在字段重排后无人同步，且没有以数值可区分的fixture检查每一列。
 - 建议解法：把native push顺序改成全部既有consumer使用的resident/active/allocated/retained，或同步修改两个consumer并以LuaLS当前allocated-first顺序作为契约；更稳妥的是返回具名table，避免同类型四元组静默错位。双语console/metrics文档需明确字段来源与单位。
 - 回归测试：修复阶段给四个mallctl key注入彼此不同的sentinel，分别核对native tuple、Prometheus四个sample、console四行和LuaLS契约；真实jemalloc构建再验证`active >= allocated`等合理不变量，但不把经验关系当唯一oracle。当前只做静态审阅。
+
+### METRIC-004 — P2 — registry 允许不同对象重复注册同名 metric，导出重复 family/sample 使 scrape 失败
+
+- 状态：已确认；registry identity规则、自动注册入口、gather输出与双语公开说明的确定性静态核对。本轮不注册重复metric或向Prometheus发送文本。
+- 协议契约：同一registry中的metric family名称必须唯一且type/help/label schema一致，同一name加同一label set只能出现一个sample；client library应在注册时拒绝冲突，不能生成重复HELP/TYPE或重复series再交给scraper猜测。
+- 位置：`lualib/silly/metrics/registry.lua:14-22`只比较`self[i] == obj`，不索引`obj.name`；`lualib/silly/metrics/prometheus.lua:12-30`的三个公开constructor每次创建新对象后直接注册。gather对每个对象都无条件写HELP、TYPE和sample在`:131-165`。双语registry reference明确承认不同对象同名不会被阻止并要求应用自行保证唯一，见`docs/src/{en/,}reference/metrics/registry.md:62-75,145-163,655-699`；Test 15只覆盖重复同一对象，见`test/testprometheus.lua:315-346`。
+- 触发：两个模块各调用`prometheus.counter("requests_total",...)`，应用热加载/重复初始化同一instrumentation，或自定义registry注册同名的counter/gauge/histogram对象；即使label values不同，重复family metadata也已出现，同label values时sample再重复。
+- 影响：导出文本包含第二组同名HELP/TYPE，若类型或help不同还自相矛盾；相同label set产生完全相同series两次。Prometheus解析/ingest会把该target抓取标记失败或丢弃重复series，导致包括内置network/process指标在内的整批监控缺口。API没有返回既有collector或冲突错误，调用方在启动时无法可靠发现，常在部署后才表现为target down。
+- 证据：register循环的唯一return条件是Lua对象引用相同；两个constructor调用必然得到不同table，所以都append。gather没有按name合并或冲突检测，而是逐collector输出metadata。文档示例直接展示两个`counter("test",...)`均进入结果，证明这不是只靠非常规custom collector才可达；自动注册层也没有额外保护。
+- 根因：registry把“防止同一对象重复append”误当成Prometheus family去重，没有建立name→descriptor索引，也没有验证type/help/labelnames/buckets的descriptor一致性。
+- 建议解法：注册时原子校验metric name唯一；同名且descriptor完全相同可选择返回既有collector，但不能静默注册第二对象，任何type/help/label schema冲突必须同步报错且不改变registry。custom collector若可生成多个family，也需在gather阶段验证全局descriptor和series唯一性，并保证错误不会污染下一次gather buffer。
+- 回归测试：修复阶段覆盖同一对象重复注册、不同对象同name同/异type、同/异help、label schema差异、histogram派生`_bucket/_sum/_count`名称冲突及热加载；断言冲突在注册时失败、registry不变、合法不同series只输出一组HELP/TYPE，并由独立Prometheus parser接受。当前不执行注册或抓取。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4118,9 +4130,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为334项：P0为0，P1为112，P2为179，P3为43。模块分布：CORE 9、METRIC 3、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为335项：P0为0，P1为112，P2为180，P3为43。模块分布：CORE 9、METRIC 4、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；179项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；180项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4483,4 +4495,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：继续复核HTTP限流示例，确认首冒号切分把bracketed IPv6截成首hextet、配额跨客户端串扰；所谓周期cleanup只执行一次且生产示例无删除，归档为`DOC-052`。
 - 2026-08-13：从HTTP监控示例继续反查Histogram wire，确认内部互斥bucket被直接导出且`+Inf`只写超最大桶样本；累计分布、总数不变量与双语契约均被破坏，归档为`METRIC-002`。
 - 2026-08-13：继续核对metrics native边界，确认C按allocated/active/resident/retained返回，但Prometheus collector与console均按resident/active/allocated/retained解包，归档为`METRIC-003`。
+- 2026-08-13：继续核对metrics registry，确认只按对象引用去重；公开自动注册可导出重复同名HELP/TYPE/sample并使scrape失败，归档为`METRIC-004`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
