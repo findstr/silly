@@ -157,6 +157,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | TLS-010 | P2 | ciphers只限制TLS1.2及以下，TLS1.3仍使用OpenSSL默认套件且混合配置静默假成功。 |
 | TLS-011 | P1 | plaintext buffer以signed int无检查扩容，累计远端数据可溢出并污染SSL_read写地址/长度。 |
 | TLS-012 | P2 | client在TCP发布后才编码ALPN/创建SSL，初始化异常发生在owner发布前并遗留不可达连接。 |
+| TLS-013 | P2 | certificate table长度由Lua integer窄化为int，伪造__len可破坏native flexible-array ctx布局。 |
 | DNS-001 | P2 | CNAME/SRV/SOA解析可跨越声明RDLENGTH借用后续字节，A/AAAA也接受非精确长度。 |
 | DNS-002 | P1 | DNS response三section被抹平且CLASS丢失，无关低trust记录可覆盖任意名字的既有cache。 |
 | DNS-003 | P1 | DNS新名字TXID恒从1递增且每server长期复用单一UDP source port，伪响应entropy显著不足。 |
@@ -367,7 +368,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为235条：P1 95、P2 128、P3 12。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 12、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8；以主报告中的编号和证据为准。
+当前统计为236条：P1 95、P2 129、P3 12。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 13、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

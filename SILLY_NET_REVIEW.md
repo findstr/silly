@@ -521,6 +521,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在TCP成功后立刻建立to-be-closed socket guard；先严格验证/编码ALPN与hostname，再以受保护调用构造SSL，只有全部成功才提交到conn pool并解除guard。native构造应返回`nil,errno/error`或保证userdata持有全部中间BIO并可幂等finalize；accepted路径也使用同一factory/rollback。公开API对配置错误统一同步返回或抛出，但无论选择哪种都必须关闭transport。
 - 回归测试：修复阶段覆盖ALPN非string、空/255/256字节、`__len`异常、SSL_new及两个BIO_new逐点失败，client和accepted方向均断言fd/slot/callback/SSL/BIO回到基线、端口可重用且错误形状稳定。当前只保存静态证据。
 
+### TLS-013 — P2 — certificate table 长度从 Lua integer 窄化为 int，伪造 `__len` 可破坏 native ctx 布局
+
+- 状态：已确认；Lua length metamethod、C整数转换、flexible-array allocation与accept使用路径静态推导。本轮不构造metatable输入或建立连接。
+- FFI契约：Lua动态值进入C allocation count前必须验证类型、非负范围与乘加不溢出；userdata flexible-array大小应以checked `size_t`计算，错误输入只能返回参数错误，不能产生零entry/错尺寸context。
+- 位置：Lua listener只检查`#certs>0`在`lualib/silly/net/tls.lua:326-365`；native `ncert=luaL_len`窄化、`new_ctx`的int乘加与后续entry循环在`luaclib-src/ltls.c:137-151,398-429`；accept/open无条件读取`ctx->entries[0].ptr`在`:459-495`。
+- 触发：传入带`__len` metamethod的certificate table，让长度返回大于`INT_MAX`的正Lua integer（例如在常见32-bit int ABI上为`2^32`或`INT_MAX+1`）。Lua的前置`#certs>0`按完整integer为真，listener先成功发布；C `luaL_len`再次得到该值并赋给int。
+- 影响：窄化是implementation-defined，常见结果可成为0或负数；`ctx_count*sizeof(entry)`及与offset相加还可能signed overflow。结果可能是异常巨大的allocation、过小userdata后循环越界写，或`entry_count==0`却成功返回ctx。最后一种在首个accept的`SSL_new(ctx->entries[0].ptr)`读取userdata边界外指针并可崩溃/破坏内存；此前listener已发布，配置调用看似成功。
+- 证据：`luaL_len`返回`lua_Integer`，源码未保存到同宽变量或检查`INT_MAX`；`new_ctx`参数、局部`size`和`entry_count`均为int，乘法也在signed int域完成。`new_ctx`按计算结果分配后直接相信count，且`lctx_server`对0 entry没有失败分支；`ltls_open`则无条件索引entry 0。Lua table的`__len`属于标准语言能力，不需要真实分配数十亿元素即可到达数值边界。
+- 根因：native代码把“数组长度来自普通dense table”的注解假设当成C内存安全验证，并用单一signed int同时表示Lua数量、allocation bytes与循环上界。
+- 建议解法：Lua入口先要求plain dense array或复制到受控candidate并限制合理certificate count；C层把`luaL_len`保存在`lua_Integer/size_t`，验证`1<=n<=MAX_CERTS`，用checked `size_t`乘加后再分配，最后才安全窄化循环count。`ltls_open`同时拒绝`entry_count<1`或空entry，任何错误发生在listener发布前或可靠rollback。
+- 回归测试：修复阶段覆盖普通0/1/MAX证书、MAX+1、`INT_MAX+1`、`2^32`、负/非整数/抛错`__len`及稀疏table；全部非法输入只返回错误，listener/fd/context不发布，ASan/UBSan无overflow/OOB。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2966,7 +2978,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为235项：P0为0，P1为95，P2为128，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 12、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为236项：P0为0，P1为95，P2为129，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 13、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -3010,6 +3022,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：按OpenSSL契约确认TLS `ciphers`只调用旧cipher-list API，TLS1.3 suites仍使用库默认；双语安全指南的混合列表会静默假成功；归档为`TLS-010`。
 - 2026-08-13：确认TLS plaintext buffer以signed int累计并做无检查加法/倍增，远端长期输入接近表示上限时可回绕并污染SSL_read写地址/长度；归档为`TLS-011`。
 - 2026-08-13：确认TLS client在TCP已注册后才编码ALPN/创建SSL，配置或native构造异常发生在conn owner发布前且无cleanup guard；归档为`TLS-012`。
+- 2026-08-13：确认TLS native将可由`__len`提供的Lua证书数量直接窄化为int并以int计算flexible-array大小，可形成零entry ctx或越界写；归档为`TLS-013`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
