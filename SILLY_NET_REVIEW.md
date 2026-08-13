@@ -1249,6 +1249,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client/server共享专用Content-Length parser：先规范化`HTTP1-002`的重复/list形式，再要求每项非空ASCII DIGIT、逐位checked accumulation、全部值相同，输出受实现/配置上限约束的integer；sender只接受validated integer或canonical decimal并重新格式化，任何错误在写start-line前失败且连接不复用。
 - 回归测试：修复阶段覆盖0、前导零、上限/上限加一、`+/-`、hex、指数、小数、内部/首尾空白、非ASCII digit及重复/list组合；client/server parser与request/response sender四向都必须对非法值零字节fail closed，合法值采用同一边界。当前只保存静态证据。
 
+### HTTP1-021 — P1 — sender 按 Lua key 大小写识别控制字段，可自行生成重复 Host 与 TE+CL
+
+- 状态：已确认；高层/streaming client、server response、shared writer与HTTP字段名case-insensitive语义静态核对。本轮不发送带混合大小写的字段。
+- 规范：HTTP field name不区分大小写；sender决定Host、Content-Length、Transfer-Encoding、Connection、Expect等控制语义时必须先统一名称，且不得生成TE+CL。参见[RFC 9110 §5.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.1)与[RFC 9112 §6.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.2)。
+- 位置：只有convenience路径lowercase header在`lualib/silly/net/http/client.lua:329-345`，streaming `M.request`直传在`:303-327`；H1控制字段查找/Host suppression在`lualib/silly/net/http/h1.lua:79-93,342-365,556-577`，server respond共享writer在`:758-798`。
+- 触发：公开`client:request`或server `stream:respond`使用合法常规拼写`Host`、`Content-Length`、`Transfer-Encoding`、`Connection`或`Expect`；例如POST header为`{["Content-Length"]="5"}`后写5字节body。文档说明接收后的map为小写，但没有在发送入口拒绝其他合法HTTP大小写。
+- 影响：`Host`不会被suppression识别，client先生成自己的`host:`再发调用方Host，形成重复/冲突authority。`Content-Length`不被framing选择识别：有data时库自动补小写`transfer-encoding: chunked`并发送原CL，形成TE+CL且body按chunked编码；无data时又补小写`content-length: 0`形成重复不同长度。Connection/Expect/TE也会在本地状态机中失效。严格peer、proxy与Silly本地writer据同一字段采用不同边界/连接语义，可导致request smuggling、response splitting、路由歧义和pool反同步；server response方向相同。
+- 证据：receiver会`lower(k)`，证明项目知道字段名case-insensitive；sender却仅以精确小写Lua key索引，并在`compose_header`只跳过`k=="host"`。高层get/post复制为小写掩盖问题，但公开streaming request和server respond没有复制/验证。字段名`Content-Length`本身完全符合H1 token grammar，因此`HTTP1-009`的非法octet校验不能修复；调用方也未显式同时提供TE，区别于`HTTP1-016`。
+- 根因：接收map规范化、高层client规范化与底层writer控制解析各自实现，底层把“调用方恰好使用小写”当成未经执行的前置条件。
+- 建议解法：所有sender入口在写任何start-line/header前复制并ASCII lowercase名称，合并或拒绝大小写折叠后的重复控制字段，再执行Host/CL/TE/Connection/Expect语义校验；H2使用同一规范化结果并拒绝connection-specific fields。若API坚持只收小写，也必须运行时在资源/字节发布前明确拒绝uppercase，不能按普通字段发送。
+- 回归测试：修复阶段对client streaming/convenience和server response分别覆盖每个控制字段的lower/title/upper及大小写重复组合；捕获wire断言恰好一个Host、永无TE+CL、framing/keepalive/Expect一致，并验证非法输入零字节失败。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3127,7 +3139,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为249项：P0为0，P1为98，P2为134，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
+当前滚动统计为250项：P0为0，P1为99，P2为134，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 21、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
 
 建议按依赖关系分五批修复：
 
@@ -3187,6 +3199,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1 sender/client/server均以Lua `tonumber`解释Content-Length，符号/hex/指数/小数等非法wire值可与严格peer形成消息边界分叉；归档为`HTTP1-020`。
 - 2026-08-13：确认HTTP redirect把301/302/303的所有method一律改GET，且删除body时残留Expect/TE等entity fields，破坏方法与下一跳消息语义；归档为`HTTPC-006`。
 - 2026-08-13：确认HTTP双语reference公开listen backlog，而http.lua明文/TLS adapter都未转发到底层，任何配置均静默落回默认；归档为`DOC-012`。
+- 2026-08-13：确认H1 sender只按精确小写Lua key识别Host/CL/TE等控制字段，常规Title-Case输入可被重复并由库自动形成TE+CL歧义wire；归档为`HTTP1-021`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
