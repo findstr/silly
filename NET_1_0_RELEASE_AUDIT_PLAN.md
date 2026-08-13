@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket 阶段已收口；共 215 项（P1 90、P2 116、P3 9）。本轮新增 `NET-003`、`SOCK-015` 至 `SOCK-019`，每项均已独立提交；正在进入 TCP/UDP/addr 阶段。
+当前滚动进度（2026-08-13）：底层 engine/socket 与 TCP/UDP/addr 阶段已收口；共 221 项（P1 92、P2 119、P3 10）。本轮新增 `NET-003` 至 `NET-006`、`SOCK-015` 至 `SOCK-019`、`ADDR-002`、`TLS-009` 与 `DOC-007`，每项均已独立提交；正在进入 DNS 阶段。
 
 ## 1. 目标和边界
 
@@ -57,11 +57,17 @@
 - `src/win/win.c`：已审有归档；本轮新增`SOCK-016`至`SOCK-019`。
 - `src/win/event_iocp.h`、`src/win/wepoll.h`、`src/win/wepoll.c`：已审无新增；完整检查handle tree、reflock、poll cancel/delete、事件映射和Silly wrapper，项目侧代际及控制API偏差已归入`SOCK-009/010/016/019`。
 - `luaclib-src/lnet.c`：已审有归档；本轮新增`NET-003`，既有裸pointer/address长度问题见`NET-002`、`SOCK-006/011`。
-- `luaclib-src/laddr.c`、`ldns.c`、`lhttp.c`、`ltls.c`、`lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
+- `luaclib-src/laddr.c`：已审有归档；新增`ADDR-002`，既有binary sockaddr边界另见`ADDR-001`、`SOCK-011`。
+- `luaclib-src/ltls.c`：已审有归档；逐项复核context/SSL/BIO/read/write/GC与Lua调用链，新增`TLS-009`，其余风险由`TLS-001`至`TLS-008`覆盖。
+- `luaclib-src/ldns.c`：审阅中；正在重做wire边界、name compression与Lua stack/ownership矩阵。
+- `luaclib-src/lhttp.c`、`lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
 
 ### 3.2 Lua transport 和协议层
 
-- `lualib/silly/net/tcp.lua`、`udp.lua`、`tls.lua`、`dns.lua`、`cluster.lua`：待审。
+- `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005/006`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重。
+- `lualib/silly/net/tls.lua`：已审有归档；transport交叉项见`NET-005/006`，本轮TLS独有新增`TLS-009`；TLS专门阶段仍会复核配置/握手与OpenSSL细节。
+- `lualib/silly/net/dns.lua`：审阅中。
+- `lualib/silly/net/cluster.lua`：待审。
 - `lualib/silly/net/http.lua`、`http/client.lua`、`http/h1.lua`、`http/h2.lua`、`http/url.lua`：待审。
 - 报告当前没有直接文件证据引用的 `http/dom.lua`、`http/statusname.lua`，以及引用很少的 `http/helper.lua`：优先补审。
 - `lualib/silly/net/websocket.lua`：待审。
@@ -70,7 +76,7 @@
 
 ### 3.3 测试、类型和文档
 
-- transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testssl.lua`、`testdns.lua`、`testaddr.lua`。
+- transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testssl.lua`随TLS专门阶段复核，`testdns.lua`审阅中。
 - HTTP/application protocols：`testhttp.lua`、`testhttp2.lua`、`testhpack.lua`、`testwebsocket.lua`、`testgrpc.lua` 和 `test/conformance/`。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
 - `lualib/types/silly/` 下对应公开面、`docs/src/reference/` 与 `docs/src/en/reference/`、相关 guide/tutorial/example：全部待做最终一致性核对。
