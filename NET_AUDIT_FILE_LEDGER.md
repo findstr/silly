@@ -46,7 +46,7 @@
 | `src/silly.h` | 已审有归档 | CORE、SOCK、METRIC多项ABI | public structs、counter宽度、API类型 |
 | `src/silly_conf.h` | 已审有归档 | CORE-004、SOCK-012 | worker/socket/timer默认配置 |
 | `src/sockaddr.h` | 已审有归档 | SOCK-011、ADDR-001/002 | binary sockaddr layout与长度 |
-| `src/socket.c` | 已审有归档 | SOCK-001至SOCK-019、NET-001 | slot generation、poll、send/recv、close、stats |
+| `src/socket.c` | 已审有归档 | SOCK-001至SOCK-019、NET-001、METRIC-005 | slot generation、poll、send/recv、close、stats |
 | `src/socket.h` | 已审有归档 | SOCK-006/011/019 | fd/sid/size API边界 |
 | `src/spinlock.h` | 已审无新增 | socket pool/wlist锁调用点 | memory order与critical section已映射 |
 | `src/timer.c` | 已审有归档 | CORE-006、CORE-009、NET-007 | wheel、session、wall/monotonic、shutdown |
@@ -157,7 +157,7 @@
 | `lualib/silly/metrics/collector.lua` | 已审无新增 | collector type alias | runtime仅返回type declaration |
 | `lualib/silly/metrics/collector/jemalloc.lua` | 已审有归档 | METRIC-003 | native tuple与gauge字段 |
 | `lualib/silly/metrics/collector/process.lua` | 已审有归档 | CORE-008 | CPU/RSS/heap collector与平台能力 |
-| `lualib/silly/metrics/collector/silly.lua` | 审阅中 | engine counter wrap/reset候选 | 需完成long-running counter与reset语义反查 |
+| `lualib/silly/metrics/collector/silly.lua` | 已审有归档 | METRIC-005 | engine counters、gauge与sent/received语义 |
 | `lualib/silly/metrics/counter.lua` | 审阅中 | METRIC-004调用链 | descriptor/value validation仍待收口 |
 | `lualib/silly/metrics/gauge.lua` | 审阅中 | METRIC-004调用链 | descriptor/value validation仍待收口 |
 | `lualib/silly/metrics/histogram.lua` | 已审有归档 | METRIC-002/004 | bucket storage与descriptor |

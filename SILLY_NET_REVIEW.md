@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档336项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档337项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -399,6 +399,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：registry把“防止同一对象重复append”误当成Prometheus family去重，没有建立name→descriptor索引，也没有验证type/help/labelnames/buckets的descriptor一致性。
 - 建议解法：注册时原子校验metric name唯一；同名且descriptor完全相同可选择返回既有collector，但不能静默注册第二对象，任何type/help/label schema冲突必须同步报错且不改变registry。custom collector若可生成多个family，也需在gather阶段验证全局descriptor和series唯一性，并保证错误不会污染下一次gather buffer。
 - 回归测试：修复阶段覆盖同一对象重复注册、不同对象同name同/异type、同/异help、label schema差异、histogram派生`_bucket/_sum/_count`名称冲突及热加载；断言冲突在注册时失败、registry不变、合法不同series只输出一组HELP/TYPE，并由独立Prometheus parser接受。当前不执行注册或抓取。
+
+### METRIC-005 — P2 — 内置 `network_sent_bytes` 在排队时计满 payload，失败与未发送字节仍永久算作已发送
+
+- 状态：已确认；socket enqueue、实际TCP/UDP write、close/error cleanup与内置collector/双语指标契约的确定性静态核对。本轮不建立连接、制造backpressure或发送datagram。
+- 公开契约：`silly_network_sent_bytes_total`的名称、HELP和双语文档都定义为“通过网络发送/已发送的总字节”；计数必须以OS成功接受的write字节为准，至少不能把随后因断线或永久发送错误而丢弃的完整payload记成已发送。
+- 位置：TCP payload在进入socket线程后、仅append待发链表前即把完整`sz`加到global/per-socket sent bytes，见`src/socket.c:1642-1660`；UDP同样在首次`sendudp`前计完整size，见`:1689-1726`。真正TCP `sendv`只按成功量减少`wlbytes`、不更新sent stat，在`:1118-1174`；UDP drain在成功/失败后都删除node，也不修正sent stat，在`:1211-1239`。Lua累计导出在`lualib/silly/metrics/collector/silly.lua:40-55,64-116`，双语契约在`docs/src/{en/,}guides/logging-monitoring.md:264-280`和`reference/metrics/prometheus.md:61-80`。
+- 触发：TCP write只完成部分后peer reset/timeout/close，连接仍在connecting时排队payload后失败，或UDP `sendudp`返回永久错误；正常backpressure期间，尚未写入kernel的全部queue也已立即体现在counter中。高层HTTP/gRPC/MySQL/Redis写都可走TCP路径。
+- 影响：counter稳定高估实际出站流量，失败越多、待发queue越大偏差越大；带宽计费、吞吐/SLO、压缩率、异常流量检测和sent/received对账都得到错误数据。peer可通过反复建连、诱导大response后立即reset放大虚假egress而不真正接收这些字节；counter单调且无失败回滚，后续抓取无法恢复真实值。
+- 证据：唯一两处global `netstat.sent_bytes`增量都在`op_tcp_send/op_udp_send`入队路径，grep不到成功`sendv/sendudp`分支的增量；TCP actual `total`仅用于`wlbytes`和node consumption，close/error会释放剩余wlist但不减stat。UDP首次永久失败也在已经计数后直接free并return。该项不同于`SOCK-001`：后者是失败datagram没有递减queue `wlbytes`，本条是全局/Prometheus已发送字节语义即使queue accounting修复仍错误。
+- 根因：实现把“应用提交给socket线程的字节”与“OS成功发送的字节”合并成一个字段，并在payload仍有完整长度的入队点计数，避免了partial-write统计却破坏公开指标语义。
+- 建议解法：在每次TCP `sendv`成功后按返回`total`增加global/per-socket sent bytes；UDP仅在返回完整datagram长度时增加，永久错误不计。若还需要submitted/queued/dropped字节，使用三个独立命名counter/gauge并分别定义；close时记录dropped bytes但不得回改单调sent counter。
+- 回归测试：修复阶段用确定性send wrapper覆盖full、partial→EAGAIN→success、partial→close、connect failure、UDP success/EAGAIN/permanent error；断言sent只累计成功OS字节、queued随排空归零、dropped单独计数，Prometheus多次gather保持单调且与wrapper成功总量一致。当前不执行I/O。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4142,9 +4154,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为336项：P0为0，P1为112，P2为181，P3为43。模块分布：CORE 10、METRIC 4、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为337项：P0为0，P1为112，P2为182，P3为43。模块分布：CORE 10、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；181项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；182项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4509,4 +4521,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：继续核对metrics native边界，确认C按allocated/active/resident/retained返回，但Prometheus collector与console均按resident/active/allocated/retained解包，归档为`METRIC-003`。
 - 2026-08-13：继续核对metrics registry，确认只按对象引用去重；公开自动注册可导出重复同名HELP/TYPE/sample并使scrape失败，归档为`METRIC-004`。
 - 2026-08-13：逐文件台账反查trace generator，确认root只含16-bit秒与16-bit sequence；突发65,537次或稳定1次/秒约18.2小时都会复用ID，归档为`CORE-010`。
+- 2026-08-13：收口runtime metrics collector时反查socket stats，确认sent bytes在payload入队时计满，partial/失败/close未发送部分永不回滚且真正write不计成功量，归档为`METRIC-005`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
