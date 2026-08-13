@@ -4953,6 +4953,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：echo-server性能围栏反查确认其把最后创建的client当成全部完成屏障，并以秒级os.time计算短测吞吐；可报告部分结果或除零为inf，归档为`DOC-077`。
 - 2026-08-13：沿echo write语义反查socket发送入口，确认TCP outbound queue没有soft/hard limit；live sid的每次write均无条件复制、增加wlbytes并入队，教程承诺的queue-full错误不存在，归档为`SOCK-020`。
 - 2026-08-13：echo idle timer调度反查确认data callback只把reader放入ready queue；其执行cancel前旧EXPIRE可同步运行并关闭已有activity的连接，归档为`DOC-078`，并发barrier留待修复阶段。
+- 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，映射到`SOCK-020`及`DOC-075`至`078`；randomkey只产小写字母，不构成delimiter候选。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
