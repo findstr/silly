@@ -1477,17 +1477,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用overflow-safe计算null_bytes，在保存slice前验证`null_bytes <= chk.len - chk.pos`；最好新增`binary_read_slice`统一返回受界限约束的pointer/length。拒绝非`0x00`row header，解析所有非null值后还应按协议决定是否要求完整消费packet；任何codec error使连接fatal。
 - 回归测试：修复阶段按column_count 1/6/7/8/9等bitmap边界截断每一个byte，并覆盖空values、全部null和尾随数据；在ASan/UBSan下断言只返回protocol error且无越界。当前不新增packet样本。
 
-### MYSQLC-002 — P2 — BIGINT UNSIGNED 经 signed lua_Integer 返回为负值
+### MYSQLC-002 — P2 — 无符号列与 OK 计数经 signed lua_Integer 返回为负值
 
 - 状态：已确认；C integer conversion与Lua数值范围静态核对。不需要网络复现。
-- 规范：MySQL binary protocol的`MYSQL_TYPE_LONGLONG`配合UNSIGNED flag表示完整64-bit unsigned范围；client不能把`2^63..2^64-1`静默解释为负的signed值，无法原生表示时应返回decimal string/typed value或显式范围错误。
-- 位置：`binary_read_uint64le`在`luaclib-src/mysql/binary.h:107-119`；unsigned LONGLONG dispatch在`luaclib-src/mysql/lmysql.c:343-383`；现有边界测试在`test/testmysql.lua:9-23,128-365`。
-- 触发：prepared SELECT返回值大于`9223372036854775807`的`BIGINT UNSIGNED`，包括常见id/bitmask/counter最大值。
-- 影响：值发生模2^64符号wrap，例如`18446744073709551615`返回`-1`；应用可能进行错误的排序、权限bit判断、游标/主键续查和账务计算，写回时又作为signed LONGLONG发送，造成不可逆数据错误。
-- 证据：reader构造`uint64_t`后以`lua_Integer`返回；parse_field在UNSIGNED分支直接`lua_pushinteger`。64-bit Lua integer只有signed范围，代码没有range check或alternate representation。测试中的`0xFFFFFFFFFFFFFFFF`在Lua同样解释为`-1`，未比较真实decimal语义。
+- 规范：MySQL binary protocol的`MYSQL_TYPE_LONGLONG`配合UNSIGNED flag表示完整64-bit unsigned范围；[MySQL OK_Packet](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html)中的`affected_rows`和`last_insert_id`也都是length-encoded integer。client不能把`2^63..2^64-1`静默解释为负的signed值，无法原生表示时应返回decimal string/typed value或显式范围错误。
+- 位置：`binary_read_uint64le`及lenenc在`luaclib-src/mysql/binary.h:107-124,160-195`；OK字段解码在`luaclib-src/mysql/lmysql.c:64-109`；unsigned LONGLONG dispatch在`:343-383`；现有边界测试在`test/testmysql.lua:9-49,128-365`。
+- 触发：prepared SELECT返回值大于`9223372036854775807`的`BIGINT UNSIGNED`，包括常见id/bitmask/counter最大值；或OK packet的affected row count/auto-increment id通过0xfe lenenc表达相同区间。代理、批量操作或未来server扩展可以送达完整协议域，即使普通单表DML很少达到该数量。
+- 影响：值发生模2^64符号wrap，例如`18446744073709551615`返回`-1`；应用可能进行错误的排序、权限bit判断、游标/主键续查和账务计算，写回时又作为signed LONGLONG发送，造成不可逆数据错误。OK字段变负还会绕过`affected_rows==0/1`等业务完整性判断，并把高位insert id作为负主键传播。
+- 证据：reader构造`uint64_t`后以`lua_Integer`返回；parse_field在UNSIGNED分支直接`lua_pushinteger`，OK parser也用相同signed `binary_read_lenenc`结果直接push两个字段。64-bit Lua integer只有signed范围，代码没有range check或alternate representation。测试中的`0xFFFFFFFFFFFFFFFF`在Lua同样解释为`-1`，OK fixtures只使用3和5，未比较真实decimal语义。
 - 根因：wire unsigned domain被强制映射到较窄的signed native domain，类型签名隐藏了不可表示区间。
 - 建议解法：若值<=LUA_MAXINTEGER可返回integer；否则默认返回精确decimal string或`mysql.uint64` typed userdata/table，并在文档稳定约定。提供显式lossy-number opt-in也必须标注；parameter side增加相同typed value编码能力。
-- 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`及round-trip parameter，分别验证signed与unsigned column；测试用decimal string/byte pattern建立期望，不能再用会wrap的Lua hex literal。
+- 回归测试：修复阶段覆盖`2^63-1/2^63/2^64-1`及round-trip parameter，分别验证signed/unsigned column与OK affected_rows/last_insert_id；测试用decimal string/byte pattern建立期望，不能再用会wrap的Lua hex literal。
 
 ### MYSQLC-003 — P2 — temporal length 未严格验证，可伪造时间并使后续列错位
 
@@ -4033,6 +4033,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：扩展`DOC-028`到全部MySQL文档调用面：六份双语文件共60行不存在的`silly.wait/sleep/time`，另有把signal函数当object及错误`INT`名称、standalone block缺task/time import；不重复计数。
 - 2026-08-13：确认MySQL双语监控在调用pool query前连续采集wait/query时间戳，所谓等待几乎恒为零，真实checkout排队全被误算成SQL执行；归档为`DOC-031`，未运行计时或并发barrier。
 - 2026-08-13：补强`MYSQL-012`：AuthSwitch的plugin data按规范是EOF opaque bytes，代码却无条件删除末byte；initial response多数capability也未取server交集，未知plugin名与native token可不一致；不重复计数。
+- 2026-08-13：补强`MYSQLC-002`：OK packet的affected_rows和last_insert_id同样是unsigned lenenc，超过Lua signed范围也会wrap为负，影响业务行数/主键判断；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
