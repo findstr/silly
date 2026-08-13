@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK与WebSocket阶段已收口；共291项（P1 105、P2 161、P3 25）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket完成RFC 6455双角色矩阵、H1/H2交界、双语文档及全部7组测试映射，新增`DOC-018`至`DOC-025`并与底层共享问题去重。gRPC审计中新增`GRPC-025`至`GRPC-038`与`DOC-026`。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket与gRPC阶段已收口；共291项（P1 105、P2 161、P3 25）。gRPC完成7个Lua模块、native protobuf codec/descriptor、四类RPC生命周期、9组测试、LuaLS及双语1758行reference复核，新增`GRPC-025`至`GRPC-038`与`DOC-026`；当前进入Redis/MySQL/etcd专项。
 
 ## 1. 目标和边界
 
@@ -61,6 +61,7 @@
 - `luaclib-src/ltls.c`：已审有归档；逐项复核context/SSL/BIO/read/write/GC、certificate/SNI、ALPN、session/early-data、error queue与Lua调用链；本轮新增`TLS-009`至`TLS-018`，既有风险由`TLS-001`至`TLS-008`覆盖。
 - `luaclib-src/ldns.c`：已审有归档；完成query/name compression、header/question、各RR/RDLENGTH、section/class、EDNS/RCODE、TTL/negative和Lua stack/offset矩阵，新增`DNS-009/010/013/014`，其余偏差由`DNS-001/002/003/008`覆盖。
 - `luaclib-src/lhttp.c`：已审有归档；HPACK static/dynamic table、Huffman、varint、Lua stack/整数/size转换及全部frame builder已逐函数核对，保留`HPACK-001/002`，本轮新增`HPACK-004`；Huffman tree预分配经静态节点计数恰为270，排除realloc悬空指针候选。
+- `luaclib-src/pb.c`、`pb.h`：已审有归档；完成descriptor label/oneof/map、全部scalar、encode/decode、unknown/packed/merge、递归/stack/size与gRPC finalizer交界，新增`GRPC-025/027-029/032-033/035-038`并补强map截断证据；通用pack/unpack非gRPC入口留到跨模块最终复核。
 - `luaclib-src/lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
 
 ### 3.2 Lua transport 和协议层
@@ -73,15 +74,15 @@
 - `lualib/silly/net/http/dom.lua`、`http/helper.lua`、`http/statusname.lua`：已审无新增；DOM异常受protected parse边界收敛，target/status helper的协议偏差已并入`HTTP1-008/010`，未另立重复条目。
 - `lualib/silly/net/http/h2.lua`：已审有归档；完成DATA/HEADERS/PRIORITY/RST/SETTINGS/PING/GOAWAY/WINDOW_UPDATE/CONTINUATION/PUSH_PROMISE按client/server与idle/open/half-closed/closed矩阵，新增`H2-035`至`H2-041`并补强padding flow-control到`H2-003`。未知RST code由元表稳定格式化、Huffman tree恰好不扩容等候选已排除。
 - `lualib/silly/net/websocket.lua`：已审有归档；opening handshake、frame parser/sender、fragment/control/close、并发、H1/H2交界与文档测试矩阵已完成。重复close与`__close`组合归入`WS-007`，WSS空payload挂起归入`TLS-009`，127-length最高位的TCP重分帧/TLS挂起归入`WS-003`；H2非法101/nil conn路径归入`WS-001`，未重复编号。
-- `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：待审；其中顶层 `grpc.lua` 当前没有直接文件证据引用，优先补审。
+- `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：已审有归档；四类RPC的headers/envelope/status/deadline/cancel/metadata/cardinality、conn round-robin/close、server dispatch/shutdown、timer/异常收尾及所有公开方法已映射到`GRPC-001`至`GRPC-038`，顶层装配与status常量无独立新增。
 - `lualib/silly/store/redis.lua`、`mysql.lua`、`etcd.lua`：待审。
 
 ### 3.3 测试、类型和文档
 
 - transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`已逐项映射，positive ALPN、reload、读写/关闭等覆盖与certificate verification、close_notify、握手deadline、TLS版本、invalid config和failure cleanup缺口均已落到TLS条目。
-- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`全部7组顶层场景及两组11项data vector已映射：均为同库正常互通，WSS只读非空data，空Close只走ws；缺少握手拒绝、畸形frame、WSS空控制帧、预算/deadline、关闭幂等和独立peer覆盖，相应实现问题均已归档。`testgrpc.lua`待审。
+- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`全部7组顶层场景及两组11项data vector已映射，相应缺口均已归档。`testgrpc.lua`全部9组已映射：只覆盖同库正常unary/三类stream、简单application error、已有连接unary timeout、10路并发、1MiB与单target DNS失败；缺少独立peer、malformed/status/header、TLS/ALPN、多target、metadata、shutdown、codec边界及异常后资源归零，均对应`GRPC-001`至`GRPC-038`。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
-- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket没有独立type文件，inline LuaLS及双语reference/tutorial已逐段核对，新增`DOC-018`至`DOC-025`。gRPC/storage/cluster类型、guide/example继续对应专项及最终一致性核对。
+- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；WebSocket无独立type文件，inline LuaLS及双语reference/tutorial已收口。gRPC无独立types文件，7个模块inline LuaLS、`lualib/types/pb/pb.lua`及中英文reference各1758行（64代码围栏、46标题）已核对，新增`DOC-026`并保留`DOC-004`；storage/cluster类型、guide/example继续对应专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
 
