@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-12（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：两轮全量纯静态审计、`cluster`分支三轮专项及第三轮重点模块查漏已收口，1.0发布封板逐文件审计进行中；当前确认master基线210项（P1 89、P2 112、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：两轮全量纯静态审计、`cluster`分支三轮专项及第三轮重点模块查漏已收口，1.0发布封板逐文件审计进行中；当前确认master基线211项（P1 89、P2 113、P3 9）及4项分支独有问题。按用户要求，未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -254,6 +254,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-012 | P1 | TCP/TLS默认buffer与UDP packet stash无资源上限，慢消费时远端输入可持续耗尽内存。 |
 | SOCK-013 | P2 | nonblocking设置失败只写日志，blocking fd仍进入poller并可能挂死唯一socket线程。 |
 | SOCK-014 | P2 | stale close在sid校验后可跨越free/reuse，把CLOSING状态写入新generation并抑制其事件。 |
+| SOCK-015 | P2 | 合法fd 0的异步TCP connect完成路径错误断言fd必须大于0，可终止进程。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -342,7 +343,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为210条：P1 89、P2 112、P3 9。模块分布为CORE 7、NET 3、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
+当前统计为211条：P1 89、P2 113、P3 9。模块分布为CORE 7、NET 3、SOCK 15、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

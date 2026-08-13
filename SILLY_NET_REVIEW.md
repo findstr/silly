@@ -1740,6 +1740,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：worker入口只验证/复制sid并排队，不直接修改slot state；由socket线程在成功验证sid后原子设置closing并决定幂等close。若API必须同步返回`EXCLOSING`，使用独立的generation-tagged command/pending表，或为slot实现覆盖sid+state的锁/seqlock事务，且回收后不允许旧引用再写。
 - 回归测试：修复阶段用小pool/barrier覆盖`pool_get → old free → state clear → sid invalid → new alloc → stale set_closing`各切点，并覆盖pending TCP connect、listen失败和重复close；断言new socket state为clean、其data/close事件正常交付、old close只返回确定错误。当前不创建或运行该复现。
 
+### SOCK-015 — P2 — 合法 fd 0 的异步 TCP connect 完成会触发进程断言
+
+- 状态：已确认；POSIX descriptor语义与connect completion调用链的确定性静态推导。本轮不关闭stdin或建立连接。
+- 平台语义：POSIX `socket()`返回任何当前最小可用的非负descriptor，0同样合法；只有负数表示失败。事件循环和连接状态机必须接受fd 0，不能把它当未初始化值。
+- 位置：TCP socket创建/pool发布在`src/socket.c:1415-1448`；异步connect、poll completion及SO_ERROR读取在`:881-913,1456-1493,1842-1873`；唯一错误断言是`:886`。其他创建路径已使用`fd >= 0`判断。
+- 触发：进程启动时descriptor 0未被stdin或其他资源占用，首个outbound TCP `socket()`返回0；nonblocking `connect()`返回EINPROGRESS，随后poller报告连接可写并进入`checkconnected→get_sock_error`。
+- 影响：`assert(s->fd > 0)`确定性失败并终止整个进程，而该fd和连接状态均合法。容器、supervisor、嵌入式启动器或应用主动关闭stdin后都可能出现；是否崩溃取决于connect同步完成还是EINPROGRESS，形成部署环境相关的启动/故障恢复不稳定。
+- 证据：创建路径只以`fd < 0`判失败并会把0写入socket slot；`op_tcp_connect`也明确断言`fd >= 0`，说明0属于已接受状态。只有稍后的`get_sock_error`收紧成`>0`，且该函数是EINPROGRESS事件的必经路径。代码没有在初始化时保留0或把socket重新映射到大于0的descriptor。
+- 根因：把传统stdio fd编号与socket有效性混淆；不同连接分支使用了不一致的descriptor不变量。
+- 建议解法：改为`assert(s->fd >= 0)`并审查所有platform wrapper只以各平台的invalid sentinel判错；不要依赖stdio始终打开。若某平台socket类型的invalid值不是-1，集中使用`SP_INVALID/INVALID_SOCKET` helper，避免通用整数比较。
+- 回归测试：修复阶段在独立子进程关闭fd 0后创建会EINPROGRESS的TCP连接，断言fd 0可以完成、读写、关闭并复用；同时覆盖同步成功、ECONNREFUSED、listener/UDP取得0和daemon stdio重定向。当前不改变进程descriptor。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -2667,7 +2679,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为210项：P0为0，P1为89，P2为112，P3为9。模块分布：CORE 7、NET 3、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为211项：P0为0，P1为89，P2为113，P3为9。模块分布：CORE 7、NET 3、SOCK 15、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2879,3 +2891,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
+- 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
