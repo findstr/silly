@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档333项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档334项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -364,6 +364,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：实现选择互斥bucket作为内部存储以降低observe成本，但导出时忘记输出running cumulative sum，并把“未进入有限bucket”的尾部计数误当成`+Inf` bucket，而不是把全部样本纳入无穷上界。
 - 建议解法：可保留互斥内部bucket，但gather时对有限bucket输出running cumulative sum，并令`+Inf`直接输出`v.count`；或者observe时更新所有匹配bucket并直接输出累计数组，两种设计只能选一种并统一文档/测试。额外验证bucket边界为有限严格递增值，防止重复/NaN边界破坏序列。
 - 回归测试：修复阶段用独立registry覆盖每个有限bucket、边界值、超最大值、空histogram、vector labels及多次gather；断言bucket单调非降、`+Inf == _count`、`_sum`正确，并把文本交给独立Prometheus parser及`histogram_quantile`查询。当前只记录静态推导。
+
+### METRIC-003 — P2 — jemalloc native 返回顺序与全部 Lua 消费方相反，resident/allocated 指标互换
+
+- 状态：已确认；native push顺序、Lua多返回赋值、Prometheus/console字段名与LuaLS契约的确定性静态核对。本轮不启用jemalloc或抓取进程指标。
+- 位置：`luaclib-src/lmetrics.c:52-67`从mallctl分别取得`allocated,active,resident,retained`并以这个顺序push；`lualib/silly/metrics/collector/jemalloc.lua:7-35`却赋给`resident,active,allocated,retained`，再写入同名gauge。`lualib/silly/console.lua:95-115`重复相同解包；`lualib/types/silly/metrics/c.lua:25-30`也把第一个返回标为allocated，但没有阻止两个Lua调用方按相反顺序使用。
+- 触发：使用默认启用jemalloc的构建并调用`prometheus.gather()`，或访问console info；无需异常状态，任意一次采样即触发。
+- 影响：`jemalloc_resident`实际报告allocated bytes，`jemalloc_allocated`实际报告resident bytes；通常resident显著大于allocated，故容量告警、碎片率、内存泄漏诊断和扩缩容判断全部引用错列。console与Prometheus同时错且数值彼此一致，使维护者更难从两条观测路径发现偏差。
+- 证据：C局部变量与四次mallctl key一一对应，随后push顺序明确为allocated、active、resident、retained；Lua多返回按位置赋值，两个consumer都把位置1命名resident、位置3命名allocated。collector的gauge help分别承诺物理resident pages与application allocated bytes，不能把当前结果解释为仅变量重命名。
+- 根因：native API返回顺序在实现/类型stub与历史Lua消费方之间没有单一结构化契约，位置式tuple在字段重排后无人同步，且没有以数值可区分的fixture检查每一列。
+- 建议解法：把native push顺序改成全部既有consumer使用的resident/active/allocated/retained，或同步修改两个consumer并以LuaLS当前allocated-first顺序作为契约；更稳妥的是返回具名table，避免同类型四元组静默错位。双语console/metrics文档需明确字段来源与单位。
+- 回归测试：修复阶段给四个mallctl key注入彼此不同的sentinel，分别核对native tuple、Prometheus四个sample、console四行和LuaLS契约；真实jemalloc构建再验证`active >= allocated`等合理不变量，但不把经验关系当唯一oracle。当前只做静态审阅。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4107,9 +4118,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为333项：P0为0，P1为112，P2为178，P3为43。模块分布：CORE 9、METRIC 2、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为334项：P0为0，P1为112，P2为179，P3为43。模块分布：CORE 9、METRIC 3、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；178项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；179项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4471,4 +4482,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：沿HTTP监控示例反查Prometheus encoder，确认label value未转义quote/backslash/LF，网络字段可使整次scrape非法或注入额外exposition行，归档为`METRIC-001`。
 - 2026-08-13：继续复核HTTP限流示例，确认首冒号切分把bracketed IPv6截成首hextet、配额跨客户端串扰；所谓周期cleanup只执行一次且生产示例无删除，归档为`DOC-052`。
 - 2026-08-13：从HTTP监控示例继续反查Histogram wire，确认内部互斥bucket被直接导出且`+Inf`只写超最大桶样本；累计分布、总数不变量与双语契约均被破坏，归档为`METRIC-002`。
+- 2026-08-13：继续核对metrics native边界，确认C按allocated/active/resident/retained返回，但Prometheus collector与console均按resident/active/allocated/retained解包，归档为`METRIC-003`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
