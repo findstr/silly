@@ -627,6 +627,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先在局部candidate中严格验证opts table、每个endpoint可解析且host/port完整、search name合法、timeout/attempts/ndots为定义范围内integer，并复制所有caller table；成功后一次交换配置generation，再结束旧generation请求/连接。失败应返回`false,error`或同步抛出但保持旧generation完全不变，且所有recv/timer callback按generation忽略迟到事件。
 - 回归测试：修复阶段在健康cache、活动UDP query和TCP fallback三种状态下逐字段传nil/错误类型/空/畸形地址/边界数值；失败后旧查询与新lookup仍使用原resolver、全局配置深度相等、caller table不变。合法commit才恰好终止旧generation一次。当前只保存静态证据。
 
+### DNS-013 — P2 — 发送 EDNS0 OPT 却丢弃 response extended RCODE/version，扩展错误被误报为成功空答案
+
+- 状态：已确认；RFC 6891 OPT wire定义与query/response codec的确定性静态核对。本轮只查RFC原文，不发送EDNS流量。
+- 协议规范：[RFC 6891 §6.1.2-6.1.3](https://www.rfc-editor.org/rfc/rfc6891.html#section-6.1.3)定义OPT TTL字段包含8-bit EXTENDED-RCODE与8-bit VERSION；完整RCODE由该高8位和DNS header低4位组成。发送OPT的requestor必须按完整transaction控制信息解释response，不能把OPT当普通未知RR丢弃。
+- 位置：query无条件附加EDNS0 version0 OPT在`luaclib-src/ldns.c:127-201`；response header只取4-bit RCODE在`:516-579`；RR parser虽然读到所有RR的TTL，但TYPE=OPT统一skip在`:300-329,441-467`。Lua将空records当成功提交在`lualib/silly/net/dns.lua:204-253`。
+- 触发：resolver返回header RCODE低4位为0、OPT extended RCODE非0的错误，例如EDNS BADVERS；也包括response声明非零EDNS VERSION或malformed/重复OPT，而question/id/type均匹配当前请求。
+- 影响：实现计算`rcode=0`，忽略携带扩展错误的OPT，再以空records table完成request、把目标qtype旧cache清成过期/negative形态并重置nameserver failcount。调用方最终得到`Not found`而非server/protocol错误，可能把能力协商、策略或resolver故障误判成域名不存在；重试和备用nameserver选择也不会按真实失败语义运行。
+- 证据：`q_opt`固定ARCOUNT=1、TYPE41、version0，证明本端主动使用EDNS。`lanswer`的RCODE mask仅为`0x000F`；`parse_rr_begin`读取OPT TTL到`ctx.ttl`后，`push_rr` default直接返回-1且没有任何位置提取extended RCODE/version。records非nil即走success，空table不会触发`Server failure`。
+- 根因：OPT被当成“unsupported data record”跳过，而不是DNS message级控制元数据；header解析和additional-section解析之间没有共同的完整RCODE/EDNS状态对象。
+- 建议解法：保留section与OPT provenance，严格要求response最多一个合法root-owner OPT；组合`full_rcode=(ext_rcode<<4)|header_rcode`并验证version/flags/options，再决定成功、BADVERS或其他错误。未知option按RFC忽略，但OPT本身不能忽略。是否短期无EDNS重试可按RFC 6891 §6.2.2与产品策略实现，不能用降级掩盖extended error。
+- 回归测试：修复阶段覆盖无OPT普通RCODE、合法OPT ext=0/version0、BADVERS、其他extended RCODE、非零version、重复OPT、非root owner及unknown option；扩展错误不得产生negative cache或成功结果，后续合法response仍可完成。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2847,7 +2859,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为225项：P0为0，P1为92，P2为123，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 12、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为226项：P0为0，P1为92，P2为124，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 13、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2880,6 +2892,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认DNS RR循环把结构/RDATA parse failure降格为break或skip，仍以成功提交已解析前缀并完成请求；归档为`DNS-010`。
 - 2026-08-13：确认DNS caller在timer创建前已发布singleflight waiter，超范围timeout抛错会留下dead task并使共享finish再次异常；归档为`DNS-011`。
 - 2026-08-13：确认`dns.conf`在任何新配置校验前已结束inflight并关闭旧resolver，后续异常会留下空/半配置全局状态；归档为`DNS-012`。
+- 2026-08-13：按RFC 6891确认DNS主动发送OPT却跳过response OPT，extended RCODE/version丢失并会把扩展错误当成功空答案；归档为`DNS-013`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
