@@ -1261,6 +1261,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有sender入口在写任何start-line/header前复制并ASCII lowercase名称，合并或拒绝大小写折叠后的重复控制字段，再执行Host/CL/TE/Connection/Expect语义校验；H2使用同一规范化结果并拒绝connection-specific fields。若API坚持只收小写，也必须运行时在资源/字节发布前明确拒绝uppercase，不能按普通字段发送。
 - 回归测试：修复阶段对client streaming/convenience和server response分别覆盖每个控制字段的lower/title/upper及大小写重复组合；捕获wire断言恰好一个Host、永无TE+CL、framing/keepalive/Expect一致，并验证非法输入零字节失败。当前只保存静态证据。
 
+### HTTP1-022 — P2 — server 错删 HEAD/304 的合法 Content-Length/Transfer-Encoding 元数据
+
+- 状态：已确认；response body语义、H1 framing fields与server sender共享predicate静态核对。本轮不发送HEAD或304响应。
+- 规范：HEAD response不得含content，但其response fields表示等价GET会有的值；RFC 9110 §8.6明确允许HEAD携带与GET一致的Content-Length，并允许304携带对应200的Content-Length。RFC 9112 §6.1也允许HEAD/304用Transfer-Encoding指示原响应会采用的coding，而1xx/204才是MUST NOT发送TE。参见[RFC 9110 §8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6)与[RFC 9112 §6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1)。
+- 位置：共同bodyless分类在`lualib/silly/net/http/h1.lua:94-100`，server `respond`无差别删除字段在`:758-771`，header flush/发送在`:342-365,790-798`。
+- 触发：handler响应HEAD并显式提供等价GET representation长度，或返回304并提供对应selected representation的长度/coding；例如`stream:respond(304,{["content-length"]="1234"})`。
+- 影响：库在应用无法观察/阻止的情况下删除合法元数据。HEAD调用方无法预估下载大小、比较representation或验证缓存；304 cache revalidation失去可用于检查stored response的长度/coding信息，造成互操作和缓存元数据偏差。H2 sender并不走这段删除逻辑，因ALPN不同而得到不同HTTP语义。
+- 证据：`bodyless_response`把HEAD、所有1xx、204、304和successful CONNECT统一成true；`h1s.respond`对任何true都执行`header["content-length"]=nil`和`header["transfer-encoding"]=nil`，没有按method/status区分“无message content”与“字段也被禁止”。client正确地以header结束划界并不要求删除这些字段，说明删除纯属sender策略错误。
+- 根因：单个boolean同时承担body framing终止与field legality；规范实际需要二维response semantics（是否有content、哪些长度/coding元数据允许、其值约束）。
+- 建议解法：用method/status矩阵分离body许可与field规则：HEAD/304禁止实际content但保留经校验且符合would-be response约束的CL/TE；1xx/204禁止TE并按各自规则处理CL；successful CONNECT另行进入tunnel状态。H1/H2共享语义层，编码层只负责wire framing。
+- 回归测试：修复阶段覆盖HEAD/304/1xx/204/205/successful CONNECT与普通200的CL/TE/body组合；捕获H1/H2 fields，断言HEAD/304合法元数据保留但无body，禁止组合在任何header写出前失败。当前只保存静态证据。
+
 ### COMP-001 — P2 — gzip inflate 未要求完整 stream，截断输入可作为部分成功返回
 
 - 状态：已确认；zlib状态机与RFC 1952静态核对。本阶段不生成截断/拼接gzip样本。
@@ -3139,7 +3151,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为250项：P0为0，P1为99，P2为134，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 21、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
+当前滚动统计为251项：P0为0，P1为99，P2为135，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 22、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
 
 建议按依赖关系分五批修复：
 
@@ -3200,6 +3212,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认HTTP redirect把301/302/303的所有method一律改GET，且删除body时残留Expect/TE等entity fields，破坏方法与下一跳消息语义；归档为`HTTPC-006`。
 - 2026-08-13：确认HTTP双语reference公开listen backlog，而http.lua明文/TLS adapter都未转发到底层，任何配置均静默落回默认；归档为`DOC-012`。
 - 2026-08-13：确认H1 sender只按精确小写Lua key识别Host/CL/TE等控制字段，常规Title-Case输入可被重复并由库自动形成TE+CL歧义wire；归档为`HTTP1-021`。
+- 2026-08-13：确认H1 server把HEAD/304与1xx/204共用bodyless分支并无差别删除CL/TE，丢失规范允许的representation元数据；归档为`HTTP1-022`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
