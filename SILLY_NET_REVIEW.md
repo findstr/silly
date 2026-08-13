@@ -2894,6 +2894,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：`readall`只在normal END时返回完整buffer成功；RST/GOAWAY/protocol error必须稳定返回terminal error并明确丢弃或通过structured incomplete result附带partial bytes，不能返回`data,nil`。若streaming `read(n)`保留“先交付已收bytes、下次报错”的语义，需文档化且每个byte/error只交付一次；gRPC/message层不得把partial frame视为EOS。
 - 回归测试：修复阶段覆盖0/1/N个DATA后remote RST各error code、local reset、GOAWAY/EOF、readall在reset前等待与reset后调用、首次错误后重试，以及正常DATA+END；client/server两向均断言RST永不产生完整成功，partial策略可观察且一致。当前只保存静态证据。
 
+### H2-038 — P2 — 收到 RST_STREAM 后新的 respond/write/closewrite 仍排帧并报告成功
+
+- 状态：已确认；remote reset、blocked/new writer、server handler收尾与frame queue静态推导。本轮不发送RST或在closed stream写帧。
+- 规范：收到RST_STREAM后该stream立即进入closed；除规范明确允许的优先级处理外，endpoint不得继续在该stream发送HEADERS/DATA。已阻塞的发送和之后的新发送都必须观察同一terminal error，不能把“peer已取消”仅当读取方向结束。
+- 位置：RST只写remote state并唤醒当前writer在`lualib/silly/net/http/h2.lua:843-892,1336-1352`；`respond`只检查channel在`:953-966`；`write/closewrite`只检查local state在`:968-1029`；server handler返回后无条件closewrite在`:1550-1560`。
+- 触发：client对server request发送RST_STREAM(CANCEL)后handler继续计算并调用`respond/write/closewrite`，或server reset client request/response stream后client再次写；也包括先前blocked writer已被RST唤醒返回error，调用方稍后重试写入同一对象。
+- 影响：新调用返回true并把HEADERS/DATA/END_STREAM加入connection send queue，消耗flow-control credit和CPU，却永远不可能构成有效stream。peer在它发出的reset到达本端后仍收到这些frames，可忽略、再次reset或按closed-stream规则终止connection，因而一个普通取消可干扰同连接其他请求。server handler无法可靠观察client cancellation，可能继续序列化大response；API成功返回又掩盖了工作和wire均已失效。
+- 证据：`stream_remoteend(...STATE_RST...)`只设`s.remotestate=STATE_RST`和`s.errstr`，不会同步关闭`s.localstate`；仅当某个write当前正等待credit时才通过`stream_writewakeup`返回error。之后`S.respond`只要`s.channel`存在便成功，`S.write/S.closewrite`只拒绝`localstate>=STATE_CLOSE`，完全不读remotestate/errstr，所以会经`stream_writeheader/build_body/channel_write`排帧。正常server wrapper也不会检查handler期间出现的remote reset。
+- 根因：实现把HTTP/2 stream的双向half-state用于END_STREAM，却把RST错误地只落在remote half；没有不可逆的whole-stream reset latch供所有公开操作共同检查。
+- 建议解法：RST建立单调的stream-terminal/reset状态，原子结束read/write waiters并让所有之后的respond/write/flush/closewrite返回原始typed error，且不得再排任何非必要frame或扣credit。handler可通过context/cancel信号尽早停止；wrapper最终close只回收map/quota，不再发送第二次RST/END。与`H2-017`结合保留已经完整收到的response结果，但必须停止尚未结束的request发送。
+- 回归测试：修复阶段在respond前、headers后、partial DATA、blocked flow-control write和handler返回前分别注入各RST code；覆盖client/server和write retry，断言RST后零新HEADERS/DATA、所有调用稳定失败、quota/queue/credit收敛且其他streams继续。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3219,7 +3231,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为257项：P0为0，P1为99，P2为140，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 37、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为258项：P0为0，P1为99，P2为141，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3287,6 +3299,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认idle H2 channel close只异步排队GOAWAY后即同步关闭transport，flush task随后因conn=nil丢弃graceful shutdown wire；归档为`H2-035`。
 - 2026-08-13：确认H2 client允许DATA在任何final response HEADERS前进入body/readall，高层可返回status=nil、body非空且无error的response对象；归档为`H2-036`。
 - 2026-08-13：确认H2 stream进入RST/GOAWAY error终态后，readall只要buffer非空就返回partial data,nil并吞掉终态错误；归档为`H2-037`。
+- 2026-08-13：确认remote RST只终止当前waiter/remote half，之后respond/write/closewrite仍排HEADERS/DATA并报告成功；归档为`H2-038`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
