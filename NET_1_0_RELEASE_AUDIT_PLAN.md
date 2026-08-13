@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC及Redis/MySQL/etcd存储阶段已收口；共308项（P1 109、P2 166、P3 33）。etcd新增`ETCD-017`、`DOC-035/036/037`并反查出通用`GRPC-039`；当前进入cluster Lua/native/分支差异复核。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK、WebSocket、gRPC及Redis/MySQL/etcd存储阶段已收口；共309项（P1 110、P2 166、P3 33）。cluster复核新增master/raw-string分支共同的`CLUSTER-016`明文无认证问题；当前继续Lua/native/测试/双语文档与分支差异查漏。
 
 ## 1. 目标和边界
 

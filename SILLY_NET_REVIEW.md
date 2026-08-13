@@ -238,7 +238,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 2026-08-09至2026-08-12继续只读审阅`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`；2026-08-12已重新查询远端，尖端未变化。该分支与`master`的共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`，相对共同祖先只有1个独有提交且落后`master` 3个提交，因此专项复核以分支自身代码和共同祖先diff为基线，没有切换当前工作树。
 
-既有`CLUSTER-001`至`CLUSTER-015`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认4项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）以及3项P3文档/测试回归（`CLUSTER-B002`至`B004`）。分支独有编号不计入本报告以master为基线的199项统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
+既有`CLUSTER-001`至`CLUSTER-016`逐项状态、64位/raw-string协议改造和分支独有问题记录在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。其中`CLUSTER-003`已由nil guard修复；`CLUSTER-008`的lazy-connect触发路径因eager connect消除；另确认4项只属于该分支的问题：`CLUSTER-B001`（P2，eager connect无deadline）以及3项P3文档/测试回归（`CLUSTER-B002`至`B004`）。分支独有编号不计入master统计。本轮没有运行cluster测试、建立peer、发送frame或新增重现代码。
 
 ## 4. 已确认问题
 
@@ -987,6 +987,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：parser将“一批输入的部分成功”隐藏成单一失败返回值，而调用者把失败理解为该fd所有状态均已清理；complete queue缺少per-fd teardown/rollback能力，解析提交与连接错误处理不具事务性。
 - 建议解法：优先让`c.push`返回结构化结果（已完成frame数/错误），Lua无论尾部是否出错都先受控地drain或逐fd丢弃已提交frame，再关闭连接；更稳妥的是为每次push建立临时完成链，整批验证成功后再原子splice到dispatch queue。C层提供幂等`clear_fd`，同时释放该generation的incomplete与尚未dispatch complete项；响应仍必须验证fd generation/session，不能因drain而接受已关闭peer ACK。
 - 回归测试：修复阶段在parser级分别输入`valid request + invalid length`、`valid ACK + malformed request`、多valid+invalid与跨多fd交错；断言错误返回后该fd的complete/incomplete bytes和queue count均为0，其他fd帧不丢失，后续data不会执行已关闭peer帧。用小内存计数验证重复错误连接不增长；本轮不创建或运行混合frame。
+
+### CLUSTER-016 — P1 — cluster RPC 固定明文 TCP 且没有节点认证或消息完整性
+
+- 状态：已确认；master与`origin/cluster`的公开配置、TCP调用链、wire header、accept/dispatch及双语reference静态核对。本轮不建立监听、发送凭据或做中间人测试。
+- 位置：master固定`net.tcpconnect/tcplisten`并直接发布peer在`lualib/silly/net/cluster.lua:1-24,130-225`，收到frame后无握手直接unmarshal/call在`:62-104`；native header只有length/session/cmd/traceid在`luaclib-src/lcluster.c:12-49,167-246,333-437`。`origin/cluster`仍固定TCP且raw-string request无认证字段，对应Lua`:1-24,48-199`、C`:12-43,165-241,313-423`；两版`serve`均无TLS/auth选项。公开定位与`0.0.0.0`示例见双语`docs/src/{en/,}reference/net/cluster.md:12-42,229-243`。
+- 触发：cluster端口可被同网段、容器网络、云VPC中的非成员主机或被攻陷节点访问；被动监听或可修改链路的代理/网关同样命中。无需预测session即可主动新建连接并发送合法request frame。
+- 影响：任意可达主机可作为伪节点调用公开RPC handler，读取response、提交伪造业务操作或用大/慢frame触发资源问题；链路上的第三方可观察和篡改业务payload、cmd、traceid/session，也可重放合法request。即使应用尝试按来源IP过滤，master/branch的incoming `peer.remoteaddr`还因`CLUSTER-007`保存listener sid，无法作为可靠身份；`CLUSTER-001`进一步允许错误peer伪造其他连接response。
+- 证据：connect/listen只调用plaintext TCP，既不复用已有`silly.net.tls`也没有CA、hostname、client cert、PSK/token或auth callback。wire无version/nonce/MAC，server在frame parse成功后立即调用业务handler；accept callback是唯一前置钩子但文档只交付peer且无认证协议，源码也不强制其存在。中英文reference把模块描述为完整的跨节点RPC、展示对所有接口监听，却零次出现TLS/auth/trusted-network安全边界。
+- 根因：cluster协议把网络可达性当作节点身份，并假设部署网络本身提供机密性与完整性；安全模型没有成为显式API/握手状态，而是留给每个业务marshal自行猜测实现。
+- 建议解法：1.0默认提供并要求mTLS（CA/pinned trust、hostname或节点ID SAN、client certificate、TLS版本/cipher policy），在认证和协议版本协商完成前不发布peer、不调用accept业务逻辑也不读取RPC frame；若需应用层身份，再绑定TLS exporter/channel identity做challenge/token并防重放。plaintext只能作为显式insecure opt-in且文档限定loopback/受控测试，不能静默降级。认证后的peer identity必须与`CLUSTER-001/007`一起进入pending correlation、日志和授权。
+- 回归测试：修复阶段覆盖受信双向证书、错误CA/hostname/node ID、无client cert、过期证书、plaintext downgrade、中间人和重放；断言认证失败零handler/零response、连接与parser预算立即释放，成功peer暴露稳定authenticated identity。master与raw-string分支都做跨版本/协议拒绝矩阵。当前不建立TLS或发送frame。
 
 ### ADDR-001 — P2 — IP 分类忽略 embedded NUL 后缀，验证结果与完整地址字符串不一致
 
@@ -3826,7 +3837,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为308项：P0为0，P1为109，P2为166，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
+当前滚动统计为309项：P0为0，P1为110，P2为166，P3为33。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 16、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37。
 
 建议按依赖关系分五批修复：
 
@@ -4156,6 +4167,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认etcd中英文reference各16处`lua validate`示例调用顶层并不存在的`silly.sleep`，watch/lease/关闭等流程会在首次等待处异常；归档为`DOC-037`，未运行文档示例。
 - 2026-08-13：etcd字段矩阵反查确认protobuf默认把`2^63..2^64-1`的合法uint64/fixed64经signed参数解码成负Lua integer，直接影响cluster/member ID等；归档为`GRPC-039`，未构造高位varint。
 - 2026-08-13：完成etcd封板审计：624行wrapper、KV/Lease/Watch生成descriptor、`testetcd.lua`17组/919行、692行fake server、真实etcd 15组/764行及双语reference 1554/1564行均已映射；新增`ETCD-017`、`DOC-035/036/037`并反查`GRPC-039`，其余疑点归入既有17项etcd根因或静态排除，未运行服务、断链或并发barrier。
+- 2026-08-13：cluster封板复核确认master与raw-string分支均固定明文TCP，协议/配置无节点认证、机密性、完整性或重放保护且文档未限定受信网络；归档为共同问题`CLUSTER-016`，未建立peer或发送frame。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

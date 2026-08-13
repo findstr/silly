@@ -121,7 +121,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 远端分支已只读抓取为`origin/cluster`，尖端为`0f2c8773842edb818c1aac74ade3f975d1cbd068`；未checkout或修改分支源码。
 - 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
-- 既有15项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
+- 既有16项cluster结论的分支状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
 - 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master基线199项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
@@ -196,6 +196,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-013 | P3 | cluster随机分片测试把期望值当作`assert`错误消息，从未比较重组packet，完整性检查恒通过。 |
 | CLUSTER-014 | P2 | RPC timeout直到request发出后才验证，非法配置会造成远端已执行而本地抛错及重试歧义。 |
 | CLUSTER-015 | P1 | 同批次合法frame后的解析错误会把已完成frame留在全局ring，跨错误连接累积并可能迟延分发ACK。 |
+| CLUSTER-016 | P1 | master与raw-string分支均固定明文TCP且无节点认证/消息完整性，可达主机即可调用RPC或篡改重放。 |
 | ADDR-001 | P2 | IP分类忽略Lua string的embedded-NUL后缀，校验/日志中的地址可与socket实际endpoint不同。 |
 | ADDR-002 | P2 | `addr.parse("[::1]")`等无端口bracket输入构造`se+1`指针并比较，公开正常路径触发C未定义行为。 |
 | URL-001 | P1 | URL fragment未从HTTP target剥离，OAuth token等client-side secret可进入request-line/:path与服务端日志。 |
@@ -440,7 +441,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为308条：P1 109、P2 166、P3 33。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37；以主报告中的编号和证据为准。
+当前统计为309条：P1 110、P2 166、P3 33。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 16、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 37；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -1,6 +1,6 @@
 # Silly `cluster` 分支静态审计
 
-> 状态：第三轮纯静态复核完成；确认4项分支独有问题，当前范围无未归档候选
+> 状态：1.0封板纯静态复核进行中；确认4项分支独有问题及16项master共同问题
 > 审计日期：2026-08-09 至 2026-08-12
 > 审计方式：只读源码、文档、类型与测试；未切换工作树，未运行服务、测试、重现、故障注入或网络输入
 
@@ -55,8 +55,9 @@ test/testcluster.lua
 | CLUSTER-013 | 仍存在 | `testcluster.lua`仍写成`assert(table.concat(buf), pk)`，没有比较重组packet；已在主报告与提交`f61e68400`归档。 |
 | CLUSTER-014 | 仍存在 | `serve`不验证timeout；call先send再由`time.after`拒绝超范围/非整数值，可形成远端已执行、本地抛错。 |
 | CLUSTER-015 | 仍存在 | 同批次先入ring的合法frame在后续解析错误时不回滚；Lua关闭后不process，`c.clear`又只清half frame，形成跨连接滞留。 |
+| CLUSTER-016 | 仍存在 | 分支仍固定明文TCP，raw-string wire无TLS、节点认证、MAC或防重放；任意可达主机可调用handler，链路方可读写payload。 |
 
-矩阵结论：15项既有问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余12项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
+矩阵结论：16项共同问题中，1项已修复（CLUSTER-003），1项原触发路径已消除（CLUSTER-008），1项仅文档/自然wrap风险改善但核心仍在（CLUSTER-006），其余13项仍存在。该计数按“问题编号”互斥归类；CLUSTER-009的影响降低但仍计入“仍存在”。
 
 ## 4. 分支独有问题
 
@@ -136,3 +137,4 @@ test/testcluster.lua
 - 2026-08-12：确认eager改造后的`cluster.send`已无任何yield路径，但中英文reference仍强制要求`task.fork`，记录为`CLUSTER-B003`。
 - 2026-08-12：确认新增late-response用例不观察task异常，旧nil-wakeup路径被框架日志隔离后测试仍可假绿，记录为`CLUSTER-B004`。
 - 2026-08-12：只读确认远端`cluster`仍指向`0f2c8773`；核对落后的3个master提交与第三轮排除项后收口，当前静态范围无未归档候选。
+- 2026-08-13：1.0封板复核确认master与分支都没有TLS、节点认证、消息完整性或防重放，新增共同问题`CLUSTER-016`；未建立peer或发送frame。
