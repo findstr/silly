@@ -415,8 +415,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-029 | P2 | protobuf descriptor丢弃proto2 required label，缺字段request/response仍可被收发为成功。 |
 | GRPC-030 | P2 | 四类RPC无metadata/context API，认证、trace及`-bin` initial/trailing metadata无法互操作。 |
 | GRPC-031 | P1 | server close只关闭listener，既有H2连接可在close返回后无限创建新RPC。 |
+| GRPC-032 | P2 | protobuf encode异常越过公开错误契约，并可遗留timer或永久占用H2 stream/quota。 |
 
-当前统计为284条：P1 103、P2 156、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 31、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
+当前统计为285条：P1 103、P2 157、P3 25。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 32、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

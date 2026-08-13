@@ -190,6 +190,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-TLS-ALPN-H2 | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/tls.lua:198-204,250-258,464-466`; `lualib/silly/net/http/client.lua:243-279` | TLS client/server | 偏离 | 双方只配置h2 ALPN但不核对最终选择；无ALPN/非h2会话仍直接进入H2 handshake/parser | 同库双方总提议h2，不能覆盖legacy/misconfigured TLS peer | GRPC-022 |
 | GRPC-LISTEN-CONFIG | API/security | `lualib/silly/net/grpc/server.lua:29-55`; `lualib/silly/net/tls.lua:326-365`; `lualib/silly/net/tcp.lua:152-175`; `docs/src/en/reference/net/grpc.md:146-166` | server | 偏离 | 公开ciphers/backlog配置被adapter静默丢弃，TLS policy与listen queue不按调用方设置生效 | 默认配置自测不会检查实际ctx/listener option | GRPC-023 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
+| GRPC-PROTOBUF-ENCODE-FINALIZE | API/safety | `lualib/silly/net/grpc/helper.lua:53-67`; `grpc/client/service.lua:12-23,134-213`; `grpc/registrar.lua:83-191`; `luaclib-src/pb.c:1597-1777` | client/server sender | 偏离 | `pb.encode`类型/schema错误直接抛Lua异常；多个wrapper没有protected encode/finalizer，异常可绕过timer取消、grpc-status及H2 stream回收 | 现有测试只编码字段类型正确的对象，没有错误输出、请求对象或资源归零断言 | GRPC-032 |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
 | GRPC-AUTOMATIC-RETRY | safety | `lualib/silly/net/grpc/client/conn.lua:82-100`; `lualib/silly/net/grpc/client/service.lua:134-257` | client | 不适用/安全 | 实现没有automatic retry，不会无条件重放非幂等RPC；GOAWAY/REFUSED_STREAM可靠性与status mapping缺口见H2-008/GRPC-013 | 无retry tests | — |
@@ -3505,6 +3506,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：返回专用gRPC server对象，accept时登记每个H2 channel并在dispatch退出时摘除。graceful close原子标记draining、先关listener、向全部channel发送正确Last-Stream-ID的GOAWAY并拒绝新stream，等待active calls到0或absolute deadline；超时/force close终止channel并让call得到UNAVAILABLE/CANCELLED。close返回必须保证registry为空且迟到accept/channel发布受generation阻断，并与`H2-016/028/035`修复联动。
 - 回归测试：修复阶段用可控channel覆盖idle/active/streaming RPC、close前已连接但未发call、close与accept/HEADERS并发、deadline/force、重复close及handler异常；断言close开始后无新handler，in-flight按策略完成，client收到GOAWAY/标准status，所有conn/channel/task/quota归零。当前不运行并发场景。
 
+### GRPC-032 — P2 — protobuf encode 异常越过公开错误契约并遗留 timer/H2 active stream
+
+- 状态：已确认；native encoder异常语义、四类client/server wrapper与timer/stream ownership的确定性静态核对。本轮不编码错误对象或建立RPC。
+- 契约：公开 unary 调用承诺失败返回`nil, string`，`stream:write`承诺`false, string`；server在handler完成后仍必须用唯一final status结束RPC。serialization failure无论源于本地请求还是业务输出，都必须在写出不完整message前转成受控错误，并恰好取消timer、结束/重置stream和释放HTTP/2并发配额。
+- 位置：无保护的codec入口在`lualib/silly/net/grpc/helper.lua:53-67`；client unary/server-streaming的timer与request encode在`grpc/client/service.lua:12-23,134-213`，stream write在`:84-88`；server unary/client-streaming的response encode在`grpc/registrar.lua:83-114,156-191`；native抛错点在`luaclib-src/pb.c:1597-1601,1616-1668,1737-1777`；双语返回契约在`docs/src/{en/,}reference/net/grpc.md:343-352,461-470`。
+- 触发：client request table给已知field传错误Lua类型、未知enum名或非table embedded message；或server unary/client-streaming handler返回同类不可编码response。server-streaming client带或不带timeout时在建流后编码错误request也命中。
+- 影响：调用者得到Lua异常而不是文档化错误tuple。client unary虽由`<close>`最终关闭H2 stream，但已登记的`waiting_stream[timer]`不会清除/取消，继续强引用关闭对象直到deadline；server-streaming client没有to-be-closed guard，无timeout时异常后stream仍留在channel map并永久占用active stream/quota，有timeout时也至少滞留到timer触发。server unary/client-streaming的response encode位于handler `pcall`之外，异常越过grpc-status finalizer与H2 `server_handler`回收，形成无status响应及`H2-027`同类永久stream/quota泄漏。请求派生的错误业务输出可让远端重复触发该资源耗尽路径。
+- 证据：`helper.writebody`直接调用`pb.encode`，没有`pcall`或nil/error分支；native对字段类型、enum及message table用`argcheck/luaL_error`长跳转。unary timer在encode前写入全局table，只有encode/read正常返回后的`:157-163`才删除；sstreaming局部`h2stream`既没有`<close>`也尚未封装进带`__close`对象。server unary/cstream先结束业务`pcall`再调用`writebody`，外层H2 handler没有异常finalizer。现有gRPC测试所有对象都符合schema，且没有异常后的timer、stream map或quota断言。
+- 根因：codec采用exception API，但gRPC wrapper按`boolean,error` API编排清理；timer、stream和final status没有统一call owner或finally边界，导致每个调用形态各自遗漏不同清理步骤。
+- 建议解法：在写任何envelope前以统一protected encode返回`nil,error`；为每个RPC建立单一call finalizer，负责timer摘除/取消、唯一status、half-close或RST、stream map/quota回收，正常返回和任意Lua/C异常都走它。client本地请求编码失败应在发送request HEADERS前完成并返回参数错误；server输出失败映射INTERNAL且不得再发送部分message。`stream:write`维持文档化`false,error`，不能要求用户自行pcall后猜测stream状态。
+- 回归测试：修复阶段对四类RPC分别覆盖错误scalar/enum/nested/repeated请求及response，含有/无timeout；断言不抛出公开边界、handler调用次数正确、只出现一个final status、timer table/stream map/quota立即归零且连接上其他RPC可继续。当前不执行编码或网络路径。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3534,7 +3547,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为284项：P0为0，P1为103，P2为156，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 31、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为285项：P0为0，P1为103，P2为157，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 32、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3819,6 +3832,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认四类RPC均无公开metadata/call-context入口，server也无法正常读取request或发送initial/trailing metadata，`-bin`没有Base64语义；归档为`GRPC-030`。
 - 2026-08-13：确认gRPC双语reference把client/server/bidi streaming混成统一API，server-stream调用不存在的write，client-stream upload以RST close代替EOS/final response；归档为`DOC-026`。
 - 2026-08-13：确认`grpc.listen`直接返回只拥有listen fd的底层listener，accepted H2 channels无server owner；close返回后既有连接仍可无限创建新RPC，归档为`GRPC-031`。
+- 2026-08-13：确认protobuf encode类型/schema错误直接抛异常，多个gRPC wrapper因此越过公开错误tuple、timer取消、final status与H2 stream回收；归档为`GRPC-032`，未编码错误对象或建立RPC。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
