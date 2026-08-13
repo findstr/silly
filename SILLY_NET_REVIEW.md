@@ -1788,6 +1788,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用checked helper逐段构造路径：每次调用后要求`0 < n < capacity`，每次追加后要求返回值小于remaining，并预留NUL和唯一文件名最大长度；任何不满足都跳过该目录而不做指针运算。优先直接使用AF_INET loopback socket pair，或使用支持长路径且能可靠清理命名项的Windows专用实现。
 - 回归测试：修复阶段用Win32 API stub覆盖返回0、恰好capacity、capacity+1、目录可容纳但后缀截断、文件名恰好满等边界；ASan/Windows Application Verifier下均只能安全fallback，不越界且不泄漏listener/client/accepted socket。当前不构造长环境路径。
 
+### SOCK-019 — P2 — TCP 路径把 Windows 指针宽度 `SOCKET` 截成 `int`
+
+- 状态：已确认；Windows socket类型契约与C隐式转换的确定性静态推导。本轮不制造高位handle或运行Windows服务。
+- 平台契约：Win64的`SOCKET`是`UINT_PTR`，项目自己的`fd_t`也正确声明为`intptr_t`；只有`INVALID_SOCKET`表示失败，不能把socket handle存入32位`int`。一旦高32位非零，窄化后的值不再标识原socket。
+- 位置：Windows类型定义在`src/win/win.h:12-18`；TCP listener helper却返回`int`，见`src/socket.c:1279-1311`；accepted socket局部变量是`int`，见`:809-848`；outbound TCP创建变量也是`int`，见`:1415-1453`。此外socket统计再次把`s->fd`复制到`int`并用于`getpeername`，见`:2019-2057`；公开统计结构的fd字段本身也是`int`，见`src/silly.h:59-69`。
+- 触发：Win64进程收到或创建一个不能无损表示为32位`int`的合法Winsock handle；长运行、高句柄压力、嵌入其他大量handle的宿主进程会提高出现概率。
+- 影响：listener可能在`dolisten`返回时即丢失高位，随后把错误handle发布到pool；connect和accept则在`socket()`/`accept()`返回的第一步窄化。后续`nonblock/setsockopt/epoll_ctl/send/recv/closesocket`作用于截断值：通常表现为合法连接随机失败并泄漏原socket；若截断值碰巧标识另一socket，则可能注册、读写或关闭错误连接。统计路径也可能查询无关连接或返回伪造地址。
+- 证据：同文件的UDP bind/connect以及多数内部helper已经使用`fd_t`，说明跨平台预期类型明确；只有上述TCP/统计路径退化为`int`。编译器允许从`SOCKET/uintptr_t`到`int`的实现定义窄化，现有成功Windows CI不能证明所有合法handle值可表示。
+- 根因：Unix fd 的`int`假设残留在部分公共路径，没有把平台socket类型贯穿返回值、局部变量和统计ABI。
+- 建议解法：所有真实socket变量、helper返回值和内部统计快照统一使用`fd_t`/`SOCKET`，只与平台invalid sentinel比较；对外若必须暴露数值handle，使用`intptr_t`/`int64_t`或明确不公开原生handle。开启Win64 conversion warnings并禁止socket→int隐式赋值。
+- 回归测试：修复阶段用Winsock wrapper返回带高32位的synthetic handle验证类型传递，另在真实Win64句柄压力下覆盖listen/connect/accept/stat/close；断言每个API收到的bit pattern完整一致，不泄漏原handle、不触碰低位碰撞对象。当前不施加handle压力。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -2715,7 +2727,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为214项：P0为0，P1为90，P2为115，P3为9。模块分布：CORE 7、NET 3、SOCK 18、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为215项：P0为0，P1为90，P2为116，P3为9。模块分布：CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2737,6 +2749,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：1.0封板平台审计确认Windows控制唤醒通道以Winsock socket创建，却由CRT `close`销毁；归档为`SOCK-016`。
 - 2026-08-13：确认Windows accept资源耗尽路径以CRT `/dev/null` fd冒充Winsock reserve socket，无法释放对应资源槽；归档为`SOCK-017`。
 - 2026-08-13：确认Windows控制socket路径拼接未检查Win32 required length和`snprintf`截断，长目录可在启动期形成栈越界写；归档为`SOCK-018`。
+- 2026-08-13：确认TCP listen/connect/accept及stat将Win64指针宽度`SOCKET`存入`int`，合法高位handle会被截断；归档为`SOCK-019`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。

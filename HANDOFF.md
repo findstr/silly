@@ -258,6 +258,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | SOCK-016 | P2 | Windows控制唤醒通道是Winsock socket，却用CRT close销毁，导致handle泄漏并可能误关无关CRT fd。 |
 | SOCK-017 | P2 | Windows accept耗尽恢复以CRT `/dev/null` fd充当Winsock reserve，释放不了socket槽并可能让listener热循环。 |
 | SOCK-018 | P1 | Windows控制socket路径未检查目录API required length，长路径使`sun_path+n`越界并以巨大size写栈。 |
+| SOCK-019 | P2 | TCP listen/connect/accept/stat把Win64指针宽度SOCKET截成int，可泄漏、误注册、误读写或误关连接。 |
 | HTTP1-001 | P2 | 接受同时包含 TE 与 CL 的请求后未按 RFC 9112 强制关闭连接。 |
 | HTTP1-002 | P2 | client/server 拒绝 RFC 9112 允许的相同 `Content-Length` 列表。 |
 | HTTP1-003 | P1 | `Transfer-Encoding` 未按大小写不敏感的列表及 final coding 决定 framing。 |
@@ -346,7 +347,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为214条：P1 90、P2 115、P3 9。模块分布为CORE 7、NET 3、SOCK 18、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
+当前统计为215条：P1 90、P2 116、P3 9。模块分布为CORE 7、NET 3、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
