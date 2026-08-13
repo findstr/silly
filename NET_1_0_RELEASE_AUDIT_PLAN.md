@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-最终进度（2026-08-13）：24小时静态计划的底层engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/H1、H2/HPACK、WebSocket、gRPC、Redis/MySQL/etcd、cluster、跨模块、平台、测试、双语文档与LuaLS账本均已收口；共323项（P1 110、P2 172、P3 41），另有4项cluster分支独有问题。所有候选均已归档或有证据排除，主报告与HANDOFF的ID、严重度及统计逐项一致。审计状态为完成，发布状态为阻断，下一阶段是逐项修复与动态回归。
+完成性反证进度（2026-08-13）：不沿用目录级完成声明，正从仓库实际文件清单重建逐文件证据；当前共324项（P1 111、P2 172、P3 41），另有4项cluster分支独有问题。共享native buffer反查新增`NET-008`，其余零引用依赖继续逐文件复核。发布状态保持阻断。
 
 ## 1. 目标和边界
 
@@ -67,7 +67,7 @@
 
 ### 3.2 Lua transport 和协议层
 
-- `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005/006/007`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重；`NET-007`同时覆盖TLS/H2/connect在大timeout timer异常前发布operation的跨层事务缺口。
+- `lualib/silly/net/tcp.lua`、`udp.lua`：已审有归档；新增`NET-005`至`008`、`DOC-007`，既有`UDP-001`、`SOCK-012`等条目已逐路径去重；`NET-007`覆盖TLS/H2/connect在大timeout timer异常前发布operation的跨层事务缺口，`NET-008`覆盖共享native buffer的累计字节溢出。
 - `lualib/silly/net/tls.lua`：已审有归档；配置、connect/listen/reload、握手三态、timeout、read/write、buffer limit、close、GC、SNI/ALPN与native所有权均已完成；transport交叉项见`NET-005/006`，TLS独有项为`TLS-001`至`TLS-018`。
 - `lualib/silly/net/dns.lua`：已审有归档；完成UDP/TCP fallback、singleflight、timer、CNAME/search、cache/TTL、reconfigure、平台bootstrap与close/wakeup交错矩阵，新增`DNS-011/012/015/018`，Windows边界见`DNS-016/017`。共享TCP旧recv覆盖新连接候选已按worker每消息后清空wakeup queue的顺序排除。
 - `lualib/silly/net/cluster.lua`：已审有归档；331行逐路径完成serve/connect/listen/call/send、codec/handler、waiter/timer、trace、reconnect、active/passive close及全局context生命周期核对，问题由`CLUSTER-001`至`019`覆盖；raw-string分支状态与4项独有问题另见专项报告。
@@ -107,4 +107,4 @@
 - P3：允许进入 1.0 后修复，但文档中会误导安全、事务或数据一致性承诺的除外。
 - 修复顺序按依赖：engine/socket → TCP/TLS/DNS → HTTP/HPACK → WebSocket/gRPC → storage/cluster → 文档和发布回归。不能先用高层 workaround 掩盖底层 ownership/framing 缺陷。
 
-完成判定（2026-08-13）：文件账本全部终态；所有候选已归档或有证据排除；主报告/HANDOFF共323个ID与严重度逐项相同，模块和严重度合计一致；唯一编号空洞`HPACK-003`有明确误报撤回记录；最终提交后工作区应保持干净。本计划据此标记为完成。动态验证按用户约束进入修复阶段，不是本次静态完成判定的一部分。
+完成判定暂缓：只有仓库实际文件宇宙与新建逐文件账本完全对应、零引用依赖复核完毕、所有候选归档或排除、主报告/HANDOFF重新核账且工作区干净后，才恢复“完成”状态。动态验证仍按用户约束进入修复阶段，不属于本次静态判定。

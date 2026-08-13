@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0 `net` 全量纯静态封板审计已完成；确认master基线323项（P1 110、P2 172、P3 41）及4项cluster分支独有问题，当前静态范围无未归档高置信候选。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0 `net` 完成性反证审计进行中；当前确认master基线324项（P1 111、P2 172、P3 41）及4项cluster分支独有问题。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -122,10 +122,10 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
 - 既有19项master cluster结论（其中17项在分支仍有对应路径）的状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
-- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master基线323项统计。
+- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master滚动基线324项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
-## 5. 已确认问题（323 条）
+## 5. 已确认问题（324 条，完成性反证审计中的滚动基线）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -147,6 +147,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | NET-005 | P1 | TCP/TLS单reader门禁晚于缓存fast path，并发read可偷走旧operation字节并令其永久挂起。 |
 | NET-006 | P1 | TCP/TLS buffer limit可在当前read满足前暂停transport，唯一reader无法降水位而永久自锁。 |
 | NET-007 | P2 | 大于UINT32_MAX的合法Lua整数timeout在fd/waiter发布后令native timer抛错，可毒化TCP/TLS/UDP/H2对象并遗留connect/gRPC资源。 |
+| NET-008 | P1 | TCP native buffer以signed int累计无界backlog，超过INT_MAX触发UB并可令read永久nil或readall断言终止。 |
 | UDP-001 | P2 | bound socket缺destination仍返回成功后静默丢包，connected socket的显式destination又被C层忽略。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
 | TLS-002 | P1 | accepted TLS不保活SNI callback ctx，reload/close+GC后在途ClientHello可访问失效userdata。 |
@@ -455,7 +456,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为323条：P1 110、P2 172、P3 41。模块分布为CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45；以主报告中的编号和证据为准。
+当前统计为324条：P1 111、P2 172、P3 41。模块分布为CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
@@ -509,13 +510,13 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ## 8. 下一步：进入修复阶段
 
-全量静态封板审计已经完成，不需要用户再提醒“继续review”。下一会话应让用户选择修复批次；若用户授权从最高风险开始，建议按以下依赖顺序：
+完成性反证审计尚未收口，应继续逐文件review，无需用户重复提醒。真正封板后再按以下依赖顺序进入修复：
 
 1. engine同步、内存安全与生命周期：`CORE-001`至`004`、`CORE-007`、`NET-003/005/006`、`SOCK-006/008/009/011/015/018/019`、`MYSQLC-001/005/007`、`HPACK-002/004`、`TLS-002`、`CLUSTER-005`。
 2. 身份认证与资源边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、HTTP/WS/H2/gRPC输入上限、`ETCD-005/009`。
 3. transport状态机与deadline：engine/queue同步、HTTP framing/HTTP2流控、TLS shutdown、gRPC status/deadline，以及Redis/MySQL/etcd统一absolute deadline。
 4. driver正确性：Redis parser/null/generation，MySQL pool/transaction/multi-result/codec，etcd mutation ambiguity/watch checkpoint/lease scheduler。
-5. 修正`CORE-008/009`、`NET-007`的跨平台/跨层语义，完成独立peer互操作、版本矩阵、sanitizer，并同步`DOC-001`至`045`、LuaLS和中英文文档。
+5. 修正`CORE-008/009`、`NET-007/008`的跨平台/跨层语义，完成独立peer互操作、版本矩阵、sanitizer，并同步当前全部`DOC-*`、LuaLS和中英文文档。
 
 每个issue建议一个修复提交；提交前先把主报告对应条目标为“修复中”，实现后补测试和验证结果，再标为“已修复”。不要一次性改完整层级，否则回归和回滚难以定位。
 
@@ -555,7 +556,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-Silly net 1.0全量纯静态封板审计已经完成，master 323项及cluster分支4项均已归档，当前静态范围无未归档高置信候选，但P1/P2 blocker尚未修复。先完整读取HANDOFF.md和SILLY_NET_REVIEW.md，核对当前分支与干净状态，不要重做基线。根据用户选择的issue/修复批次工作：先定位报告条目和依赖，修改源码并补该条回归，执行适用的ASan/UBSan/TSAN与独立peer验证，更新报告状态后独立提交。保留用户改动；未经重新授权，不新增或运行畸形输入、并发barrier和fault injection。
+Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 324项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md和NET_1_0_RELEASE_AUDIT_PLAN.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单

@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 全量纯静态封板审计已完成；323项master问题与4项cluster分支独有问题均已归档，进入修复与动态回归阶段
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档324项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -422,6 +422,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：timeout范围属于timer实现细节，却没有在公共边界统一规范化；各异步operation又把“发布waiter/资源”和“成功取得timer”拆成非事务顺序，并假设timer构造永不失败。
 - 建议解法：统一提供deadline/timeout规范化函数，在任何connect、stream或waiter状态变更前验证类型与支持范围；超界返回稳定`INVAL`或文档化的错误，不抛出跨越资源边界的异常。更稳妥的是先成功创建timer，再以不可yield的事务发布operation；若后续发布失败，立即cancel timer并关闭/回滚fd、stream和waiter。把支持的最大毫秒值补入time与所有透传API的双语文档/LuaLS。
 - 回归测试：修复阶段覆盖`UINT32_MAX-1`、`UINT32_MAX`、`UINT32_MAX+1`、`math.maxinteger`及错误类型，对connect、TCP/TLS/UDP read、H2 read/waitresponse和gRPC unary/server-streaming逐一断言：不遗留pending fd/waiter/timer/active stream，原对象保持可用或被明确关闭，迟到DATA/CLOSE/CONNECT不会二次唤醒；当前不运行timer或网络复现。
+
+### NET-008 — P1 — TCP 接收 buffer 的 signed byte accounting 可被远端 backlog 推入整数溢出
+
+- 状态：已确认；native buffer整数域、TCP payload大小、默认背压与read终局的确定性静态核对。本轮不发送大流量或分配GiB内存。
+- 位置：buffer总量与node长度均为`int`，见`luaclib-src/adt/lbuffer.c:25-46`；每次append把`size_t`/Lua integer窄化给`push_data(int sz)`并执行`signed b->bytes += sz`在`:303-316,411-446`，read/readall依赖该值在`:318-395`。TCP每个DATA无条件append且默认`buflimit=nil`在`lualib/silly/net/tcp.lua:68-98,127-149,213-225`；底层单次read chunk上限为2MiB，但总量没有上限，见`src/silly_conf.h:49-50`与`src/socket.c:932-1057`。
+- 触发：建立TCP连接后持续发送，而应用暂不读取或处理速度不足，使该连接尚未消费的累计buffer超过`INT_MAX`字节。每个合法DATA块远小于`INT_MAX`也会通过重复加法命中，不要求单个超大Lua string；默认构造没有buffer cap，显式limit也允许配置到该边界以上。
+- 影响：`b->bytes += sz`发生C signed overflow，属于未定义行为。常见二补数构建中总量变负后，`size()`和append返回负值；任何正长度read都因`bytes > b->bytes`永久返回nil，`readall()`则以负bytes走“返回空串”分支后命中`assert(b->bytes == 0)`终止进程，NDEBUG构建会返回错误空正文并保留全部nodes。优化器还可利用UB产生其他结果。远端因此可在进程尚未由allocator OOM终止前破坏stream可读性或直接崩溃；HTTP等上层可能把错误空正文/永久等待传播到协议状态机。
+- 证据：C socket thread每次最多交付固定chunk，但Lua buffer把所有node的`bytes`累加进单个32-bit signed字段，没有checked add、hard cap或`size_t`。`read_bytes`首先比较请求与这个已溢出总量，`lreadall`又把同一值当请求长度并在调用后assert清零；GC/clear仍按node索引释放，因此这不是单纯指标错误。`SOCK-012`记录默认接收队列无界导致内存耗尽，本条关注在OOM之前可达的独立整数UB与错误read终局，修复需同时处理而不能只依赖allocator失败。
+- 根因：native ADT把可由远端长期累计的字节总量建模为`int`，同时上层把资源限制设为可选，并假定单次socket chunk较小就能保证累计值安全。
+- 建议解法：将buffer bytes/node length/read size统一为`size_t`或经验证的无符号宽类型；append前做checked addition，并设置低于所有表示/allocator边界的per-connection hard cap与安全默认值。达到cap应返回稳定LIMIT并关闭或按协议终止，不能先修改nodes/引用再报错。TCP的watermark/self-deadlock仍按`NET-006`单独修复。
+- 回归测试：修复阶段用可配置小计数上限或buffer测试hook覆盖上限前、恰好上限、加一、多node跨界、partial read后再append及readall；断言无signed overflow、assert、负size、错误空正文或引用泄漏。TCP/H1/H2调用链验证远端超限得到有限错误且其他连接不受影响；当前不制造大backlog。
 
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
@@ -3995,9 +4006,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为323项：P0为0，P1为110，P2为172，P3为41。模块分布：CORE 9、NET 7、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45。
+当前滚动统计为324项：P0为0，P1为111，P2为172，P3为41。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 45。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-静态审计完成不等于当前代码可发布：110项P1默认全部阻断1.0；172项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。当前基线没有未归档的高置信候选，但按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer仍可能发现新问题。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；172项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4005,7 +4016,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 2. 安全身份与输入边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、`HTTP1-007/008/009`、`WS-001/002/005/008`、`H2-003/013/019/025`、`GRPC-005`、`ETCD-005/009`。
 3. transport状态机和取消：统一socket/engine同步后处理HTTP/1 framing、HTTP/2 stream/flow-control/GOAWAY、TLS shutdown、gRPC status/deadline，以及Redis/MySQL/etcd贯穿DNS→connect→handshake→request→body的absolute deadline。
 4. driver数据正确性：Redis parser/null与connection generation；MySQL pool lease/transaction/multi-result/packet codec；etcd mutation ambiguity、watch revision checkpoint和lease scheduler。
-5. 平台、互操作与公开契约：先修`CORE-008/009`与`NET-007`的跨平台/跨层基础语义，再用Go/OpenSSL/Redis/MySQL 8/MariaDB/etcd官方client-server矩阵验证，执行RFC畸形输入与sanitizer；最后同步`DOC-001`至`045`、LuaLS、中英文reference和所有示例。
+5. 平台、互操作与公开契约：先修`CORE-008/009`与`NET-007/008`的跨平台/跨层基础语义，再用Go/OpenSSL/Redis/MySQL 8/MariaDB/etcd官方client-server矩阵验证，执行RFC畸形输入与sanitizer；最后同步当前全部`DOC-*`、LuaLS、中英文reference和所有示例。
 
 修复阶段的最低门槛是：每项有独立回归、ASan/UBSan/TSAN适用项清零、资源上限可配置且有安全默认、跨连接/stream错误不污染其他请求；协议项必须至少与一个独立实现双向互操作。
 
@@ -4349,4 +4360,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：最终time契约复核确认`time.now()`仅在启动时采样一次墙钟，此后始终以monotonic tick推算；系统校时后不再是双语reference/LuaLS承诺的当前Unix时间戳，归档为`CORE-009`。
 - 2026-08-13：最终protobuf类型复核确认`pb.option`、conv、type/field iterator、slice多返回、unsafe use与protoc path API的LuaLS契约均偏离真实Lua/C返回，归档为`DOC-045`。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
-- 2026-08-13：完成发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。24小时计划的源码、native、测试、双语文档、LuaLS、跨模块和平台账本全部终态；当前静态范围无未归档高置信候选，但P1/P2阻断项尚未修复，1.0不得据此直接发布。
+- 2026-08-13：完成性反查共享ADT确认TCP默认无界接收buffer以signed int累计所有node字节；远端backlog超过INT_MAX会触发UB，并使read永久nil或readall断言终止，归档为`NET-008`。
+- 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
