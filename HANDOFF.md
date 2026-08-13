@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0 `net` 完成性反证审计进行中；当前确认master基线376项（P1 114、P2 204、P3 58）及4项cluster分支独有问题。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0 `net` 静态完成性反证审计已收口；确认master基线376项（P1 114、P2 204、P3 58）及4项cluster分支独有问题。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -122,10 +122,10 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
 - 既有19项master cluster结论（其中17项在分支仍有对应路径）的状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
-- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master滚动基线376项统计。
+- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master静态封板基线376项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
-## 5. 已确认问题（376 条，完成性反证审计中的滚动基线）
+## 5. 已确认问题（376 条，静态完成性反证审计封板基线）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -562,7 +562,7 @@ timeout 20s ./silly ../review-repros/tcp_immediate_connect_fd_leak.lua
 
 ## 8. 下一步：进入修复阶段
 
-完成性反证审计尚未收口，应继续逐文件review，无需用户重复提醒。真正封板后再按以下依赖顺序进入修复：
+完成性反证审计的静态范围已经收口：389个实际文件与台账双向差集为空，且没有`待审`或`审阅中`项。现在按以下依赖顺序进入修复：
 
 1. engine同步、内存安全与生命周期：`CORE-001`至`004`、`CORE-007`、`NET-003/005/006`、`SOCK-006/008/009/011/015/018/019`、`MYSQLC-001/005/007`、`HPACK-002/004`、`TLS-002`、`CLUSTER-005`。
 2. 身份认证与资源边界：`TLS-001/005/006`、`DNS-002/003`、`CLUSTER-001`、HTTP/WS/H2/gRPC输入上限、`ETCD-005/009`。
@@ -608,7 +608,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 376项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md、NET_1_0_RELEASE_AUDIT_PLAN.md和NET_AUDIT_FILE_LEDGER.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
+Silly net 1.0静态完成性反证审计已收口；封板基线为master 376项及cluster分支4项，389个实际文件与逐文件台账双向差集为空，但P1/P2 blocker尚未修复，1.0不可发布。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md、NET_1_0_RELEASE_AUDIT_PLAN.md和NET_AUDIT_FILE_LEDGER.md，核对当前分支与工作树，再按第8节依赖顺序逐项修复、补回归并独立提交。保留用户改动；用户重新授权前不新增或运行畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单

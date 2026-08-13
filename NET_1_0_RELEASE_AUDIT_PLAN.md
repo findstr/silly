@@ -5,9 +5,9 @@
 > 审计分支：`codex/silly-net-review`
 > 产品基线：`master@d1aef7ffd8439340dfd957a49fccba3fbf133055`
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
-> 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
+> 起始结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-完成性反证进度（2026-08-13）：不沿用目录级完成声明，正从仓库实际文件清单重建逐文件证据；当前共364项（P1 112、P2 199、P3 53），另有4项cluster分支独有问题。共享native buffer反查新增`NET-008`，低层net文档ownership反查新增`DOC-046`，双语文件差集新增`DOC-047`，HTTP教程安全缓解新增`DOC-048`，HTTP最佳实践无效API、timeout生命周期、高基数metrics和限流生命周期新增`DOC-049`至`052`，core文档新增`DOC-053`，异步监控时钟、状态统计与代理信任新增`DOC-054`至`056`，logger格式/信号/trace/HTTP tuple/异常收尾/imports/lazy与PromQL契约新增`DOC-057`至`064`，Gauge陈旧bug说明、英文截断、Histogram time API、Registry导出、连接Gauge、Collector契约及hot-reload timer新增`DOC-065`至`071`，metrics wire/生命周期反查新增`METRIC-001`至`011`，core ID/hot-reload依赖反查新增`CORE-010`至`012`；其余零引用依赖继续逐文件复核。发布状态保持阻断。
+完成性反证结论（2026-08-13）：24小时执行表中的静态范围已经收口。仓库实际文件宇宙与逐文件台账各389项且双向差集为空，没有`待审`或`审阅中`行；主报告与HANDOFF的编号、严重级别和统计一致。最终静态基线为master 376项（P1 114、P2 204、P3 58），另有4项cluster分支独有问题。此结论只证明定义范围内没有未登记的静态审阅文件，不证明实现无bug或允许发布；发布状态继续阻断，动态验证按用户约束进入修复阶段。
 
 ## 1. 目标和边界
 
@@ -45,9 +45,9 @@
 
 ## 3. 文件级覆盖账本
 
-状态只允许 `待审`、`审阅中`、`已审无新增`、`已审有归档`。已有问题数量不能自动把文件标为完成。
+状态只允许 `待审`、`审阅中`、`已审无新增`、`已审有归档`、`范围外`。已有问题数量不能自动把文件标为完成。
 
-本节保留阶段摘要；可执行的逐路径账本在[`NET_AUDIT_FILE_LEDGER.md`](NET_AUDIT_FILE_LEDGER.md)。当前第一版已与仓库实际`src/**`和`luaclib-src/**`集合做差，两个集合均无漏项或多项；Lua runtime依赖已逐路径列出。tests、LuaLS和双语文档仍待追加，因此完成判定继续暂缓。
+本节保留阶段摘要；可执行的逐路径账本在[`NET_AUDIT_FILE_LEDGER.md`](NET_AUDIT_FILE_LEDGER.md)。最终集合包含`src/**`、`luaclib-src/**`、`lualib/**`、`test/**`、全部双语Markdown和六个VuePress TypeScript配置，共389个唯一文件；它与台账首列双向差集为空。展示资产按台账第7节规则排除。
 
 ### 3.1 Engine 和 native 层
 
@@ -111,4 +111,4 @@
 - P3：允许进入 1.0 后修复，但文档中会误导安全、事务或数据一致性承诺的除外。
 - 修复顺序按依赖：engine/socket → TCP/TLS/DNS → HTTP/HPACK → WebSocket/gRPC → storage/cluster → 文档和发布回归。不能先用高层 workaround 掩盖底层 ownership/framing 缺陷。
 
-完成判定暂缓：只有仓库实际文件宇宙与新建逐文件账本完全对应、零引用依赖复核完毕、所有候选归档或排除、主报告/HANDOFF重新核账且工作区干净后，才恢复“完成”状态。动态验证仍按用户约束进入修复阶段，不属于本次静态判定。
+静态完成判定已满足：仓库实际文件宇宙与逐文件台账完全对应，零引用依赖已复核，所有候选均已归档或排除，主报告/HANDOFF已重新核账。动态验证仍按用户约束进入修复阶段，不属于本次静态完成判定；376项未修复问题意味着1.0仍不可发布。
