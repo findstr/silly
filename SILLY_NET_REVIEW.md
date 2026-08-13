@@ -1887,6 +1887,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0前二选一并保持双语一致：若需要覆盖，提供显式、可验证且在首次module load前生效的配置API/启动项，定义平台、权限与路径编码语义；若不支持，删除环境变量承诺并指导使用`dns.conf`/`dns.sethosts`（同时说明二者不是文件路径加载器）。未知旧配置应至少产生迁移诊断。
 - 回归测试：修复阶段增加公开配置schema/doc lint，确保文档中的每个键都存在consumer；若实现路径覆盖，用临时文件/stub验证resolver与hosts分别读取指定内容且错误可见。当前只保存静态证据。
 
+### DOC-009 — P3 — TLS 双语 reference 的 listener/remoteaddr 示例缺必填地址或直接传 hostname
+
+- 状态：已确认；两种语言的`lua validate`代码块与TLS/TCP公开入口、numeric address解析路径静态核对。本轮不运行文档示例或DNS/connect。
+- 位置：缺少`addr`的`tls.listen` API示例在`docs/src/en/reference/net/tls.md:330-350`和`docs/src/reference/net/tls.md:330-350`；直接调用`tls.connect("example.com:443")`的remoteaddr示例在两文件`:547-565`。真实检查在`lualib/silly/net/tls.lua:279-325,326-365`及`lualib/silly/net.lua:97-140`，numeric-only socket解析在`src/socket.c:1242-1259`。
+- 触发：照抄第一段启动listener，或照抄第二段获取远端地址；两段均被文档标记为可验证Lua代码。
+- 影响：listener示例在任何socket操作前以`tls.listen missing addr`抛异常；remoteaddr示例把`example.com`传到底层带`AI_NUMERICHOST`的`getaddrinfo`，不会自动调用`silly.net.dns`，连接稳定失败并在`if not conn then return end`静默退出，永远不打印属性。用户会误判TLS能直接解析hostname、或在最基础API示例就无法启动服务。
+- 证据：`M.listen`无条件`assert(addr,...)`，示例table只有certs/accept。`net.connect_wrap`只做语法拆分后进入native socket，后者hints固定`AI_NUMERICHOST`；同一reference前面的完整client示例正确地先`dns.lookup`再拼IP，证明remoteaddr段不是支持另一种入口，而是页面内部漂移。英文和中文逐字共享两个错误。
+- 根因：独立API片段从完整示例复制/删减时遗漏required field和DNS步骤，`lua validate`标签没有接入签名/schema或实际doc-test。
+- 建议解法：listener片段加入明确numeric `addr`并检查`listener,err`；remoteaddr片段复用`dns.lookup`或改成numeric endpoint，同时保留logical hostname给SNI/未来证书验证。若1.0决定让TLS connect接受hostname，应由统一双栈resolver/dialer实现并更新真实契约，不能只改示例。CI对所有validate块做required-option静态检查并用stub禁止外网。
+- 回归测试：修复阶段让双语validate块在stub DNS/socket环境执行，断言listener参数完整、hostname解析调用明确、失败不会静默通过；同类片段由单一include/template生成以防翻译漂移。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3026,7 +3037,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为240项：P0为0，P1为95，P2为132，P3为13。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为241项：P0为0，P1为95，P2为132，P3为14。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 9。
 
 建议按依赖关系分五批修复：
 
@@ -3076,6 +3087,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认OpenSSL未协商ALPN的零长度结果被binding转换为空字符串而非文档承诺的nil，Lua truthiness可误判为已协商；归档为`TLS-016`。
 - 2026-08-13：补强`TLS-001/004/006`：双语文档虚构默认certificate verification和cipher-string版本控制，testssl又把raw TCP close误注释成SSL_shutdown；不重复计数。
 - 2026-08-13：确认低层TLS ctx/ssl显式free后仍由同一strict函数执行GC，meta tombstone会被当作类型错误并在finalizer中抛出；归档为`TLS-017`。
+- 2026-08-13：确认TLS双语reference的validate示例一处漏必填listener addr、另一处把hostname直接传给numeric-only connect并静默退出；归档为`DOC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
