@@ -2859,6 +2859,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：client/server首帧路径显式要求type SETTINGS、stream 0且ACK未设置，再交给可返回成功/错误的SETTINGS validator；任何前言违规都发送/记录`PROTOCOL_ERROR`并关闭连接，不能继续等ACK。将初始SETTINGS已接收与本端SETTINGS已确认建模为两个独立状态。
 - 回归测试：修复阶段覆盖首帧空/非空普通SETTINGS、空ACK、带payload ACK、非0 stream及非SETTINGS；client/server都应只接受前两种合规普通SETTINGS（包括空payload），其余有限时间内失败并释放资源。当前不运行握手复现。
 
+### H2-035 — P2 — 空闲 channel close 在异步 GOAWAY flush 前关闭 transport，graceful shutdown wire 必然丢失
+
+- 状态：已确认；task.fork调度顺序、channel GOAWAY/flush/close与client pool关闭链静态推导。本轮不建立或关闭H2连接。
+- 规范/契约：HTTP/2 endpoint开始优雅关闭时应先发送GOAWAY，让peer获得不再建立新stream及已处理边界；双语HTTP reference还把`client:close()`描述为gracefully closing pooled connections。直接transport EOF只能表达异常/不确定终止，不能替代GOAWAY。
+- 位置：异步frame queue/flush在`lualib/silly/net/http/h2.lua:499-530`；NO_ERROR GOAWAY与close判定在`:547-610`；公开channel close在`:679-699`；高层pool close在`lualib/silly/net/http/client.lua:417-443`；fork仅入wakeup queue、当前消息后才dispatch在`lualib/silly/task.lua:163-170,228-239`。
+- 触发：对`streamcount==0`的H2 channel调用`close()`；最常见路径是HTTP client关闭其idle H2 pool，也包括新建后尚无stream或全部stream已经回收的channel。
+- 影响：peer只观察TCP/TLS EOF，看不到GOAWAY和Last-Stream-ID，无法区分正常停机与连接故障，也无法使用协议边界判断请求是否可能处理；监控、重试分类和graceful drain语义失真。若sendbuf中还有其他异步control frame，它们也随同GOAWAY被清除。调用方看到close已完成，之后没有任何路径重新发送这些帧。
+- 证据：`channel_goaway(NO_ERROR)`只调用`channel_write`，后者把GOAWAY放入`sendbuf`并`task.fork(channel_flushwrite)`，不会同步执行。`C.close`紧接着调用`channel_checkclose`；streamcount为0时它立即`conn:close(); ch.conn=nil`。当前业务函数不yield，故flush task之后运行时看到nil conn，只清空sendbuf而不写wire。error GOAWAY路径专门同步调用`channel_flushwrite`，反向证明NO_ERROR路径缺少相同发送保证。
+- 根因：graceful close把“frame已排队”误当作“frame已交给transport”，connection lifetime没有等待/拥有异步writer completion；close条件只看streamcount，不看sendbuf/writeco。
+- 建议解法：建立channel writer owner和closing状态。首次graceful close同步或可等待地写出GOAWAY，只有transport接受frame且send queue排空后才关闭；若要两阶段drain，则先发送max/processed boundary GOAWAY、拒绝新stream、等待active streams或deadline，再发送最终GOAWAY并关闭。所有write failure走`H2-030`统一终态；重复close幂等且不能跳过pending flush。
+- 回归测试：修复阶段用记录transport覆盖idle close、active streams drain、已有pending PING/WINDOW_UPDATE、write failure、deadline与重复close；逐字节断言EOF前恰有合法GOAWAY且Last-Stream-ID符合`H2-016`修复，close返回时writer/sendbuf/conn均已终态。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3184,7 +3196,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为254项：P0为0，P1为99，P2为137，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为255项：P0为0，P1为99，P2为138，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 35、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3249,6 +3261,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认中文HTTP reference声明`http.newclient.read_timeout`默认5秒，但实现/schema完全不接收该字段且请求仍无限等待；归档为`DOC-013`。
 - 2026-08-13：确认H1/H2 parser把重复字段提升为array，而redirect/gzip仍将Location/Content-Encoding当string，远端响应可触发未捕获Lua类型异常；归档为`HTTPC-007`。
 - 2026-08-13：确认H1读取失败会保留已缓冲正文，而后续readall只要缓冲非空便返回`data,nil`并吞掉cached error；归档为`HTTP1-023`。
+- 2026-08-13：确认idle H2 channel close只异步排队GOAWAY后即同步关闭transport，flush task随后因conn=nil丢弃graceful shutdown wire；归档为`H2-035`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
