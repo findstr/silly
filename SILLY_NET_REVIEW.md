@@ -2160,6 +2160,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：维护显式`client_count`，只在成功注册时加一、所有幂等移除路径恰好减一；在upgrade/分配业务状态前以同一admission owner检查上限并拒绝。也可用独立slot allocator，但不能每次遍历或`#map`承担并发 admission。所有展示统一读取同一计数器。
 - 回归测试：修复阶段按连接1/2/3、断开1/2、继续分配4..N的序列核对count与`pairs`元素数；在上限前后及重复cleanup/发送失败清理交错下断言从不超额、计数不负且统计一致。双语示例共用同一测试。本轮不运行连接场景。
 
+### DOC-022 — P2 — WebSocket 完整聊天室把远端昵称写入 `innerHTML`，20 字节限制仍可形成跨用户脚本执行
+
+- 状态：已确认；双语完整server/client数据流与DOM sink的确定性静态对照。本轮不打开浏览器或发送payload。
+- 位置：server接受/广播昵称在`docs/src/{en/,}tutorials/websocket-chat.md:779-805`；完整HTML client把sender和user name拼入`innerHTML`在`:1429-1479`，已有escape helper仅用于content/system text在`:1439-1457,1512-1517`；图片练习另有未验证URL sink在`:1706-1727`。
+- 触发：任一连接发送`set_name`，昵称为可执行HTML。server只要求非空且`#new_name <= 20`；例如ASCII字符串`<svg/onload=alert()>`恰好20字节。之后该用户出现在在线列表或发送message/private message，使其他browser client渲染昵称。
+- 影响：受害者页面用HTML parser创建攻击者控制的元素和event handler，可执行任意同页JavaScript；在实际部署origin下可读取页面可访问的数据、冒用WebSocket会话发送消息、篡改UI或向外传输token。昵称是server保存并广播的状态，故一次设置可影响多名当前/后续用户，属于聊天室内的存储型跨用户XSS。20字符限制和正文转义会给读者造成已处理输入安全的错觉，但不阻止该payload。
+- 证据：`addMessage`模板只对`${content}`调用`escapeHtml`，`${sender}`原样进入`<span>`；`updateUserList`把`${user.name.substring(...)}`和`${user.name}`两次原样插入`userDiv.innerHTML`。server的长度检查后直接保存name并通过user list/message metadata广播，没有HTML normalization。exercise的图片URL也原样拼进quoted `src`属性，说明DOM构造策略在扩展功能中继续重复。
+- 根因：把远端业务字段和HTML模板字符串混合，并只对某个字段做黑盒式局部转义；server输入长度被错误当成输出上下文安全策略。
+- 建议解法：client使用`createElement`并对所有远端text赋`textContent`，不把昵称/消息/错误拼入`innerHTML`；图片使用`URL`解析、限定`https:`/允许域并以DOM property赋值，必要时使用可信的CSP。server仍应按产品规则验证Unicode长度和昵称字符，但不能替代每个输出上下文的编码。教程显式加入安全说明。
+- 回归测试：修复阶段将昵称、sender、message、error和image URL分别输入HTML标签、attribute quote、entity、SVG/event payload及普通Unicode；断言DOM只产生文本或允许的安全元素、无event attribute/脚本执行。双语完整示例与扩展代码纳入浏览器安全doc-test。本轮不执行payload。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3394,7 +3405,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为272项：P0为0，P1为100，P2为149，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 21。
+当前滚动统计为273项：P0为0，P1为100，P2为150，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 22。
 
 建议按依赖关系分五批修复：
 
@@ -3478,6 +3489,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认WebSocket双语reference虚构partial read data、把非法standalone continuation列为正常消息类型，并把有result的close写成无返回值；归档为`DOC-019`。
 - 2026-08-13：确认WebSocket双语教程的广播优化调用channel不存在的`recv/send`方法，consumer与producer首次调用均会异常；归档为`DOC-020`。
 - 2026-08-13：确认WebSocket教程对单调ID稀疏`clients`表使用`#clients`做在线统计和连接资源上限，断开产生hole后可持续低估并放行超额连接；归档为`DOC-021`。
+- 2026-08-13：确认WebSocket完整聊天室把远端昵称原样拼入浏览器`innerHTML`，20字节server限制仍允许可执行SVG payload并形成跨用户XSS；归档为`DOC-022`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
