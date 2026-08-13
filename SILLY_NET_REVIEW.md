@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档331项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档332项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2670,6 +2670,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：只在路由匹配后用固定route name/template（如`/api/users/:id`）作label，404统一为`unknown`或有限分类；status必须记录真实状态而非硬编码200。metrics库可增加series budget/drop计数和可选删除，但不能替代应用选择有界label。指南明确禁止raw path、query、user ID、IP、trace ID作为标签。
 - 回归检查：修复阶段向路由层注入大量唯一路径，断言series数量保持在method×route×status的固定上限、404共享一个label且gather大小稳定；同时验证合法模板与真实status计数。当前不发送请求或制造高基数数据。
 
+### DOC-052 — P2 — HTTP 限流示例截断 IPv6 身份且清理只运行一次，配额串扰并永久积累 client key
+
+- 状态：已确认；双语rate-limit示例、endpoint格式与timer一次性语义的确定性静态核对。本轮不建立IPv6连接或生成多来源请求。
+- 位置：简单限流和末尾生产示例都用`stream.remoteaddr:match("^([^:]+)")`提取IP，见`docs/src/{en/,}guides/http-best-practices.md:359-446,1694-1760`；前一示例把一次`time.after(300000,...)`注释成“定期/每5分钟”在`:400-411`，后一示例完全没有cleanup。native endpoint把IPv6格式化为`[address]:port`在`src/socket.c:540-563`，`time.after`只注册一次callback且不会自动重排，见`lualib/silly/time.lua:37-56`。
+- 触发：IPv6 client访问时，pattern在地址内部第一个冒号停止，例如`[2001:db8::1]:443`只得到`[2001`；任一共享该首hextet的client消费同一counter。另一方面，服务持续接收来自历史唯一IPv4或不同IPv6首hextet的请求超过第一次5分钟cleanup之后。
+- 影响：一个IPv6 client可耗尽`[2001`桶，使大量无关地址持续收到429，形成跨租户可用性攻击；不同IPv6地址也无法获得文档承诺的per-IP公平性。来源表只在启动5分钟后清一次或从不清，之后每个新key永久驻留，长期公网服务或分布式攻击会让heap/GC集合单调增长。该资源风险与`DOC-051`的path metrics cache不同，修复一个不会消除另一个。
+- 证据：socket `ntop`明确先写`[`、完整IPv6、`]`再写`:port`；Lua pattern的排除集包含冒号，故首个IPv6分隔符即终止。`time.after`调用native timer一次，callback dispatch后清除session，不包含repeat循环；示例callback末尾也没有再次`time.after`。完整示例的`rate_limiter`全文件只有lookup/insert/count更新，无任何删除。
+- 根因：endpoint被当作简单`host:port`字符串用首冒号切分，忽略bracketed IPv6；one-shot timer又被误认为interval scheduler，且生产汇总时丢掉了唯一cleanup片段。
+- 建议解法：使用公开且IPv6-safe的endpoint parser返回host，或让HTTP stream直接暴露规范化peer IP/port；反向代理场景还必须只信任已配置trusted proxy并规范化X-Forwarded-For。清理器在callback末尾显式安全重排、服务close时cancel，或采用有界TTL/LRU/token-bucket store；生产示例说明单进程内存限流不能替代共享网关策略。
+- 回归检查：修复阶段覆盖IPv4、压缩/完整IPv6、不同地址同首hextet、同地址不同port、trusted/untrusted proxy以及大量过期key；断言身份无碰撞、配额独立、周期多次清理且table保持有界。当前不运行连接或timer测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4084,9 +4095,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为331项：P0为0，P1为111，P2为177，P3为43。模块分布：CORE 9、METRIC 1、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 51。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为332项：P0为0，P1为111，P2为178，P3为43。模块分布：CORE 9、METRIC 1、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；177项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；178项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4446,4 +4457,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：继续反查HTTP最佳实践timeout时序，确认timer只结束外层channel等待而无法取消fork中的正文/下游/业务操作；handler返回后子task仍可无限残留、提交副作用或二次响应，归档为`DOC-050`。
 - 2026-08-13：HTTP最佳实践监控段反查metrics生命周期，确认两处把任意远端path写入永久labelcache/series，唯一404 URL即可线性增加heap与gather成本，归档为`DOC-051`。
 - 2026-08-13：沿HTTP监控示例反查Prometheus encoder，确认label value未转义quote/backslash/LF，网络字段可使整次scrape非法或注入额外exposition行，归档为`METRIC-001`。
+- 2026-08-13：继续复核HTTP限流示例，确认首冒号切分把bracketed IPv6截成首hextet、配额跨客户端串扰；所谓周期cleanup只执行一次且生产示例无删除，归档为`DOC-052`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
