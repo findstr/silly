@@ -229,6 +229,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | MYSQLC-006 | P2 | row只按column alias建表且无ordinal模式，duplicate columns会静默覆盖。 |
 | MYSQLC-007 | P1 | unsigned64 lenenc经signed/可wrap cursor运算可绕过边界并进入native OOB read。 |
 | MYSQLC-008 | P3 | pre-handshake ERR无SQLSTATE时parser仍吞一个marker byte，连接错误message首字节丢失。 |
+| MYSQLC-009 | P2 | native codec错误把整个MySQL packet hex写入异常，泄漏敏感row并将大包至少放大两倍。 |
 | MYSQL-001 | P1 | idle/lifetime淘汰及leaked lease GC均不递减open_count，受限pool可永久假满。 |
 | MYSQL-002 | P1 | driver无TLS/server identity且full-auth信任peer临时RSA key，MITM可读取流量并取得密码。 |
 | MYSQL-003 | P1 | connect/auth/query/pool wait均无deadline/cancel，现有connect_timeout选项被静默忽略。 |
@@ -434,7 +435,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为302条：P1 108、P2 164、P3 30。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 34；以主报告中的编号和证据为准。
+当前统计为303条：P1 108、P2 165、P3 30。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 16、DOC 34；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

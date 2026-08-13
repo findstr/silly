@@ -1559,6 +1559,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：让ERR parser显式接收已协商capabilities/phase；pre-handshake直接把errno后剩余内容作为message，post-handshake仅在PROTOCOL_41已协商时严格要求`#`和完整5-byte SQLSTATE。所有长度先检查，空message正常返回结构化ERR；不要用message首字符猜协议版本。
 - 回归测试：修复阶段覆盖pre-handshake空/单字节/普通/以`#`开头message，以及post-handshake合法SQLSTATE、缺marker、截断state；断言message逐byte保真、malformed post-handshake连接fatal且任何分支不抛出public API。当前不发送ERR packet。
 
+### MYSQLC-009 — P2 — codec 异常十六进制转储整个 packet，敏感 row 泄漏并放大内存
+
+- 状态：已确认；native统一错误构造、packet上限、Lua exception日志链静态核对。本轮不构造packet或触发异常。
+- 位置：所有checked reader共用的`binary_error`在`luaclib-src/mysql/binary.h:20-33`；它被OK/ERR/column/binary row parser调用，见`luaclib-src/mysql/lmysql.c:64-470`；`read_packet`不执行配置上限在`lualib/silly/store/mysql.lua:313-333`，codec异常又无protected conversion在`:776-945`；task会记录未捕获异常及traceback见`lualib/silly/task.lua:45-64`。
+- 触发：server/proxy返回一个前部包含合法业务列、后部字段截断或length/type非法的binary row/metadata；任一近physical packet上限的畸形packet也可在最后一个byte触发bounds error。网络反同步和server bug同样能自然进入。
+- 影响：错误构造逐byte把**整个原始packet**编码成hex并嵌入异常，不只显示错误附近窗口；未捕获异常随后进入默认logger。row中的密码hash、token、个人信息、财务字段或BLOB因此可持久写入日志/trace并扩大可见范围。一个接近16MiB的packet至少生成约32MiB hex内容，加上原packet、LuaL_Buffer扩容和最终格式化副本，单次协议错误即可制造显著内存/CPU峰值，叠加`MYSQL-009`的未执行max_packet_size形成远端DoS放大。
+- 证据：loop从`chk->start`（`binary_check`固定为0）一直到`chk->len`，每byte追加两个hex字符，没有redaction、窗口或长度cap；`luaL_error("%s error chunk:%s ...")`把结果完整复制进exception。parse_row在较后列失败时，前面已成功解码的所有wire bytes仍在同一packet中并被转储。错误文本还以`%d`格式化`size_t`位置/长度，构成附带的varargs类型不匹配，但本条主要风险不依赖该UB。
+- 根因：开发期全packet诊断dump进入production错误模型，未区分不可信wire data、敏感业务payload与可安全记录的结构化offset/type。
+- 建议解法：异常只记录parser名、packet type、总长度、offset和稳定reason；若调试确需bytes，默认redact并限制为错误点前后固定小窗口，必须显式安全debug开关且不得覆盖auth/row数据。使用正确`%zu`格式。先执行per-packet budget，codec错误转换为结构化ERR并关闭连接，避免默认task traceback携带payload。
+- 回归测试：修复阶段以带可识别secret marker的截断row和limit-size stub packet触发每类decoder，捕获error/logger并断言marker与全packet hex均不存在、错误串长度有固定上界、峰值分配不随payload线性翻倍。当前不创建输入或运行logger。
+
 ### MYSQL-001 — P1 — idle/lifetime/GC 销毁连接不递减 open_count，pool 可永久假满
 
 - 状态：已确认；pool counter状态机静态推导。不需要并发复现。
@@ -3759,7 +3770,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为302项：P0为0，P1为108，P2为164，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 34。
+当前滚动统计为303项：P0为0，P1为108，P2为165，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 16、DOC 34。
 
 建议按依赖关系分五批修复：
 
@@ -4073,6 +4084,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认MySQL死锁重试示例只捕获Lua异常，丢弃driver按正常返回值交付的callback SQL错误并继续commit，可部分提交事务且语句阶段1213不会重试；归档为`DOC-032`，未执行事务。
 - 2026-08-13：确认MySQL双语连接池指南声称max_idle_conns=0为无限，实际return条件与两组test都明确把0当作no cache；默认配置每次query重连，归档为`DOC-033`，未建立连接。
 - 2026-08-13：确认MySQL唯一inline LuaLS把row全部值标为string，并把native/test/reference实际公开的err.sqlstate拼成不存在的sql_stage；归档为`DOC-034`，未运行type checker。
+- 2026-08-13：确认MySQL native `binary_error`把整个不可信packet逐byte hex嵌入异常，默认task日志可泄漏前序敏感row且大包至少放大两倍；归档为`MYSQLC-009`，未构造packet。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
