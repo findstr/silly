@@ -298,6 +298,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-031 | P3 | MySQL双语监控在pool query前连续取时间戳，等待指标恒近零而真实排队被误算成慢SQL。 |
 | DOC-032 | P1 | MySQL死锁重试示例只捕获Lua异常并丢弃callback返回ERR，可提交此前成功的部分事务。 |
 | DOC-033 | P2 | MySQL双语指南称max_idle_conns=0为无限，实际实现和测试都把0当作禁用idle复用。 |
+| DOC-034 | P3 | MySQL inline LuaLS把row值全标string且把真实err.sqlstate拼成不存在的sql_stage。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -433,7 +434,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-037 | P2 | protobuf parser拒绝packed=false repeated numeric的合法packed wire，破坏schema演进兼容。 |
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 
-当前统计为301条：P1 108、P2 164、P3 29。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 33；以主报告中的编号和证据为准。
+当前统计为302条：P1 108、P2 164、P3 30。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 34；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -2346,6 +2346,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0前选定唯一兼容契约。基于tests和常见pool语义，优先保留`0=no idle`并修正双语guide/reference，给生产默认设置安全的正数或明确要求配置；若改成unlimited则必须设独立sentinel并评估无界idle fd风险，不能静默改变0。公开pool metrics方便发现连接 churn。
 - 回归检查：修复阶段以connection id/handshake counter覆盖省略值、0、1、N及超过N并发归还；断言文档语义和保留/关闭数量一致，默认配置不会意外制造每query重连。当前不运行连接或性能测试。
 
+### DOC-034 — P3 — MySQL inline LuaLS 把所有 row 值标成 string，并拼错 `sqlstate`
+
+- 状态：已确认；MySQL全部类型入口、native返回字段、双语reference与测试静态核对。本轮不运行LuaLS或查询。
+- 位置：唯一MySQL LuaLS声明位于`lualib/silly/store/mysql.lua:78-131`，其中err字段在`:97-107`、row index签名在`:129-131`；native ERR实际写入`sqlstate`见`luaclib-src/mysql/lmysql.c:198-206`，field decoder返回integer/number/string/nil见`:343-427`；双语数据契约在`docs/src/{en/,}reference/store/mysql.md:531-567`。`lualib/types/silly/`下没有MySQL补充类型文件。
+- 触发：调用方在启用LuaLS的项目中访问`err.sqlstate`，或对`row.id/balance/flag`等MySQL数值列做比较、加减和传入要求number的函数。
+- 影响：编辑器把真实存在的`sqlstate`报告为unknown field，却建议一个runtime永远不产生的`sql_stage`；所有row字段又被推断为string，正常数值业务持续产生type warning/错误补全。团队为消除告警可能加入错误的`tonumber`/string比较或改读`err.sql_stage`，前者掩盖NULL/精度契约，后者让错误分类在运行时恒为nil。1.0公开API的静态契约无法可信使用。
+- 证据：C parser的upvalue key明确为`SQLSTATE`且unit test断言`t.sqlstate=="HY000"`；仓库没有任何写入`sql_stage`。row decoder对TINY到LONGLONG调用`lua_pushinteger`，FLOAT/DOUBLE调用`lua_pushnumber`，temporal/decimal/text调用string，NULL不设置key；inline却只有`---@field [string] string`。双语reference也明确列出这些多类型，与annotation自相矛盾。
+- 根因：内部ERR注释沿用了“stage”命名且未与native key/test同步，row map为了简化写成单一string；文档、native与LuaLS没有共享schema或静态校验。
+- 建议解法：把字段改为`sqlstate string?`；row index至少声明`integer|number|string|nil`，更理想是为query结果提供generic/用户可标注row shape，并为超范围uint、NULL和duplicate labels使用修复后稳定类型。将native exported key、LuaLS与双语reference纳入一致性检查。
+- 回归检查：修复阶段用LuaLS fixture访问`err.sqlstate`及integer/double/string/NULL row，断言无unknown-field且不把numeric值固定推断为string；同时确保`sql_stage`被判为无效。当前不执行type checker。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3748,7 +3759,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为301项：P0为0，P1为108，P2为164，P3为29。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 33。
+当前滚动统计为302项：P0为0，P1为108，P2为164，P3为30。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 34。
 
 建议按依赖关系分五批修复：
 
@@ -4061,6 +4072,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`MYSQL-010`：握手无条件宣告MULTI_STATEMENTS/MULTI_RESULTS，名为multi support的Test 27却明确只测单条SELECT，无法覆盖stored-program多结果与response drain；不重复计数。
 - 2026-08-13：确认MySQL死锁重试示例只捕获Lua异常，丢弃driver按正常返回值交付的callback SQL错误并继续commit，可部分提交事务且语句阶段1213不会重试；归档为`DOC-032`，未执行事务。
 - 2026-08-13：确认MySQL双语连接池指南声称max_idle_conns=0为无限，实际return条件与两组test都明确把0当作no cache；默认配置每次query重连，归档为`DOC-033`，未建立连接。
+- 2026-08-13：确认MySQL唯一inline LuaLS把row全部值标为string，并把native/test/reference实际公开的err.sqlstate拼成不存在的sql_stage；归档为`DOC-034`，未运行type checker。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
