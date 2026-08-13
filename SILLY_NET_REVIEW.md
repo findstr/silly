@@ -1752,6 +1752,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：改为`assert(s->fd >= 0)`并审查所有platform wrapper只以各平台的invalid sentinel判错；不要依赖stdio始终打开。若某平台socket类型的invalid值不是-1，集中使用`SP_INVALID/INVALID_SOCKET` helper，避免通用整数比较。
 - 回归测试：修复阶段在独立子进程关闭fd 0后创建会EINPROGRESS的TCP连接，断言fd 0可以完成、读写、关闭并复用；同时覆盖同步成功、ECONNREFUSED、listener/UDP取得0和daemon stdio重定向。当前不改变进程descriptor。
 
+### SOCK-016 — P2 — Windows 控制唤醒 socket 使用 CRT `close` 销毁
+
+- 状态：已确认；Windows handle API 契约与初始化/销毁调用链的确定性静态推导。本轮不运行Windows构建或反复初始化。
+- 平台语义：Windows的Winsock `SOCKET`必须由`closesocket()`释放；CRT `close()`接收的是另一套整数file descriptor。两种handle namespace不可互换，即使底层数值偶然相同也不建立所有权关系。
+- 位置：Windows `pipe()`以`WSASocket/accept`创建控制通道两端并经`fd_t`返回，在`src/win/win.c:127-276`；`fd_t`是`intptr_t`且没有把`close`映射为`closesocket`，见`src/win/win.h:12-18,70-74`和`src/platform.h:32-37`；通用销毁却在`src/trigger.h:37-46`调用`close`。该销毁分别由`socket_init`错误回滚和正常`socket_exit`调用，见`src/socket.c:1929-1996`。
+- 触发：任意Windows正常退出；或控制socket已创建后，`add_to_sp`等后续socket初始化步骤失败并进入回滚。
+- 影响：两个Winsock控制socket不会被正确关闭，直到进程终止才由OS回收；初始化失败若上层重试会持续泄漏socket handle。更坏情况下，截断后的SOCKET数值恰好命中有效CRT descriptor，`close`会误关日志、配置或其他无关文件，随后仍泄漏原socket。64位`SOCKET`到CRT `int`参数的窄化还会进一步破坏目标标识。
+- 证据：创建路径从未把Winsock handle包装成CRT fd；Windows `pipe_read/pipe_write`也显式把同一值作为`SOCKET`交给`recv/send`。项目其他socket关闭路径均使用`closesocket`，只有通用`trigger_destroy`使用`close`；非Windows平台才在`platform.h`定义`closesocket`为`close`，反向映射不存在。
+- 根因：控制通道在Unix是pipe fd、在Windows是socket pair，但抽象层只统一了读写，没有统一close操作和invalid sentinel。
+- 建议解法：增加平台级`closefd`/`trigger_close` helper，Unix调用`close`、Windows调用`closesocket`，并让初始化、错误回滚和正常销毁共用；字段初始化和有效性判断也使用平台invalid sentinel，避免把Windows handle缩成`int`。
+- 回归测试：修复阶段在Windows统计进程handle/socket资源，覆盖正常启动退出和`sp_add`失败回滚，断言控制通道两端各关闭一次；同时预先打开多个CRT文件并验证销毁不会改变它们的可读写性。当前不做handle故障注入。
+
 ### HTTP1-001 — P2 — 接受 TE+CL 请求后未按 RFC 9112 强制关闭连接
 
 - 状态：已确认；RFC 规范与确定性控制流推导。本阶段按用户要求只做静态 review，不新增复现代码。
@@ -2679,7 +2691,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为211项：P0为0，P1为89，P2为113，P3为9。模块分布：CORE 7、NET 3、SOCK 15、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为212项：P0为0，P1为89，P2为114，P3为9。模块分布：CORE 7、NET 3、SOCK 16、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2698,6 +2710,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-06：完成第一轮 engine/queue/worker/socket 静态审阅，并用 TSAN 确认 5 组真实竞争。
 - 2026-08-06：用 `sendv_cap=1` 的确定性复现确认退出路径泄漏全部待发 payload；LSan 报告 32768 bytes/8 objects。
 - 2026-08-06：确认立即失败的 TCP connect 泄漏 fd；8 次失败令 open fd 从 8 增至 16。
+- 2026-08-13：1.0封板平台审计确认Windows控制唤醒通道以Winsock socket创建，却由CRT `close`销毁；归档为`SOCK-016`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
