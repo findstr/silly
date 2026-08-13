@@ -4818,4 +4818,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
 - 2026-08-13：Collector contract反查确认LuaLS/主reference要求name+new+collect，但Prometheus/Registry官方示例与runtime只要求collect，归档为`DOC-070`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
+- 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
