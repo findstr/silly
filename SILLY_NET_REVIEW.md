@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档351项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档352项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2896,6 +2896,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：使用`rate(process_cpu_seconds_user[1m]) + rate(process_cpu_seconds_system[1m])`（多实例面板按需要再`sum by(instance)`），并明确乘100所得是单核百分比语义、多核可能超过100%；或产品新增规范命名且保持向后兼容的total counter。所有dashboard/alert PromQL通过实际metric manifest lint。
 - 回归检查：修复阶段从一次gather提取family names并验证文档PromQL selector均存在；用user/system递增fixture确认查询有值、组合正确且实例label不被意外丢失。当前不执行查询。
 
+### DOC-065 — P3 — Gauge reference 仍宣称已修复的 `add(v)` 只加 1，示例输出与当前实现相反
+
+- 状态：已确认；双语gauge reference、当前Lua实现和方法示例的确定性静态核对。本轮不调用Gauge。
+- 位置：`docs/src/{en/,}reference/metrics/gauge.md:235-267,542-600,609-654,900-925`多次声明`add(v)`源码硬编码`+1`，示例称100后add(50)得到101，并建议直接`set(gauge.value+v)`或修改源码。当前`lualib/silly/metrics/gauge.lua:23-27`明确执行`self.value = self.value + v`；同页性能建议在`:871-909`又把`gauge:add(count)`当正确批量更新，内部自相矛盾。
+- 触发：用户查阅`gauge:add`、复制余额示例或数据库/cache workaround；无需异常输入。
+- 影响：文档断言的输出与运行结果相反（实际150/175而非101/102），用户会误判1.0 API有已知缺陷、绕过封装读取并写回内部`.value`，或在修复不存在的问题时形成私有fork。手工read-modify-set也让未来增加validation/aggregation或多worker语义时更难迁移。
+- 证据：Gauge `inc()`才固定加1，`add(v)`使用参数v；中文所谓“源码第31-33行”和英文同段描述均不匹配当前文件。全仓没有monkey patch替换该方法，sub/add/collect都直接使用同一metatable实现。
+- 根因：文档由旧版本bug状态生成，代码修复后没有同步删除warning、错误期望值和两处业务workaround；缺少按当前实现执行API围栏的校验。
+- 建议解法：删除全部bug警告/源码修改建议，将示例期望改成150/175，业务示例直接调用`add(0.1)`；若`.value`并非正式API则从文档示例移除或标为只读诊断。以单一API contract生成双语方法说明。
+- 回归检查：修复阶段覆盖0、正数、负数、浮点、vector submetric并断言`new == old + v`；双语文档零命中“add只加1/等待修复”，代码围栏预期值与实现一致。当前不执行。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4310,7 +4321,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为351项：P0为0，P1为112，P2为191，P3为48。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 64。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为352项：P0为0，P1为112，P2为191，P3为49。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 65。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
