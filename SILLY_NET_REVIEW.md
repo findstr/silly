@@ -385,10 +385,10 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 - 状态：已确认；OpenSSL默认契约、公开配置面与确定性调用链推导。本阶段不搭建MITM/伪证书动态复现。
 - 规范/权威依据：OpenSSL文档明确新建context默认不验证peer（`SSL_VERIFY_NONE`）；标准client流程需启用`SSL_VERIFY_PEER`、加载默认或指定trust store，并在握手前设置期望DNS hostname/IP。参见 [SSL_CTX_set_verify](https://docs.openssl.org/3.0/man3/SSL_CTX_set_verify/)、[TLS client guide](https://docs.openssl.org/3.3/man7/ossl-guide-tls-client-block/) 与 [SSL_set1_host](https://docs.openssl.org/3.0/man3/SSL_set1_host/)。
-- 位置：全局client context创建在`luaclib-src/ltls.c:217-230`；TLS对象/SNI设置在`:458-496`；Lua公开connect options在`lualib/silly/net/tls.lua:284-330`；文档示例在`docs/src/reference/net/tls.md:176-233,350-382`。
+- 位置：全局client context创建在`luaclib-src/ltls.c:217-230`；TLS对象/SNI设置在`:458-496`；Lua公开connect options在`lualib/silly/net/tls.lua:284-330`；双语reference的client示例与错误安全声明在`docs/src/{en/,}reference/net/tls.md:169-235,567-595`。
 - 触发：任何`silly.net.tls.connect`（以及使用它的HTTPS/WSS/gRPC client）连接到攻击者、错误配置或被DNS/路由劫持的endpoint；peer提供任意自签名、过期、不受信任或hostname不匹配的证书。即使调用方传入正确`hostname`也会触发，因为该参数只用于SNI。
 - 影响：链路虽然加密但没有服务端身份认证；主动中间人可终止并重新建立TLS，读取或篡改HTTP凭据、cookies、gRPC metadata及应用数据。API/文档把该连接描述为TLS/HTTPS且没有“不安全模式”警告，调用方也没有可用选项自行开启验证。
-- 证据：`lctx_client`只调用`SSL_CTX_new(TLS_method())`，从未调用`SSL_CTX_set_verify(...SSL_VERIFY_PEER...)`、`SSL_CTX_set_default_verify_paths`或加载CA。`ltls_open`对hostname只调用`SSL_set_tlsext_host_name`，没有`SSL_set1_host/SSL_set1_ipaddr`，握手成功路径也不检查`SSL_get_verify_result`。整个Lua conf没有CA、verify或expected-name字段。
+- 证据：`lctx_client`只调用`SSL_CTX_new(TLS_method())`，从未调用`SSL_CTX_set_verify(...SSL_VERIFY_PEER...)`、`SSL_CTX_set_default_verify_paths`或加载CA。`ltls_open`对hostname只调用`SSL_set_tlsext_host_name`，没有`SSL_set1_host/SSL_set1_ipaddr`，握手成功路径也不检查`SSL_get_verify_result`。整个Lua conf没有CA、verify或expected-name字段。两种语言却逐字声明“Clients verify server certificates by default / 客户端默认会验证服务器证书，自签名会失败”，common-errors还列出certificate mismatch/untrusted certificate；这些状态在当前client根本不会由验证产生。
 - 根因：把SNI（告诉服务端选择证书）误当作/替代了peer authentication，且client context只有一个无配置的全局实例。
 - 建议解法：安全默认开启peer verification并加载系统trust store；要求从目标URI自动导出expected hostname/IP，分别调用适用的OpenSSL verification API，SNI只对DNS名设置。提供`cafile/capath/ca_pem`和可选client cert；若确需测试用insecure模式，必须显式命名、默认false并向上层传播，不能让hostname=nil静默关闭所有认证。任何verify配置失败或握手验证失败均返回明确TLS错误。
 - 回归测试：修复阶段用独立证书矩阵覆盖受信CA+正确SAN成功，自签名、未知CA、过期、错误SAN、DNS/IP类型不匹配均失败；custom CA成功，显式insecure仅在主动配置时成功。HTTPS/WSS/gRPC集成路径均验证默认安全行为。当前不新增MITM复现。
@@ -423,7 +423,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 位置：Lua close在`lualib/silly/net/tls.lua:409-426`；native TLS只导出open/read/write/handshake/push/size/free，在`luaclib-src/ltls.c:642-689`；`ltls_free`仅调用`SSL_free`在`:187-200`。
 - 触发：任意已完成握手的TLS connection调用`conn:close()`或经`__close/__gc`收尾；无需异常条件。
 - 影响：peer看到底层EOF而非authenticated TLS EOF，严格实现会报告`unexpected eof while reading`并可能拒绝session reuse；若上层协议没有自身无歧义长度/结束标记，应用无法区分正常结尾与攻击者截断。HTTPS/WSS等常见路径也失去规范的TLS关闭语义。
-- 证据：`conn.close`立即清Lua状态后调用`net.close(fd)`，从不访问`s.ssl`；native模块全文没有`SSL_shutdown`。GC只`SSL_free`内存对象，既不drain out BIO也不发送alert。OpenSSL quiet-shutdown也未配置，因此不是一个显式、受约束的兼容模式。
+- 证据：`conn.close`立即清Lua状态后调用`net.close(fd)`，从不访问`s.ssl`；native模块全文没有`SSL_shutdown`。GC只`SSL_free`内存对象，既不drain out BIO也不发送alert。OpenSSL quiet-shutdown也未配置，因此不是一个显式、受约束的兼容模式。`test/testssl.lua:125-135`甚至把同一个`cfd:close()`注释为“Close cleanly (with SSL_shutdown)”，但测试只观察对端最终raw EOF，没有验证wire close_notify，形成错误覆盖信号。
 - 根因：TLS wrapper只代理握手和application data，把连接关闭完全委托给TCP层，缺少独立的TLS shutdown状态机与write-close deadline。
 - 建议解法：提供异步TLS close：在未发生fatal error时调用`SSL_shutdown`，drain并发送out BIO中的close_notify；可选择一次调用后关闭的documented fast shutdown，或在deadline内等待peer close_notify后关闭。fatal路径不得错误调用shutdown，但应尽力发送已生成alert。区分`abort()`与graceful `close()`，并保证GC finalizer采用有界、不会yield的安全策略。
 - 回归测试：修复阶段让OpenSSL/Go等strict peer验证主动client/server close都收到close_notify，双向关闭在deadline内完成；同时覆盖peer不响应、已有fatal error、pending ciphertext和GC fallback，无挂起/double-close。当前不新增互操作复现。
@@ -445,8 +445,8 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 规范：RFC 8996要求实现不得协商TLS 1.0或TLS 1.1；见 [RFC 8996](https://www.rfc-editor.org/rfc/rfc8996.html)。最低版本应由实现/API明确设为TLS 1.2或更高，不能依赖发行版OpenSSL配置偶然禁用旧协议。
 - 位置：client context在`luaclib-src/ltls.c:217-230`；每个server certificate context在`:285-352`，其中`:298`显式设置`TLS1_1_VERSION`；Lua TLS配置在`lualib/silly/net/tls.lua:43-48,338-367`。
 - 触发：在允许legacy协议/cipher的OpenSSL构建或系统策略下，与只提供TLS 1.1的peer协商；server路径代码明确允许1.1，client则完全使用库默认minimum。不同部署可因此产生不一致结果。
-- 影响：成功协商已被BCP禁止的旧TLS版本，继承其过时算法/协议风险；同一应用在不同OpenSSL版本或系统配置上安全基线漂移。配置API也无法把minimum提升到TLS 1.3或为受控legacy场景显式声明例外。
-- 证据：server唯一版本调用是`SSL_CTX_set_min_proto_version(ptr,TLS1_1_VERSION)`且忽略返回值；client context没有任何min/max调用。`TLS_method()`本身是version-flexible method，不等价于TLS 1.2 minimum。Lua conf只暴露cipher/cert/ALPN。
+- 影响：成功协商已被BCP禁止的旧TLS版本，继承其过时算法/协议风险；同一应用在不同OpenSSL版本或系统配置上安全基线漂移。配置API也无法把minimum提升到TLS 1.3或为受控legacy场景显式声明例外。双语安全指南又教用户用cipher string“禁用TLS1.0/1.1并强制TLS1.2+”，部署按该示例配置后仍可能协商代码允许的TLS1.1，形成安全策略假象。
+- 证据：server唯一版本调用是`SSL_CTX_set_min_proto_version(ptr,TLS1_1_VERSION)`且忽略返回值；client context没有任何min/max调用。`TLS_method()`本身是version-flexible method，不等价于TLS 1.2 minimum。Lua conf只暴露cipher/cert/ALPN。双语`docs/src/{en/,}guides/tls-configuration.md:488-519`把`ciphers="DEFAULT:!SSLv3:!TLSv1:!TLSv1.1"`标成version control，但实现只把它交给不设置protocol min/max的cipher-list API；`TLS-010`另记录其对TLS1.3 suite也不生效。
 - 根因：实现保留旧兼容minimum并把client policy隐式委托给OpenSSL全局默认，没有建立统一、可验证的TLS policy层。
 - 建议解法：client/server默认明确设置minimum TLS 1.2并检查API返回值；可选`min_version/max_version`只接受受支持、安全的枚举，任何legacy override需显式风险开关和告警。分别配置TLS≤1.2 cipher list与TLS1.3 ciphersuites，并在启动时记录最终policy。
 - 回归测试：修复阶段用TLS 1.0/1.1-only peer断言client/server均拒绝，TLS 1.2/1.3成功；覆盖不同OpenSSL major与系统security-level，显式配置错误必须启动失败而非静默回退。当前不启用legacy互操作。
@@ -3062,6 +3062,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS vectored write逐段进入SSL后才校验后续元素，后段异常/错误会把已生成prefix ciphertext留在out BIO并由未来write迟发；归档为`TLS-014`。
 - 2026-08-13：确认TLS certificate loader先创建SSL_CTX再调用可longjmp的Lua字段类型检查，异常绕过cleanup且指针尚未提交给userdata owner；归档为`TLS-015`。
 - 2026-08-13：确认OpenSSL未协商ALPN的零长度结果被binding转换为空字符串而非文档承诺的nil，Lua truthiness可误判为已协商；归档为`TLS-016`。
+- 2026-08-13：补强`TLS-001/004/006`：双语文档虚构默认certificate verification和cipher-string版本控制，testssl又把raw TCP close误注释成SSL_shutdown；不重复计数。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
