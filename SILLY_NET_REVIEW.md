@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档347项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档348项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2852,6 +2852,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：使用`local body, err = stream:readall(); if not body then return nil,err end; return {status=stream.status,body=body,header=stream.header}`，并明确非2xx仍可有合法body而transport error与HTTP status是两个正交通道。最好为streaming client提供具名response结果以减少同类型tuple误用。
 - 回归检查：修复阶段覆盖200、404、500、空body、RST/EOF/timeout，断言status始终取解析字段、error单独传播且正文不因非2xx被误判transport失败；文档静态扫描`body,status = stream:readall()`零命中。当前不建立连接。
 
+### DOC-061 — P2 — logging “生产级”示例异常路径永久抬高 in-flight gauge 并可能二次响应
+
+- 状态：已确认；双语完整示例的异常边界、metrics更新顺序和HTTP response终局的确定性静态核对。本轮不触发handler异常或采集指标。
+- 位置：`docs/src/{en/,}guides/logging-monitoring.md:865-1074`的`handle_request`开头执行`http_requests_in_flight:inc()`，只有所有路由、response、四项metrics和结构化日志都成功后才在`:1048-1057`执行`dec()`。外层`silly.pcall` catch在`:1060-1073`只记录错误、发送500并增加500 counter，不递减gauge、观察duration/request/response size或判断response是否已提交。
+- 触发：`json.encode`、业务handler、`time.sleep`恢复、`stream:respond/closewrite`、metric label/observe或`log_request`中任一步抛错。`DOC-057`所述非法logger格式属于前一个简化示例；本完整示例本身仍可由业务/codec/transport异常进入该路径。
+- 影响：每次异常都让`api_http_requests_in_flight`永久加一，持续故障使表示“当前处理请求”的gauge单调上升，即使所有请求协程已结束。容量告警、自动扩缩容和Grafana并发面板因此报告幽灵负载；异常请求又缺duration/size观测，故障时恰好失去延迟证据。若错误发生在200/201/404响应已经提交后，catch仍发送第二个500，产生协议异常或误导日志，并可能同时记录原status与500两次。
+- 证据：Lua/xpcall异常直接跳过`handle_request`余下语句，不存在defer/finally；gauge对象不会按协程生命周期自动回滚。catch没有保存“已响应”状态，HTTP stream也不会撤销先前写入。正常分支的counter/duration/dec位置均早于最终log但晚于全部response，所以不同抛错点还会产生counter已计/gauge已减与完全漏计等多种不一致终局。
+- 根因：instrumentation分散在业务handler尾部，把“顺利走到最后”当成唯一终局，没有以scope guard/outer middleware保证in-flight恰好减一次；response提交与exception recovery也没有单一所有者。
+- 建议解法：最外层observability wrapper在进入时inc并以受保护的统一finally路径dec，记录真实status/outcome和monotonic duration恰好一次；业务response通过context/writer记录是否已提交，异常仅在未提交时生成500，否则关闭/reset并记录write/handler failure，禁止二次response。metric/logger自身失败不得破坏请求清理。
+- 回归检查：修复阶段在route前、业务中、JSON、首次respond后、closewrite、metrics和logger各点注入异常；断言in-flight总回到基线、每请求恰好一个终局counter/duration、最多一个response且无残余task。当前不做异常注入。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4266,9 +4277,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为347项：P0为0，P1为112，P2为189，P3为46。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 60。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为348项：P0为0，P1为112，P2为190，P3为46。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 61。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；189项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；190项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
