@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档326项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档327项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2614,6 +2614,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：新增与当前实现及英文页逐入口对齐的中文`reference/net/url.md`，补中文README导航；同步校正默认port、authority、fragment/query语义与错误返回。CI对中英文公开reference做相对路径集合差分，并允许仅通过显式豁免清单存在单语页面。
 - 回归检查：修复阶段静态构建两种语言站点，检查中文URL页和八个入口均可从Network索引到达，所有内部链接有效；以API manifest核对Lua导出、英文、中文标题集合。当前不构建文档。
 
+### DOC-048 — P2 — HTTP 教程的“恶意大上传”防护可被 chunked 或重复 Content-Length 绕过
+
+- 状态：已确认；双语教程安全示例、H1 header表示和body读取状态机的确定性静态核对。本轮不发送chunked/重复header请求或运行server。
+- 位置：中英文HTTP server教程明确以“防止恶意大文件上传”为目标，却只执行`tonumber(stream.header["content-length"]) > 1 MiB`，见`docs/src/{en/,}tutorials/http-server.md:703-715`。H1重复header聚合为table并在存在Transfer-Encoding时删除Content-Length，见`lualib/silly/net/http/h1.lua:130-168`；chunked/read-to-EOF与固定长度正文均由无总量上限的`readall`累计，见`:174-340,534-545,835-846`。
+- 触发：攻击者用`Transfer-Encoding: chunked`发送超过1 MiB正文，此时可不带Content-Length且parser还会删除并存的Content-Length；或发送重复Content-Length，使公开header值成为table而`tonumber(table)`返回nil。应用随后按教程其他路径调用`stream:readall()`。
+- 影响：示例条件为false，413分支不执行，服务继续读取并在内存累计任意大的正文；攻击者可用少量并发连接耗尽worker内存。维护者会误以为已按官方教程部署上传上限，风险比单纯遗漏提示更高。运行时缺少header/body/stream预算已由`HTTP1-007`覆盖；本条独立记录官方安全缓解本身可稳定绕过。
+- 证据：`read_header`将第二个同名字段改为数组、后续继续append；Lua`tonumber`对table返回nil。只要Transfer-Encoding字段存在，实现就把`header["content-length"]`置nil，而合法chunked reader会逐chunk将数据append到`recvbuf`直到零块，没有累计上限检查。教程只在读取前检查声明值，既不拒绝不可信/重复framing，也不对实际读取bytes计数。
+- 根因：安全示例把攻击者声明的单个header值当成资源预算，而API没有提供限额读取或server级body cap；教程没有覆盖HTTP/1的多种framing，也没有与底层parser的重复字段表示对齐。
+- 建议解法：先在H1/H2公共stream层提供强制的实际header/body/connection预算与安全默认，超限立即按协议终止且释放buffer；应用级接口可提供`readall(max_bytes)`或累计迭代读取。教程应说明Content-Length只能用于早拒绝，必须拒绝重复/冲突值并对chunked及无长度正文按实际bytes实施同一1 MiB上限，不能把header检查描述成完整防护。
+- 回归检查：修复阶段覆盖小/大Content-Length、chunked跨多个chunk越界、TE+CL、重复相同/不同CL、无长度EOF正文和H2 DATA；断言所有路径在实际第`limit+1`字节前后按定义停止、返回413或协议错误、连接与buffer资源归零。当前不构造请求。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4028,9 +4039,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为326项：P0为0，P1为111，P2为173，P3为42。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 47。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为327项：P0为0，P1为111，P2为174，P3为42。模块分布：CORE 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 48。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；173项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；174项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4385,4 +4396,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：完成性反查共享ADT确认TCP默认无界接收buffer以signed int累计所有node字节；远端backlog超过INT_MAX会触发UB，并使read永久nil或readall断言终止，归档为`NET-008`。
 - 2026-08-13：完成性反查低层net双语reference确认所有接收示例误用只复制不释放的`silly.tostring`，且虚构callback return/yield自动失效规则；官方成功路径逐包泄漏，归档为`DOC-046`。
 - 2026-08-13：完成性反查双语文件集合确认英文已发布完整`silly.net.http.url`页面并加入索引，而中文页面和导航均不存在，归档为`DOC-047`。
+- 2026-08-13：完成性反查HTTP server双语教程确认其“防恶意大上传”示例只检查单值Content-Length，chunked、TE+CL和重复CL均可跳过且实际readall仍无界，归档为`DOC-048`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
