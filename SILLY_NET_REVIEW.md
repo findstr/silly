@@ -2067,6 +2067,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把`stream:write(data)`和`stream:closewrite([data[,trailer]])`定义为H1/H2共同能力，分别说明H1 framing与H2 flow-control/并发约束；删除错误版本分支和`close(body)`，补充每次write返回值必须检查。若产品决定不公开H2 streaming，则实现必须一致拒绝而非文档单方面隐藏，但1.0更合理的是保留现有能力并修复其H2状态问题。
 - 回归测试：将reference/guide示例纳入LuaLS/doc test；H1/H2同一handler执行多次write+closewrite，断言方法存在、返回契约一致且大body不先聚合。静态API lint禁止文档引用不存在的方法。当前只保存静态证据。
 
+### DOC-016 — P3 — 中文 reference 与双语 guide 错称 HTTP client 不池化、每次请求新建连接
+
+- 状态：已确认；双语能力说明、全局/专用client构造及H1/H2 pool收放路径静态核对。本轮不建立或复用连接。
+- 位置：错误说明在`docs/src/reference/net/http.md:22-30`与`docs/src/{en/,}guides/http-best-practices.md:73-101`，正确英文reference对照在`docs/src/en/reference/net/http.md:21-30`；实现位于`lualib/silly/net/http.lua:6-67`及`lualib/silly/net/http/client.lua:75-204,211-280,417-443`。
+- 触发：用户阅读中文reference或任一语言最佳实践，依据“每次请求创建新连接/不支持连接池”评估fd、TLS握手、DNS频率、负载均衡、服务端连接数或client shutdown；使用顶层`http.get/post`也同样被误导。
+- 影响：实际顶层API共享模块级`httpc`，H1连接在response完整后归池，H2 channel也长期复用/多路复用。运维可能低估长寿命连接和idle fd、误判DNS/endpoint变化生效时间，或额外自建一层池造成资源与生命周期复杂化；测试/性能结论会与文档模型相反。已有pool泄漏、close竞态及GOAWAY问题也更容易因用户不知道池存在而难以诊断。
+- 证据：`http.lua`加载时执行`local httpc=client.new()`，所有顶层get/post/request转发给同一对象；`find_conn`先查H2/H1 pool，H1 `releaseh1`回插、H2 channel创建即入pool，idle timer统一淘汰。`newclient`还公开max-idle/idle-timeout选项。英文reference明确承认两协议自动pool，证明其他文档不是有意描述另一API。
+- 根因：中文/reference与guide保留旧transport模型，且同一能力事实在多个手写页面重复维护，没有由client option/schema和pool tests生成。
+- 建议解法：统一声明顶层singleton与`newclient`都池化，并解释H1顺序复用、H2多路复用、idle/max配置、DNS/TLS identity key和`client:close()`责任；若顶层singleton无法显式close，也需说明进程级生命周期。删除“每次新建”示例注释，双语内容从同一能力表生成。
+- 回归测试：文档契约测试以stub connector计数连续H1/H2请求的建立次数、完整/错误body后的复用与close淘汰，并静态比较中英文能力表；不把本库client/server互测当协议正确性证明。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3253,7 +3264,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为260项：P0为0，P1为99，P2为141，P3为20。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 15。
+当前滚动统计为261项：P0为0，P1为99，P2为141，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 38、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
 
 建议按依赖关系分五批修复：
 
@@ -3324,6 +3335,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认remote RST只终止当前waiter/remote half，之后respond/write/closewrite仍排HEADERS/DATA并报告成功；归档为`H2-038`。
 - 2026-08-13：确认HTTP双语reference/中文guide把server push列为Silly已支持，但H2无push API且client SETTINGS明确禁用；归档为`DOC-014`。
 - 2026-08-13：确认HTTP双语reference/guide反称H2不支持实际已实现的write，并让用户调用不存在的close(body)；归档为`DOC-015`。
+- 2026-08-13：确认中文HTTP reference与双语guide错称client不池化/每次新建连接，实际顶层singleton与专用client均复用H1/H2；归档为`DOC-016`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
