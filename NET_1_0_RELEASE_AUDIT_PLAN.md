@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共269项（P1 100、P2 148、P3 21）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket专项已确认教程的post-read消息检查不能形成输入预算并归档`DOC-018`，其余矩阵继续收口。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共270项（P1 100、P2 148、P3 22）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket专项已确认教程的post-read消息检查不能形成输入预算及reference返回契约漂移，归档`DOC-018/019`，其余矩阵继续收口。
 
 ## 1. 目标和边界
 
@@ -81,7 +81,7 @@
 - transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`已逐项映射，positive ALPN、reload、读写/关闭等覆盖与certificate verification、close_notify、握手deadline、TLS版本、invalid config和failure cleanup缺口均已落到TLS条目。
 - HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`审阅中：现有WSS case只读取非空data，空Close只在ws覆盖，因此未发现`TLS-009`在WSS合法空frame上的挂起。`testgrpc.lua`待审。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
-- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket双语reference/tutorial已开始逐段核对，新增`DOC-018`，gRPC/storage/cluster类型、guide/example继续对应专项及最终一致性核对。
+- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket双语reference/tutorial逐段核对中新增`DOC-018/019`，gRPC/storage/cluster类型、guide/example继续对应专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
 

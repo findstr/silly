@@ -2127,6 +2127,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：先按`WS-005`在WebSocket parser中提供有安全默认值、可配置的frame/message上限，并在读取payload及追加fragment之前检查；教程显式把这些选项配置在listener/upgrade或socket创建处。返回后的`#data`检查可以保留为房间业务上限，但必须说明它不承担内存DoS防护。
 - 回归测试：修复阶段让文档示例使用真实size配置，并以注入式reader覆盖header声明超限但payload未到、许多小fragment累计越界及恰好边界；断言在分配/拼接超限内容前终止并释放stash。双语代码块做同一schema检查。本轮不执行示例或构造流量。
 
+### DOC-019 — P3 — WebSocket 双语 reference 的 read/close 返回契约与实现不一致
+
+- 状态：已确认；双语reference、LuaLS注解和所有公开return路径逐项静态对照。本轮不调用WebSocket API。
+- 位置：错误契约位于`docs/src/{en/,}reference/net/websocket.md:160-224`；实现位于`lualib/silly/net/websocket.lua:51-95,139-223`，相关非法fragment行为另见`WS-004`、close状态另见`WS-007`。
+- 触发：调用方按文档在read失败后使用第三返回值恢复partial frame/message、把`"continuation"`作为正常完整消息类型分派，或期望`close()`没有可检查的结果；封装层和LuaLS也会据此声明错误签名。
+- 影响：reader的第三返回值在全部错误路径都固定为`""`，底层已经缓冲的partial header/payload不会交付，故应用无法实现文档暗示的恢复。合法fragment chain只会以首帧的`text/binary`类型完整返回；`continuation`仅因`WS-004`错误接受standalone continuation才可见，把它写入正常类型集合会固化协议偏离。反向上，`close()`真实返回底层`boolean,error`但文档写“无返回值”，调用方无法按契约观察close失败；它还会误以为与其他资源close的result API不同。
+- 证据：`read_frame`每个短读/error只返回nil、error和空串，`s.read`又无条件返回`nil,op,""`，从没有返回已消费或底层缓存的partial bytes。正常FIN=0首帧保存`stashtype`，final continuation后返回该首类型；只有无stash的opcode 0被当前错误状态机直接映射为`continuation`。`s.close`有明确`---@return boolean,string?`并执行`return ok,err`，双语页面却都列Returns/返回值为None/无。
+- 根因：reference按理想化frame API手写，未从真实LuaLS签名及状态机结果集合生成；协议层“frame type”和公开层“complete message type”也被混用。
+- 建议解法：文档只声明真实且稳定的结果：read成功返回完整`text/binary`或明确的control event，错误返回`nil,error`，除非未来实现可证明partial归属的流式API；删除正常`continuation`类型。先决定`close`是否应返回result并与`WS-007`的幂等/handshake结果统一，再同步双语签名和LuaLS。
+- 回归测试：修复阶段用API contract test枚举read的EOF、header/payload短读、合法fragment和非法standalone continuation，并检查返回值数量/类型；覆盖close成功、已关闭和底层失败。CI比较双语reference、LuaLS annotation与导出函数签名/枚举。本轮不执行调用。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3361,7 +3372,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为269项：P0为0，P1为100，P2为148，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 18。
+当前滚动统计为270项：P0为0，P1为100，P2为148，P3为22。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 19。
 
 建议按依赖关系分五批修复：
 
@@ -3442,6 +3453,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认双语WebSocket教程在`sock:read()`完整缓冲后才检查10 KiB并错误声称可防恶意大消息；归档为`DOC-018`，实现侧根因仍由`WS-005`覆盖。
 - 2026-08-13：补强`TLS-009`：WebSocket frame reader对零payload仍调用`read(0)`，故WSS收到合法空Close/Ping/Pong/data frame会永久等待；现有WSS测试只读非空消息，未覆盖该分叉。不重复计数。
 - 2026-08-13：补强`WS-007`：WebSocket把非幂等close直接注册为`__close`，显式close后作用域退出或重复cleanup会在nil connection上抛异常并可能掩盖原错误。不重复计数。
+- 2026-08-13：确认WebSocket双语reference虚构partial read data、把非法standalone continuation列为正常消息类型，并把有result的close写成无返回值；归档为`DOC-019`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
