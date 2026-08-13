@@ -2390,6 +2390,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：两种语言和inline LuaLS统一改为`integer`并明确为受int64表示策略影响的非负删除数量；示例用`res.deleted > 0`或与期望数量显式比较。由protobuf descriptor生成/校验公开response类型，避免手写schema漂移。
 - 回归检查：修复阶段对不存在单key、存在单key、空/多key prefix分别断言0/1/N，并让LuaLS检查`deleted > 0`通过、boolean消费报类型错误；doc-test验证中英文示例不再依赖Lua零值真值。当前只保存静态证据。
 
+### DOC-036 — P3 — etcd `Event.type` 标成 integer，但 codec、测试与示例都交付枚举名字符串
+
+- 状态：已确认；生成LuaLS、protobuf enum decode默认值、真实etcd断言与双语示例静态对照。本轮不解码event或运行LuaLS。
+- 位置：错误类型在`lualib/silly/store/etcd/v3/proto.lua:2980-2984`；native codec的默认enum-name分支在`luaclib-src/pb.c:149-154,1854-1867,2069-2074`；真实集成断言在`test/etcdcheck.lua:380-389`；中英文reference的字符串分支分别见`docs/src/reference/store/etcd.md:628-642`与`docs/src/en/reference/store/etcd.md:638-652`并在后续示例重复。
+- 触发：启用LuaLS后按实际API写`if event.type == "PUT" then ... elseif event.type == "DELETE" then ... end`；或开发者相信integer注解而改为与0/1比较。
+- 影响：正确的字符串比较被静态分析标为不相交类型，补全也无法给出合法枚举名；若为消除告警改用数字，默认codec交付的已知event将永远不匹配，PUT/DELETE处理、配置更新或服务发现清理分支被静默跳过。未知未来枚举仍可能以integer交付，现有单一integer注解也没有表达真实的演进契约。
+- 证据：`lpb_State.enum_as_value`默认零，decode known enum时查descriptor并`lua_pushstring(ev->name)`；只有显式全局`pb.option("enum_as_value")`或未知值才返回数字。仓库没有切换该全局选项，真实etcd test明确断言`"PUT"/"DELETE"`，所有reference示例也与字符串比较；只有生成文件手写注解写`integer`。
+- 根因：生成LuaLS把wire enum底层编号直接翻译为Lua integer，没有纳入codec的presentation option和unknown-enum fallback；schema类型生成与实际decode policy分离。
+- 建议解法：在当前默认策略下把公开类型定义为`"PUT"|"DELETE"|integer`，其中integer仅表示未知enum；更稳妥地为EventType生成literal alias并固定etcd client自己的codec policy，避免进程全局`pb.option`使API类型运行时改变。文档说明unknown value的处理。
+- 回归检查：修复阶段让LuaLS fixture对PUT/DELETE字符串分支无告警，已知wire值解码为对应名字、未知值保留integer；若允许全局enum模式变化，则构造client时隔离或拒绝不兼容模式。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3792,7 +3803,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为305项：P0为0，P1为109，P2为165，P3为31。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 35。
+当前滚动统计为306项：P0为0，P1为109，P2为165，P3为32。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 36。
 
 建议按依赖关系分五批修复：
 
@@ -4118,6 +4129,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
 - 2026-08-13：确认etcd watch原地改写并长期保存caller request table，同table复用或调用后修改会覆盖watch ID及重连范围，导致事件错投、漏投或永久等待；归档为`ETCD-017`，未建立watch或断链。
 - 2026-08-13：确认etcd `DeleteRangeResponse.deleted`实际为int64数量，但wrapper LuaLS及中英文reference均标成boolean；Lua中0为truthy会让照文档判断的调用方误报删除成功，归档为`DOC-035`，未发送删除请求。
+- 2026-08-13：确认etcd `Event.type`的生成LuaLS标成integer，但默认protobuf codec、真实集成断言和双语示例均交付/使用`PUT`、`DELETE`字符串；归档为`DOC-036`，未解码event。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。
