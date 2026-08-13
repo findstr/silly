@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档337项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档338项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -352,6 +352,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：为把parent/current node塞入单个64-bit integer，generator把时间和counter都压到16位，却仍把结果当作全局唯一ID；没有随机熵、持久epoch、进程instance identity或collision检测，node输入也依赖调用方自律。
 - 建议解法：采用标准128-bit W3C trace-id并以固定32位hex header传播，使用CSPRNG或足够宽的time+process-random+counter生成；若必须保留64位legacy格式，必须重新定义为非全局唯一、增加per-process随机epoch并保证counter在生命周期内不回绕，同时拒绝node超出0..65535。cluster wire需要版本化迁移，不能静默改变现有8-byte字段。
 - 回归测试：修复阶段用可注入clock/counter覆盖同秒边界、sequence wrap、time wrap、进程重启、两个同node实例及非法node；断言所有生成root唯一，HTTP header、cluster frame、task fork/attach/propagate和logger保持同一标准表示。当前不生成碰撞流量。
+
+### CORE-011 — P2 — `silly.genid()` 是重启即复用的 32-bit 进程计数器，却承诺全局唯一并用于 JWT JTI
+
+- 状态：已确认；worker初始化/计数宽度、native/Lua导出及双语core/JWT契约的确定性静态核对。本轮不启动多进程、重启进程或循环分配ID。
+- 公开契约：中英文`silly` reference把`genid()`定义为“生成全局唯一ID”；JWT reference进一步用它生成unique user ID和防重放的unique token `jti`。全局唯一至少需要区分进程、实例重启和计数回绕，不能只在当前进程的短窗口内递增。
+- 位置：`src/worker.c:38-57,197-203,446-458`把`W->id`定义为`uint32_t`、启动时memset为0、每次前置递增并仅在回绕到0时写日志；`src/api.c:161-164`与`src/silly.h:155`保留32-bit返回，`luaclib-src/lsilly.c:26-31`再导出Lua integer，`lualib/silly.lua:31-42`公开为`silly.genid`。双语唯一性承诺在`docs/src/{en/,}reference/silly.md:48-59`；JWT security示例在`reference/security/jwt.md:272-291,711-723`。
+- 触发：两个Silly进程各首次调用一次、同一服务重启后再次调用，或单进程累计调用2^32次。前两种是普通多实例/滚动发布条件，无需达到回绕极限。
+- 影响：不同进程或不同部署代的对象、请求和token收到相同ID；以它作数据库key、幂等key、用户标识或消息correlation会错配/覆盖。按官方JWT防重放示例使用时，重复`jti`会让撤销一个token误伤另一个，或使基于唯一ID的replay记录无法区分不同token；日志只在单进程回绕时警告，跨进程/重启碰撞完全静默。
+- 证据：`worker_init`每次明确把整个W清零，第一次`++W->id`恒为1；ID没有PID、node、time、random或持久epoch。两台机器、两个worker进程或一次重启因此都会生成相同序列`1,2,...`。`uint32_t`加法按模2^32回绕，代码自身的wrap warning也证明实现知道重复会发生，却没有改变返回或阻止继续分配。
+- 根因：内部轻量request/process sequence被直接作为公共“global ID”暴露，接口命名和文档把局部递增性质升级成了分布式唯一性保证；安全示例又在没有entropy/namespace的情况下复用它。
+- 建议解法：若保留现实现，将API改名/契约明确为`next_local_id`且只允许短生命周期进程内关联，回绕前失败；真正`genid`采用UUIDv4/UUIDv7、ULID或包含足够随机instance ID与宽counter/time的方案，并定义字符串/128-bit表示。JWT `jti`必须用CSPRNG生成至少128-bit不可预测唯一值，不能用可预测计数器。
+- 回归测试：修复阶段用两个独立generator实例、模拟重启、counter边界与并发调用验证无碰撞；JWT示例断言jti格式、entropy与跨进程唯一性，并测试blacklist只命中目标token。当前不运行多进程或生成大量ID。
 
 ### METRIC-001 — P2 — Prometheus label value 未转义，网络字段可破坏或注入抓取文本
 
@@ -4154,9 +4166,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为337项：P0为0，P1为112，P2为182，P3为43。模块分布：CORE 10、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为338项：P0为0，P1为112，P2为183，P3为43。模块分布：CORE 11、METRIC 5、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；182项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；183项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4522,4 +4534,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：继续核对metrics registry，确认只按对象引用去重；公开自动注册可导出重复同名HELP/TYPE/sample并使scrape失败，归档为`METRIC-004`。
 - 2026-08-13：逐文件台账反查trace generator，确认root只含16-bit秒与16-bit sequence；突发65,537次或稳定1次/秒约18.2小时都会复用ID，归档为`CORE-010`。
 - 2026-08-13：收口runtime metrics collector时反查socket stats，确认sent bytes在payload入队时计满，partial/失败/close未发送部分永不回滚且真正write不计成功量，归档为`METRIC-005`。
+- 2026-08-13：LuaLS/core反查确认公开`genid`只是启动归零的32-bit进程计数器，跨进程/重启立即复用且JWT指南用作唯一用户/JTI，归档为`CORE-011`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

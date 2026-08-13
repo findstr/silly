@@ -64,7 +64,7 @@
 | `src/win/wepoll.h` | 已审无新增 | wepoll public declarations | 同上 |
 | `src/win/win.c` | 已审有归档 | SOCK-016至019、DNS-016至018 | Winsock控制通道、path、resolver、handle宽度 |
 | `src/win/win.h` | 已审有归档 | CORE-008、SOCK-016/019 | Windows stubs、fd/socket类型与platform API |
-| `src/worker.c` | 已审有归档 | CORE-001/002/004/005、SOCK-008 | callback、wakeup drain、thread start/exit |
+| `src/worker.c` | 已审有归档 | CORE-001/002/004/005/011、SOCK-008 | callback、wakeup drain、thread start/exit、ID生成 |
 | `src/worker.h` | 已审无新增 | worker API/message boundary | 实现映射到`worker.c` |
 
 ## 3. Native Lua binding 与内建 codec
@@ -102,7 +102,7 @@
 | `luaclib-src/lnet.c` | 已审有归档 | NET-002/003、SOCK-006/011 | pointer ownership、pack/multicast/address |
 | `luaclib-src/lperf.c` | 范围外 | profiler binding | 不参与net运行路径 |
 | `luaclib-src/lsignal.c` | 范围外 | process signal API | 无协议/socket ownership |
-| `luaclib-src/lsilly.c` | 已审无新增 | core metadata/exit/callback binding | shutdown问题映射到engine/worker |
+| `luaclib-src/lsilly.c` | 已审有归档 | CORE-011 | core metadata/exit/callback、genid导出 |
 | `luaclib-src/ltest.c` | 范围外 | test-only hooks | 产品构建不依赖其协议行为 |
 | `luaclib-src/ltime.c` | 已审有归档 | CORE-006/009、NET-007 | timeout integer、clock契约、session |
 | `luaclib-src/ltls.c` | 已审有归档 | TLS-001至018中的native项 | SSL_CTX/SSL/BIO/SNI/ALPN/GC/error |
@@ -127,6 +127,8 @@
 
 | 路径 | 状态 | 问题/证据 | 尚需动作或排除理由 |
 |---|---|---|---|
+| `lualib/protoc.lua` | 已审有归档 | DOC-045、GRPC-038 | gRPC/protobuf codegen、path与proto2 group能力 |
+| `lualib/silly.lua` | 已审有归档 | CORE-011、DOC-046 | core公开导出、genid、tostring、exit |
 | `lualib/silly/net.lua` | 已审有归档 | NET-001至004、DOC-046 | callback tables、payload ownership、dispatch/close |
 | `lualib/silly/net/cluster.lua` | 已审有归档 | CLUSTER-001至019 | master逐路径与cluster分支对照已收口 |
 | `lualib/silly/net/dns.lua` | 已审有归档 | DNS-001至018 | UDP/TCP/cache/singleflight/reconfigure/close |
@@ -173,6 +175,14 @@
 | `lualib/silly/trace.lua` | 已审有归档 | CORE-010 | task trace API导出与唯一性契约 |
 | `lualib/silly/logger.lua` | 已审无新增 | net/trace日志wrapper | formatter与native sink已核对 |
 | `lualib/silly/console.lua` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc观测输出 |
+| `lualib/silly/debugger.lua` | 范围外 | debugger orchestration | 不参与产品net协议路径 |
+| `lualib/silly/hive.lua` | 范围外 | optional hive codec wrapper | cluster只接收caller-supplied marshal |
+| `lualib/silly/internal/autoload.lua` | 已审无新增 | native module searcher | net/codec native加载与types路径已核对 |
+| `lualib/silly/internal/stdin.lua` | 范围外 | REPL/stdin helper | 不参与socket engine协议处理 |
+| `lualib/silly/patch.lua` | 范围外 | Lua patch helper | 不在net/storage调用图 |
+| `lualib/silly/security/jwt.lua` | 范围外 | application JWT实现 | 非内建net认证；其文档错误用genid已归CORE-011 |
+| `lualib/silly/signal.lua` | 范围外 | process signal wrapper | 不参与协议状态机 |
+| `lualib/zproto.lua` | 范围外 | optional zproto wrapper | 非cluster固定wire codec |
 
 ## 5. LuaLS / native 类型声明
 
@@ -182,7 +192,7 @@
 | `lualib/types/pb/pb.lua` | 已审有归档 | DOC-045、GRPC protobuf项 | encode/decode/option/iterator/slice/path API |
 | `lualib/types/silly/adt/buffer.lua` | 已审有归档 | NET-008、DOC-044 | buffer读写返回与size宽度 |
 | `lualib/types/silly/adt/queue.lua` | 已审无新增 | task/channel/cluster native queue | 空pop与所有权由调用方/cluster stub覆盖 |
-| `lualib/types/silly/c.lua` | 审阅中 | core native总入口 | 需完成exit/tostring/error/version公开返回核对 |
+| `lualib/types/silly/c.lua` | 已审有归档 | CORE-011 | exit/tostring/error/version/genid公开签名与实现 |
 | `lualib/types/silly/compress/gzip.lua` | 已审有归档 | HTTPC-001、COMP-001 | output budget、flush/end/error与签名 |
 | `lualib/types/silly/crypto/cipher.lua` | 范围外 | caller-selected cipher API | 不参与内建TLS record实现 |
 | `lualib/types/silly/crypto/hash.lua` | 已审无新增 | WebSocket/MySQL hash调用 | 方法与native返回已核对 |

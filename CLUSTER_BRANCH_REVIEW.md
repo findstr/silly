@@ -64,7 +64,7 @@ test/testcluster.lua
 
 ## 4. 分支独有问题
 
-分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告337项统计。
+分支独有问题使用`CLUSTER-Bxxx`编号，不计入以`master d1aef7ff`为基线的主报告338项统计。
 
 ### CLUSTER-B001 — P2 — eager `cluster.connect`没有deadline参数，黑洞dial可长期挂起
 
