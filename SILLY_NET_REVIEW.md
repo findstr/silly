@@ -1977,6 +1977,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0若不实现，删除“自动”及0-RTT收益，明确当前只建议应用层复用已建立连接；若实现，增加以origin/SNI/ALPN/验证策略隔离且有过期和ticket更新的session cache，显式观测是否恢复。0-RTT必须另设opt-in API、服务端额度、拒绝回退及anti-replay/仅幂等请求规则，不能由普通`write`隐式开启。
 - 回归测试：修复阶段用本地stub/受控TLS peer连续握手，断言第二次`SSL_session_reused`与full-handshake计数；0-RTT需分别覆盖accept/reject/replay/非幂等禁用。文档CI检查被宣传的OpenSSL特性至少存在对应binding符号或明确标注“不支持”。当前只保存静态证据。
 
+### DOC-012 — P3 — `http.listen.backlog` 被双语 reference 公开但实现静默丢弃
+
+- 状态：已确认；HTTP公开配置、TCP/TLS wrapper与双语reference逐字段静态核对。本轮不启动listener或制造accept queue压力。
+- 位置：双语参数承诺在`docs/src/en/reference/net/http.md:42-56`和`docs/src/reference/net/http.md:41-55`；HTTP transport实现位于`lualib/silly/net/http.lua:10-50`，真实底层参数在`lualib/silly/net/tcp.lua:155-173`与`lualib/silly/net/tls.lua:326-365`。
+- 触发：调用`http.listen{addr=...,backlog=N,handler=...}`，无论明文还是TLS；文档明确把该字段列为optional listen queue size。
+- 影响：HTTP层构造传给`tcp.listen/tls.listen`的新table时没有`backlog`，底层最终总是采用通用默认256。部署者为突发连接、资源保护或平台限制设置的小/大queue完全不生效且没有错误/告警，压测与上线容量行为偏离配置；读取配置对象也无法发现丢失。
+- 证据：`M.listen`明文分支只转发`addr/accept`，TLS分支只转发`addr/certs/alpnprotos/accept`；两种底层listen都明确读取`opts.backlog`并传给`net.tcplisten`。源内HTTP conf LuaLS注解也遗漏backlog，说明文档与wrapper schema同时漂移，而不是底层不支持。
+- 根因：HTTP adapter手工重建配置table，新增/已有底层option没有共享schema或逐字段契约测试。
+- 建议解法：在HTTP conf注解加入backlog并在两分支显式转发、验证integer/range；更稳妥地由统一listener option mapper处理共享transport字段，TLS专属字段另行allowlist，未知字段报错而非静默忽略。若1.0不支持HTTP级覆盖，则从双语文档删除并明确固定默认。
+- 回归测试：修复阶段用stub替换tcp/tls listen，分别断言nil及边界backlog原样到达且invalid值在资源创建前失败；文档/schema lint确保每个公开option有consumer。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3116,7 +3127,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为248项：P0为0，P1为98，P2为134，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为249项：P0为0，P1为98，P2为134，P3为17。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 12。
 
 建议按依赖关系分五批修复：
 
@@ -3175,6 +3186,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1 chunked普通空写会编码协议last-chunk却保持stream可写，closewrite空串还会生成双终止块并污染下一消息；归档为`HTTP1-019`。
 - 2026-08-13：确认H1 sender/client/server均以Lua `tonumber`解释Content-Length，符号/hex/指数/小数等非法wire值可与严格peer形成消息边界分叉；归档为`HTTP1-020`。
 - 2026-08-13：确认HTTP redirect把301/302/303的所有method一律改GET，且删除body时残留Expect/TE等entity fields，破坏方法与下一跳消息语义；归档为`HTTPC-006`。
+- 2026-08-13：确认HTTP双语reference公开listen backlog，而http.lua明文/TLS adapter都未转发到底层，任何配置均静默落回默认；归档为`DOC-012`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
