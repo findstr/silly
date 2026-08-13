@@ -3451,17 +3451,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：构造client时只校验target语法并建立独立resolver/subchannel状态，不因单target暂时解析失败丢弃健康成员；后台或按需解析/连接每个subchannel，round_robin picker只选READY channels。无READY时按明确fail-fast/wait-for-ready与absolute call deadline策略等待或返回聚合错误；一次call是否重选尚未发送bytes的备用endpoint也必须区分于已发送后的RPC retry，避免重复副作用。与`GRPC-020`共享双栈resolver结果，但保持target级与address级两层故障隔离。
 - 回归测试：修复阶段用可控resolver/connector覆盖`bad DNS + healthy`、`refused + healthy`、TLS/H2失败+healthy、全部失败、故障恢复、两健康轮询及close交错；断言单坏target不阻断建池、不接收新RPC，恢复后重新进入轮询，所有等待受同一deadline约束且未自动重放已发送的非幂等RPC。本轮不执行这些场景。
 
-### GRPC-027 — P1 — protobuf 嵌套 message 无递归深度限制，远端可耗尽 C stack
+### GRPC-027 — P1 — protobuf 嵌套 message 收发均无递归深度限制，可耗尽 C stack
 
 - 状态：已确认；gRPC消息预算、native protobuf递归调用和官方parser安全边界的确定性静态核对。本轮不生成深层schema/payload或触发stack exhaustion。
 - 依据：[Protocol Buffers C++ CodedInputStream Recursion Limit](https://protobuf.dev/reference/cpp/api-docs/google.protobuf.io.coded_stream/)明确说明解析embedded messages/groups必须跟踪递归深度，以防损坏或恶意message造成stack overflow，官方默认上限为100。总字节上限不能替代结构深度上限。
-- 位置：gRPC server仅有4 MiB frame length上限、client无响应上限，见`lualib/silly/net/grpc/helper.lua:6-50`；message字段递归在`luaclib-src/pb.c:1853-1876,1943-1988`，环境只保存Lua state/buffer/slice且没有depth字段，见`:1588-1593`。
-- 触发：合法service schema含递归message，例如`Node { Node child = 1; }`，peer发送许多层紧凑LEN子消息；也可通过静态但很深的嵌套type链。server request只需总payload不超过4 MiB，恶意server response连该限制也没有。
-- 影响：每个embedded message都增加真实native C调用栈帧，远早于4 MiB预算即可达到数千层并耗尽线程stack，导致stack overflow、进程崩溃或不可预测内存破坏。server路径可由未认证远端请求触发并终止承载所有连接的进程；client连接不可信/受劫持peer时同样可崩溃。`luaL_checkstack`只保证Lua value stack有空间，不能给C call stack建立安全上限。
-- 证据：`lpbD_rawfield`遇`PB_Tmessage`后建立subslice并直接调用`lpbD_message`，后者可再次走同一路径；`lpb_Env`没有depth/budget，函数入口唯一检查是`luaL_checkstack(L,5,...)`。没有默认100、可配置limit或到达阈值后的parse error。gRPC只在读取server request envelope时检查flat byte length，且4 MiB足以编码远超常见C stack承受范围的嵌套LEN记录。
-- 根因：binding把Lua栈容量检查误当成解析递归保护，protobuf decoder和gRPC call配置之间没有共享结构复杂度预算。
-- 建议解法：在每次进入embedded message/group前以decoder context递增depth，超过安全默认值（可参考100）即返回受控parse error，并用finally式路径保证所有退出递减；limit必须非负、可配置且同时应用顶层/嵌套/map/group与decode hook。gRPC捕获错误并映射INTERNAL，不调用业务；同时按`GRPC-005`补client大小预算，但不要用size代替depth。
-- 回归测试：修复阶段以生成式builder覆盖limit-1/limit/limit+1、递归message、静态嵌套、repeated/map/group及decode hook抛错，断言边界稳定、depth不串到下一call且无C stack增长失控；四类RPC双向确认超限只终止当前call并返回非OK。ASan/UBSan和小stack线程下验证，当前不执行。
+- 位置：gRPC server仅有4 MiB frame length上限、client无响应上限，见`lualib/silly/net/grpc/helper.lua:6-50`；encode message递归在`luaclib-src/pb.c:1595-1660,1737-1777`，decode递归在`:1853-1876,1943-1988`，环境只保存Lua state/buffer/slice且没有depth字段，见`:1588-1593`。
+- 触发：合法service schema含递归message，例如`Node { Node child = 1; }`，peer发送许多层紧凑LEN子消息；也可通过静态但很深的嵌套type链。server request只需总payload不超过4 MiB，恶意server response连该限制也没有。反向sender给同一递归schema传入深层或自引用Lua table时，client request及server response encode也会无限递归。
+- 影响：每个embedded message都增加真实native C调用栈帧，远早于4 MiB预算即可达到数千层并耗尽线程stack，导致stack overflow、进程崩溃或不可预测内存破坏。server decode路径可由未认证远端请求触发并终止承载所有连接的进程；client连接不可信/受劫持peer时同样可崩溃。encode路径使业务返回值或本地请求对象也能崩溃进程，并会越过`GRPC-032`所需finalizer。`luaL_checkstack`只保证Lua value stack有空间，不能给C call stack建立安全上限。
+- 证据：decoder的`lpbD_rawfield`遇`PB_Tmessage`后建立subslice并直接调用`lpbD_message`，后者可再次走同一路径；encoder的`lpbE_field`也直接调用`lpbE_encode`，自引用table不会被检测。`lpb_Env`没有depth/budget，两条递归入口唯一相关检查都是`luaL_checkstack(L,5,...)`。没有默认100、可配置limit、cycle detection或到达阈值后的受控error。gRPC只在读取server request envelope时检查flat byte length，且4 MiB足以编码远超常见C stack承受范围的嵌套LEN记录。
+- 根因：binding把Lua栈容量检查误当成结构递归保护，protobuf encoder/decoder和gRPC call配置之间没有共享复杂度预算。
+- 建议解法：在每次encode/decode进入embedded message/group前以codec context递增depth，超过安全默认值（可参考100）即返回受控error，并用finally式路径保证所有退出递减；encode另检测当前递归路径上的table identity以拒绝cycle。limit必须非负、可配置且同时应用顶层/嵌套/map/group与hooks。gRPC decode失败映射INTERNAL且不调用业务，encode错误按`GRPC-032`完整收尾；同时按`GRPC-005`补client大小预算，但不要用size代替depth。
+- 回归测试：修复阶段以生成式builder覆盖limit-1/limit/limit+1、递归message、静态嵌套、自引用table、repeated/map/group及hook抛错，断言收发边界稳定、depth不串到下一call且无C stack增长失控；四类RPC双向确认超限只终止当前call并返回非OK。ASan/UBSan和小stack线程下验证，当前不执行。
 
 ### GRPC-028 — P2 — protobuf `string` 与 `bytes` 共用裸字节路径，收发均不验证 UTF-8
 
@@ -3905,6 +3905,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native protobuf parser用descriptor packed flag限制接收格式，`packed=false` repeated numeric会拒绝规范要求兼容的packed wire；归档为`GRPC-037`，未构造payload。
 - 2026-08-13：补强`GRPC-025`的map-entry证据：其循环同样接受截断tag，且unknown field不skip value、会把value误作后续tag；不重复计数。
 - 2026-08-13：补强`GRPC-023`：双语配置表还公开`alpnprotos`，adapter同样忽略并固定h2；建议删除override而不是静默接受，不重复计数。
+- 2026-08-13：补强`GRPC-027`：native encoder也对递归schema的深层/自引用Lua table做无界C递归；与decoder共享depth budget根因，不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
