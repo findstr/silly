@@ -158,6 +158,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC9113-4.3/6.2/6.10-FRAGMENT-SEQUENCE | MUST | `luaclib-src/lhttp.c:883-949`; `lualib/silly/net/http/h2.lua:700-738,1018-1024` | client/server sender | 偏离 | 大于 frame size 的 field block 最后一帧被硬编码为 HEADERS，而非 CONTINUATION+END_HEADERS | 现有测试没有 outbound header block 跨 frame | H2-020 |
 | RFC9113-6.9.2-INITIAL-WINDOW-OVERFLOW | MUST | `lualib/silly/net/http/h2.lua:1131-1172,1211-1278` | client/server recipient | 偏离 | SETTINGS initial-window delta 使任一 stream window 超过 2^31-1 时只 RST stream；规范要求 connection FLOW_CONTROL_ERROR | 现有测试没有高 window 后再增 initial setting | H2-021 |
 | RFC9113-8.1.1-CONTENT-LENGTH-SCOPE | MUST | `lualib/silly/net/http/h2.lua:845-877,1177-1205,1446-1499,1562-1648` | client/server recipient | 偏离 | DATA 总量与 Content-Length 不符时发送 connection GOAWAY；规范要求对应 stream PROTOCOL_ERROR | 现有测试未验证 mismatch 与并发 stream 隔离 | H2-022 |
+| RFC9113-8.1.1-CONTENT-LENGTH-SENDER | MUST/interoperability | `lualib/silly/net/http/h2.lua:176-214,453-495,700-738,805-877,938-1029` | client/server sender | 偏离 | sender 保存任意 Content-Length，却不累计 DATA 或在 END_STREAM 前校验；request/response 均可成功生成声明长度与正文不符的 malformed message | 现有测试只覆盖声明值恰好等于正文长度，没有少发、多发、零body或trailer结束 mismatch | H2-040 |
 | RFC9113-5.1.1/5.1.2/8.1.1-REQUEST-ADMISSION | MUST | `lualib/silly/net/http/h2.lua:453-495,845-894,1038-1080,1562-1648` | server recipient | 偏离 | initial HEADERS admission非事务：拒绝可复用id/泄漏quota；early END长度不符在teardown后仍发布并调用handler | 现有malformed tests未检查id/quota/handler隔离 | H2-023 |
 | RFC9113-5.1/5.4.2-CLOSED-HPACK | MUST | `lualib/silly/net/http/h2.lua:1038-1080,1446-1499`; `luaclib-src/lhttp.c:692-780` | client recipient | 偏离 | local RST tombstone 固定只留 100 个；淘汰后 late HEADERS 在 HPACK 前直接 GOAWAY，未 minimally process compression state | 现有测试没有 >100 cancel 后 delayed response headers | H2-024 |
 | RFC9113-10.5-PROGRESS-LIMITS | SHOULD/security | `lualib/silly/net/http/h2.lua:268-365,1420-1547,1668-1738`; `lualib/silly/net/http.lua:10-45`; `lualib/silly/net/http/client.lua:206-274` | client/server | 偏离 | preface/SETTINGS/ACK/frame body/CONTINUATION 所有 read 均无 progress deadline，配置也无入口 | 现有测试不覆盖 slow preface/frame/header block | H2-025 |
@@ -2951,6 +2952,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：分离reserved对象与wire stream registry，或为每个id维护严格`IDLE→OPEN/...`状态；首次HEADERS编码/排入有序writer时原子提交id和map，之前收到该id任何不允许的frame按真正idle规则处理。乱序发送的id分配应在commit时完成且不会与接收侧可见历史冲突；closed history继续独立保留。
 - 回归测试：修复阶段覆盖open后在request前/request后但flush前yield，peer对reserved id发送HEADERS/RST/WINDOW_UPDATE/DATA/PRIORITY，以及两个reserved stream乱序发送；除PRIORITY规范例外外idle frame应正确终止connection，绝不向应用发布响应，正常commit后同类frame按open state处理。当前只保存静态证据。
 
+### H2-040 — P2 — sender 不校验 Content-Length 与实际 DATA 总量
+
+- 状态：已确认；request/response header保存、DATA分片、flow-control续写及三种END_STREAM路径静态推导。本轮不向独立peer发送长度失配消息。
+- 规范：HTTP/2消息携带Content-Length时，其十进制值必须等于组成content的全部DATA frame payload长度；不相等即malformed。sender必须拒绝自相矛盾的调用，不能把检测责任留给peer。
+- 位置：stream只维护接收计数在`lualib/silly/net/http/h2.lua:176-214,453-495`；request/respond保存header在`:938-966`；header、DATA和END_STREAM发送在`:700-738,805-838,896-930,968-1029`；仅接收方向执行长度检查在`:845-877,1177-1205,1446-1499,1562-1648`。
+- 触发：client或server分别以`request/respond`声明Content-Length=N，随后通过任意次数`write`和`closewrite(data, trailer)`发送少于或多于N字节；也包括非零N却直接`closewrite()`、零N却发送正文，以及用trailer结束一个长度失配的消息。
+- 影响：公开API全部可返回true并在wire上完成一个必定malformed的request或response。严格peer会在END_STREAM处以PROTOCOL_ERROR reset该stream；本端业务却已把发送视为成功，造成请求提交状态、响应日志和重试判断错误。经代理或异构gRPC/HTTP2实现时会出现稳定互操作失败；若不同hop对声明长度和DATA采用不同信任策略，还会放大消息完整性分歧。
+- 证据：stream对象只有`recvbytes/recvexpect`，没有对应`sendbytes/sendexpect`。`S.request/S.respond`原样保存header；`S.write`只按flow-control切DATA，`S.closewrite`可由initial HEADERS、DATA或trailing HEADERS任一路设置END_STREAM，所有路径均未解析Content-Length或比较累计发送量。相反，recipient明确累计`recvbytes`并在remote END比较，证明发送侧状态缺口。现有HTTP/2测试中的Content-Length均恰好匹配正文，未覆盖mismatch。
+- 根因：Content-Length完整性被实现成纯接收属性，没有抽象为HTTP message双向共同不变量；底层write API的成功只代表已排帧，未验证调用序列能形成合法消息。
+- 建议解法：initial headers提交时严格解析单一规范十进制Content-Length并保存`sendexpect`；每次DATA发送前以checked arithmetic累计且立即拒绝超发，在任何END_STREAM排帧前要求累计值恰好匹配。失败应稳定终止/reset该stream、唤醒writer且不得发送矛盾的END_STREAM；HEAD/无content响应的规则与`H2-031`统一处理。
+- 回归测试：修复阶段覆盖client request/server response的少发、多发、zero/nonzero、分片write、final data、trailer结束、flow-control阻塞后续写与合法精确匹配；断言失配调用返回typed error、wire上不完成malformed消息、其他并发stream不受影响。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3276,7 +3289,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为262项：P0为0，P1为99，P2为142，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 39、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
+当前滚动统计为263项：P0为0，P1为99，P2为143，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 40、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
 
 建议按依赖关系分五批修复：
 
@@ -3349,6 +3362,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认HTTP双语reference/guide反称H2不支持实际已实现的write，并让用户调用不存在的close(body)；归档为`DOC-015`。
 - 2026-08-13：确认中文HTTP reference与双语guide错称client不池化/每次新建连接，实际顶层singleton与专用client均复用H1/H2；归档为`DOC-016`。
 - 2026-08-13：确认H2 client把openstream的本地reservation立即放入wire map，peer可在request HEADERS发送前让idle id被当作open接受；归档为`H2-039`。
+- 2026-08-13：确认H2 sender不累计实际DATA长度，request/response可在Content-Length失配时仍排END_STREAM并报告成功；归档为`H2-040`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
