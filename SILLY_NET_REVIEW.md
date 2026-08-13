@@ -509,6 +509,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：累计offset/size/cap改用`size_t`并使用checked-add/multiply；在每次指针计算前验证invariant `offset<=cap && size<=cap-offset`，单次传给OpenSSL的长度再限制为`INT_MAX`。设置远低于表示上限的native hard cap和安全默认Lua limit，达到cap时返回结构化limit错误并关闭TLS状态；realloc使用临时指针并定义OOM收尾，不能覆盖旧owner。
 - 回归测试：修复阶段用小型可配置cap/allocator stub覆盖恰好cap、cap+1、compact后增长、乘法/加法边界与realloc失败；断言只返回limit/OOM并释放一次，ASan/UBSan无越界或signed overflow。再以慢reader验证远端输入受硬上限约束。当前只保存静态证据。
 
+### TLS-012 — P2 — client 在 TCP 发布后才编码 ALPN/创建 SSL，初始化异常会遗留不可达连接
+
+- 状态：已确认；TCP connect发布顺序、Lua表达式异常与native SSL/BIO构造路径静态核对。本轮不传非法配置或注入OpenSSL allocation failure。
+- 资源契约：建立并向net层注册的socket必须立即有异常安全owner；任何后续配置编码/native构造失败都要关闭fd、删除callback并返回稳定错误，不能依赖尚未构造成功的connection finalizer。
+- 位置：底层connect成功后安装data/close callback在`lualib/silly/net.lua:97-140`；TLS connect随后调用`new_socket`在`lualib/silly/net/tls.lua:279-325`，而ALPN编码和`tls.open`发生在connection table进入`conn_pool`之前的`:78-124`。native `SSL_new/BIO_new`错误使用`luaL_error`在`luaclib-src/ltls.c:459-495`。
+- 触发：`tls.connect`传入含非string元素、长度大于255或其`__len`抛错的`alpnprotos`，使`#k`/`string.char(#k)`异常；或TCP成功后`SSL_new`、input/output `BIO_new`因资源失败抛错。server accept的`tls.open`资源异常也存在同类窗口，但正常server不经过ALPN编码。
+- 影响：异常越过`M.connect`，没有返回声明的`nil,error`；已建立TCP fd仍在C socket pool和net callback表中，但没有TLS conn对象、`conn_pool[fd]`或调用方handle可以关闭它。后续data事件因找不到TLS conn而被忽略，close事件也不能回收Lua所有权；远端保持连接时可长期占用fd/slot，重复错误配置或资源压力可稳定泄漏。accepted方向还可能把同类无owner fd留给远端。
+- 证据：`net.tcpconnect`返回前已写`data_callback[fd]`和`close_callback[fd]`；之后没有to-be-closed guard或`pcall`。`new_socket`先运行`wire_alpn_protos`，再在table constructor中调用可能longjmp的`tls.open`，最后才执行`conn_pool[fd]=s`。因此任何中间异常都发生在唯一Lua owner发布前，`M.connect`的handshake失败cleanup只覆盖`new_socket`已经返回的情况。
+- 根因：异步TCP acquisition与TLS对象构造没有统一事务，且普通配置错误/native资源错误以非局部异常表达；代码只为返回式handshake失败实现了rollback。
+- 建议解法：在TCP成功后立刻建立to-be-closed socket guard；先严格验证/编码ALPN与hostname，再以受保护调用构造SSL，只有全部成功才提交到conn pool并解除guard。native构造应返回`nil,errno/error`或保证userdata持有全部中间BIO并可幂等finalize；accepted路径也使用同一factory/rollback。公开API对配置错误统一同步返回或抛出，但无论选择哪种都必须关闭transport。
+- 回归测试：修复阶段覆盖ALPN非string、空/255/256字节、`__len`异常、SSL_new及两个BIO_new逐点失败，client和accepted方向均断言fd/slot/callback/SSL/BIO回到基线、端口可重用且错误形状稳定。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2954,7 +2966,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为234项：P0为0，P1为95，P2为127，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 11、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为235项：P0为0，P1为95，P2为128，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 12、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -2997,6 +3009,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认DNS双语reference声明的`sys.dns.resolv_conf`/`sys.dns.hosts`环境变量没有任何实现consumer，设置后仍读取固定系统路径；归档为`DOC-008`。
 - 2026-08-13：按OpenSSL契约确认TLS `ciphers`只调用旧cipher-list API，TLS1.3 suites仍使用库默认；双语安全指南的混合列表会静默假成功；归档为`TLS-010`。
 - 2026-08-13：确认TLS plaintext buffer以signed int累计并做无检查加法/倍增，远端长期输入接近表示上限时可回绕并污染SSL_read写地址/长度；归档为`TLS-011`。
+- 2026-08-13：确认TLS client在TCP已注册后才编码ALPN/创建SSL，配置或native构造异常发生在conn owner发布前且无cleanup guard；归档为`TLS-012`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
