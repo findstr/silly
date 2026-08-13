@@ -687,6 +687,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：用`len + sizeof("\\drivers\\etc\\hosts")`做checked size计算并动态分配，或使用支持长路径的Unicode Win32 path API；必须检查格式化返回值并把截断/打开失败作为可诊断状态传给Lua。不要仅把目标数组再放大一个常量而继续忽略返回值。
 - 回归测试：修复阶段stub `GetSystemDirectory`覆盖长度241、242、259、required-size及failure，断言生成路径完整、无截断/越界，且打开失败保留可区分原因；另覆盖非ASCII/Unicode系统路径。当前只保存静态证据。
 
+### DNS-018 — P1 — 系统 resolver 配置读取失败时自动改用公共 8.8.8.8，绕过本机 DNS 策略
+
+- 状态：已确认；Unix/Windows配置入口、模块初始化fallback与公开默认行为的确定性静态核对。本轮不删除配置文件、不改权限，也不向公共resolver发送查询。
+- 安全契约：读取系统DNS策略失败与“系统明确配置公共resolver”不是同一状态；网络库不得在没有调用方显式授权时把原本应由本机resolver处理的查询转交固定第三方。配置不可用应fail closed并保留可诊断原因，或只使用显式opt-in的fallback。
+- 位置：Unix固定读取`/etc/resolv.conf`在`src/unix/unix.h:57-58`和`src/unix/unix.c:154-181`；Windows合成配置在`src/win/win.c:295-329`；无内容的自动fallback在`lualib/silly/net/dns.lua:742-747`。程序化空列表同样被改写为Google DNS在`:766-774`。
+- 触发：Unix下`/etc/resolv.conf`不存在、不可读、被沙箱隐藏或open失败；Windows下`GetNetworkParams`失败；也包括调用方传入空`nameservers`本意为禁用外部DNS。模块加载仍成功并建立固定server entry。
+- 影响：后续hostname、service-discovery和SRV查询被发往`8.8.8.8:53`，绕过VPN、企业审计/过滤、DNSSEC/加密stub、容器注入与split-horizon策略；内部服务名、tenant名或用户目标会离开预期信任边界。公共DNS还可能为内部名字返回不同结果，使连接错误目标；在禁止直连公网DNS的环境则把清晰的配置错误变成反复超时。单条warn日志不能授权或修复这种策略变化。
+- 证据：`c.resolvconf()`返回nil后唯一分支把内容硬编码为`"nameserver 8.8.8.8"`并继续`parse_resolvconf`；没有启动配置、环境变量或API opt-in。底层`push_file`把open/read失败统一为nil，Windows也把所有API错误统一为nil，因此上层甚至不能根据失败原因选择安全策略。`dns.conf`对省略/空list同样无条件插入该地址，并会原地修改调用方空table（另见`DNS-012`）。
+- 根因：把“保证总有nameserver”的可用性默认置于系统网络策略之上，并把配置读取错误、无配置和调用方显式空配置折叠为同一个公共服务默认值。
+- 建议解法：自动初始化读取失败时保持无resolver并返回带cause的`No nameserver`，同时提供明确日志/health metric；若产品确需公共fallback，必须由启动参数或`dns.conf`显式启用并可选择地址。区分missing/permission/parse/API/OOM，避免故障原因丢失；空列表应表示禁用或被明确拒绝，不能静默改写调用方数据。
+- 回归测试：修复阶段stub Unix open失败、Windows API失败、空文件、无nameserver内容与显式空list，断言默认不会创建任何公共endpoint或发送包、错误保留cause；另覆盖显式opt-in后才使用调用方指定fallback。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2907,7 +2919,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为230项：P0为0，P1为93，P2为126，P3为11。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 17、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为231项：P0为0，P1为94，P2为126，P3为11。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2945,6 +2957,8 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认DNS为每个查询名字永久intern cache节点，expired/TTL0/timeout/send failure均无逐项删除或容量预算；归档为`DNS-015`。
 - 2026-08-13：确认Windows DNS bootstrap在`GetNetworkParams`要求扩容后不检查`malloc`结果，OOM时仍把NULL作为输出buffer传回系统API；归档为`DNS-016`。
 - 2026-08-13：确认Windows hosts路径只验证system directory本身能装入MAX_PATH，追加固定后缀后可静默截断并忽略hosts配置；归档为`DNS-017`。
+- 2026-08-13：确认系统resolver配置读取失败或显式空列表会自动改用公共8.8.8.8，绕过本机DNS策略并可能泄漏内部查询；归档为`DNS-018`。
+- 2026-08-13：排除DNS共享TCP recv task覆盖新连接的候选；close只将reader排入wakeup queue，worker在下一条消息前完成旧task收尾，期间没有可发布新连接的yield点。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
