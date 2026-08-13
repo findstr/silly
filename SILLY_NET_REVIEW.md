@@ -2871,6 +2871,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：建立channel writer owner和closing状态。首次graceful close同步或可等待地写出GOAWAY，只有transport接受frame且send queue排空后才关闭；若要两阶段drain，则先发送max/processed boundary GOAWAY、拒绝新stream、等待active streams或deadline，再发送最终GOAWAY并关闭。所有write failure走`H2-030`统一终态；重复close幂等且不能跳过pending flush。
 - 回归测试：修复阶段用记录transport覆盖idle close、active streams drain、已有pending PING/WINDOW_UPDATE、write failure、deadline与重复close；逐字节断言EOF前恰有合法GOAWAY且Last-Stream-ID符合`H2-016`修复，close返回时writer/sendbuf/conn均已终态。当前只保存静态证据。
 
+### H2-036 — P2 — client 接受 final response HEADERS 之前的 DATA，高层可返回无 status 的成功对象
+
+- 状态：已确认；client stream初态、DATA dispatch、readall waiter与高层response构造静态推导。本轮不发送header-less response。
+- 规范：HTTP/2 response必须以包含恰好一个`:status`的initial HEADERS field section开始，之后才允许DATA；缺失initial response headers的消息是malformed，应以对应stream `PROTOCOL_ERROR`结束，不能把DATA当成有效response content。
+- 位置：stream初始remote state在`lualib/silly/net/http/h2.lua:456-495`；DATA接收在`:1177-1205`；只有HEADERS handler验证status在`:1446-1510`；`readall`在`:1110-1124`；高层直接读取并组装response在`lualib/silly/net/http/client.lua:351-405`。
+- 触发：server对已发送request的client stream不发送任何response HEADERS，直接发送一个或多个DATA，最后设置END_STREAM；单个`DATA(payload, END_STREAM)`即可。
+- 影响：convenience `get/post`不先调用`waitresponse`，而是直接`stream:readall()`；它会取得payload并返回非nilresponse table，其中`status=nil`、headers为空、body为攻击者数据且error=nil。仅以`if response then`判断成功的调用方会把协议上根本不存在的HTTP响应当成功处理；状态码鉴权、redirect/error policy也被绕过。streaming调用若先`waitresponse`可能得到EOF，但同一底层对象因调用顺序不同产生不同安全语义。
+- 证据：`frame_data`仅在`s==nil`或`remotestate>=STATE_CLOSE`时报错；`STATE_NONE`明确小于close，所以会append、累计并将state直接改为`STATE_DATA`。END_STREAM时`stream_remoteend`会把等待`STATE_CLOSE`的readall以完整buffer唤醒。唯一`:status`检查只存在于`frame_header_client`，该函数从未执行；高层随后无条件使用`stream.status/header`构造response，没有要求status存在。
+- 根因：实现把RFC stream state与HTTP message phase混为一个宽松数值状态；DATA legality只验证frame-level stream存在性，没有验证response initial field section已经成功提交。
+- 建议解法：为每个方向建立独立、单调的message phase（awaiting-initial、informational、final-headers、body、trailers、ended/reset）；client在final HEADERS前收到任何DATA都只reset该stream(PROTOCOL_ERROR)，唤醒所有waiter并禁止返回partial success。高层组装response前再防御性要求validated final status，以typed protocol error收尾。
+- 回归测试：修复阶段覆盖DATA/空DATA在initial HEADERS前、带/不带END_STREAM、先informational再DATA、正常final→DATA及两个并发streams；`waitresponse/read/readall/get/post`都必须对malformed sequence返回错误且只reset目标stream，永不产生status=nil的成功对象。当前只保存静态证据。
+
 ### HPACK-002 — P1 — varint 溢出可进入 C 未定义行为和越界长度路径
 
 - 状态：已确认；RFC 7541 与确定性 C 整数/指针语义推导。按用户要求，本阶段不构造恶意字节复现；修复阶段需在隔离 sanitizer 环境验证。
@@ -3196,7 +3208,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为255项：P0为0，P1为99，P2为138，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 35、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
+当前滚动统计为256项：P0为0，P1为99，P2为139，P3为18。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 36、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 13。
 
 建议按依赖关系分五批修复：
 
@@ -3262,6 +3274,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1/H2 parser把重复字段提升为array，而redirect/gzip仍将Location/Content-Encoding当string，远端响应可触发未捕获Lua类型异常；归档为`HTTPC-007`。
 - 2026-08-13：确认H1读取失败会保留已缓冲正文，而后续readall只要缓冲非空便返回`data,nil`并吞掉cached error；归档为`HTTP1-023`。
 - 2026-08-13：确认idle H2 channel close只异步排队GOAWAY后即同步关闭transport，flush task随后因conn=nil丢弃graceful shutdown wire；归档为`H2-035`。
+- 2026-08-13：确认H2 client允许DATA在任何final response HEADERS前进入body/readall，高层可返回status=nil、body非空且无error的response对象；归档为`H2-036`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
