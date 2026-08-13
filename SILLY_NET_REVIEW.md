@@ -2081,6 +2081,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：统一声明顶层singleton与`newclient`都池化，并解释H1顺序复用、H2多路复用、idle/max配置、DNS/TLS identity key和`client:close()`责任；若顶层singleton无法显式close，也需说明进程级生命周期。删除“每次新建”示例注释，双语内容从同一能力表生成。
 - 回归测试：文档契约测试以stub connector计数连续H1/H2请求的建立次数、完整/错误body后的复用与close淘汰，并静态比较中英文能力表；不把本库client/server互测当协议正确性证明。当前只保存静态证据。
 
+### DOC-017 — P2 — 双语 HTTP/2“最佳实践”示例实际启动明文 HTTP/1.1
+
+- 状态：已确认；双语示例、HTTP transport选择、TLS ALPN配置与H2 accept分派静态核对。本轮不启动示例listener或发起连接。
+- 位置：错误示例与能力承诺在`docs/src/{en/,}guides/http-best-practices.md:33-72`；transport选择在`lualib/silly/net/http.lua:10-48`；TLS server ALPN仅按显式配置构造在`lualib/silly/net/tls.lua:326-365`。双语reference的正确警告可见`docs/src/{en/,}reference/net/http.md:41-56`。
+- 触发：用户复制“配置HTTP/2（HTTPS）”示例，仅提供addr/certs/handler；或只意识到遗漏`tls=true`并补上它，却仍未配置服务端`alpnprotos`。
+- 影响：原样示例因`conf.tls`为nil直接调用`tcp.listen`，证书完全不读取，8443端口实际提供明文HTTP/1.1。部署者可能在误以为HTTPS已启用时发送cookie、token和业务数据，形成真实的传输机密性/完整性暴露。只补`tls=true`后，server context仍没有ALPN列表，accept无法得到`"h2"`并落入H1，因此示例标题、打印的协议候选和性能结论仍不可达。
+- 证据：`http.listen`唯一分支条件是`if not conf.tls then tcp.listen`；`certs`是否存在不影响选择。TLS分支原样传`conf.alpnprotos`，`new_server_ctx`仅在该table存在时构造wire ALPN，不提供H2默认值。accept也只在`conn:alpnproto()=="h2"`时调用`h2.httpd`。测试中的H2 server明确同时设置`tls=true`与`alpnprotos={"h2"}`，而双语指南两项均缺失；同仓reference已明确“certs必须配tls=true”，证明不是有意的隐式模式。
+- 根因：安全/协议启用项是三个彼此独立的动态table字段，但指南把“给证书”误写为隐式启用TLS和ALPN；示例没有通过配置schema或断言实际协商协议的文档测试。
+- 建议解法：示例至少显式加入`tls=true`与`alpnprotos={"h2","http/1.1"}`，检查listen返回值，并说明顺序/选择策略；所有双语说明统一声明certs本身不会启用TLS、未协商h2会回退H1。产品层可考虑在提供certs但`tls~=true`时fail closed，或为HTTP TLS server给出文档化安全ALPN默认，但不能静默明文。
+- 回归测试：修复阶段把双语示例提取为配置契约测试，以stub断言选择tls.listen且certs/ALPN被转发；独立client验证协商h2并实际得到`stream.version=="HTTP/2"`。另覆盖certs无tls时参数错误、TLS无ALPN时明确H1/failure策略，防止安全示例再次漂移。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3315,7 +3326,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为265项：P0为0，P1为100，P2为144，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 16。
+当前滚动统计为266项：P0为0，P1为100，P2为145，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 7、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 17。
 
 建议按依赖关系分五批修复：
 
@@ -3392,6 +3403,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认32位HPACK table-size setting未经checked conversion窄化进C int，动态表非空时容量减法可触发signed overflow；归档为`HPACK-004`。
 - 2026-08-13：确认zero-length H2 frame会在检查PADDED前按空payload短路，缺失Pad Length的DATA仍可正常END_STREAM；归档为`H2-041`。
 - 2026-08-13：补强`H2-003`：padding在flow-control记账前已被剥离，守规peer发送padded DATA也会因Pad Length/padding credit永不回补而停顿；不重复计数。
+- 2026-08-13：确认双语HTTP/2最佳实践示例遗漏tls开关和server ALPN，原样实际启动明文H1且证书不生效；归档为`DOC-017`并按安全误导定为P2。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
