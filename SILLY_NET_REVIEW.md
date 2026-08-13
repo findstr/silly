@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档360项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档361项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3000,6 +3000,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：正式发布`gather(r?) -> string`契约，Registry自定义导出示例直接调用`prometheus.gather(custom_reg)`；明确传入registry不会自动包含全局built-ins，除非显式注册。若该参数不准备支持，则应提供官方`registry:gather()`而不是让文档手写wire格式。
 - 回归检查：修复阶段用独立registry同时注册counter/gauge/histogram/vector，断言`gather(custom)`只包含目标集合且独立parser接受；双语signature、示例和LuaLS参数一致，仓库文档零手写Prometheus formatter。当前不执行。
 
+### DOC-069 — P2 — Gauge “活跃连接”示例按 HTTP stream 计数且异常不回滚，连接容量指标持续失真
+
+- 状态：已确认；双语Gauge示例、HTTP handler调用粒度、H1 keep-alive/H2 multiplex与内置连接指标的确定性静态核对。本轮不启动server或注入handler异常。
+- 位置：`docs/src/{en/,}reference/metrics/gauge.md:369-405`在每次HTTP `handler(stream)`入口增加`http_active_connections`，成功respond/closewrite后才减少，并注释为“connection established/closed”。实际HTTP listener按每个request/stream派发handler，H1/H2入口在`lualib/silly/net/http/{h1.lua:1510-1538,h2.lua:1538-1560}`；真正底层active TCP数已由`collector/silly.lua:36-39,69-75`导出为`silly_tcp_connections`。
+- 触发：同一H1 keep-alive连接连续请求、一个H2连接并发多个stream，或`respond/closewrite`及任何业务步骤抛异常/提前return。
+- 影响：Gauge实际表示in-flight requests/streams而非connections：H1同一socket会反复进入，H2一条socket可同时贡献许多，无法用于fd/连接池容量和连接泄漏告警。任一异常又跳过`dec()`，值会永久偏高且每次失败继续累积；文档标题和HELP使dashboard维护者无法识别语义错误。
+- 证据：listener accept只建立channel，handler由每个解析出的stream task调用；示例没有accept/close callback，也没有socket identity，因此不可能观测真实连接生命周期。减法不在protected/finally路径，task异常收尾不会反向修改用户Gauge。默认collector直接读取native `tcp_connections`，已提供正确source。
+- 根因：请求middleware模式被误命名为connection lifecycle，并把成功路径尾部当成无条件收尾；示例没有区分transport connection、HTTP request和H2 stream三种不同资源。
+- 建议解法：若目标是in-flight requests，改名`http_requests_in_flight`并用保证恰好一次执行的finally/defer收尾，包含异常/提前返回；若目标是真实TCP连接，直接使用`silly_tcp_connections`或在listener/channel生命周期提供明确hook，不能从request handler推断。文档同时说明H2 multiplex语义。
+- 回归检查：修复阶段覆盖一条H1两次keep-alive请求、一条H2多stream、handler throw和write error；in-flight Gauge回到0，真实connection Gauge在socket关闭前保持1、关闭后为0。当前不运行网络场景。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4414,7 +4425,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为360项：P0为0，P1为112，P2为196，P3为52。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 68。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为361项：P0为0，P1为112，P2为197，P3为52。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 69。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4793,4 +4804,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Registry mutation时序反查确认collect固定旧上界遍历live array；custom collector重入注销或yield期间被另一task注销会跳过对象并最终调用nil，归档为`METRIC-010`。
 - 2026-08-13：Histogram exporter所有权反查确认所有历史bucket数值/字符串进入无界module-level强缓存；动态Histogram注销/GC后仍永久保留，归档为`METRIC-011`。
 - 2026-08-13：隔离Registry导出反查确认runtime已有`gather(r)`，双语reference却漏掉参数并教用户手写不支持Histogram/转义的formatter，归档为`DOC-068`。
+- 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
