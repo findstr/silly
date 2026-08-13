@@ -266,6 +266,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-007 | P3 | TCP/TLS双语reference、guide与benchmark使用底层拒绝的多字节CRLF delimiter，示例会立即抛错。 |
 | DOC-008 | P3 | DNS双语reference声明不存在的环境变量路径覆盖，设置后仍读取固定系统resolver与hosts。 |
 | DOC-009 | P3 | TLS双语reference的validate示例漏listener addr，或把hostname直接传给numeric-only connect。 |
+| DOC-010 | P3 | TLS底层LuaLS声明仍描述文件路径ctx和boolean handshake，与真实PEM表及三态整数ABI相反。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -373,7 +374,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为241条：P1 95、P2 132、P3 14。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 9；以主报告中的编号和证据为准。
+当前统计为242条：P1 95、P2 132、P3 15。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 10；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

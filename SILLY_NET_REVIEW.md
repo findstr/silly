@@ -1898,6 +1898,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：listener片段加入明确numeric `addr`并检查`listener,err`；remoteaddr片段复用`dns.lookup`或改成numeric endpoint，同时保留logical hostname给SNI/未来证书验证。若1.0决定让TLS connect接受hostname，应由统一双栈resolver/dialer实现并更新真实契约，不能只改示例。CI对所有validate块做required-option静态检查并用stub禁止外网。
 - 回归测试：修复阶段让双语validate块在stub DNS/socket环境执行，断言listener参数完整、hostname解析调用明确、失败不会静默通过；同类片段由单一include/template生成以防翻译漂移。当前只保存静态证据。
 
+### DOC-010 — P3 — TLS 底层 LuaLS 声明与真实 C ABI 相反
+
+- 状态：已确认；逐项对照`lualib/types/silly/tls/{ctx,tls}.lua`、`luaclib-src/ltls.c`导出及高层唯一调用点。本轮不直接调用底层binding。
+- 位置：错误ctx签名在`lualib/types/silly/tls/ctx.lua:11-23`，错误handshake返回声明在`lualib/types/silly/tls/tls.lua:22-25`；真实实现分别在`luaclib-src/ltls.c:222-234,398-445,611-648`，正确调用在`lualib/silly/net/tls.lua:37,197-208,326-339`。
+- 触发：编辑器用户依据类型声明直接调用`silly.tls.ctx.server(cert_file,key_file,ca_file)`，或把`tls:handshake()`按boolean分支判断。
+- 影响：server第一参数实际必须是`{ {cert=PEM内容,key=PEM内容}, ... }`，第二、三参数分别是cipher string与wire-format ALPN；照声明传路径字符串会把字符串长度当证书数量并逐字节取“entry”，随后异常。handshake实际第一返回值是三态整数`1/0/-1`，而Lua中的`0`和`-1`均为真；按声明写`if ssl:handshake() then`会把明确失败和需要继续IO都当成功，继续在未建成TLS通道上处理应用协议。
+- 证据：`lctx_client`完全不读取参数；`lctx_server`对参数1执行`luaL_len/lua_geti`，参数2执行`SSL_CTX_set_cipher_list`，参数3作为已编码ALPN字节串保存。`ltls_handshake`明确压入integer 1（成功）、-1（WANT_READ/WANT_WRITE）或0（错误）；高层封装也用`HANDSHAKE_OK=1/HANDSHAKE_ERROR=0`精确比较，未按boolean消费。
+- 根因：LuaLS stub仍保留旧的“文件路径加载”与二态握手接口，native接口改为内存PEM、ALPN和异步三态后没有同步契约或自动校验。
+- 建议解法：将底层模块标记为internal并准确声明：client无参数，server接收PEM entry数组/cipher/wire ALPN，handshake返回`1|0|-1`及`string|silly.errno|nil`；最好用命名常量或枚举封装三态，避免任何boolean误用。由导出函数签名或共享schema生成stub，避免继续漂移。
+- 回归测试：修复阶段增加LuaLS静态fixture，覆盖server参数shape及handshake三态穷举；再加文档/API lint对照唯一高层调用，确保底层stub不会建议文件路径或boolean分支。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3037,7 +3048,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为241项：P0为0，P1为95，P2为132，P3为14。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 9。
+当前滚动统计为242项：P0为0，P1为95，P2为132，P3为15。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 17、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 10。
 
 建议按依赖关系分五批修复：
 
@@ -3088,6 +3099,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`TLS-001/004/006`：双语文档虚构默认certificate verification和cipher-string版本控制，testssl又把raw TCP close误注释成SSL_shutdown；不重复计数。
 - 2026-08-13：确认低层TLS ctx/ssl显式free后仍由同一strict函数执行GC，meta tombstone会被当作类型错误并在finalizer中抛出；归档为`TLS-017`。
 - 2026-08-13：确认TLS双语reference的validate示例一处漏必填listener addr、另一处把hostname直接传给numeric-only connect并静默退出；归档为`DOC-009`。
+- 2026-08-13：确认TLS底层LuaLS仍声明文件路径ctx与boolean handshake，真实C ABI却要求PEM表并返回`1/0/-1`三态整数；归档为`DOC-010`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
