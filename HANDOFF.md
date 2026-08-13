@@ -163,6 +163,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DNS-007 | P2 | public timeout在每个CNAME hop/search候选重新计时，无法约束整次lookup/resolve耗时。 |
 | DNS-008 | P2 | parser抹平NXDOMAIN/NODATA，name error被按qtype缓存，无法跨type命中并允许冲突状态。 |
 | DNS-009 | P2 | 普通非尾随点域名的query encoder在最后label后构造end+1指针，正常查询进入C未定义行为。 |
+| DNS-010 | P2 | RR结构/RDATA解析失败只break或skip，malformed response的有效前缀仍按成功提交cache并完成请求。 |
 | CLUSTER-001 | P1 | cluster response只按全局session匹配，任一peer或wrap后的late ACK可跨连接完成其他RPC。 |
 | CLUSTER-002 | P2 | cluster peer断线/主动close不结束其pending RPC，waiter与timer只能保留到全局timeout。 |
 | CLUSTER-003 | P2 | unknown/late/duplicate ACK会对nil coroutine执行wakeup，连接保持并可持续制造异常/日志。 |
@@ -354,7 +355,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为222条：P1 92、P2 120、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 9、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
+当前统计为223条：P1 92、P2 121、P3 10。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 10、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -591,6 +591,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在`dot == end`时写完label后直接`p=end; break`，只有真实找到`.`才赋值`p=dot+1`；或改用剩余长度/index循环，确保所有中间指针始终在`[start,end]`。尾随点应作为显式分支处理，避免再次靠zero-length隐式跳过。
 - 回归测试：修复阶段对单label、多label、63-byte label、253-byte name、尾随点及search拼接做固定wire vector；在UBSan与高优化构建下编码普通名字零告警，结果QNAME恰以一个root zero结束。当前只保存静态证据。
 
+### DNS-010 — P2 — RR 解析失败被降格为跳过/提前结束，malformed response 的有效前缀仍会提交缓存
+
+- 状态：已确认；C parser返回值、Lua response提交与公开类型契约的确定性静态核对。本轮不构造截断DNS消息。
+- 协议/解析契约：DNS header中的section counts定义消息包含的RR数量；声明的任一RR结构截断或已支持类型的RDATA畸形时，整条response必须判为malformed，不能把此前解析的记录当作完整答案提交。合法但不支持的TYPE可以按其RDLENGTH安全跳过，这与结构解析失败必须区分。
+- 位置：RR循环与返回值在`luaclib-src/ldns.c:441-509`，`lanswer`无条件返回records在`:516-592`；Lua提交cache并完成request在`lualib/silly/net/dns.lua:204-253`。类型声明`lualib/types/silly/net/dns/c.lua:34-39`明确声称任何parse failure返回nil。
+- 触发：matching response声明两个answer，第一个为合法A/AAAA/CNAME/SRV，第二个RR name/fixed header/RDATA在消息末尾截断；或者声明一个已支持TYPE但使用过短A/AAAA、坏CNAME pointer或不完整SRV/SOA。前者最直接产生非空有效前缀。
+- 影响：`answer`仍返回正常id/name/qtype及records table，`dispatch_resp`把前缀记录清空并替换对应cache、重置server failcount，再以成功唤醒所有waiter；调用方得到攻击者/故障resolver提供的“不完整但看似成功”结果，而不是等待另一个合法响应或失败。只有畸形记录时也会把请求按成功结束并可能清除旧cache，造成错误NODATA语义。TCP fallback同用此parser，因此不局限UDP。
+- 证据：`push_rrs`中`parse_rr_begin<0`只执行`break`，随后直接返回已提交数量n，没有“是否遍历count项”状态；`push_rr`对已知RDATA解析失败与unsupported TYPE都返回-1，caller统一不入结果但继续下一RR。`lanswer`只在`total_rr>1000`时恢复stack/return nil，从不检查RR loop是否完整；Lua只以`records==nil`识别server failure，空表和有效前缀都属于成功。
+- 根因：parser把“输出中不包含该RR”同时用于unsupported-but-well-formed与malformed两种结果，外层又只返回成功记录数，失去transactional parse状态。
+- 建议解法：RR parser返回三态`OK/SKIP/MALFORMED`并始终先完整验证owner、fixed header和RDLENGTH；合法unknown TYPE只SKIP，任何结构/已知RDATA失败立即回滚records table并让`lanswer`返回nil。只有严格消费完header声明的全部section count后才能发布records；section边界/来源还需与`DNS-002/008`一起保留。
+- 回归测试：修复阶段覆盖每个RR name/fixed/RDATA字节的截断、合法第一项+坏第二项、坏第一项+合法第二项、unknown合法TYPE、unsupported TYPE后合法A及TC路径；malformed响应必须零cache改动且request继续等待合法response，unknown合法项可跳过。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2811,7 +2823,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为222项：P0为0，P1为92，P2为120，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 9、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为223项：P0为0，P1为92，P2为121，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 10、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2841,6 +2853,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TCP/TLS buffer limit会在当前定长/分隔符read满足前暂停transport，唯一reader无法消费或恢复，形成永久自锁；归档为`NET-006`。
 - 2026-08-13：确认TLS native把`read(0)`编码为未满足，Lua登记值为0的唯一waiter后所有data callback都无法完成；归档为`TLS-009`。
 - 2026-08-13：确认DNS query encoder处理普通名字最后一个label后构造`end+1`指针，所有无尾随点查询落入C未定义行为；归档为`DNS-009`。
+- 2026-08-13：确认DNS RR循环把结构/RDATA parse failure降格为break或skip，仍以成功提交已解析前缀并完成请求；归档为`DNS-010`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
