@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档363项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档364项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3034,6 +3034,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：定义两个明确类型：collector module/factory可有`new`，registered collector instance只要求`collect`，`name?`作为诊断字段；或若1.0决定强制三字段，register必须同步校验并修正所有官方示例。LuaLS、三份双语reference和runtime错误时机必须一致。
 - 回归检查：修复阶段把每份官方custom collector围栏交给LuaLS，零缺字段诊断；register对最小合法/缺collect对象按契约同步接受或拒绝，错误包含collector name（若有）。当前不运行type checker。
 
+### DOC-071 — P2 — 热更新指南的循环 timer 不返回 handle，所谓 cancel/restart 会叠加永久周期任务
+
+- 状态：已确认；双语timer示例、`time.after/cancel`返回契约与递归调度所有权的确定性静态核对。本轮不调度或取消timer。
+- 位置：`docs/src/{en/,}guides/hot-reload.md:722-786`定义`repeat_call(ms,func)`：内部`loop()`每次调用`time.after(ms,loop)`却不保存/return session，外层又不return；“Solution 2”随后以`M.timer_handle = repeat_call(...)`保存nil，并只在handle truthy时cancel。真实`time.after`返回session、`time.cancel`按session取消单个timer，见`lualib/silly/time.lua:27-45`。
+- 触发：按指南启动周期任务并执行一次或多次hot reload/restart timer方案。
+- 影响：旧loop已经安排的下一次timer永远没有可达handle，无法取消；新版本又启动一条独立loop。每次hotfix使任务倍增，数据库清理、配置刷新、心跳或计费副作用会重复执行，CPU/I/O与日志持续增长，且模块表显示handle=nil使运维误判已停止。
+- 证据：Lua函数无显式return恒返回nil；递归callback每轮只把新session留在临时表达式，之后没有owner。条件`if M.timer_handle then`因此对该helper创建的timer永远不执行，`time.cancel`也不会递归取消未来session。
+- 根因：one-shot timer被包装成递归interval时没有设计可变current-session和stopped generation，文档把helper调用本身误当成可取消handle。
+- 建议解法：helper返回owner对象，保存当前session和stopped/generation；每轮callback先验证generation，重排时更新session，stop先置stopped再cancel当前session。hot reload必须先确认旧owner终止再启动新owner，并处理callback正在执行的竞态。
+- 回归检查：修复阶段用确定性时钟覆盖start、连续触发、在pending/执行中stop、restart和多次hotfix；任一时刻至多一条有效周期链，stop后计数不再增长。当前不运行timer。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4448,7 +4459,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为363项：P0为0，P1为112，P2为198，P3为53。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 70。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为364项：P0为0，P1为112，P2为199，P3为53。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 71。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4830,6 +4841,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
 - 2026-08-13：Collector contract反查确认LuaLS/主reference要求name+new+collect，但Prometheus/Registry官方示例与runtime只要求collect，归档为`DOC-070`。
 - 2026-08-13：hot-reload依赖反查确认`patch:collectupval(table)`把每个export value无条件交给debug.getinfo；典型VERSION/config常量使官方主流程立即崩溃，归档为`CORE-012`。
+- 2026-08-13：hot-reload timer方案反查确认递归`repeat_call`既不保存也不返回after session；cancel handle恒nil，每次更新叠加永久周期任务，归档为`DOC-071`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
