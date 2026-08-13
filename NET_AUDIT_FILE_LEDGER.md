@@ -330,7 +330,7 @@
 | `docs/src/en/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/en/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/en/reference/logger.md` | 审阅中 | DOC-057/058、trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/en/reference/logger.md` | 审阅中 | DOC-057/058/063、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
@@ -395,7 +395,7 @@
 | `docs/src/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/reference/logger.md` | 审阅中 | DOC-057/058、trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/reference/logger.md` | 审阅中 | DOC-057/058/063、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |

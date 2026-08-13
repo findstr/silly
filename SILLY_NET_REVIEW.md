@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档349项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档350项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2874,6 +2874,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：改用`local json = require "silly.encoding.json"`并在告警块加入`local task = require "silly.task"`；所有独立围栏必须列全imports，文档validator对require target和未定义全局做静态检查。若片段依赖伪业务变量如`request`，明确标成占位参数而非隐式全局。
 - 回归检查：修复阶段提取双语围栏，在仓库模块manifest下做require解析与LuaLS未定义全局检查；启用DEBUG分支和告警bootstrap均不得因模块/name错误失败。当前不运行示例。
 
+### DOC-063 — P2 — logger reference 错称禁用级别不会求值参数，昂贵序列化仍在请求热路径执行
+
+- 状态：已确认；双语logger reference、Lua实参求值语义和runtime level切换实现的确定性静态核对。本轮不调用昂贵logger参数。
+- 位置：`docs/src/{en/,}reference/logger.md:255-266,276-286`宣称低于level的调用“零开销”，并明确断言`logger.debug("Expensive operation:", serialize_large_object())`中的函数不会被调用。实现只在`lualib/silly/logger.lua:20-53`把`logger.debug`字段替换为`nop`；没有macro、closure或lazy argument API。logging指南反而在`docs/src/{en/,}guides/logging-monitoring.md:90-106`正确要求先检查level再序列化。
+- 触发：生产级别为INFO/WARN/ERROR时，应用按reference把JSON编码、请求/response dump、数据库row格式化或其他昂贵/有副作用表达式直接作为`logger.debug(...)`实参。每次调用都会触发。
+- 影响：Lua在进入`nop`前先求值全部实参，因此序列化、table遍历、内存分配、函数副作用与潜在异常全部照常发生，只是最终日志写被跳过。若输入大小受远端请求控制，关闭DEBUG仍可能承担线性CPU/内存成本并被放大为可用性问题；带副作用的参数还会在维护者认为日志已禁用时改变状态或抛错。
+- 证据：`nop(...)`只丢弃已经计算完的arguments，`refresh`仅替换function value；调用语法没有把argument封装成closure。reference下一节自身又警告“即使日志被过滤，counter也会增加”，与前一段“serialize不会调用”直接矛盾；正确的logging guide显式用`if logger.getlevel() <= logger.DEBUG`包住encode。
+- 根因：文档把“native formatter不会运行/不会写日志”扩大成“调用表达式零成本”，忽略Lua eager argument evaluation；API没有lazy closure入口却使用类似编译期日志宏的承诺。
+- 建议解法：reference改为“只省去logger内部格式化与I/O，实参始终求值”，所有昂贵表达式必须放在level guard中；可提供`logger.debuglazy(function() return ... end)`或明确的`logger.enabled(level)`，但closure异常/trace语义需定义。删除零开销绝对表述并统一双语示例。
+- 回归检查：修复阶段用计数/抛错/大序列化函数作为被过滤实参，文档契约必须明确它仍执行；guard/lazy API路径则断言不执行。静态lint提示logger调用中的function call/json.encode/string.format。当前不运行。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4288,9 +4299,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为349项：P0为0，P1为112，P2为190，P3为47。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 62。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为350项：P0为0，P1为112，P2为191，P3为47。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 63。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；190项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
