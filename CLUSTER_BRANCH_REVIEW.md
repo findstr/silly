@@ -44,7 +44,7 @@ test/testcluster.lua
 | CLUSTER-002 | 仍存在 | `wait_pool`仍不记录peer/fd，remote close与active close都不会结束该连接上的pending RPC。 |
 | CLUSTER-003 | 已修复 | response分支新增`if co then ... else logger.debug(...) end`，unknown/late/duplicate ACK不再对nil执行`task.wakeup`。 |
 | CLUSTER-004 | 仍存在 | passive close走`close_fd`并调用`c.clear(ctx,fd)`；active `close_peer`仍只清map/关socket，不清per-fd incomplete parser state。 |
-| CLUSTER-005 | 仍存在 | `hardlimit`仍允许`UINT32_MAX`，receive仍计算`psize + 1`，send仍把`HEADER_SIZE + body`窄化为`uint32_t total`，checked-add缺口未变。 |
+| CLUSTER-005 | 仍存在 | `hardlimit`仍可超过`INT_MAX`，完整frame会窄化成负`packet.size`；`UINT32_MAX`的`psize+1`与send total回绕也仍存在。 |
 | CLUSTER-006 | 部分改善、核心仍存在 | 文档已与8/16-byte新header尺寸一致，但length/session/traceid仍以native整数`memcpy`上wire，跨端序互操作仍失败。 |
 | CLUSTER-007 | 仍存在 | 底层accept ABI为`(fd,listenid,addr)`，cluster仍声明`function(fd,addr)`，incoming `peer.remoteaddr`保存listener id。 |
 | CLUSTER-008 | 原触发路径已消除 | call不再隐式DNS/dial；eager `connect`在call之前单独完成，因此“RPC timer在lazy connect后才开始”的原问题不再适用。connect自身的deadline另见第4节。 |

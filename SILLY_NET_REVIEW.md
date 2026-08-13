@@ -867,16 +867,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：所有close入口调用同一个幂等teardown，先摘除peer generation的pending/complete/incomplete state，再清map和关闭socket；`c.clear`应同时考虑已完成但尚未pop的packet，或C ctx提供`clear_fd`统一释放该fd全部状态。明确listener与connection类型避免对listener误操作。
 - 回归测试：修复阶段发送length=hardlimit与少量body后主动close，断言allocator立即回基线、hash无该sid；覆盖header partial、body partial、complete queued、重复close及sid复用，无double-free。当前不发送大partial frame。
 
-### CLUSTER-005 — P1 — 合法 `UINT32_MAX` hardlimit 使 frame allocation/total 长度回绕
+### CLUSTER-005 — P1 — 公开 hardlimit 超出本地长度域，可使 frame 长度变负或 allocation/total 回绕
 
 - 状态：已确认；配置范围与确定性unsigned arithmetic/memcpy路径推导。按要求不构造超大length或越界copy触发。
-- 位置：hard/soft limit validation在`luaclib-src/lcluster.c:77-105`；接收length与allocation/copy在`:167-246`；发送request/response size计算在`:333-397,398-437`；lightuserdata length入口在`:295-304`。
-- 触发：应用通过公开`cluster.serve{hardlimit=0xffffffff,...}`或直接`c.create`使用被接受的最大值。远端随后只需发送host-order length prefix `0xffffffff`及任意body字节；发送侧也可用接近上限的string，或直接C module的lightuserdata+claimed length生成接近4GiB body。
-- 影响：接收侧`ic->header.psize + 1`在32-bit unsigned域回绕为0，得到零/极小allocation，紧接着把网络body复制到`ic->buff`造成heap overflow。发送侧`total=HEADER_SIZE+body`赋给uint32后回绕，按小total分配，再复制16/4-byte header和巨大payload，同样heap overflow/越界读取；可能导致进程崩溃或可利用的内存破坏。
-- 证据：`lcreate`明确允许`hardval <= UINT32_MAX`；wire psize与hardlimit均uint32，validate仅比较大小。allocation表达式没有先提升到size_t或检查`SIZE_MAX-1`。pack路径虽用uint64计算body并验证，但随后无`body<=UINT32_MAX-HEADER_SIZE`检查就窄化到uint32 total。默认128MiB不会触发，不代表公开合法配置安全。
+- 位置：hard/soft limit validation在`luaclib-src/lcluster.c:77-105`；接收length、`packet.size`转存与pop在`:35-61,149-246,313-361`；发送request/response size计算在`:333-397,398-437`；lightuserdata length入口在`:295-304`。raw-string分支保留同一字段和算术布局。
+- 触发：应用通过公开`cluster.serve{hardlimit=N,...}`或直接`c.create`设置任何`N > INT_MAX`；peer发送合法范围内的`psize > INT_MAX`并补齐body。`N=UINT32_MAX`时仅需头与任意body字节即可命中更早的`psize+1`回绕；发送侧也可用接近上限的string或lightuserdata+claimed length。
+- 影响：对`INT_MAX < psize < UINT32_MAX`，完整frame的`uint32_t rsize`先写入signed `packet.size`变负，`lpop`再做header减法并把负`int`作为external-string长度，转成巨大的`size_t`后可越界读取、巨额allocation或崩溃。恰为`UINT32_MAX`时，接收侧`psize+1`先回绕成0并进入小分配/大copy heap overflow；发送侧`HEADER_SIZE+body`窄化回绕也会按小total分配后复制巨大payload。公开允许范围内因此存在从2GiB开始的多条native内存破坏路径，而不只单个最大值。
+- 证据：`lcreate`明确允许`hardval <= UINT32_MAX`；wire psize/rsize/hardlimit均uint32，但`struct packet.size`和`lpop local size`是int，赋值/减法/传入`lua_pushexternalstring`均无`<=INT_MAX`证明。allocation表达式没有先提升到size_t或检查`SIZE_MAX-1`；pack虽用uint64计算body并验证，随后仍无`body<=UINT32_MAX-HEADER_SIZE`检查便窄化为uint32 total。默认128MiB暂不命中，不代表公开合法配置安全。
 - 根因：协议32-bit body length的理论最大值被直接当作可配置资源上限，没有为NUL sentinel、外层4-byte prefix和allocation arithmetic保留空间；多个域之间缺少checked add/narrow。
 - 建议解法：定义远低于`UINT32_MAX`且受`INT_MAX/SIZE_MAX`约束的绝对protocol cap；对`psize+1`、`HEADER_SIZE+body`、allocation与copy全部使用checked `size_t/uint64_t`加法，验证后才窄化wire字段。lightuserdata入口同时校验非负、实际owner范围或改opaque buffer。配置超出安全cap应立即报错。
-- 回归测试：修复阶段只做checked-arithmetic单元边界，覆盖hardlimit/psize/body在cap、`UINT32_MAX-4..UINT32_MAX`及负claimed length，断言在allocation/copy前拒绝；不分配4GiB。ASan/UBSan下合法最大安全frame round-trip。当前不构造越界包。
+- 回归测试：修复阶段只做checked-arithmetic单元边界，覆盖hardlimit/psize/body在安全cap、`INT_MAX-1/INT_MAX/INT_MAX+1`、`UINT32_MAX-4..UINT32_MAX`及负claimed length，断言在allocation/copy/pop前拒绝；不实际分配2–4GiB。ASan/UBSan下合法最大安全frame round-trip。当前不构造越界包。
 
 ### CLUSTER-006 — P2 — wire integers 使用 host byte order，跨端序节点无法互操作
 
@@ -4168,6 +4168,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：etcd字段矩阵反查确认protobuf默认把`2^63..2^64-1`的合法uint64/fixed64经signed参数解码成负Lua integer，直接影响cluster/member ID等；归档为`GRPC-039`，未构造高位varint。
 - 2026-08-13：完成etcd封板审计：624行wrapper、KV/Lease/Watch生成descriptor、`testetcd.lua`17组/919行、692行fake server、真实etcd 15组/764行及双语reference 1554/1564行均已映射；新增`ETCD-017`、`DOC-035/036/037`并反查`GRPC-039`，其余疑点归入既有17项etcd根因或静态排除，未运行服务、断链或并发barrier。
 - 2026-08-13：cluster封板复核确认master与raw-string分支均固定明文TCP，协议/配置无节点认证、机密性、完整性或重放保护且文档未限定受信网络；归档为共同问题`CLUSTER-016`，未建立peer或发送frame。
+- 2026-08-13：补强`CLUSTER-005`：允许的`psize > INT_MAX`即会从uint32窄化为负`packet.size`并以巨大external-string长度pop；`UINT32_MAX`的allocation/total回绕只是更晚边界，不重复计数。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

@@ -185,7 +185,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | CLUSTER-002 | P2 | cluster peer断线/主动close不结束其pending RPC，waiter与timer只能保留到全局timeout。 |
 | CLUSTER-003 | P2 | unknown/late/duplicate ACK会对nil coroutine执行wakeup，连接保持并可持续制造异常/日志。 |
 | CLUSTER-004 | P2 | cluster主动close不清C parser的per-fd incomplete buffer，默认单块可滞留至128MiB。 |
-| CLUSTER-005 | P1 | 合法UINT32_MAX hardlimit使receive psize+1及send 4+body回绕，进入小分配/大copy内存破坏。 |
+| CLUSTER-005 | P1 | hardlimit允许超过INT_MAX，frame长度可先变负并以巨大Lua string pop，最大值还会使allocation/total回绕。 |
 | CLUSTER-006 | P2 | cluster wire直接复制native整数/struct，大小端不同节点无法互操作且文档格式也与实现不符。 |
 | CLUSTER-007 | P2 | accept adapter参数错位，incoming peer.remoteaddr实际保存listener sid而非客户端endpoint。 |
 | CLUSTER-008 | P1 | RPC timeout在lazy DNS/TCP connect之后才启动，黑洞endpoint可使call无限等待并阻塞同peer callers。 |
