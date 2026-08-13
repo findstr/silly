@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档356项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档357项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -459,6 +459,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：为无label schema设置的fast path只检查values长度，没有同时检查labelnames长度；arity invariant被放在仅非空values才调用的composer中，validation与serialization顺序错误。
 - 建议解法：`key`入口首先原子检查`#lnames == #values`，两者均为0时才返回空字符串；公开constructor最好把空`labelnames={}`规范化为simple metric或拒绝，以免制造只能经`:labels()`访问的伪vector。对稀疏/nil varargs还需用显式参数计数而非不可靠的`#table`，并在创建cache节点前完成验证。
 - 回归测试：修复阶段对三类vector覆盖0/少1/多1/正确数量、空schema和中间nil；断言失败不新增labelcache/metrics、不改变数值，合法series始终包含声明的全部标签，gather由独立parser接受。当前不运行这些调用。
+
+### METRIC-009 — P2 — `gather()` 格式化异常不清共享 buffer，一次坏值可永久毒化后续全部 scrape
+
+- 状态：已确认；module-level exporter buffer、Gauge setter、custom collector契约与异常顺序的确定性静态核对。本轮不写入异常metric value或调用gather。
+- 公开契约：一次scrape因某个collector/value失败后，修正或注销该指标必须允许后续scrape恢复；临时输出buffer不能跨失败请求保留半份exposition，更不能让一个已移除的坏值永久阻断进程全部内置/业务metrics。
+- 位置：`lualib/silly/metrics/prometheus.lua:129-170`把`buf`定义为模块级table，gather先逐项append，直到`table.concat`成功后才在`:167-169`清空，没有异常/finally路径。`lualib/silly/metrics/gauge.lua:23-27`的公开`:set(v)`不校验number，custom collector又可按双语`reference/metrics/{collector.md:76-94,registry.md:421-466}`直接append原始metric table。
+- 触发：对已注册Gauge执行`:set(false)`或`:set({})`后抓取一次；或者custom collector返回nil/boolean/table类型的name/help/value，导致`table.concat(buf, "")`格式化失败。应用捕获该请求异常后把Gauge改回number或注销collector，再次调用gather。
+- 影响：首次失败前已经写入的HELP/TYPE/sample片段和不兼容值仍留在共享buffer；第二次gather从`#buf`之后继续append，最终concat再次遇到旧坏值并失败。指标即使已经修正/注销也无法恢复，进程余生所有Prometheus抓取持续500/断开，默认process/network监控与告警一起失明；重复请求还不断向旧buffer追加新片段并增长内存。
+- 证据：清理循环位于concat之后，Lua异常会直接越过它；下一次调用没有入口reset。Gauge setter只是直接赋值，custom collector也没有registration/collect schema validation，所以formatter错误可经公开API到达。现有`test/testprometheus.lua:447-497`只检查成功gather的逗号格式，未覆盖一次失败、修正后的第二次抓取或buffer长度复位。
+- 根因：为了减少分配复用了全局scratch table，却把cleanup绑定到唯一成功出口；producer schema未验证与exporter非异常安全叠加，把单次调用错误升级为持久全局状态损坏。
+- 建议解法：每次gather使用局部buffer，或在入口先清空并以受保护/finally路径保证所有出口复位；先把collect结果验证/格式化到调用私有buffer，成功后再返回。Gauge/Histogram/Counter与custom metric边界集中验证finite number、descriptor和kind，错误应标明collector且不泄漏旧输出；不要用共享可变scratch跨请求保存状态。
+- 回归测试：修复阶段让Gauge及custom collector分别产生boolean/table/nil/throw，捕获首轮错误后修正/注销并再次gather；断言第二轮只有当前合法metrics、无旧片段、buffer/内存回基线。并覆盖两个任务交错发起scrape与collector异常，确认互不污染。当前不执行。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4367,7 +4379,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为356项：P0为0，P1为112，P2为193，P3为51。模块分布：CORE 11、METRIC 8、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为357项：P0为0，P1为112，P2为194，P3为51。模块分布：CORE 11、METRIC 9、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4742,4 +4754,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：双语结构反查发现英文Gauge reference在首个usage示例后直接EOF，并保留“长度限制、后续另发”的生成占位句，缺少中文后半页565行内容，归档为`DOC-066`。
 - 2026-08-13：Histogram双语完整监控示例反查确认其调用未导出的`silly.time.now/sleep`，任一请求在记录指标前即异常，归档为`DOC-067`。
 - 2026-08-13：共享labels fast path反查确认非空schema调用零参数`:labels()`会在arity assert前返回空key；三类vector均静默建立缺失全部标签的series，归档为`METRIC-008`。
+- 2026-08-13：Exporter异常收尾反查确认gather复用module-level buffer且只在concat成功后清空；一个坏Gauge/custom metric值可永久毒化后续全部scrape并持续追加内存，归档为`METRIC-009`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
