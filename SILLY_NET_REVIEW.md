@@ -2535,6 +2535,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把`Event.prev_kv`标为`KeyValue?`，删除`WatchProgressRequest.progress_request`，保留outer `WatchRequest.progress_request`；在public watch request类型和双语参数表补充`prev_kv:boolean?`及其compaction例外。由descriptor生成scalar/repeated/message presence和enum表示类型，并在CI对照wrapper透传选项；同时保留`DOC-036`所需的enum-as-name修正。
 - 回归测试：修复阶段用LuaLS覆盖默认watch直接解引用应告警、nil guard通过、`prev_kv=true`仍要求nil guard、empty progress request只接受空table；descriptor snapshot断言每个annotated field真实存在且presence一致。当前不运行protobuf decode或类型检查。
 
+### DOC-044 — P3 — net/DNS native LuaLS 的导出、返回 arity 与 errno 类型多处漂移
+
+- 状态：已确认；`silly.net.c`/`silly.net.dns.c` stub与native导出表、每条push/return路径静态对照。本轮不直接调用底层binding或运行LuaLS。
+- 位置：net stub在`lualib/types/silly/net/c.lua:1-82`，真实导出与实现位于`luaclib-src/lnet.c:39-68,131-220,290-374`；DNS answer stub在`lualib/types/silly/net/dns/c.lua:35-40`，真实失败返回位于`luaclib-src/ldns.c`的answer入口。正确高层errno与multipack使用在`lualib/silly/net.lua:1-54`，双语low-level reference也把错误写为`silly.errno`并把handle写为lightuserdata。
+- 触发：依据IDE补全接收`local pack = c.multipack(...)`并把它当table，给`tcp_multicast`传第四个addr，比较底层错误为string，调用真实但stub不可见的`multifree/ntop`，或依据`dns.c.answer`的必有返回直接使用malformed packet结果。
+- 影响：`multipack`实际返回`lightuserdata,size`两个值，stub却声明单个table，调用方容易丢失真实size或对裸handle做错误操作；结合`NET-003`的非安全ownership，这会进一步增加错误fanout/length/释放风险。`tcp_multicast`第四参数完全未读取，errno是可比较的`silly.errno` userdata而非string；漏导出使合法内部调用被静态报错。DNS answer的C parse失败只返回nil，必有tuple声明会压掉必要的nil guard。运行时安全根因仍分别由`NET-003`、`SOCK-006/011`、`ADDR-001`与DNS parser条目覆盖，本条不重复提高严重度。
+- 证据：`lmultipack`明确push pointer和size并return 2，`ltcpmulticast`只读取前三个参数；module table含`multifree`和`ntop`，stub均无声明。所有socket失败用`silly_push_error`而非`lua_pushstring`。DNS stub自己的注释已经写“Returns nil (single value) on any parse failure”，紧接的`---@return integer id,...`却没有optional/overload，内部`dispatch_resp`也以`if not id then return`证明nil是正常解析失败分支。
+- 根因：native binding演进后stub未由真实export/stack contract生成；LuaLS难以表达lightuserdata ownership和条件多返回时，又被简化成了错误的普通table与必有tuple。
+- 建议解法：为`multipack`声明精确重载与`---@return lightuserdata ptr, integer size`，`tcp_multicast`只保留三参数，所有错误统一为`silly.errno?`；补`multifree/ntop`并将dangerous raw ownership标internal。`dns.answer`用overload表达`nil`或完整tuple。建立native API manifest，静态核对导出名、最小/最大参数、返回arity与error representation；长期应以opaque full userdata取代裸multicast pointer。
+- 回归检查：修复阶段用LuaLS fixture覆盖两个multipack返回值、三参multicast、errno identity、multifree/ntop可见性及DNS nil guard；另用只读native contract测试比较导出集合和return arity。当前不发送数据或解析packet。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4291,6 +4302,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
 - 2026-08-13：完成cluster LuaLS对照，确认master把可选timeout标必填、numeric cmd标成string-only，两版底层stub又把空ring时零返回的pop标成必有tuple；归档为`DOC-042`，未运行type checker。
 - 2026-08-13：完成etcd generated LuaLS presence复核，确认`Event.prev_kv`在默认watch/compaction时可缺失却标必有，空`WatchProgressRequest`又被虚构boolean字段；归档为`DOC-043`，`Event.type`偏差仍由`DOC-036`覆盖。
+- 2026-08-13：完成net/DNS native stub核账，确认multipack返回shape、multicast参数、errno类型、漏导出方法及answer nil分支均与LuaLS相反；归档为`DOC-044`，对应运行时ownership/parser风险不重复计数。
 - 2026-08-13：完成cluster封板审计：master Lua 331行、native 553行、类型stub 54行、`testcluster.lua`24组/604行、中英文reference 1127/1126行及raw-string分支7个变更文件均已映射；新增`CLUSTER-016`至`019`、`DOC-038`至`042`，断线registry候选则经GC/finalizer反查排除。其余候选归入既有19项、4项分支独有问题或静态排除，阶段收口。
 - 2026-08-13：跨模块timeout事务复核确认native timer拒绝大于`UINT32_MAX`的整数，但connect、TCP/TLS/UDP/H2均先发布fd/waiter，gRPC也先占stream；同步参数异常会跳过回滚并毒化对象或遗留资源，归档为`NET-007`。DNS同类顺序已由`DNS-011`覆盖，H1因尚未发布底层waiter而排除。
 - 2026-08-13：跨模块duration时钟复核确认`time.now()`由固定启动wall基准加monotonic tick构成，运行中系统校时不会直接影响HTTP pool、DNS TTL、MySQL pool或etcd keepalive比较；据此撤回`HTTPC-008`中的附带wall-clock论据，保留由`lastfree=0`确定触发的核心问题。
