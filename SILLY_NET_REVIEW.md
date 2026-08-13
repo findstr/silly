@@ -2489,6 +2489,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0前选择并固定一种契约。推荐返回结构化cluster error（稳定kind/code/cause，transport cause可保留`silly.errno`），让调用方可靠区分timeout/closed/encode/remote，同时不依赖平台字符串；若短期保留当前tuple，则明确哪些errno identity是稳定承诺并删掉相反文本。中英文、LuaLS、errno reference和测试注释必须由同一错误schema生成/校验。
 - 回归检查：修复阶段覆盖response timeout、dial timeout/refused、active/passive close、marshal/unmarshal失败和remote handler失败，断言每类稳定可分支且message仅用于诊断；静态扫描禁止同一API同时出现“errno可比较”和“opaque不可比较”。当前只保存静态证据。
 
+### DOC-041 — P3 — master cluster reference 遗漏唯一的 frame hard/soft limit 配置
+
+- 状态：已确认；master实现、inline LuaLS、中英文serve参数表与raw-string分支静态对照。本轮不修改limit或发送frame。
+- 位置：master `M.serve`把`conf.hardlimit/conf.softlimit`传入native ctx，见`lualib/silly/net/cluster.lua:311-329`；native LuaLS在`lualib/types/silly/net/cluster/c.lua:8-12`公开默认128MiB/65535。master中英文`docs/src/{en/,}reference/net/cluster.md:47-83`的serve参数只列marshal、unmarshal、call、close、accept、timeout，整份文件均无hardlimit/softlimit；raw-string分支对应参数表已补上两项。
+- 触发：部署者依据master 1.0 reference配置cluster，想降低单frame接收预分配、限制异常大响应或调高warning阈值；IDE虽可能从inline annotation发现字段，但公开reference用户没有入口信息。
+- 影响：用户通常只能接受默认128MiB hardlimit与65535 warning，无法从文档得知已有的资源收紧能力；这放大`CLUSTER-012`的慢partial-frame内存风险，并使超过softlimit的日志难以解释/调优。误以为字段不支持而在业务payload外重复实现限制，也无法阻止native在完整body前预分配。该项本身是文档可发现性问题，严重度P3，不重复计算底层资源漏洞。
+- 证据：两字段是高层serve conf annotation的一部分并被原样消费，C create也验证并保存；master reference零命中。分支commit只在更新后的cluster专属文档补入字段，证明不是刻意私有的C-only选项，但修订尚未存在于master基线。
+- 根因：新增packet size limits时同步了实现、stub和测试，却没有把高层配置schema作为双语reference的唯一来源；分支重写文档时才局部补齐。
+- 建议解法：master中英文serve参数表补充integer类型、默认值、允许范围、`hardlimit>=softlimit`、body是否包含协议header以及softlimit仅发送侧告警的精确定义；同时坦白hardlimit不能替代global/per-peer budget。由结构化conf schema生成inline LuaLS和双语表，分支迁移也复用同一字段定义。
+- 回归检查：修复阶段做API/doc schema lint，断言serve消费的每个字段在两种语言各恰好出现且默认/range一致；用stub create捕获省略值和显式limit的数据流，但当前不运行frame或allocation测试。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4241,6 +4252,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：沿cluster被动断线反查共享net registry，确认CLOSE dispatcher只调用callback却不删除data/close表项；远端连接抖动可按历史sid永久扩表，TCP/TLS/UDP/cluster共同受影响；归档为`NET-007`，未建立或循环关闭连接。
 - 2026-08-13：确认master cluster reference的connect专节正确声明lazy handle构造不yield，但文末又称直接调用报错且必须task.fork；归档为master文档问题`DOC-039`，raw-string eager分支不适用。
 - 2026-08-13：确认cluster API/timeout段承诺返回可识别`silly.errno`，但同页Error Handling及全局errno reference又要求把cluster错误视为opaque string且禁止比较；归档为`DOC-040`，当前实现/test确实直接返回并比较errno常量。
+- 2026-08-13：确认master cluster实现/LuaLS支持hardlimit与softlimit，但中英文reference整份零命中，部署者无法发现唯一frame预算入口；归档为`DOC-041`，raw-string分支已补齐。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
 - 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
 - 2026-08-13：确认POSIX合法fd 0在异步TCP connect完成读取SO_ERROR时命中`assert(fd>0)`并终止进程，记录为`SOCK-015`；未关闭stdin或建立连接。

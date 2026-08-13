@@ -124,6 +124,7 @@ test/testcluster.lua
 - master文档问题`DOC-039`不适用于本分支：master的connect专节与文末对“lazy handle是否yield”自相矛盾，而本分支eager connect确实需要yieldable task。
 - `DOC-040`适用于两版文档：API/timeout段把错误写成`silly.errno`并点名`errno.TIMEDOUT`，Error Handling又禁止把cluster错误与errno比较；分支改造未统一这项契约。
 - 分支同样经共享`net.lua`受`NET-007`影响：remote close只分发cluster close callback，不删除按历史sid保存的底层data/close registry；该项作为跨协议问题计入主报告，不重复使用CLUSTER编号。
+- master文档遗漏`DOC-041`在本分支已修复：raw-string reference的serve参数表同时列出hardlimit和softlimit及默认值。
 
 第三轮明确排除、未另立问题的路径：
 
