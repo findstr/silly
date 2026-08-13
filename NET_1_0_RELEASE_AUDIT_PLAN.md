@@ -7,6 +7,8 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
+当前滚动进度（2026-08-13）：底层 engine/socket 阶段已收口；共 215 项（P1 90、P2 116、P3 9）。本轮新增 `NET-003`、`SOCK-015` 至 `SOCK-019`，每项均已独立提交；正在进入 TCP/UDP/addr 阶段。
+
 ## 1. 目标和边界
 
 本轮不是重复阅读已有报告，而是为 1.0 发布做逐文件封板：证明每个网络相关源码、native binding、engine 依赖、测试和公开契约都被映射到检查项；对状态机的正常、失败、超时、取消、关闭、重入和资源耗尽分支分别检查，并与既有 issue 去重。
@@ -47,9 +49,15 @@
 
 ### 3.1 Engine 和 native 层
 
-- `src/socket.c`、`src/worker.c`、`src/timer.c`、`src/queue.c`、`src/message.c`、`src/engine.c`、`src/api.c`：待审。
-- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`、`src/win/win.c`、`src/win/event_iocp.h`、`src/win/wepoll.c`：待审。
-- `luaclib-src/lnet.c`、`laddr.c`、`ldns.c`、`lhttp.c`、`ltls.c`、`lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
+- `src/socket.c`：已审有归档；既有 `SOCK-001` 至 `SOCK-014`，本轮新增 `SOCK-015`、`SOCK-017`、`SOCK-019`，平台共用调用链另见 `SOCK-016/018`。
+- `src/engine.c`、`src/worker.c`、`src/timer.c`、`src/queue.c`：已审有归档；对应 `CORE-001` 至 `CORE-007` 及 `SOCK-008`，本轮未发现可独立于既有条目的新问题。
+- `src/message.c`、`src/api.c`、`src/monitor.c` 及直接 header：已审无新增；公开转发、message id、shutdown调用顺序和monitor跨线程字段已映射到既有问题。
+- `src/array.h`、`src/flipbuf.h`、`src/trigger.h`、`src/spinlock.h`、`src/platform.h`、`src/sockaddr.h`、`src/silly.h`、`src/silly_conf.h`、`src/socket.h`：已审有归档；新增Windows控制通道问题为`SOCK-016/018`，其他结论并入`CORE-007`、`SOCK-011/012/015/017/019`。
+- `src/unix/unix.c`、`src/unix/event_epoll.h`、`src/unix/event_kevent.h`：已审无新增；注册/修改失败、裸slot userdata和nonblocking失败已由`SOCK-009/010/013`覆盖。
+- `src/win/win.c`：已审有归档；本轮新增`SOCK-016`至`SOCK-019`。
+- `src/win/event_iocp.h`、`src/win/wepoll.h`、`src/win/wepoll.c`：已审无新增；完整检查handle tree、reflock、poll cancel/delete、事件映射和Silly wrapper，项目侧代际及控制API偏差已归入`SOCK-009/010/016/019`。
+- `luaclib-src/lnet.c`：已审有归档；本轮新增`NET-003`，既有裸pointer/address长度问题见`NET-002`、`SOCK-006/011`。
+- `luaclib-src/laddr.c`、`ldns.c`、`lhttp.c`、`ltls.c`、`lcluster.c`、`mysql/lmysql.c` 及其直接 header：待审。
 
 ### 3.2 Lua transport 和协议层
 
