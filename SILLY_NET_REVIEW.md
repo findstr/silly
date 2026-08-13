@@ -193,6 +193,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-PROTOBUF-ENCODE-FINALIZE | API/safety | `lualib/silly/net/grpc/helper.lua:53-67`; `grpc/client/service.lua:12-23,134-213`; `grpc/registrar.lua:83-191`; `luaclib-src/pb.c:1597-1777` | client/server sender | 偏离 | `pb.encode`类型/schema错误直接抛Lua异常；多个wrapper没有protected encode/finalizer，异常可绕过timer取消、grpc-status及H2 stream回收 | 现有测试只编码字段类型正确的对象，没有错误输出、请求对象或资源归零断言 | GRPC-032 |
 | PROTOBUF-SCALAR-DOMAIN | schema/data integrity | `luaclib-src/pb.c:316-359,406-470,1616-1668`; `lualib/silly/net/grpc/helper.lua:53-67` | client/server sender | 偏离 | 32位整数静默取低32位、signed/unsigned 64位不查范围，enum接受fractional number并转整数，bool把任意truthy值编码为true | gRPC测试只用小范围int32和正确Lua类型，没有边界外值或encode→decode等值断言 | GRPC-033 |
+| PROTOBUF-ONEOF-INVARIANT | MUST/data integrity | `luaclib-src/pb.c:1304-1307,1728-1757,1943-1973`; `lualib/silly/net/grpc/helper.lua:16-67` | client/server | 偏离 | decoder遇到新oneof member只更新case名、不清除旧member；encoder也会发送table中全部members，破坏API层“至多一个/last wins”不变量 | gRPC schema与测试完全没有oneof | GRPC-035 |
 | GRPC-NORMAL-RESPONSE-TRAILERS | MUST | `lualib/silly/net/grpc/registrar.lua:80-228`; `lualib/silly/net/http/h2.lua:992-1025` | server sender | 正常路径符合 | normal success/application error在initial response headers后以最终HEADERS+END_STREAM发送grpc-status；parse/exception/status-code偏离另行编号 | 现有正常与application error用例覆盖 | — |
 | GRPC-CUSTOM-METADATA | optional/API | `lualib/silly/net/grpc/client/service.lua`; `lualib/silly/net/grpc/registrar.lua` | client/server | 未公开支持 | API没有传入/取出initial/trailing metadata的参数或context；因此也未实现`-bin` base64 codec。协议允许零metadata，不单独记MUST偏离，但属于跨实现功能缺口 | 无metadata tests | — |
 | GRPC-AUTOMATIC-RETRY | safety | `lualib/silly/net/grpc/client/conn.lua:82-100`; `lualib/silly/net/grpc/client/service.lua:134-257` | client | 不适用/安全 | 实现没有automatic retry，不会无条件重放非幂等RPC；GOAWAY/REFUSED_STREAM可靠性与status mapping缺口见H2-008/GRPC-013 | 无retry tests | — |
@@ -3544,6 +3545,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：区分`read next message`与`finish/close_and_recv/status`。client-streaming提供`close_and_recv()`或让final read只在status OK时返回response，否则`nil, typed_status/error`；server/bidi可让EOS read返回`nil, typed_status`，其中OK使用可区分的clean-EOS结果，或提供必须调用的`finish()`。文档和LuaLS公开code/message/trailers，所有transport/protocol/status错误归一，不能只给字符串导致code丢失。
 - 回归测试：修复阶段三种streaming分别覆盖0/N message后OK及每类代表性非OK、response+nonOK、Trailers-Only、缺/非法status、RST/断连；断言调用方只用公开返回值即可区分clean EOS与失败，非OK client-streaming永不返回成功对象，status/message只交付一次。当前不运行RPC。
 
+### GRPC-035 — P1 — protobuf oneof decoder 保留已失效成员，sender 也会同时编码多个成员
+
+- 状态：已确认；descriptor oneof索引、native encode/decode与官方last-one-wins规则的确定性静态核对。本轮不加载oneof schema或构造多member message。
+- 规范：[Protocol Buffers oneof](https://protobuf.dev/programming-guides/editions/#oneof)要求设置任一member自动清除同组其他member；parser在wire上遇到多个members时只保留最后一个，处理新member前必须清除先前member。oneof是API层“至多一个case”不变量，而不是只额外保存一个case名称。
+- 位置：descriptor能正确暴露oneof name/index在`luaclib-src/pb.c:1304-1307`；encoder按table字段独立遍历在`:1728-1757`；decoder的oneof分支在`:1943-1973`；gRPC双向codec入口在`lualib/silly/net/grpc/helper.lua:16-67`。
+- 触发：合法peer在同一message依次发送oneof成员`a`和`b`，或重复交替发送它们；反向上，本地request/handler response table同时含`a`与`b`。两者都是动态binding必须确定处理的输入，普通/repeated外层及嵌套message均可命中。
+- 影响：decode结果的oneof case字段指向最后的`b`，但Lua table仍同时保留旧`a`及新`b`。业务若直接检查`if msg.a then`、合并table或重新编码，会使用规范上已经清除的数据；当oneof表示credential、selector、operation、payload variant或条件时，可造成校验对象与执行对象分裂。sender则根据`pairs`或descriptor顺序把多个members都写上wire，独立peer只保留最后一个，其选择可能与本地调用者预期不同，且Silly round-trip仍残留双方字段。
+- 证据：decoder遇到`f->oneof_idx`只执行`table[oneof_name]=current_field_name`，随后写`table[current_field_name]=value`，没有读取上一case或把`table[previous_name]`设nil。encoder只看每个字段是否存在，`lpb_encode_onefield`不查询同组case；默认`pairs`顺序不构成稳定优先级，`encode_order`也只是descriptor顺序。descriptor已保存oneof索引/name，所以不是缺少schema信息。`testgrpc.lua`的所有messages都没有oneof。
+- 根因：binding把oneof实现成“case标签+普通独立字段”，没有让case标签成为字段有效性的唯一owner；encode/decode两边都未执行mutual exclusion。
+- 建议解法：decode新member前读取同组上一case，若不同则清除旧字段，再设置新case和值；同一message member重复应按scalar overwrite/message merge规则处理。encode要求每组零或一个member：优先使用显式case并验证对应值，或扫描后发现多个立即返回受控schema error，不能依赖table遍历顺序。与`GRPC-032`统一错误/资源收尾。
+- 回归测试：修复阶段覆盖`a→b`、`b→a`、`a→a`、三个members、scalar/message混合、nested及外层repeated；断言decode table只有最终有效member、case一致，message同member正确merge。encode覆盖零/一个/多个、显式case不一致及不同遍历模式；四类RPC双向确认业务永远看不到失效member。当前不构造payload。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3573,7 +3586,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为287项：P0为0，P1为104，P2为158，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 34、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
+当前滚动统计为288项：P0为0，P1为105，P2为158，P3为25。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 35、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 26。
 
 建议按依赖关系分五批修复：
 
@@ -3861,6 +3874,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认protobuf encode类型/schema错误直接抛异常，多个gRPC wrapper因此越过公开错误tuple、timer取消、final status与H2 stream回收；归档为`GRPC-032`，未编码错误对象或建立RPC。
 - 2026-08-13：确认native protobuf scalar encoder对32/64位整数、enum与bool缺少schema域校验，边界外/错误类型输入会被静默截断或改义；归档为`GRPC-033`，未编码这些输入。
 - 2026-08-13：确认三种streaming client不通过公开read返回值交付最终非OK status，失败会表现为普通EOF，client-streaming还可返回成功对象；归档为`GRPC-034`，未建立错误stream。
+- 2026-08-13：确认native protobuf oneof decoder只更新case而不清除旧member，sender也会编码table中的多个members，破坏last-one-wins不变量；归档为`GRPC-035`，未加载oneof schema。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
