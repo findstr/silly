@@ -406,7 +406,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-020 | P2 | client target只取单个A记录并固定首个IPv4地址，IPv6-only或首地址故障服务不可用。 |
 | GRPC-021 | P1 | close不与in-flight newchannel共同串行，返回后仍可复活orphan channel并继续RPC。 |
 | GRPC-022 | P2 | TLS client/server不验证ALPN最终选择h2，无ALPN或非h2会话仍直接进入H2状态机。 |
-| GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
+| GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog/alpnprotos配置，TLS策略、listen queue与声明override不生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 | GRPC-025 | P1 | protobuf message/map decoder把截断tag/unknown value当正常EOF，map unknown field还不skip value。 |
 | GRPC-026 | P2 | 多target round-robin不隔离坏endpoint，单点DNS/dial故障会阻断建池或周期性打失败RPC。 |

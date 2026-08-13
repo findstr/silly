@@ -189,7 +189,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 | RFC8305-3/4-CONNECT-RACING | SHOULD | `lualib/silly/net/grpc/client/conn.lua:16-29,49-79,127-155`; `lualib/silly/net/dns.lua:588-654` | client | 偏离 | 每个target固定单次A lookup并永久只保存首个IPv4 endpoint，无AAAA或同名多地址fallback | 单地址/IPv4本机自测不能覆盖AAAA-only或首地址故障 | GRPC-020 |
 | GRPC-CLIENT-CLOSE-LIFECYCLE | safety/concurrency | `lualib/silly/net/grpc/client/conn.lua:44-117` | client | 偏离 | close不与in-flight newchannel共锁；close返回后迟到建连仍可向已摘除endpoint发布channel并返回stream | 普通串行close无法覆盖connect yield窗口 | GRPC-021 |
 | GRPC-TLS-ALPN-H2 | MUST/interoperability | `lualib/silly/net/grpc/client/conn.lua:49-79`; `lualib/silly/net/grpc/server.lua:38-55`; `lualib/silly/net/tls.lua:198-204,250-258,464-466`; `lualib/silly/net/http/client.lua:243-279` | TLS client/server | 偏离 | 双方只配置h2 ALPN但不核对最终选择；无ALPN/非h2会话仍直接进入H2 handshake/parser | 同库双方总提议h2，不能覆盖legacy/misconfigured TLS peer | GRPC-022 |
-| GRPC-LISTEN-CONFIG | API/security | `lualib/silly/net/grpc/server.lua:29-55`; `lualib/silly/net/tls.lua:326-365`; `lualib/silly/net/tcp.lua:152-175`; `docs/src/en/reference/net/grpc.md:146-166` | server | 偏离 | 公开ciphers/backlog配置被adapter静默丢弃，TLS policy与listen queue不按调用方设置生效 | 默认配置自测不会检查实际ctx/listener option | GRPC-023 |
+| GRPC-LISTEN-CONFIG | API/security | `lualib/silly/net/grpc/server.lua:29-55`; `lualib/silly/net/tls.lua:326-365`; `lualib/silly/net/tcp.lua:152-175`; `docs/src/en/reference/net/grpc.md:146-166` | server | 偏离 | 公开ciphers/backlog/alpnprotos配置被adapter静默丢弃，TLS policy、listen queue与声明的ALPN override均不生效 | 默认配置自测不会检查实际ctx/listener option | GRPC-023 |
 | GRPC-LENGTH-PREFIXED-MESSAGE | MUST | `lualib/silly/net/grpc/helper.lua:6-67`; `lualib/silly/net/http/h2.lua:1084-1105,1177-1204` | client/server | 基础格式符合 | writer使用1-byte flag+4-byte big-endian length；reader exact-size读取可跨任意DATA边界重组。压缩语义、上限、parse status另见GRPC-004/005/007/015 | 正常测试覆盖unary/三种streaming与1 MiB message | — |
 | GRPC-PROTOBUF-ENCODE-FINALIZE | API/safety | `lualib/silly/net/grpc/helper.lua:53-67`; `grpc/client/service.lua:12-23,134-213`; `grpc/registrar.lua:83-191`; `luaclib-src/pb.c:1597-1777` | client/server sender | 偏离 | `pb.encode`类型/schema错误直接抛Lua异常；多个wrapper没有protected encode/finalizer，异常可绕过timer取消、grpc-status及H2 stream回收 | 现有测试只编码字段类型正确的对象，没有错误输出、请求对象或资源归零断言 | GRPC-032 |
 | PROTOBUF-SCALAR-DOMAIN | schema/data integrity | `luaclib-src/pb.c:316-359,406-470,1616-1668`; `lualib/silly/net/grpc/helper.lua:53-67` | client/server sender | 偏离 | 32位整数静默取低32位、signed/unsigned 64位不查范围，enum接受fractional number并转整数，bool把任意truthy值编码为true | gRPC测试只用小范围int32和正确Lua类型，没有边界外值或encode→decode等值断言 | GRPC-033 |
@@ -3404,16 +3404,16 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：TLS client成功后要求 `conn:alpnproto()=="h2"`，否则立即关闭并返回结构化ALPN错误；TLS server accept同样在调用H2前检查并关闭未协商h2的连接。明文prior-knowledge路径不做ALPN检查。将检查封装为gRPC TLS transport helper，避免client/server再次分叉。
 - 后续回归条件：修复阶段覆盖协商h2、无ALPN、server不选择、选择非h2和TLS握手失败；client/server两侧均断言只有h2进入H2 parser，其他情况立即关闭且无channel/stream/task残留。当前不运行TLS互操作。
 
-### GRPC-023 — P2 — `grpc.listen` 静默丢弃公开的 `ciphers` 与 `backlog` 配置
+### GRPC-023 — P2 — `grpc.listen` 静默丢弃公开的 `ciphers`、`backlog` 与 `alpnprotos` 配置
 
 - 状态：已确认；gRPC listen adapter、TCP/TLS listener options与中英文公开配置表的确定性静态核对。本轮不创建listener或TLS context。
 - 位置：gRPC server配置注解与下传在 `lualib/silly/net/grpc/server.lua:29-55`；TLS消费 `ciphers/backlog` 在 `lualib/silly/net/tls.lua:326-365`，TCP消费backlog在 `lualib/silly/net/tcp.lua:152-175`；公开配置见 `docs/src/en/reference/net/grpc.md:146-166` 与中文同名文档。
-- 触发：为明文或TLS gRPC listener设置 `backlog`；或TLS listener设置显式 `ciphers` 安全策略。调用成功且没有unknown-option警告。
-- 影响：实际listen queue仍使用底层默认值，容量/突发连接行为与部署配置不符。更重要的是，自定义cipher policy从未进入TLS context，安全管理员可能依据一个静默无效的设置错误判断已禁用某些套件或满足组织基线；问题不会从成功返回值或日志中显现。
+- 触发：为明文或TLS gRPC listener设置 `backlog`；或TLS listener设置显式 `ciphers` 安全策略/`alpnprotos`列表。调用成功且没有unknown-option警告。
+- 影响：实际listen queue仍使用底层默认值，容量/突发连接行为与部署配置不符。更重要的是，自定义cipher policy从未进入TLS context，安全管理员可能依据一个静默无效的设置错误判断已禁用某些套件或满足组织基线；`alpnprotos`也无论传什么都固定成`{"h2"}`，公开配置与实际握手不一致。问题不会从成功返回值或日志中显现；gRPC正确设计应直接不公开ALPN override，而非接受后忽略。
 - 证据：`server.lua` 的conf注解列出 `ciphers`，reference另列出 `backlog`，但明文调用table只有 `addr,accept`，TLS调用table只有 `addr,certs,alpnprotos,accept`。底层API明确读取 `conf.backlog` 传给 `net.tcplisten`，并由 `new_server_ctx` 读取 `conf.ciphers` 传给 `ctx.server`；adapter没有传入时它们不可能生效。reference还列出可配`alpnprotos`，实现正确地固定为h2但没有说明该字段被忽略。
 - 根因：wrapper手工重建了listener option table而非受控转发支持字段；文档配置schema与server.lua注解/实际下传三者没有单一来源或unknown-option校验。
 - 建议解法：显式把 `backlog` 传入两种listener、把 `ciphers` 传入TLS listener，并在入口验证TLS专用字段只用于 `tls=true`。gRPC的ALPN应固定为h2并删除公开override，而不是接受任意值；所有未知/不适用配置fail fast。最好以共享schema生成LuaLS注解与双语文档表。
-- 后续回归条件：修复阶段用stub listener捕获下传table，覆盖明文/TLS的backlog、TLS ciphers、未知字段和不适用组合；TLS集成阶段再检查实际ctx cipher policy。当前只做静态配置数据流核对。
+- 后续回归条件：修复阶段用stub listener捕获下传table，覆盖明文/TLS的backlog、TLS ciphers、alpnprotos显式拒绝/移除、未知字段和不适用组合；TLS集成阶段再检查实际ctx cipher policy与固定h2协商。当前只做静态配置数据流核对。
 
 ### GRPC-024 — P2 — request runtime error 通过第二个 `:status` HEADERS 冒充 trailers
 
@@ -3904,6 +3904,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认native protobuf decoder对重复singular embedded message整块覆盖而非递归merge，合法拆分字段会静默丢数据；归档为`GRPC-036`，未构造重复field payload。
 - 2026-08-13：确认native protobuf parser用descriptor packed flag限制接收格式，`packed=false` repeated numeric会拒绝规范要求兼容的packed wire；归档为`GRPC-037`，未构造payload。
 - 2026-08-13：补强`GRPC-025`的map-entry证据：其循环同样接受截断tag，且unknown field不skip value、会把value误作后续tag；不重复计数。
+- 2026-08-13：补强`GRPC-023`：双语配置表还公开`alpnprotos`，adapter同样忽略并固定h2；建议删除override而不是静默接受，不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
