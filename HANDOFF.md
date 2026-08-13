@@ -144,6 +144,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | NET-004 | P2 | 低层listen/connect在socket发布后才校验event回调；缺字段异常会遗留不可达fd，无accept listener还可被远端重复触发。 |
 | NET-005 | P1 | TCP/TLS单reader门禁晚于缓存fast path，并发read可偷走旧operation字节并令其永久挂起。 |
 | NET-006 | P1 | TCP/TLS buffer limit可在当前read满足前暂停transport，唯一reader无法降水位而永久自锁。 |
+| NET-007 | P1 | 被动CLOSE只调用底层data/close callback而不删registry，远端连接抖动可按历史sid永久扩大全局Lua表。 |
 | UDP-001 | P2 | bound socket缺destination仍返回成功后静默丢包，connected socket的显式destination又被C层忽略。 |
 | TLS-001 | P1 | TLS client保持OpenSSL默认VERIFY_NONE，既不验证证书链也不验证hostname，HTTPS/WSS/gRPC可被MITM。 |
 | TLS-002 | P1 | accepted TLS不保活SNI callback ctx，reload/close+GC后在途ClientHello可访问失效userdata。 |
