@@ -282,6 +282,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-018 | P2 | 双语WebSocket教程在完整缓冲后才检查消息大小，不能防止其声称的恶意大消息内存耗尽。 |
 | DOC-019 | P3 | WebSocket双语reference虚构partial read/正常continuation结果，并把实际返回result的close写成无返回值。 |
 | DOC-020 | P3 | WebSocket双语教程的广播优化调用不存在的channel `recv/send`方法，两侧首次调用均异常。 |
+| DOC-021 | P2 | WebSocket双语教程用稀疏clients map的`#`做统计和连接上限，断开后可低估并放行超额连接。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -403,7 +404,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为271条：P1 100、P2 148、P3 23。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 20；以主报告中的编号和证据为准。
+当前统计为272条：P1 100、P2 149、P3 23。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 21；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

@@ -2149,6 +2149,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：两种语言统一改为consumer的`local msg,err=broadcast_chan:pop()`及producer的`local ok,err=broadcast_chan:push({...})`，两侧都处理channel关闭错误；同时检查`broadcast`参数与前文消息结构一致。将教程Lua块标为可抽取验证，启用LuaLS unknown-member检查。
 - 回归测试：修复阶段提取双语该代码块，用stub producer push一条消息并关闭channel，断言consumer恰好调用一次broadcast后有限退出；静态检查不得再出现未导出的channel方法。本轮不执行示例。
 
+### DOC-021 — P2 — WebSocket 教程用稀疏连接表的长度运算实施资源上限，断开后可无限低估在线数
+
+- 状态：已确认；教程连接表生命周期与Lua 5.4 table length语义的确定性静态对照。本轮不建立连接或执行示例。
+- 位置：`clients[next_id]`单调分配及断开删除在`docs/src/{en/,}tutorials/websocket-chat.md:150-202,225-304,574-878`；在线统计多次使用`#clients`，安全建议又在`:1839-1851`用同一表达式执行`MAX_CLIENTS` admission。
+- 触发：至少一个非尾端client断开使整数key集合产生hole；由于`next_id`只递增且不复用，之后表长期不是1..n连续sequence。新连接继续用`if #clients >= MAX_CLIENTS`判断容量。
+- 影响：Lua对带hole表的`#`只返回某个边界而非元素数量，结果可能远小于实际在线数；连接限制因而可持续放行超过1000个连接，不能实现教程声称的“防止资源耗尽”。欢迎消息、join/leave payload、server stats和日志也会报告错误人数，监控和管理判断失真。攻击者可通过反复连接/断开制造hole后扩大低估。
+- 证据：教程把`clients`作为以永不回退`next_id`为key的map，并以`clients[id]=nil`删除；没有独立`client_count`。Lua sequence length不等于`pairs`可见元素数，尤其key 1断开后即不存在任何“当前人数等于#clients”的保证。安全段原样复用`#clients`，也没有遍历计数或原子admission counter；双语版本一致。
+- 根因：把array sequence的长度运算用于稀疏ID map，并让展示统计与资源admission共享同一个不成立的派生值。
+- 建议解法：维护显式`client_count`，只在成功注册时加一、所有幂等移除路径恰好减一；在upgrade/分配业务状态前以同一admission owner检查上限并拒绝。也可用独立slot allocator，但不能每次遍历或`#map`承担并发 admission。所有展示统一读取同一计数器。
+- 回归测试：修复阶段按连接1/2/3、断开1/2、继续分配4..N的序列核对count与`pairs`元素数；在上限前后及重复cleanup/发送失败清理交错下断言从不超额、计数不负且统计一致。双语示例共用同一测试。本轮不运行连接场景。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3383,7 +3394,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为271项：P0为0，P1为100，P2为148，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 20。
+当前滚动统计为272项：P0为0，P1为100，P2为149，P3为23。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 21。
 
 建议按依赖关系分五批修复：
 
@@ -3466,6 +3477,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：补强`WS-007`：WebSocket把非幂等close直接注册为`__close`，显式close后作用域退出或重复cleanup会在nil connection上抛异常并可能掩盖原错误。不重复计数。
 - 2026-08-13：确认WebSocket双语reference虚构partial read data、把非法standalone continuation列为正常消息类型，并把有result的close写成无返回值；归档为`DOC-019`。
 - 2026-08-13：确认WebSocket双语教程的广播优化调用channel不存在的`recv/send`方法，consumer与producer首次调用均会异常；归档为`DOC-020`。
+- 2026-08-13：确认WebSocket教程对单调ID稀疏`clients`表使用`#clients`做在线统计和连接资源上限，断开产生hole后可持续低估并放行超额连接；归档为`DOC-021`。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
