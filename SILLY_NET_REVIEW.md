@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档348项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档349项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2863,6 +2863,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：最外层observability wrapper在进入时inc并以受保护的统一finally路径dec，记录真实status/outcome和monotonic duration恰好一次；业务response通过context/writer记录是否已提交，异常仅在未提交时生成500，否则关闭/reset并记录write/handler failure，禁止二次response。metric/logger自身失败不得破坏请求清理。
 - 回归检查：修复阶段在route前、业务中、JSON、首次respond后、closewrite、metrics和logger各点注入异常；断言in-flight总回到基线、每请求恰好一个终局counter/duration、最多一个response且无残余task。当前不做异常注入。
 
+### DOC-062 — P3 — logging 独立示例使用不存在的 JSON 模块且漏导入 `task`
+
+- 状态：已确认；双语代码围栏、实际模块路径与Lua名称解析的确定性静态核对。本轮不执行文档片段。
+- 位置：条件DEBUG日志示例在`docs/src/{en/,}guides/logging-monitoring.md:90-106`执行`local json = require "json"`，但仓库只提供`require "silly.encoding.json"`（runtime实现与LuaLS位于`lualib/silly/encoding/json.lua`和`lualib/types/silly/encoding/json.lua`）。应用内告警代码块在`:769-864`只导入`silly,time,logger,trace,prometheus`，末尾却调用未定义全局`task.fork(...)`。
+- 触发：前一片段把level切到DEBUG并进入昂贵序列化分支；后一片段加载后运行到启动每60秒检查的语句。均是文档描述的正常用法。
+- 影响：标准Silly安装中前者报module `json` not found，后者报attempt to index a nil value (global `task`)；请求调试日志或应用内告警完全无法启动。生产排障时临时启用DEBUG才触发前一个错误，尤其容易把观测工具故障误认为业务故障。
+- 证据：仓库文件集合没有`lualib/json.lua`或同名preload，其他正确页面均导入`silly.encoding.json`；告警围栏内也没有局部`task`参数或前置共享代码块依赖声明，Markdown把它作为自包含示例展示。Lua全局查找不会自动把`silly.task`注入为`task`。
+- 根因：片段从通用Lua生态和其他页面拼接，未经过仓库模块清单/未定义全局检查；代码围栏之间的隐式上下文也没有可执行契约。
+- 建议解法：改用`local json = require "silly.encoding.json"`并在告警块加入`local task = require "silly.task"`；所有独立围栏必须列全imports，文档validator对require target和未定义全局做静态检查。若片段依赖伪业务变量如`request`，明确标成占位参数而非隐式全局。
+- 回归检查：修复阶段提取双语围栏，在仓库模块manifest下做require解析与LuaLS未定义全局检查；启用DEBUG分支和告警bootstrap均不得因模块/name错误失败。当前不运行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4277,7 +4288,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为348项：P0为0，P1为112，P2为190，P3为46。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 61。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为349项：P0为0，P1为112，P2为190，P3为47。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 62。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；190项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
