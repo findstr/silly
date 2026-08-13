@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档342项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档343项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2797,6 +2797,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：将计数、duration和in-flight放到最外层observability middleware，在进入链前开始并在成功、拒绝、异常及提前返回的统一终局中恰好收尾一次；所有response通过记录真实status的wrapper/context发送，未成功生成response的异常归为500或明确internal outcome。route label仍必须按`DOC-051`使用有界模板，不能用raw path。
 - 回归检查：修复阶段覆盖200、404、handler 500、413、429、middleware异常和response write失败；断言每个入站请求只增加一个真实status counter，in-flight恢复基线，duration恰好一次且总counter等于各status之和。当前不发送请求。
 
+### DOC-056 — P2 — 反向代理示例无条件信任客户端转发头，可伪造“真实 IP”身份与审计记录
+
+- 状态：已确认；双语Nginx/Silly部署示例、监听地址和header信任边界的确定性静态核对。本轮不启动代理或发送伪造header。
+- 位置：Nginx示例把upstream设为`127.0.0.1:8080-8082`并覆盖`X-Real-IP`、追加`X-Forwarded-For`，见`docs/src/{en/,}guides/http-best-practices.md:1376-1463`；紧随其后的Silly“读取真实IP”示例却监听`:8080`并无条件优先取`stream.header["x-real-ip"] or stream.header["x-forwarded-for"]`，仅最后才用受TCP连接约束的`stream.remoteaddr`，见`:1466-1482`。页面没有要求backend端口仅回环/内网可达、校验remote peer为trusted proxy或解析XFF地址链。
+- 触发：攻击者能够直连Silly监听端口并自带`X-Real-IP`；或实际部署有未覆盖该字段、会保留/追加现有XFF的代理链。`addr = ":8080"`本身使文档配方默认绑定所有接口，除非部署者另行配置防火墙。
+- 影响：任意客户端字符串会被应用打印并当成“Client IP”。读者把同一recipe用于访问日志、IP限流、封禁、地理策略或审计关联时，攻击者可冒充受信地址、逃逸配额/封禁、污染取证；XFF还可能是逗号链或重复header table而不是单一规范IP，导致不同组件选择不同身份。该项与`DOC-052`的IPv6截断/限流表泄漏独立：即使地址解析正确，未建立proxy信任边界仍可伪造。
+- 证据：Lua表达式不查看`stream.remoteaddr`是否为127.0.0.1/已配置CIDR，也不区分header来自客户端还是代理；HTTP header parser不会为X-Real-IP赋予可信来源元数据。Nginx路径中`X-Real-IP`确实被覆盖时来自真实peer，但文档的Silly listener仍可被绕过直连，且示例没有把“只能由此Nginx到达”写成安全前提或配置约束。
+- 根因：示例把代理转发字段当成认证过的连接属性，混淆了header值与TCP peer identity；部署片段分开编写，未把backend网络暴露、trusted-hop列表和多代理解析建模为一套原子安全配置。
+- 建议解法：backend只监听回环/受限Unix socket或受防火墙保护的私网地址；应用仅当`remoteaddr`命中显式trusted-proxy CIDR时读取转发信息，否则忽略全部forwarding headers。让入口代理覆盖而不是盲目继承客户端身份，按已知trusted-hop数量从右向左解析和规范化XFF/RFC Forwarded，拒绝重复/非法/超长链；日志同时保留socket peer与派生client IP。
+- 回归检查：修复阶段覆盖直接连接伪造header、可信单代理、不可信代理、两级代理、客户端预置XFF、重复字段、IPv4/IPv6和非法/超长链；断言只有可信hop可改变派生IP且审计保留原始peer。部署文档检查backend监听/防火墙前提与应用算法不可拆分。当前不建立代理链。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4211,9 +4222,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为342项：P0为0，P1为112，P2为186，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 55。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为343项：P0为0，P1为112，P2为187，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 56。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；186项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；187项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 

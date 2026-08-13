@@ -311,7 +311,7 @@
 | `docs/src/en/guides/README.md` | 已审无新增 | guide索引 | 页面集合与链接 |
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/en/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
-| `docs/src/en/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054/055、METRIC项 | 仍需逐段收口proxy/cleanup |
+| `docs/src/en/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
 | `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/en/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
@@ -376,7 +376,7 @@
 | `docs/src/guides/README.md` | 已审无新增 | 中文guide索引 | 页面集合与链接 |
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
-| `docs/src/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054/055、METRIC项 | 仍需逐段收口proxy/cleanup |
+| `docs/src/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
 | `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
