@@ -4891,6 +4891,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：hot-reload加载事务反查确认所有示例在清空package.loaded后才调用可能抛错的require，且rollback不恢复cache；失败后续require可产生第二singleton，归档为`DOC-073`。
 - 2026-08-13：hot-reload首个完整网络示例反查确认其套用不存在的`res:status/res:send`双对象API，真实Silly只传单个stream并要求respond/closewrite，归档为`DOC-074`。
 - 2026-08-13：沿生产hotfix入口反查console，确认TCP连接在零认证/授权下即可调用INJECT/DEBUG，且custom command认证因built-in优先无法保护敏感命令；归档为`CORE-013`，未启动或连接管理端口。
+- 2026-08-13：完成hot-reload双语guide依赖闭包：patch混合export、load/cache transaction、export迁移、rollback、timer ownership、真实HTTP API及production console均已映射到`CORE-012/013`与`DOC-071`至`074`，两份页面转为已审有归档。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

@@ -310,7 +310,7 @@
 | `docs/src/en/concepts/README.md` | 范围外 | 英文概念索引 | 无net契约 |
 | `docs/src/en/guides/README.md` | 已审无新增 | guide索引 | 页面集合与链接 |
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/en/guides/hot-reload.md` | 审阅中 | CORE-012/013、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
+| `docs/src/en/guides/hot-reload.md` | 已审有归档 | CORE-012/013、DOC-071至074 | patch/require/export/rollback/timer/HTTP/console逐段收口 |
 | `docs/src/en/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/en/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
@@ -319,7 +319,7 @@
 | `docs/src/en/reference/adt/buffer.md` | 已审有归档 | NET-006/008 | size/limit/read ownership契约 |
 | `docs/src/en/reference/adt/list.md` | 范围外 | 独立list API | 产品net调用图不依赖 |
 | `docs/src/en/reference/adt/queue.md` | 已审无新增 | task/channel queue契约 | native queue返回已核对 |
-| `docs/src/en/reference/console.md` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc字段 |
+| `docs/src/en/reference/console.md` | 已审有归档 | CORE-008/013、METRIC-003 | 观测字段与production control-plane security |
 | `docs/src/en/reference/crypto/cipher.md` | 范围外 | application cipher | 非内建TLS record API |
 | `docs/src/en/reference/crypto/hash.md` | 已审无新增 | WS/MySQL hash dependency | 所用SHA方法与返回契约 |
 | `docs/src/en/reference/crypto/hmac.md` | 范围外 | application HMAC | 不在内建net调用图 |
@@ -375,7 +375,7 @@
 
 | `docs/src/guides/README.md` | 已审无新增 | 中文guide索引 | 页面集合与链接 |
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/guides/hot-reload.md` | 审阅中 | CORE-012/013、DOC-071至074、reload/close/config契约 | 继续核rollback生命周期示例 |
+| `docs/src/guides/hot-reload.md` | 已审有归档 | CORE-012/013、DOC-071至074 | patch/require/export/rollback/timer/HTTP/console逐段收口 |
 | `docs/src/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
@@ -384,7 +384,7 @@
 | `docs/src/reference/adt/buffer.md` | 已审有归档 | NET-006/008 | size/limit/read ownership契约 |
 | `docs/src/reference/adt/list.md` | 范围外 | 独立list API | 产品net调用图不依赖 |
 | `docs/src/reference/adt/queue.md` | 已审无新增 | task/channel queue契约 | native queue返回已核对 |
-| `docs/src/reference/console.md` | 已审有归档 | CORE-008、METRIC-003 | network/process/jemalloc字段 |
+| `docs/src/reference/console.md` | 已审有归档 | CORE-008/013、METRIC-003 | 观测字段与production control-plane security |
 | `docs/src/reference/crypto/cipher.md` | 范围外 | application cipher | 非内建TLS record API |
 | `docs/src/reference/crypto/hash.md` | 已审无新增 | WS/MySQL hash dependency | 所用SHA方法与返回契约 |
 | `docs/src/reference/crypto/hmac.md` | 范围外 | application HMAC | 不在内建net调用图 |
