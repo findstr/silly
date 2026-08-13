@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-13（Asia/Shanghai）
 > 用途：保存三轮审计结论，让后续会话直接按优先级进入修复与回归。
-> 当前结论：1.0 `net` 完成性反证审计进行中；当前确认master基线354项（P1 112、P2 192、P3 50）及4项cluster分支独有问题。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
+> 当前结论：1.0 `net` 完成性反证审计进行中；当前确认master基线355项（P1 112、P2 192、P3 51）及4项cluster分支独有问题。审计完成不代表允许发布：P1及协议/数据一致性/无限等待等P2仍默认阻断1.0。按用户要求，本轮未新增或运行重现/故障注入/独立peer互操作。
 
 ## 1. 用户目标与工作方式
 
@@ -122,10 +122,10 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 - 2026-08-12再次只读查询远端，尖端未变化。
 - 与`master`共同祖先为`295f30b879e5c29e12ab2ac1325d8b80abe8fb53`；分支有1个独有提交并落后master 3个提交。
 - 既有19项master cluster结论（其中17项在分支仍有对应路径）的状态矩阵及专项审计边界保存在[`CLUSTER_BRANCH_REVIEW.md`](CLUSTER_BRANCH_REVIEW.md)。
-- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master滚动基线354项统计。
+- 专项另确认4项分支独有问题：`CLUSTER-B001`（P2，eager connect无deadline）以及`CLUSTER-B002`至`B004`三项P3文档/测试回归；不计入master滚动基线355项统计。
 - 本专项仍为纯静态审计，没有运行测试、服务、重现、黑洞连接、partial frame或伪ACK。
 
-## 5. 已确认问题（354 条，完成性反证审计中的滚动基线）
+## 5. 已确认问题（355 条，完成性反证审计中的滚动基线）
 
 以下是索引；完整触发条件、影响、根因、建议和回归测试都在主报告第 4 节。
 
@@ -350,6 +350,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-064 | P3 | logging双语Grafana查询引用不存在的process_cpu_seconds_total，默认CPU面板恒为No data。 |
 | DOC-065 | P3 | Gauge双语reference仍宣称add(v)只加1并给出错误输出，当前实现已按v增加。 |
 | DOC-066 | P3 | 英文Gauge reference在示例中途截断并保留模型“后续另发”占位文本，缺失后半页。 |
+| DOC-067 | P3 | Histogram双语完整示例调用不存在的silly.time，首个请求在记录指标前异常。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -486,7 +487,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-038 | P2 | bundled protoc拒绝proto2 group，外部descriptor的known group在native codec中也无法收发。 |
 | GRPC-039 | P2 | protobuf默认把高位uint64/fixed64解码成负Lua integer，合法ID/counter语义翻转。 |
 
-当前统计为354条：P1 112、P2 192、P3 50。模块分布为CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 66；以主报告中的编号和证据为准。
+当前统计为355条：P1 112、P2 192、P3 51。模块分布为CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
@@ -586,7 +587,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 354项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md、NET_1_0_RELEASE_AUDIT_PLAN.md和NET_AUDIT_FILE_LEDGER.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
+Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 355项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md、NET_1_0_RELEASE_AUDIT_PLAN.md和NET_AUDIT_FILE_LEDGER.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单

@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档354项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档355项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2930,6 +2930,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：按当前实现重新翻译并人工核对中文后半页，同时先修正`DOC-065`及其他已归档示例问题，避免把错误内容机械复制到英文；为双语reference校验标题/API方法集合、围栏数与正常尾部，并禁止“length constraints/separate responses”等生成占位语进入发布文档。
 - 回归检查：修复阶段比较中英文Gauge的API标题、方法、示例主题与链接集合，英文页面必须正常结束且零命中生成提示；所有`lua validate`围栏再通过项目文档校验。当前只记录静态差异。
 
+### DOC-067 — P3 — Histogram 双语完整示例调用不存在的 `silly.time`，首个请求即异常
+
+- 状态：已确认；双语代码围栏、顶层`silly`导出与真实time模块API的确定性静态核对。本轮不启动HTTP server或执行示例。
+- 位置：`docs/src/{en/,}reference/metrics/histogram.md:632-700`的“Complete Monitoring System Integration”只导入`silly`、http、histogram、prometheus和task，却在handler中调用`silly.time.now()`与`silly.time.sleep()`。`lualib/silly.lua:1-43`没有`time`字段；真实方法由`lualib/silly/time.lua:17-23`以独立模块的`time.now/time.monotonic/time.sleep`导出。
+- 触发：原样运行标为`lua validate`的完整示例并向8080端口发送任一请求；handler第一次读取`silly.time.now`就会索引nil。
+- 影响：业务handler在响应和metrics更新前异常，完整集成教程无法处理任何请求，也不会生成它承诺的duration/response-size样本；读者可能误判HTTP或Histogram故障。若只把`now`替换成别的时钟而仍保留第二处`silly.time.sleep`，示例依旧失败。
+- 证据：顶层`silly`只公开worker/task相关字段及native函数，没有lazy submodule装配或`__index`；全仓产品代码均显式`local time = require "silly.time"`。同一metrics文档集合的Prometheus/Gauge示例也采用独立time import，证明这里不是受支持的别名。
+- 根因：示例把模块命名空间误写成面向对象式`silly.time`，`lua validate`围栏没有在真实模块导出环境中做符号解析/执行。
+- 建议解法：显式`local time = require "silly.time"`，等待用`time.sleep(ms)`，耗时观测用`time.monotonic()`之差而非墙钟；同时按`DOC-051`避免把raw path作为永久label。若HTTP示例需要生产级异常收尾，应以finally式路径保证状态和duration只提交一次。
+- 回归检查：修复阶段执行双语围栏的模块加载与单请求路径，断言handler返回200、duration单位为秒且metrics有样本；文档lint拒绝不存在的顶层`silly.*`成员。当前不运行server。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4344,7 +4355,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为354项：P0为0，P1为112，P2为192，P3为50。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 66。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为355项：P0为0，P1为112，P2为192，P3为51。模块分布：CORE 11、METRIC 7、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 67。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4717,4 +4728,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：收口counter/gauge descriptor路径，确认metric/label name与HELP均未校验/转义，Histogram还允许保留label `le`；公开配置可破坏或注入scrape，归档为`METRIC-006`。
 - 2026-08-13：继续收口Histogram schema，确认constructor不校验空、重复及非有限bucket；空数组会在sum/count已更新后崩溃，重复边界会导出重复series，归档为`METRIC-007`。
 - 2026-08-13：双语结构反查发现英文Gauge reference在首个usage示例后直接EOF，并保留“长度限制、后续另发”的生成占位句，缺少中文后半页565行内容，归档为`DOC-066`。
+- 2026-08-13：Histogram双语完整监控示例反查确认其调用未导出的`silly.time.now/sleep`，任一请求在记录指标前即异常，归档为`DOC-067`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
