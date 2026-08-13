@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档366项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档367项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3067,6 +3067,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：提供单一受保护loader helper：保存原cache值，在任何成功/失败路径都先恢复原entry，再返回new module或错误；只有新module shape、upvalue迁移和完整验证都通过后才原子提交export变化。失败处理还应验证`package.loaded[name] == old_module`，并记录真实回滚结果。
 - 回归检查：修复阶段覆盖新module语法错误、顶层error、缺dependency、错误return type及迁移error；每次失败后断言`rawequal(require(name),old_module)`、旧状态/函数未变且没有第二singleton。当前不执行模块加载。
 
+### DOC-074 — P3 — 热更新指南的核心 HTTP route 示例调用不存在的 response API
+
+- 状态：已确认；双语route示例与H1/H2公开stream方法、HTTP reference的确定性静态核对。本轮不启动HTTP server或调用handler。
+- 位置：`docs/src/{en/,}guides/hot-reload.md:187-280`把旧/新handler签名写为`handle_request(req,res)`，六次调用`res:status(code)`和`res:send(body)`；实际Silly server只把一个stream传给handler，响应入口是`stream:respond(status,headers)`后以`stream:closewrite(body)`结束，见`lualib/silly/net/http/{h1.lua:761-809,h2.lua:953-1013}`及双语HTTP reference。
+- 触发：用户把指南的route模块接入Silly HTTP listener并请求旧版本或热更新后的新版本。
+- 影响：handler在首次`res:status(...)`前已经因第二参数res为nil（或自建adapter缺方法）而异常，无法产生页面宣称的正常响应，也无法用请求验证状态保存；用户可能把框架API错误误诊为patch失败。作为指南最先且唯一的网络热更新完整示例，它不能验证1.0的真实HTTP接入路径。
+- 证据：H1/H2 handler分发均调用单参数`handler(stream)`；全仓HTTP runtime没有`:status`或`:send`方法。现有stream以`stream.status`保存已解析状态，但设置response必须调用respond，正文必须write/closewrite。
+- 根因：示例套用了其他Web框架的request/response对象模型，未按Silly统一stream API编写，也没有把文档围栏与公开方法表做静态符号核对。
+- 建议解法：把handler改为`function M.handle_request(stream)`，从`stream.path/header`读取请求，以`stream:respond(code,headers)`和`stream:closewrite(body)`响应；分别覆盖H1/H2返回契约并保证异常收尾。若提供adapter，必须在示例中完整定义而不能假设存在。
+- 回归检查：修复阶段对修改后的双语围栏做LuaLS/符号检查，并在H1与H2各执行更新前后请求；断言旧计数保留、400/200正文正确、stream恰好关闭一次。当前不运行网络示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4481,7 +4492,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为366项：P0为0，P1为112，P2为200，P3为54。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 73。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为367项：P0为0，P1为112，P2为200，P3为55。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 74。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4866,6 +4877,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：hot-reload timer方案反查确认递归`repeat_call`既不保存也不返回after session；cancel handle恒nil，每次更新叠加永久周期任务，归档为`DOC-071`。
 - 2026-08-13：hot-reload导出策略反查确认全部流程只写回function字段，但版本段要求普通`VERSION/BUILD_TIME`同步并断言新值；旧module及package.loaded必然仍报告旧代际，归档为`DOC-072`。
 - 2026-08-13：hot-reload加载事务反查确认所有示例在清空package.loaded后才调用可能抛错的require，且rollback不恢复cache；失败后续require可产生第二singleton，归档为`DOC-073`。
+- 2026-08-13：hot-reload首个完整网络示例反查确认其套用不存在的`res:status/res:send`双对象API，真实Silly只传单个stream并要求respond/closewrite，归档为`DOC-074`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
