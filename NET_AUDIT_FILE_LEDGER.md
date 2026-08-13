@@ -101,7 +101,7 @@
 | `luaclib-src/lmetrics.c` | 已审有归档 | CORE-008、METRIC-003 | native stats顺序、平台值、integer边界 |
 | `luaclib-src/lnet.c` | 已审有归档 | NET-002/003、SOCK-006/011 | pointer ownership、pack/multicast/address |
 | `luaclib-src/lperf.c` | 范围外 | profiler binding | 不参与net运行路径 |
-| `luaclib-src/lsignal.c` | 范围外 | process signal API | 无协议/socket ownership |
+| `luaclib-src/lsignal.c` | 已审有归档 | DOC-058 | logger控制依赖；注册错误/映射与replacement调用链 |
 | `luaclib-src/lsilly.c` | 已审有归档 | CORE-011 | core metadata/exit/callback、genid导出 |
 | `luaclib-src/ltest.c` | 范围外 | test-only hooks | 产品构建不依赖其协议行为 |
 | `luaclib-src/ltime.c` | 已审有归档 | CORE-006/009、NET-007 | timeout integer、clock契约、session |
@@ -181,7 +181,7 @@
 | `lualib/silly/internal/stdin.lua` | 范围外 | REPL/stdin helper | 不参与socket engine协议处理 |
 | `lualib/silly/patch.lua` | 范围外 | Lua patch helper | 不在net/storage调用图 |
 | `lualib/silly/security/jwt.lua` | 范围外 | application JWT实现 | 非内建net认证；其文档错误用genid已归CORE-011 |
-| `lualib/silly/signal.lua` | 范围外 | process signal wrapper | 不参与协议状态机 |
+| `lualib/silly/signal.lua` | 已审有归档 | DOC-058 | single-handler replacement与logger SIGUSR1 ownership |
 | `lualib/zproto.lua` | 范围外 | optional zproto wrapper | 非cluster固定wire codec |
 
 ## 5. LuaLS / native 类型声明
@@ -214,7 +214,7 @@
 | `lualib/types/silly/net/cluster/c.lua` | 已审有归档 | DOC-042、CLUSTER native项 | request/pop返回、cmd/trace/queue |
 | `lualib/types/silly/net/dns/c.lua` | 已审有归档 | DOC-044、DNS codec项 | answer nil、query/parse返回 |
 | `lualib/types/silly/perf.lua` | 范围外 | profiler types | 不参与net运行路径 |
-| `lualib/types/silly/signal/c.lua` | 范围外 | signal binding types | 不参与协议状态机 |
+| `lualib/types/silly/signal/c.lua` | 已审无新增 | signal binding types | native返回/映射契约与DOC-058对账 |
 | `lualib/types/silly/time/c.lua` | 已审有归档 | CORE-006/009、NET-007 | integer timeout与clock返回 |
 | `lualib/types/silly/tls/ctx.lua` | 已审有归档 | TLS-001至018中的context项 | cert/key/verify/SNI/ALPN/session API |
 | `lualib/types/silly/tls/tls.lua` | 已审有归档 | TLS-001至018中的connection项 | handshake/read/write/error/GC |
@@ -277,7 +277,7 @@
 | `test/testprometheus.lua` | 已审有归档 | METRIC-001至005、CORE-008 | counter/gauge/histogram/registry正常路径与wire盲区 |
 | `test/testredis.lua` | 已审有归档 | REDIS-001至010 | 18组RESP/pipeline/concurrency/reconnect/close |
 | `test/testrsa.lua` | 已审有归档 | MYSQL auth/pkey依赖 | RSA encrypt/decrypt/sign/verify正常路径 |
-| `test/testsignal.lua` | 范围外 | process signal API | 不验证net协议或socket lifecycle |
+| `test/testsignal.lua` | 已审有归档 | DOC-058 | 验证replacement返回旧handler；未覆盖logger保留信号组合 |
 | `test/testsingleflight.lua` | 已审有归档 | DNS singleflight项 | leader/waiter/error共享正常路径 |
 | `test/testssl.lua` | 已审有归档 | TLS-001至018 | cert/ALPN/reload/read-write/close与failure缺口 |
 | `test/testtask.lua` | 已审有归档 | CORE-010及跨模块task项 | scheduler/wakeup/trace/fork/wait/status |
@@ -312,7 +312,7 @@
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/en/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
 | `docs/src/en/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
-| `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
+| `docs/src/en/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057/058、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/en/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
 | `docs/src/en/reference/README.md` | 已审无新增 | 英文reference索引 | net/store/core链接集合 |
@@ -330,7 +330,7 @@
 | `docs/src/en/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/en/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/en/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/en/reference/logger.md` | 审阅中 | DOC-057、trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/en/reference/logger.md` | 审阅中 | DOC-057/058、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/en/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/en/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/en/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
@@ -353,7 +353,7 @@
 | `docs/src/en/reference/patch.md` | 范围外 | Lua patch API | 不在net调用图 |
 | `docs/src/en/reference/perf.md` | 范围外 | profiler API | 不参与net运行路径 |
 | `docs/src/en/reference/security/jwt.md` | 已审有归档 | CORE-011 | genid作为unique user/JTI的安全示例 |
-| `docs/src/en/reference/signal.md` | 范围外 | process signal API | 非net协议 |
+| `docs/src/en/reference/signal.md` | 已审有归档 | DOC-058 | logger保留SIGUSR1与single-handler替换契约 |
 | `docs/src/en/reference/silly.md` | 已审有归档 | CORE-011、DOC-053 | genid/tostring/core导出 |
 | `docs/src/en/reference/store/README.md` | 已审无新增 | storage索引 | etcd/mysql/redis页面链接 |
 | `docs/src/en/reference/store/etcd.md` | 已审有归档 | ETCD、DOC-035至037/043 | 1554行KV/lease/watch契约 |
@@ -377,7 +377,7 @@
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
 | `docs/src/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
 | `docs/src/guides/http-best-practices.md` | 审阅中 | DOC-048至052、DOC-054至056、METRIC项 | 仍需逐段收口cleanup/TLS配置 |
-| `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
+| `docs/src/guides/logging-monitoring.md` | 审阅中 | CORE-010/011、DOC-054/057/058、METRIC-002至006 | 仍需逐例核对status/trace/metrics名称 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
 | `docs/src/guides/tls-configuration.md` | 已审有归档 | DOC-003/005/009及TLS项 | version/cipher/verify/reload示例 |
 | `docs/src/reference/README.md` | 已审无新增 | 中文reference索引 | net/store/core链接集合 |
@@ -395,7 +395,7 @@
 | `docs/src/reference/env.md` | 已审无新增 | resolver/config examples | 同步环境API |
 | `docs/src/reference/errno.md` | 已审有归档 | DOC-040/044 | errno identity/string/比较契约 |
 | `docs/src/reference/hive.md` | 范围外 | optional hive codec | 非cluster固定codec |
-| `docs/src/reference/logger.md` | 审阅中 | DOC-057、trace/log dependency | 需与logging guide和native formatter最终对账 |
+| `docs/src/reference/logger.md` | 审阅中 | DOC-057/058、trace/log dependency | 需与logging guide和native formatter最终对账 |
 | `docs/src/reference/metrics/collector.md` | 审阅中 | CORE-008、METRIC-003/005 | custom collector与内置字段继续复核 |
 | `docs/src/reference/metrics/counter.md` | 审阅中 | METRIC-004/006 | descriptor、cardinality与output examples |
 | `docs/src/reference/metrics/gauge.md` | 审阅中 | METRIC-004/006 | descriptor/value/label examples |
@@ -417,7 +417,7 @@
 | `docs/src/reference/patch.md` | 范围外 | Lua patch API | 不在net调用图 |
 | `docs/src/reference/perf.md` | 范围外 | profiler API | 不参与net运行路径 |
 | `docs/src/reference/security/jwt.md` | 已审有归档 | CORE-011 | genid作为unique user/JTI的安全示例 |
-| `docs/src/reference/signal.md` | 范围外 | process signal API | 非net协议 |
+| `docs/src/reference/signal.md` | 已审有归档 | DOC-058 | logger保留SIGUSR1与single-handler替换契约 |
 | `docs/src/reference/silly.md` | 已审有归档 | CORE-011、DOC-053 | genid/tostring/core导出 |
 | `docs/src/reference/store/README.md` | 已审无新增 | storage索引 | etcd/mysql/redis页面链接 |
 | `docs/src/reference/store/etcd.md` | 已审有归档 | ETCD、DOC-035至037/043 | 1564行KV/lease/watch契约 |

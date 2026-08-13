@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档344项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档345项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -2819,6 +2819,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：全部`logger.*f`格式串改用`%s`/`%%`，需要定点小数时先用受控`string.format`生成单个值，或直接使用非格式化logger的原生类型序列化。HTTP示例还应让logging异常不能在response提交后触发第二次response，并采用最外层终局收尾。建立文档lint，扫描`logger.(debug|info|warn|error)f`格式串并拒绝除`%s/%%`外的转换。
 - 回归检查：修复阶段抽取双语所有logger代码围栏，验证合法`%s/%%`正常、`%d/%f/%.*`零命中；完整HTTP示例覆盖200/404并断言只有一个response、无task异常。当前不执行这些片段。
 
+### DOC-058 — P2 — logging/logger 指南用 `SIGUSR1` 切级别，静默覆盖内置日志 reopen 并破坏轮转
+
+- 状态：已确认；双语指南/reference、logger初始化副作用、signal替换语义与现有测试的确定性静态核对。本轮不发送进程信号或轮转日志。
+- 位置：`lualib/silly/logger.lua:56-62`在require时注册`SIGUSR1`以按`logpath`重新打开文件；`lualib/silly/signal.lua:16-31`每次注册把`signal_dispatch[s]`直接替换并仅返回旧handler。logging指南的动态级别和生产完整示例都再次注册`SIGUSR1`且丢弃旧handler，见`docs/src/{en/,}guides/logging-monitoring.md:195-228,865-895`，同页前文却要求用SIGUSR1轮转并在最终启动日志把同一命令同时描述成reopen和toggle，见`:157-192,1074-1085`。双语logger reference也先以SIGUSR1切级别、后宣称它仍自动轮转，见`docs/src/{en/,}reference/logger.md:190-216,231-251`。
+- 触发：应用复制任一动态级别示例；它在require logger后调用`signal("SIGUSR1", custom)`。之后logrotate重命名当前文件并发送USR1。
+- 影响：内置reopen handler已被覆盖，进程继续写入已重命名文件而不会创建新的`logpath`；外部压缩/删除步骤可能与仍打开的inode竞争，日志采集路径停止更新，磁盘空间可持续占用直至进程退出。反过来若不复制toggle handler，指南承诺的级别切换不会发生而只会reopen。生产完整示例向运维明确打印两条相同命令对应两个不同动作，使故障难以诊断。
+- 证据：signal注册没有handler list或自动chain；`old`虽被返回，但两个示例均不保存/调用它。`test/testsignal.lua:8-13`明确断言第二次注册返回旧handler，证明替换是稳定公开语义。signal reference只说“注意内置行为”，没有说明自定义SIGUSR1会取代而非叠加，更没有为logger示例保留reopen。
+- 根因：动态控制示例选择了已经由logger占用的信号，注释却误写成关于SIGUSR2的警告；文档没有把signal的single-handler ownership当成共享全局资源，也没有为内置handler提供组合注册或专用API。
+- 建议解法：级别切换使用不与logger/worker内部控制冲突的明确配置入口、管理socket或专用信号；若必须复用，保存旧handler并在新handler中可靠调用，但handler异常/顺序仍需定义。更稳妥地让logger提供组合后的官方control API，并在signal/logger reference列出保留信号与覆盖后果；启动日志不得给同一命令两个动作。
+- 回归检查：修复阶段覆盖require logger后重复注册、轮转rename→signal→新文件写入、级别切换、custom handler异常及两操作组合；断言reopen与toggle各有唯一明确控制、旧fd释放且日志不丢。文档静态检查禁止未组合地覆盖保留SIGUSR1。当前不发送信号。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4233,9 +4244,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为344项：P0为0，P1为112，P2为188，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 57。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为345项：P0为0，P1为112，P2为189，P3为44。模块分布：CORE 11、METRIC 6、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 58。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；188项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；189项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
