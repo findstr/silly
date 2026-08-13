@@ -256,6 +256,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | DOC-005 | P3 | Redis中英文pipeline示例使用不存在的out参数，select也未产生文档承诺的迁移提示。 |
 | DOC-006 | P3 | etcd双语“事务性操作”示例只做独立get/put，wrapper也没有txn方法，无法提供原子性。 |
 | DOC-007 | P3 | TCP/TLS双语reference、guide与benchmark使用底层拒绝的多字节CRLF delimiter，示例会立即抛错。 |
+| DOC-008 | P3 | DNS双语reference声明不存在的环境变量路径覆盖，设置后仍读取固定系统resolver与hosts。 |
 | SOCK-001 | P2 | 已排队 UDP datagram 永久发送失败后，节点释放但 `wlbytes/sendsize` 不递减。 |
 | SOCK-002 | P3 | UDP connect 失败日志以 `%d` 打印 `const char *port`，构成 varargs 未定义行为。 |
 | SOCK-003 | P2 | 退出时未清理各 slot 的待发 `wlist` payload；LSan 确认 32768 bytes/8 objects。 |
@@ -363,7 +364,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为231条：P1 94、P2 126、P3 11。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7；以主报告中的编号和证据为准。
+当前统计为232条：P1 94、P2 126、P3 12。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

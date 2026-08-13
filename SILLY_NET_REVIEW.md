@@ -1780,6 +1780,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：1.0若不扩展实现，应把TCP/TLS参数明确写成“恰好一个字节”，所有示例改为读`"\n"`后校验/剥离前置`\r`，或直接使用HTTP模块；benchmark也使用单字节分隔符。若要支持多字节delimiter，则需在跨buffer-node流式匹配、重叠前缀、EOF和limit语义都定义后实现，不能只放宽长度断言。
 - 回归测试：修复阶段让双语doc-test执行所有相关代码块，并增加delimiter长度0/1/2、多字节UTF-8、跨chunk CRLF与重叠前缀契约测试；选择单字节契约时，长度非1必须在文档和错误类型上一致。当前不执行这些示例。
 
+### DOC-008 — P3 — DNS 双语文档声明了实现不存在的环境变量路径覆盖
+
+- 状态：已确认；双语reference、Unix编译期宏、Windows系统API与仓库全局引用静态核对。本轮不设置环境变量或改系统文件。
+- 位置：不存在的配置承诺在`docs/src/en/reference/net/dns.md:43-52`和`docs/src/reference/net/dns.md:43-52`；Unix固定路径在`src/unix/unix.h:57-58`及`src/unix/unix.c:154-181`，Windows读取路径在`src/win/win.c:295-362`。仓库除两份文档外没有`sys.dns.resolv_conf`或`sys.dns.hosts`引用。
+- 触发：用户按reference设置这两个环境变量，试图让测试、容器、chroot或自定义网络策略读取另一个resolv.conf/hosts文件，然后正常加载DNS模块。
+- 影响：变量被完全忽略；Unix仍读取固定`/etc/resolv.conf`和`/etc/hosts`，Windows仍调用`GetNetworkParams`并拼系统hosts路径。测试可能意外访问宿主DNS，容器/沙箱读取错误配置；若固定resolver文件不可用，还会触发`DNS-018`的公共8.8.8.8 fallback。调用方没有unknown-setting错误，容易误以为隔离策略已经生效。
+- 证据：两个Unix路径仅由`#define DNS_RESOLVCONF "/etc/resolv.conf"`与`DNS_HOSTS "/etc/hosts"`提供，`push_file`直接使用宏；Windows函数无环境读取。全仓库搜索只有文档出现两个键，Lua初始化也无`os.getenv`、config table或参数下传。
+- 根因：reference保留了旧版或计划中的配置接口，但当前native平台抽象只暴露“读取系统默认内容”的无参数函数；文档代码块校验不覆盖叙述中的配置键。
+- 建议解法：1.0前二选一并保持双语一致：若需要覆盖，提供显式、可验证且在首次module load前生效的配置API/启动项，定义平台、权限与路径编码语义；若不支持，删除环境变量承诺并指导使用`dns.conf`/`dns.sethosts`（同时说明二者不是文件路径加载器）。未知旧配置应至少产生迁移诊断。
+- 回归测试：修复阶段增加公开配置schema/doc lint，确保文档中的每个键都存在consumer；若实现路径覆盖，用临时文件/stub验证resolver与hosts分别读取指定内容且错误可见。当前只保存静态证据。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2919,7 +2930,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为231项：P0为0，P1为94，P2为126，P3为11。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为232项：P0为0，P1为94，P2为126，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -2959,6 +2970,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认Windows hosts路径只验证system directory本身能装入MAX_PATH，追加固定后缀后可静默截断并忽略hosts配置；归档为`DNS-017`。
 - 2026-08-13：确认系统resolver配置读取失败或显式空列表会自动改用公共8.8.8.8，绕过本机DNS策略并可能泄漏内部查询；归档为`DNS-018`。
 - 2026-08-13：排除DNS共享TCP recv task覆盖新连接的候选；close只将reader排入wakeup queue，worker在下一条消息前完成旧task收尾，期间没有可发布新连接的yield点。
+- 2026-08-13：确认DNS双语reference声明的`sys.dns.resolv_conf`/`sys.dns.hosts`环境变量没有任何实现consumer，设置后仍读取固定系统路径；归档为`DOC-008`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
