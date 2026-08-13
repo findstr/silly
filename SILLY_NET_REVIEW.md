@@ -3203,12 +3203,12 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 状态：已确认；gRPC response/trailer status 要求与确定性 wrapper/control-flow 推导。本阶段只做静态 review，不新增畸形 payload。
 - 规范：RPC runtime/application error 必须通过 trailers 中的 `grpc-status`（通常 INTERNAL 等非 OK）传播；正常 response 的最终 Status 也始终必需。截断 envelope、protobuf decode failure或 streaming read error不能以无 status 的 HTTP/2 END_STREAM结束，更不能报告 `grpc-status: 0`。
 - 位置：envelope/protobuf reader 在 `lualib/silly/net/grpc/helper.lua:16-50`；server stream reader 与四种 wrapper 在 `lualib/silly/net/grpc/registrar.lua:17-31,80-228`；通用 server handler 的无条件收尾在 `lualib/silly/net/http/h2.lua:1549-1559`。
-- 触发：unary/server-streaming request 的 5-byte header或 payload 在 END_STREAM 前截断，或 payload 不是目标 protobuf；client-streaming/bidi handler 循环读取时遇到同类错误后按 nil 结束并正常 return。
-- 影响：前两类返回 HTTP 200/application-grpc 但完全没有 grpc-status，client只能合成 UNKNOWN；后两类可明确把 malformed request报告成 OK。应用、监控、retry policy 和审计日志会把协议损坏误判成成功或不可分类错误，client-streaming handler 还可能基于错误前已读消息产生并提交副作用。
-- 证据：unary/sstream wrapper 在 `readbody` 返回 nil 时只 `logger.warnf` 后 return，没有 `closewrite` trailer；外层 `server_handler` 随后调用无参数 `s:closewrite()`，把预置 content-type header以 END_STREAM发送。stream reader虽设置 `s.status=INTERNAL`，但 cstream/bstream wrapper在用户函数正常返回后从不检查它，固定发 `grpc-status=OK`。若 partial bytes 后收到 EOS，底层 exact read返回 EOF且 `h2stream:eof()` 为真，reader还会把截断误标 OK。
-- 根因：message reader 只返回松散字符串错误，没有区分 clean message-boundary EOS 与 mid-envelope EOF；stream object status 也没有成为 wrapper 终局状态机的权威输入。
-- 建议解法：让 decoder 返回结构化结果 `message/clean_eos/protocol_error/transport_error` 并跟踪当前 envelope offset；所有 wrappers通过一个唯一 finalize 函数选择最终 status，已有 runtime error不可被用户函数正常 return覆盖。能够发送 trailer时用 INTERNAL等非 OK，无法继续 framing 时按 gRPC transport mapping reset stream。
-- 后续回归条件：修复阶段覆盖 0..4-byte header截断、payload 少 1 byte、invalid protobuf、错误发生于第 1/第 N 条 streaming message；断言始终只有一个非 OK final status、handler副作用边界明确、永不缺 status或回 OK。本轮不新增测试代码。
+- 触发：unary/server-streaming request 的5-byte header或payload在END_STREAM前截断；protobuf payload具有known field wire-type mismatch、坏field value等会令native decoder抛错的内容；或client-streaming/bidi handler循环读取时遇到同类错误。decoder静默接受截断tag/unknown field的另一根因见`GRPC-025`。
+- 影响：返回nil的前两类会以HTTP 200/application-grpc但无grpc-status结束，client只能合成UNKNOWN；native decode抛错则越过unary/server-streaming wrapper和H2 `server_handler`全部收尾，使stream map与并发配额按`H2-027`永久滞留，可被远端重复消耗。client-streaming/bidi的decode异常恰好落入包围整个业务handler的pcall，被混同为application exception；其他stream read错误仍可被wrapper覆盖成OK。应用、监控和retry policy因而看到缺status、错误分类或成功，handler还可能基于错误前已读消息提交副作用。
+- 证据：`pb.decode`并非helper假定的nil-on-error API：native known-field varint/type/length失败在`luaclib-src/pb.c:1853-1899`调用`luaL_error`，直接跳过`if not resp then "Decode error"`。unary/sstream在`readbody`外没有pcall，异常沿`dispatch→fn→H2 server_handler`展开，后两步不会再执行`closewrite/close`。普通readbody nil路径仍只log后return；stream reader虽设置`s.status=INTERNAL`，cstream/bstream wrapper却不读取并固定发OK。若partial envelope后EOS，`h2stream:eof()`还会把截断标为OK。
+- 根因：message reader既没有统一protected decode，也只返回松散字符串错误，无法区分clean message-boundary EOS、mid-envelope EOF、protobuf parse exception与transport error；stream status又不是wrapper终局状态机的权威输入。
+- 建议解法：用protected decoder返回结构化结果`message/clean_eos/protocol_error/transport_error`并跟踪envelope offset；所有wrappers通过唯一finalize函数选择最终status，已有runtime error不可被用户函数正常return覆盖。能够发送trailer时用INTERNAL等非OK，无法继续framing时按gRPC transport mapping reset；H2 handler仍应以finally保证stream/quota释放。
+- 后续回归条件：修复阶段覆盖0..4-byte header截断、payload少1 byte、known-field invalid protobuf、错误发生于第1/第N条streaming message；断言异常不逃出gRPC wrapper、始终只有一个非OK final status、handler副作用边界明确且stream/quota释放。本轮不新增测试代码。
 
 ### GRPC-008 — P1 — streaming client 丢失 Trailers-Only 的真实 status
 
@@ -3299,12 +3299,12 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 状态：已确认；gRPC runtime status mapping与确定性 decoder/finalizer dataflow推导。本阶段只做静态 review，不新增畸形 response。
 - 规范：response protobuf解析失败应由 client runtime产生 INTERNAL；截断或损坏的 length-prefixed message同样不能因 peer随后宣称 grpc-status OK而成为成功。runtime已观察到的本地解析错误必须优先于不可信 peer的 OK trailer。
 - 位置：envelope/protobuf decoder在 `lualib/silly/net/grpc/helper.lua:16-50`；streaming read/finalizer在 `lualib/silly/net/grpc/client/service.lua:38-81`；unary在 `:134-176`。
-- 触发：server发送完整 envelope但 payload不是声明的 protobuf type，或5-byte header/payload在END_STREAM前截断，然后发送/已发送 `grpc-status: 0`（普通 trailer；部分场景也可由Trailers-Only状态路径组合）。
-- 影响：server-streaming、client-streaming和bidi对象最终记录 `status=OK`，调用方把损坏响应当成正常流结束；unary只返回无结构的 decode/EOF字符串而不是 INTERNAL。数据损坏、版本不匹配与恶意peer行为因此无法按标准 code监控/处置。
-- 证据：`readbody`正确返回 `"Decode error"`或底层EOF，但 `check_trailer`只要看到grpc-status就无条件以该数值覆盖本地err，err仅在status缺失时才用作message。streaming两条路径随后返回nil且暴露OK；unary在n==OK时直接`return resp, err`，没有构造INTERNAL status。
+- 触发：server发送完整envelope但known-field payload具有wire-type mismatch/坏value而使native protobuf decoder抛错，或5-byte header/payload在END_STREAM前截断，然后发送/已发送`grpc-status: 0`。decoder静默接受部分非法尾部的路径另见`GRPC-025`。
+- 影响：截断envelope会让server-streaming、client-streaming和bidi对象最终记录`status=OK`，调用方把损坏响应当正常结束；protobuf decode exception则直接从公开`stream:read()`或unary调用抛出，绕过文档化的`nil,error/status`契约。若调用方捕获后再次read，已消费的坏envelope不再可见，下一次EOF仍可由peer OK trailer把stream标为成功。数据损坏、版本不匹配与恶意peer行为无法按标准code稳定监控/处置。
+- 证据：native decoder对known-field type/varint/length错误调用`luaL_error`，因此helper的`if not resp then "Decode error"`不是保护边界。unary只有H2 stream的`<close>`资源收尾，没有protected decode/status转换；streaming read也不pcall。对readbody实际返回的EOF/transport错误，`check_trailer`只要看到grpc-status就仍无条件以该数值覆盖local err；unary在n==OK时也直接`return resp,err`而不构造INTERNAL。
 - 根因：finalizer把peer status当成唯一权威，没有维护不可被成功status覆盖的local runtime error；API又没有统一的结构化status对象。
 - 建议解法：call state保存首个本地 protocol/decode/runtime failure；最终peer non-OK可提供额外上下文，但peer OK不得覆盖本地失败。invalid response proto统一映射INTERNAL，截断按transport/protocol性质映射，并让四种API返回同一status模型。
-- 后续回归条件：修复阶段覆盖invalid protobuf、0..4-byte header、短payload、第二条streaming message损坏，分别配OK/non-OK/missing status；本地损坏永不产生OK，invalid proto稳定为INTERNAL。本轮不新增测试代码。
+- 后续回归条件：修复阶段覆盖known-field invalid protobuf、0..4-byte header、短payload、第二条streaming message损坏，分别配OK/non-OK/missing status，并验证捕获异常后重复read；公开API不得抛native parse exception，本地损坏永不产生OK且invalid proto稳定为INTERNAL。本轮不新增测试代码。
 
 ### GRPC-016 — P2 — application handler 异常被错误映射为 INTERNAL
 
@@ -3728,6 +3728,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：继续第三轮重点模块查漏，确认HTTP/2同一stream的并发读取会覆盖唯一waiter，且旧timer可误唤醒新reader，记录为`H2-032`；未运行并发barrier或协议流量。
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
 - 2026-08-13：确认native protobuf message循环把截断tag、field 0和unknown value skip失败当作正常EOF，gRPC会把非法request交给业务或接受非法response；归档为`GRPC-025`，未构造畸形payload。
+- 2026-08-13：修正并补强`GRPC-007/015`的protobuf证据：known-field decode失败会抛Lua异常而非返回nil；server unary/sstream因此叠加`H2-027`配额泄漏，client公开read则越过status契约直接抛错。不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
