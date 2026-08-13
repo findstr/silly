@@ -322,6 +322,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：把接收payload包装为full userdata/opaque buffer handle并附`__gc/__close`，消费或转移时原子清空其owner；Lua callback异常退出后未消费payload由finalizer释放。若保留裸pointer API，则dispatcher必须以受保护调用配合显式take/consume协议，并在异常时关闭socket，不能盲目finally-free造成已转移后的double-free。
 - 回归测试：修复阶段让TCP/UDP callback分别在消费前、消费后、buffer接管后抛错；断言payload各释放恰好一次、无泄漏/double-free，异常策略会阻止同连接无限重复。ASan/LSan与Silly allocator计数均回基线。当前不新增异常触发。
 
+### NET-003 — P1 — `multipack` 裸引用计数可提前释放仍在异步发送的共享缓冲区
+
+- 状态：已确认；native refcount、send failure ownership与公开API契约的确定性静态推导。本轮不调用multicast或制造失效socket。
+- 契约：公开`net.multipack(data, fanout)`以预期接收者数初始化共享buffer，随后每个`net.tcpmulticast`异步send完成时递减一次；一个可安全复用的API必须拒绝非法fanout，并保证失败/重试不会让调用方在已释放pointer上继续操作。裸handle不能在没有generation/ref acquisition的情况下被任意重复提交。
+- 位置：共享header、`multifinalizer`与`lmultipack/lmultifree`在`luaclib-src/lnet.c:17-78`；`tcpmulticast`入口在`:199-220`；底层send同步失败立即调用finalizer在`src/socket.c:1614-1629`，异步错误/完成释放在`:396-450,1118-1161,1642-1660`；公开导出和文档在`lualib/silly/net.lua:45-54`及`docs/src/{en/,}reference/net.md:153-169`。
+- 触发：以`fanout=1`创建pack，第一次向已关闭sid发送并收到`false,err`后按常规失败语义重试另一个sid；或声明fanout小于实际`tcpmulticast`调用数、重复提交同一pointer。反向地，fanout为0/负数/大于实际终局调用数会进入泄漏路径。
+- 影响：同步失败仍执行`multifinalizer`，fanout为1时已释放整块header/data；调用方仍持有原lightuserdata且返回值/文档没有说明失败会消费引用，重试把悬空pointer交给异步socket线程，形成heap use-after-free、相邻内存发送、double/invalid free或崩溃。多个已排队send超过fanout时，第N个完成也会在其他wlist仍引用同一data时释放。零/负数被截成`uint32_t`后首次decrement下溢，过大或少发则永久泄漏。
+- 证据：`lmultipack`把未经范围验证的Lua integer先存入C `int refcount`，再直接赋给`uint32_t hdr->ref`；返回的是无生命周期信息的lightuserdata。`multifinalizer`仅做atomic decrement并在结果为0时free，不检测原值0或重复消费。`socket_tcp_send`遇到invalid/zombie sid在返回`-EXCLOSED`之前已经调用传入finalizer；成功操作的所有wlist也各自保存相同pointer/finalizer。因此引用数与实际finalizer调用数只要不完全相等，就确定性进入提前释放或泄漏。
+- 根因：调用方提供的“未来异步使用次数”被当作buffer唯一所有权模型，handle本身没有不可伪造type、alive状态或每次send的ref acquire；失败是否消费引用也没有协议化。lightuserdata让Lua/Native双方都无法阻止retry、重复发送或use-after-free。
+- 建议解法：改为full userdata/opaque multicast buffer，内部保存alive与原始size；每次`tcpmulticast`在验证handle和sid后原子acquire一个独立send reference，operation终局release，Lua handle的GC/close只释放owner reference。这样无需调用方预报fanout。若保留旧API，至少要求`1 <= fanout <= UINT32_MAX`、拒绝重复超过配额、明确失败消费语义并使handle终局失效，但裸pointer仍难以安全验证。size也必须来自handle，不能由调用方再次声明。
+- 回归测试：修复阶段覆盖fanout 0/负/边界、closed sid后retry、少发、多发、重复fd、发送中GC/close和不同完成顺序；ASan/LSan下buffer只能在最后一个真实operation与Lua owner均释放后销毁，失败不留下悬空可用handle或泄漏。当前不运行这些ownership场景。
+
 ### UDP-001 — P2 — `sendto` 不区分 bound/connected socket，缺失或显式目标被静默错误处理
 
 - 状态：已确认；公开文档、Lua对象状态与C发送分支静态核对。本轮不发送datagram。
@@ -2655,7 +2667,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为209项：P0为0，P1为88，P2为112，P3为9。模块分布：CORE 7、NET 2、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为210项：P0为0，P1为89，P2为112，P3为9。模块分布：CORE 7、NET 3、SOCK 14、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 1、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
 
 建议按依赖关系分五批修复：
 
@@ -2866,3 +2878,4 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认HTTP/2 client/server都接受ACK-only SETTINGS作为对端连接前言，记录为`H2-034`；未建立peer或发送frame。
 - 2026-08-12：确认etcd watch compaction取消会丢弃完整WatchResponse及`compact_revision/cancel_reason`，记录为`ETCD-016`；未建立watch或请求compaction。
 - 2026-08-12：第三轮HTTP/2、gRPC、etcd、MySQL、Redis纯静态查漏收口；再次核对协议状态机、并发waiter、close/reconnect、事务/连接池及未处理I/O返回路径，当前范围无未归档的高置信独立候选。动态互操作、并发barrier和故障注入仍按用户要求留到修复阶段。
+- 2026-08-13：1.0封板审计确认`multipack/tcpmulticast`以调用方声明的未来finalizer次数管理裸pointer，send失败后重试或fanout偏小可提前free仍在异步发送的buffer，记录为`NET-003`；未调用multicast或制造失效socket。
