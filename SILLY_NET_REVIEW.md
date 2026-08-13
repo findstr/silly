@@ -3422,6 +3422,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：protobuf decoder显式区分EOF和parse error：只有cursor恰好位于message边界时允许结束；tag varint失败、field number 0、非法wire type、known/unknown value读取或skip失败都抛受控parse error/返回结构化failure，嵌套slice也执行同一完整消费检查。gRPC用protected decode捕获失败并经统一finalizer映射INTERNAL，绝不调用handler或接受response。
 - 回归测试：修复阶段在protobuf单元层覆盖0..10字节截断tag、tag 0、每种wire type的缺失/短value、unknown field、嵌套message及合法unknown field；断言非法输入失败且合法前缀不泄漏为成功对象。再对四类RPC双向覆盖第1/第N条坏message，server不调用业务且client不产生OK。本轮不运行这些输入。
 
+### GRPC-026 — P2 — 多 target “round-robin” 不隔离坏 endpoint，单点故障会阻断建池或周期性打失败请求
+
+- 状态：已确认；client resolver、endpoint选择、公开负载均衡承诺与官方round_robin模型的确定性静态核对。本轮不解析域名、连接endpoint或运行故障切换。
+- 依据：[gRPC Custom Load Balancing Policies](https://grpc.io/docs/guides/custom-load-balancing/)说明round_robin会连接resolver给出的每个地址，并在已连接backends间轮转；picker管理subchannel状态，而不是每次机械选择一个可能未连接的地址并把该次dial失败直接交给应用。Silly双语reference也明确承诺多个target使用round-robin。
+- 位置：构造时逐target DNS与全有或全无返回在`lualib/silly/net/grpc/client/conn.lua:127-155`；每次RPC先推进robin、只拨单一endpoint并立即返回失败在`:49-100`；文档承诺位于`docs/src/{en/,}reference/net/grpc.md:266-278,786-868,1499-1537`。
+- 触发：配置至少两个target，其中任一hostname当前DNS失败；或所有target可解析，但轮到的endpoint TCP/TLS/H2建连失败而其他target健康。无需所有后端故障。
+- 影响：第一种情况让`grpc.newclient`整体返回nil，健康target完全不可用；第二种情况下每逢robin选择坏endpoint，该RPC直接失败，下一健康endpoint从未作为本次安全建连fallback。一个坏实例因此把本应容错的pool变成固定比例失败发生器；滚动发布、扩缩容、局部DNS/网络故障会直接暴露给业务，且文档示例会误导部署者认为已有可用性负载均衡。
+- 证据：constructor在for循环内调用`dns.lookup`，任一nil立即return并丢弃此前已解析endpoint。`openstream`把robin推进后只取`self[robin]`；`newchannel`仅拨该endpoint，任何connect/newchannel错误原样返回，既不扫描其他endpoint也不维护READY/TRANSIENT_FAILURE状态。只有下一次独立调用才选下标+1。现有`testgrpc.lua`只配置单target，并单测“唯一target DNS失败则构造失败”，没有一坏一好或恢复场景。
+- 根因：targets被建模为同步、全量成功的数组和无状态下标，而不是各自拥有解析/连接状态的subchannel集合；picker与dialer耦合，无法只在ready集合中轮询或在共同deadline内尝试其他候选。
+- 建议解法：构造client时只校验target语法并建立独立resolver/subchannel状态，不因单target暂时解析失败丢弃健康成员；后台或按需解析/连接每个subchannel，round_robin picker只选READY channels。无READY时按明确fail-fast/wait-for-ready与absolute call deadline策略等待或返回聚合错误；一次call是否重选尚未发送bytes的备用endpoint也必须区分于已发送后的RPC retry，避免重复副作用。与`GRPC-020`共享双栈resolver结果，但保持target级与address级两层故障隔离。
+- 回归测试：修复阶段用可控resolver/connector覆盖`bad DNS + healthy`、`refused + healthy`、TLS/H2失败+healthy、全部失败、故障恢复、两健康轮询及close交错；断言单坏target不阻断建池、不接收新RPC，恢复后重新进入轮询，所有等待受同一deadline约束且未自动重放已发送的非幂等RPC。本轮不执行这些场景。
+
 ## 5. 候选问题收口
 
 两轮静态审计没有遗留的未归档候选。原`CAND-SOCK-002`已由完整sid/check/accounting调用链升级为`SOCK-007`；因用户要求停止新增并发barrier，它明确标注为“确定性静态时序、无独立动态复现”。其余依赖外部版本、畸形peer或故障注入的工作都列为对应已确认问题的“修复阶段回归条件”，不再混入候选计数。这里的“收口”表示计划内源码、协议与文档路径均已静态复核并完成归档，不表示数学上证明不存在其他bug；未执行的独立peer、版本矩阵、sanitizer定向回归与故障注入仍可能在修复阶段发现新问题。
@@ -3451,7 +3463,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为277项：P0为0，P1为101，P2为152，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 25、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
+当前滚动统计为278项：P0为0，P1为101，P2为153，P3为24。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 26、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25。
 
 建议按依赖关系分五批修复：
 
@@ -3729,6 +3741,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-12：确认gRPC request超限/压缩错误在initial metadata发送后再次调用respond，生成含`:status`的非法final HEADERS，记录为`GRPC-024`；未发送超限或压缩消息。
 - 2026-08-13：确认native protobuf message循环把截断tag、field 0和unknown value skip失败当作正常EOF，gRPC会把非法request交给业务或接受非法response；归档为`GRPC-025`，未构造畸形payload。
 - 2026-08-13：修正并补强`GRPC-007/015`的protobuf证据：known-field decode失败会抛Lua异常而非返回nil；server unary/sstream因此叠加`H2-027`配额泄漏，client公开read则越过status契约直接抛错。不重复计数。
+- 2026-08-13：确认多target client在任一DNS失败时整体拒绝构造，运行期也机械选择未连接endpoint并在其dial失败后终止本次RPC，不在READY backends间轮询；归档为`GRPC-026`。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。

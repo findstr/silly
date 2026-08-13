@@ -408,8 +408,9 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 | GRPC-025 | P1 | protobuf decoder把截断tag/unknown value当正常EOF，gRPC可执行业务或接受非法response。 |
+| GRPC-026 | P2 | 多target round-robin不隔离坏endpoint，单点DNS/dial故障会阻断建池或周期性打失败RPC。 |
 
-当前统计为277条：P1 101、P2 152、P3 24。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 25、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25；以主报告中的编号和证据为准。
+当前统计为278条：P1 101、P2 153、P3 24。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 26、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 25；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 
