@@ -83,7 +83,7 @@ HTTP/2 + HPACK 审计清单（状态：首轮静态核对完成；修复阶段�
 - HPACK integer/Huffman 解码溢出、EOS/填充校验、索引 0/越界、动态表更新位置与上限、COMPRESSION_ERROR。
 - 限制解压后 header list、动态表、并发流、待处理 body，防止内存/CPU 放大。
 
-WebSocket 审计清单（状态：首轮静态核对完成；修复阶段补独立peer与畸形输入）：
+WebSocket 审计清单（状态：1.0封板静态复核完成；修复阶段补独立peer与畸形输入）：
 
 - HTTP/1.1 GET upgrade、Upgrade/Connection token 列表及大小写、version 13、key 必须解码为 16 bytes、Accept 计算。
 - Origin、subprotocol 必须来自客户端候选、extension 协商；未协商 RSV 位必须拒绝。
@@ -3527,6 +3527,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：依据WHATWG确认browser Ping是不可依赖的user-agent可选行为；教程只被动回Pong却宣称自动心跳，没有主动探测或失联deadline，归档为`DOC-023`。
 - 2026-08-13：确认WebSocket完整server把JSON语法成功等同schema成功，合法primitive/错型字段可抛异常并跳过clients registry清理，重复连接累积幽灵对象；归档为`DOC-024`。
 - 2026-08-13：确认WebSocket双语入门示例读取wrapper不存在的`sock.fd`，所有断线日志都丢失连接标识并误导公开API；归档为`DOC-025`。
+- 2026-08-13：WebSocket 1.0封板审计收口：完整复核源码、RFC 6455双角色矩阵、H1/H2交界、双语reference/tutorial和`testwebsocket.lua`全部7组顶层场景；未实现的RFC 8441/permessage-deflate按可选能力记录，并发reader等共享根因已与`NET-005`去重，当前无未归档候选。
 - 2026-08-13：补强`WS-003`：127-length最高位置1经Lua `>I8`转为负integer；TCP按空payload成功导致wire重新分帧，TLS进入`TLS-009`挂起。不重复计数。
 - 2026-08-13：补强`WS-001`：缺失Upgrade/Connection的H2 GET也可通过handshake，生成H2禁止的101并返回`conn=nil` socket，常规使用异常后叠加`H2-027`泄漏；严格补齐必需H1字段即可阻断，故不另立WS编号。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。

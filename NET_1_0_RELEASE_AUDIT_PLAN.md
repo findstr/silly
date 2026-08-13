@@ -7,7 +7,7 @@
 > `cluster` 对照：`origin/cluster@0f2c8773842edb818c1aac74ade3f975d1cbd068`
 > 既有结论：master 基线 209 项（P1 88、P2 112、P3 9），另有 4 项 `cluster` 分支独有问题
 
-当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1 与 HTTP/2/HPACK 阶段已收口；共276项（P1 100、P2 152、P3 24）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket专项新增`DOC-018`至`DOC-025`，覆盖教程无效资源防护、reference返回契约、无效channel方法、浏览器XSS、虚假心跳、JSON schema/cleanup及示例字段漂移，其余矩阵继续收口。
+当前滚动进度（2026-08-13）：底层 engine/socket、TCP/UDP/addr、DNS、TLS/OpenSSL、HTTP common/HTTP1、HTTP/2/HPACK与WebSocket阶段已收口；共276项（P1 100、P2 152、P3 24）。H2本轮完成每种frame×role×stream state、flow-control、SETTINGS、HPACK/native builder、pool、36组HTTP2测试、18组HPACK测试及双语文档复核，新增`H2-035`至`H2-041`、`HPACK-004`、`HTTPC-008/009`、`DOC-014`至`DOC-017`；`H2-003/024/028`等既有项补强但不重复计数。WebSocket完成RFC 6455双角色矩阵、H1/H2交界、双语文档及全部7组测试映射，新增`DOC-018`至`DOC-025`并与底层共享问题去重。下一阶段为gRPC。
 
 ## 1. 目标和边界
 
@@ -72,16 +72,16 @@
 - `lualib/silly/net/http.lua`、`http/client.lua`、`http/h1.lua`、`http/url.lua`：已审有归档；本轮新增`HTTPC-006/007`、`HTTP1-018`至`HTTP1-023`、`DOC-012/013`，既有URL、pool、framing、Expect/upgrade/keepalive与limits问题已逐项去重。
 - `lualib/silly/net/http/dom.lua`、`http/helper.lua`、`http/statusname.lua`：已审无新增；DOM异常受protected parse边界收敛，target/status helper的协议偏差已并入`HTTP1-008/010`，未另立重复条目。
 - `lualib/silly/net/http/h2.lua`：已审有归档；完成DATA/HEADERS/PRIORITY/RST/SETTINGS/PING/GOAWAY/WINDOW_UPDATE/CONTINUATION/PUSH_PROMISE按client/server与idle/open/half-closed/closed矩阵，新增`H2-035`至`H2-041`并补强padding flow-control到`H2-003`。未知RST code由元表稳定格式化、Huffman tree恰好不扩容等候选已排除。
-- `lualib/silly/net/websocket.lua`：审阅中；现按opening handshake、frame parser/sender、fragment/control/close、并发与文档测试矩阵二次封板。重复close与`__close`组合已归入既有`WS-007`，WSS空payload挂起归入底层`TLS-009`，127-length最高位经Lua有符号转换造成的TCP重分帧/TLS挂起已补入`WS-003`；H2误用的非法101/nil conn路径依赖缺失必需字段，归入`WS-001`而未新立`WS-011`。
+- `lualib/silly/net/websocket.lua`：已审有归档；opening handshake、frame parser/sender、fragment/control/close、并发、H1/H2交界与文档测试矩阵已完成。重复close与`__close`组合归入`WS-007`，WSS空payload挂起归入`TLS-009`，127-length最高位的TCP重分帧/TLS挂起归入`WS-003`；H2非法101/nil conn路径归入`WS-001`，未重复编号。
 - `lualib/silly/net/grpc.lua`、`grpc/code.lua`、`grpc/helper.lua`、`grpc/server.lua`、`grpc/registrar.lua`、`grpc/client/conn.lua`、`grpc/client/service.lua`：待审；其中顶层 `grpc.lua` 当前没有直接文件证据引用，优先补审。
 - `lualib/silly/store/redis.lua`、`mysql.lua`、`etcd.lua`：待审。
 
 ### 3.3 测试、类型和文档
 
 - transport：`testtcp.lua`、`testtcp2.lua`、`testudp.lua`、`testaddr.lua`已映射到本轮transport边界；`testdns.lua`已逐31组case映射，缺口归入`DNS-009`至`DNS-018`；`testssl.lua`已逐项映射，positive ALPN、reload、读写/关闭等覆盖与certificate verification、close_notify、握手deadline、TLS版本、invalid config和failure cleanup缺口均已落到TLS条目。
-- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`审阅中：现有WSS case只读取非空data，空Close只在ws覆盖，因此未发现`TLS-009`在WSS合法空frame上的挂起。`testgrpc.lua`待审。
+- HTTP/application protocols：`testhttp.lua`与`test/conformance/testhttp.lua`的H1/common部分已逐项映射；gzip metadata缺口归入既有`HTTPC-001`。`testhttp2.lua`全部36组与`testhpack.lua`全部18组已映射，确认缺少独立H2 peer、malformed frame/state、padding、极值table-size和错误作用域覆盖；Test28注释与当前延迟HPACK实现不符但用例顺序仍能防止旧回归，未立重复问题。`testwebsocket.lua`全部7组顶层场景及两组11项data vector已映射：均为同库正常互通，WSS只读非空data，空Close只走ws；缺少握手拒绝、畸形frame、WSS空控制帧、预算/deadline、关闭幂等和独立peer覆盖，相应实现问题均已归档。`testgrpc.lua`待审。
 - storage/cluster：`testredis.lua`、`testmysql.lua`、`testetcd.lua`、fake servers、`testcluster.lua`。
-- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket双语reference/tutorial逐段核对中新增`DOC-018`至`DOC-024`，gRPC/storage/cluster类型、guide/example继续对应专项及最终一致性核对。
+- `lualib/types/silly/` 下DNS/TLS与HTTP2 HPACK/framebuilder公开面已审；双语DNS/TLS及HTTP reference/guide的H1/H2契约已核对，新增`DOC-012`至`DOC-017`并确认既有`DOC-003`仍完整。H2指南遗漏TLS开关和ALPN会实际启动明文H1，已按安全误导列为P2；WebSocket没有独立type文件，inline LuaLS及双语reference/tutorial已逐段核对，新增`DOC-018`至`DOC-025`。gRPC/storage/cluster类型、guide/example继续对应专项及最终一致性核对。
 
 ## 4. 每个文件的固定检查模板
 
