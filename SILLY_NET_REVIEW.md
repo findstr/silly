@@ -579,6 +579,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：parser明确返回rcode、answer/authority section与经校验的SOA negative TTL；cache分别建模name-level NXDOMAIN和type-level NODATA并保留CLASS=IN。positive answer写入前按RFC规则使冲突negative entry失效，negative命中时保持CNAME语义；不得把additional/unrelated SOA当negative proof。
 - 回归测试：修复阶段覆盖A-NXDOMAIN后AAAA/SRV均不发包、A-NODATA后AAAA仍可查询、NXDOMAIN+CNAME、无SOA默认策略、TTL到期、positive/negative替换与不同CLASS；断言query计数和cache冲突规则。当前不构造响应。
 
+### DNS-009 — P2 — 普通非尾随点域名的 query encoder 构造越过 one-past-end 的指针
+
+- 状态：已确认；C指针算术与公开正常查询路径的确定性静态推导。本轮不执行DNS查询或依赖sanitizer触发。
+- 语言约束：C只允许构造数组元素或one-past-end指针；即使随后不解引用，把指针推进到one-past-end之外也属于未定义行为。正常域名编码必须在所有编译器/优化级别下保持定义良好。
+- 位置：wire QNAME encoder在`luaclib-src/ldns.c:143-159`；公开resolver对无尾随点名字调用`question`在`lualib/silly/net/dns.lua:424-455,585-640`。同类已归档边界模式见`ADDR-002`，但本条属于独立DNS编码器和不同公开触发。
+- 触发：调用`dns.lookup/resolve("example.com",...)`或任何最后一个label后没有`.`的正常名字；绝大多数应用输入以及search候选都满足。带尾随点的FQDN最后一次推进恰好到`end`，不触发这一具体越界构造。
+- 影响：最后一轮`memchr`未找到dot而令`dot=end`、`len=end-p`；写完label后执行`p += len + 1`得到`end+1`。虽然while下一次比较通常立即结束且未解引用该指针，标准仍不定义这一执行，优化器和UB sanitizer可据此产生告警或不可移植行为；每个普通DNS query都落入该路径，使发布构建的基础wire encoder依赖偶然ABI表现。
+- 证据：循环条件只在迭代开头检查`p < end`；无dot分支没有在写完最终label后break，而是无条件执行与“越过dot”共用的`+1`。合法C数组只提供到`end`的one-past位置，不提供`end+1`。输入已由`validname`验证并不能改变指针算术规则。
+- 根因：用同一指针推进表达“跳过找到的dot”和“处理没有dot的最后一段”，但后一种情况不存在可跳过的分隔字节。
+- 建议解法：在`dot == end`时写完label后直接`p=end; break`，只有真实找到`.`才赋值`p=dot+1`；或改用剩余长度/index循环，确保所有中间指针始终在`[start,end]`。尾随点应作为显式分支处理，避免再次靠zero-length隐式跳过。
+- 回归测试：修复阶段对单label、多label、63-byte label、253-byte name、尾随点及search拼接做固定wire vector；在UBSan与高优化构建下编码普通名字零告警，结果QNAME恰以一个root zero结束。当前只保存静态证据。
+
 ### CLUSTER-001 — P1 — RPC response 只按全局 session 匹配，可跨 peer 注入或串话
 
 - 状态：已确认；wire header、C→Lua返回值与wait table调用链的确定性推导。本阶段不构造伪ACK frame。
@@ -2799,7 +2811,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为221项：P0为0，P1为92，P2为119，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
+当前滚动统计为222项：P0为0，P1为92，P2为120，P3为10。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 9、DNS 9、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2828,6 +2840,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TCP/TLS single-reader门禁位于buffer fast path之后，并发reader可按分片时序偷走旧operation字节并使其永久等待；归档为`NET-005`。
 - 2026-08-13：确认TCP/TLS buffer limit会在当前定长/分隔符read满足前暂停transport，唯一reader无法消费或恢复，形成永久自锁；归档为`NET-006`。
 - 2026-08-13：确认TLS native把`read(0)`编码为未满足，Lua登记值为0的唯一waiter后所有data callback都无法完成；归档为`TLS-009`。
+- 2026-08-13：确认DNS query encoder处理普通名字最后一个label后构造`end+1`指针，所有无尾随点查询落入C未定义行为；归档为`DNS-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
