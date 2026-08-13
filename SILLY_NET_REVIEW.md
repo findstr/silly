@@ -1612,6 +1612,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：删除“原子”声明或正式公开`client:txn{compare,success,failure}`并让示例使用单个Txn RPC，以mod_revision/version compare防止lost update；若暂不封装，提供准确的底层service访问方式和完整TxnRequest示例，并突出返回`succeeded`及失败分支。不要用client-side read-modify-write冒充事务。
 - 回归测试：修复阶段doc-test捕获发出的RPC method并断言示例只调用一次KV/Txn；语义回归覆盖compare成功/失败、并发writer、第二操作非法及transport ambiguity，验证同revision/all-or-nothing。当前只核对文本与method表。
 
+### DOC-007 — P3 — TCP/TLS 文档示例使用实现拒绝的多字节分隔符
+
+- 状态：已确认；双语reference/guide/benchmark与buffer、TCP、TLS实现及现有单元测试的确定性静态对照。本轮不运行文档示例。
+- 公开契约：`conn:read(string)`应清楚说明可接受的delimiter语法，所有标为可验证或可复制的示例必须落在真实API输入域内。
+- 位置：TCP转发delimiter到buffer的路径在`lualib/silly/net/tcp.lua:263-300`，C buffer限制在`luaclib-src/adt/lbuffer.c:357-375`；TLS有相同限制，见`luaclib-src/ltls.c:525-540`。错误的`conn:read("\\r\\n")`出现在双语`docs/src/{en/,}reference/net/tcp.md`、`reference/net/tls.md`、`guides/tls-configuration.md`及`benchmark.md`，共10处。
+- 触发：照抄任一HTTP/TLS/benchmark示例，以`"\r\n"`调用TCP或TLS connection的`read`；或者根据参数说明传入任何长度大于1的字符串delimiter。
+- 影响：调用不会读取一行，而是在进入native buffer reader时立即抛出`delimiter length must be 1`。TCP reference中完整HTTP响应示例在第一条状态行即终止；TLS与benchmark示例同样不可运行。更危险的是通用说明只写“字符串分隔符”，让应用把多字节协议边界错误地建立在一个实现明确拒绝的能力上。
+- 证据：`conn.read`未经转换把`n`交给`bread`；`lbuffer.c`对string执行`luaL_argcheck(delim.len == 1, ...)`，TLS reader也执行同一检查。buffer测试还专门断言多字节delimiter必须报该错误，而TCP测试只覆盖`"\n"`，因此不是未记录的多字节实现能力。仓库grep可见双语文档各五处使用`"\r\n"`。
+- 根因：文档把单字节terminator泛化成任意字符串delimiter，并复制了基于CRLF的HTTP示例；文档代码块没有经过与底层参数约束一致的静态或运行校验。
+- 建议解法：1.0若不扩展实现，应把TCP/TLS参数明确写成“恰好一个字节”，所有示例改为读`"\n"`后校验/剥离前置`\r`，或直接使用HTTP模块；benchmark也使用单字节分隔符。若要支持多字节delimiter，则需在跨buffer-node流式匹配、重叠前缀、EOF和limit语义都定义后实现，不能只放宽长度断言。
+- 回归测试：修复阶段让双语doc-test执行所有相关代码块，并增加delimiter长度0/1/2、多字节UTF-8、跨chunk CRLF与重叠前缀契约测试；选择单字节契约时，长度非1必须在文档和错误类型上一致。当前不执行这些示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -2751,7 +2763,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为217项：P0为0，P1为90，P2为118，P3为9。模块分布：CORE 7、NET 4、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 6。
+当前滚动统计为218项：P0为0，P1为90，P2为118，P3为10。模块分布：CORE 7、NET 4、SOCK 19、UDP 1、TLS 8、DNS 8、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 7。
 
 建议按依赖关系分五批修复：
 
@@ -2776,6 +2788,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TCP listen/connect/accept及stat将Win64指针宽度`SOCKET`存入`int`，合法高位handle会被截断；归档为`SOCK-019`。
 - 2026-08-13：确认`addr.parse`处理无端口bracket地址时构造`se+1`指针并比较，公开正常输入落入C未定义行为；归档为`ADDR-002`。
 - 2026-08-13：确认低层net在socket成功发布后才assert事件回调，缺字段配置会遗留不可达fd；文档允许无accept listener又可被远端重复触发；归档为`NET-004`。
+- 2026-08-13：确认TCP/TLS双语reference、guide与benchmark共10处使用底层明确拒绝的多字节`"\\r\\n"` delimiter；归档为`DOC-007`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
