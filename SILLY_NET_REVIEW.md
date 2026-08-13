@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档332项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档333项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -352,6 +352,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：内部cache key与Prometheus wire representation被合并成同一字符串，并假定label value已安全；缺少独立canonical tuple key和spec-compliant encoder。
 - 建议解法：cache按原始typed tuple建立不可碰撞键，输出阶段对每个value统一转义反斜杠、双引号和LF；同时验证metric/label names与HELP text的格式边界。HTTP层应按各协议拒绝非法field/control bytes，但metrics仍必须对任意公开string输入安全编码，不能依赖所有调用方预清洗。
 - 回归测试：修复阶段覆盖空值、quote、single/multiple backslash、LF、CR、UTF-8及组合，断言cache identity稳定且gather只产生预期一个sample；用独立Prometheus parser验证整份文本。H1/H2各以注入式stream字段走官方监控handler，确保不能破坏或新增series。当前不构造网络输入。
+
+### METRIC-002 — P1 — Prometheus Histogram 导出非累计 bucket 且 `+Inf` 不是总样本数
+
+- 状态：已确认；Histogram内部计数、text exposition与双语公开契约的确定性静态核对。本轮不运行metrics测试或Prometheus查询。
+- 协议契约：Prometheus classic histogram的每条`_bucket{le="x"}`必须是小于等于该上界的累计观察数，且`le="+Inf"`必须等于`_count`；否则bucket序列不是合法的累计分布，`histogram_quantile()`、SLO比例与rate计算没有正确语义。
+- 位置：`observe`只增加命中的第一个bucket后立即`break`，见`lualib/silly/metrics/histogram.lua:34-48`；encoder虽然在local `count`中累加，却在有限bucket行输出当前单桶`bc`，并把`v.count-count`作为`+Inf`，见`lualib/silly/metrics/prometheus.lua:57-111`。双语reference明确承诺累计bucket及`+Inf`包含全部观察，在`docs/src/{en/,}reference/metrics/histogram.md:18-63,94-102,120,795-838`；测试反而固定了互斥单桶内部语义且没有核对gather后的histogram文本，见`test/testprometheus.lua:169-196,278-312,407-458`。
+- 触发：创建任一至少两个bucket的Histogram并观察落入较小bucket、较大bucket或超过最大bucket的值，然后通过`prometheus.gather()`供Prometheus抓取。HTTP最佳实践正用该类型记录request duration。
+- 影响：有限bucket值会下降或彼此无累计关系，`+Inf`只表示超过最大边界的样本而非总数，并与同组`_count`不一致；Prometheus查询得到错误分位数、错误apdex/SLO及错误告警。若所有请求都小于最大bucket，当前`+Inf`恒为0而`_count`持续增长，最基本的总量不变量也被破坏，生产监控会稳定撒谎而不是偶发精度损失。
+- 证据：对bucket `{1,5,10}`依次观察`0.5,3,7,15`后，内部是`{1,1,1}`、count为4；encoder确定性输出有限bucket`1,1,1`、`+Inf=1`、`_count=4`。正确wire累计值应为`1,2,3,4`。代码中的local累计变量只参与计算`v.count-count`，没有用于有限bucket输出；双语文档示例也展示单调累计序列并声明`+Inf`等于总观察数。
+- 根因：实现选择互斥bucket作为内部存储以降低observe成本，但导出时忘记输出running cumulative sum，并把“未进入有限bucket”的尾部计数误当成`+Inf` bucket，而不是把全部样本纳入无穷上界。
+- 建议解法：可保留互斥内部bucket，但gather时对有限bucket输出running cumulative sum，并令`+Inf`直接输出`v.count`；或者observe时更新所有匹配bucket并直接输出累计数组，两种设计只能选一种并统一文档/测试。额外验证bucket边界为有限严格递增值，防止重复/NaN边界破坏序列。
+- 回归测试：修复阶段用独立registry覆盖每个有限bucket、边界值、超最大值、空histogram、vector labels及多次gather；断言bucket单调非降、`+Inf == _count`、`_sum`正确，并把文本交给独立Prometheus parser及`histogram_quantile`查询。当前只记录静态推导。
 
 ### NET-001 — P2 — listener 关闭与已排队 ACCEPT 竞态会遗留孤儿连接
 
@@ -4095,9 +4107,9 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为332项：P0为0，P1为111，P2为178，P3为43。模块分布：CORE 9、METRIC 1、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为333项：P0为0，P1为112，P2为178，P3为43。模块分布：CORE 9、METRIC 2、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 52。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
-当前滚动基线不等于代码可发布：111项P1默认全部阻断1.0；178项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
+当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；178项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
 建议按依赖关系分五批修复：
 
@@ -4458,4 +4470,5 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：HTTP最佳实践监控段反查metrics生命周期，确认两处把任意远端path写入永久labelcache/series，唯一404 URL即可线性增加heap与gather成本，归档为`DOC-051`。
 - 2026-08-13：沿HTTP监控示例反查Prometheus encoder，确认label value未转义quote/backslash/LF，网络字段可使整次scrape非法或注入额外exposition行，归档为`METRIC-001`。
 - 2026-08-13：继续复核HTTP限流示例，确认首冒号切分把bracketed IPv6截成首hextet、配额跨客户端串扰；所谓周期cleanup只执行一次且生产示例无删除，归档为`DOC-052`。
+- 2026-08-13：从HTTP监控示例继续反查Histogram wire，确认内部互斥bucket被直接导出且`+Inf`只写超最大桶样本；累计分布、总数不变量与双语契约均被破坏，归档为`METRIC-002`。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
