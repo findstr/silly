@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档374项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档375项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -3145,6 +3145,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：示例接收并检查每个`value,err`，连接成功后用统一finally/xpcall或`<close>`所有权保证close；每次write也检查boolean/error并在首错停止。若保持概念伪代码，必须明确标注省略错误处理且紧邻给出生产完整版本，不能放在“Your First”路径中冒充可运行代码。
 - 回归检查：修复阶段对围栏做LuaLS nilability检查，并覆盖connect refusal、first/second read EOF、write failure和success；所有失败打印原errno、零nil dereference且已建立connection恰好close一次。当前不连接peer。
 
+### DOC-080 — P3 — Getting Started 的安装验证和 Hello 输出仍固定为 0.6，与当前两种版本接口均不符
+
+- 状态：已确认；双语版本围栏、编译期宏、CLI与Lua binding输出格式的确定性静态核对。本轮不执行binary。
+- 位置：`docs/src/{en/,}tutorials/getting-started.md:137-147,176-184`分别声称`./silly --version`输出`0.6`、`silly.version`也为`0.6`。当前`src/silly.h:17-22`定义release为`0.7.1`、major.minor为`0.7`；`src/main.c:109-111`给CLI输出加`v`前缀并使用release，`luaclib-src/lsilly.c:114-116`则向Lua发布major.minor。
+- 触发：按教程在当前审计基线编译后运行安装验证和hello程序；任何正常构建都触发。
+- 影响：用户看到`v0.7.1`和`0.7`而不是两个`0.6`，会误判安装了错误版本或文档/二进制不匹配；发布检查若机械匹配教程输出会失败。更深层地，同一binary的CLI与Lua一个含patch、一个不含patch，教程没有说明这一契约差异，无法用Lua值确认精确修复版本。
+- 证据：两个输出都由编译期宏直接生成，不依赖git tag或运行环境；文档固定字符串与任一真实格式都不相等。该项只记录文档/API版本契约，不把目标1.0尚未修改宏本身当缺陷。
+- 根因：入门页面从0.6时代复制后未随版本宏更新，也没有使用可校验的占位符/构建元数据；CLI release与Lua version粒度差异未文档化。
+- 建议解法：发布前统一版本模型，推荐CLI和Lua都提供完整semver/release，另可暴露major/minor数值；教程用当前发布值或“vX.Y.Z（以构建为准）”并明确格式。CI从源码version source生成/验证文档，不允许手工散落固定版本。
+- 回归检查：修复阶段静态比较源码version、`--version` golden与Lua字段，并扫描双语安装文档中的旧版本字面量；release bump时同一检查必须失败提示更新。当前不执行binary。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -4571,7 +4582,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为374项：P0为0，P1为114，P2为204，P3为56。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 79。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为375项：P0为0，P1为114，P2为204，P3为57。模块分布：CORE 13、METRIC 11、NET 8、SOCK 20、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 80。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4966,6 +4977,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：echo idle timer调度反查确认data callback只把reader放入ready queue；其执行cancel前旧EXPIRE可同步运行并关闭已有activity的连接，归档为`DOC-078`，并发barrier留待修复阶段。
 - 2026-08-13：完成echo-server双语tutorial逐例收口：listener/connect错误、accept ownership、read/write/backpressure、idle timer、并发计数与性能屏障均已核对，映射到`SOCK-020`及`DOC-075`至`078`；randomkey只产小写字母，不构成delimiter候选。
 - 2026-08-13：getting-started首个TCP coroutine反查确认connect/read均丢弃nullable error并把nil继续解引用或交给write，普通拒绝/EOF升级为task异常，归档为`DOC-079`。
+- 2026-08-13：getting-started版本围栏反查确认两处仍固定0.6，当前CLI由宏输出v0.7.1、Lua字段输出0.7；安装验证与Hello golden均不匹配，归档为`DOC-080`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。
