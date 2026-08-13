@@ -1,6 +1,6 @@
 # Silly `net` 全量审计记录
 
-> 状态：1.0 `net` 完成性反证审计进行中；当前归档362项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
+> 状态：1.0 `net` 完成性反证审计进行中；当前归档363项master问题与4项cluster分支独有问题，逐文件覆盖账本尚未收口，发布继续阻断
 > 审计日期：2026-08-06 至 2026-08-13
 > 源码目录：`/home/findstrx/Documents/Codex/2026-08-06-remote/silly`
 > 上游：`https://github.com/findstr/silly.git`
@@ -364,6 +364,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 根因：内部轻量request/process sequence被直接作为公共“global ID”暴露，接口命名和文档把局部递增性质升级成了分布式唯一性保证；安全示例又在没有entropy/namespace的情况下复用它。
 - 建议解法：若保留现实现，将API改名/契约明确为`next_local_id`且只允许短生命周期进程内关联，回绕前失败；真正`genid`采用UUIDv4/UUIDv7、ULID或包含足够随机instance ID与宽counter/time的方案，并定义字符串/128-bit表示。JWT `jti`必须用CSPRNG生成至少128-bit不可预测唯一值，不能用可预测计数器。
 - 回归测试：修复阶段用两个独立generator实例、模拟重启、counter边界与并发调用验证无碰撞；JWT示例断言jti格式、entropy与跨进程唯一性，并测试blacklist只命中目标token。当前不运行多进程或生成大量ID。
+
+### CORE-012 — P2 — `patch:collectupval(module)` 把所有字段当函数，普通常量字段使热更新立即崩溃
+
+- 状态：已确认；patch table traversal、debug API前置条件、现有test与双语hot-reload主流程的确定性静态核对。本轮不加载/替换模块或执行hotfix。
+- 公开契约：`collectupval(module)`应接受普通Lua module table，只分析其中function字段；模块包含`VERSION`、常量、子table或配置值是常规形态，不能在任何状态变更前因非函数字段崩溃。
+- 位置：`lualib/silly/patch.lua:54-70`检测参数为table后，对`pairs(f_or_t)`得到的每个value无条件调用`collectfn(fn,...)`；`:15-18`立即把该值传给`debug.getinfo(fn,"u")`。双语hot-reload guide把module table作为唯一主入口，并在`guides/hot-reload.md:400-514,600-630,993-1013`明确使用含配置/`VERSION`/`BUILD_TIME`等非function字段的模块后再调用collectupval。
+- 触发：任一module返回`{VERSION="1.2.3", handler=function() ... end}`或包含数字/table字段，按指南执行`P:collectupval(module)`；第一个遍历到非function value即触发debug参数错误，遍历顺序还使故障看似随机。
+- 影响：官方“标准五步”hot reload无法处理典型版本化/配置化模块，生产console hotfix在join和替换前异常；若脚本已把`package.loaded[name]`清空且require/恢复缺少finally，异常还可能留下module cache临时状态。发布宣称的零停机修复路径因此在最常见模块shape上不可用。
+- 证据：table分支没有`type(fn)=="function"`过滤，`collectfn`也没有非function返回；现有`test/testpatch.lua`所有M1/M2 export table只放functions，因此没有反例。指南的版本管理表明确只有两个string字段，配置示例也导出scalar/table accessor组合，均与实现假设冲突。
+- 根因：测试fixture把“module table”简化为纯function map，实现把该隐含约束写进遍历器但API/文档未声明；scalar字段的替换/保留策略也没有被设计。
+- 建议解法：table分支只收集function字段，并在返回结构中明确区分可patch函数与普通exports；替换阶段对scalar/table字段定义copy、preserve或迁移hook策略。若只支持纯function map，应在入口同步验证并改名/文档化，但这与版本/配置示例不兼容。加载与`package.loaded`恢复必须用finally式保护。
+- 回归测试：修复阶段覆盖string/number/boolean/table/userdata/function混合exports、metatable module、遍历不同顺序及require失败；断言只分析functions、普通字段按契约迁移且package.loaded始终恢复。保留现有closure/timer tests并新增指南真实module shape。当前不执行hot reload。
 
 ### METRIC-001 — P2 — Prometheus label value 未转义，网络字段可破坏或注入抓取文本
 
@@ -4436,7 +4448,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为362项：P0为0，P1为112，P2为197，P3为53。模块分布：CORE 11、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 70。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
+当前滚动统计为363项：P0为0，P1为112，P2为198，P3为53。模块分布：CORE 12、METRIC 11、NET 8、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 19、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 39、REDIS 10、MYSQLC 9、MYSQL 20、ETCD 17、DOC 70。完成性反证审计尚未结束，因此该数字是滚动基线而非最终封板数。
 
 当前滚动基线不等于代码可发布：112项P1默认全部阻断1.0；191项P2中涉及wire framing/状态机、数据或事务一致性、认证、无限等待、资源泄漏、close后复活及跨平台未定义行为的条目也按阻断处理，除非维护者逐项书面接受风险并给出部署缓解。逐文件完成性反证仍可能归档新问题；按用户要求延期的独立peer、畸形输入、并发barrier、fault injection、版本矩阵和修复后sanitizer也保留到修复阶段。
 
@@ -4817,6 +4829,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：隔离Registry导出反查确认runtime已有`gather(r)`，双语reference却漏掉参数并教用户手写不支持Histogram/转义的formatter，归档为`DOC-068`。
 - 2026-08-13：Gauge活跃连接示例反查确认其按每个HTTP stream增减而非TCP lifecycle，H1/H2容量语义错误且异常路径永久漏减，归档为`DOC-069`。
 - 2026-08-13：Collector contract反查确认LuaLS/主reference要求name+new+collect，但Prometheus/Registry官方示例与runtime只要求collect，归档为`DOC-070`。
+- 2026-08-13：hot-reload依赖反查确认`patch:collectupval(table)`把每个export value无条件交给debug.getinfo；典型VERSION/config常量使官方主流程立即崩溃，归档为`CORE-012`。
 - 2026-08-13：完成Counter/Gauge/Histogram/Labels双语reference收口；Counter与Histogram完整示例中的raw path永久label并入既有`DOC-051`，四组页面全部改为已审有归档，不重复计数。
 - 2026-08-13：完成metrics依赖闭包收口：runtime、默认collectors、`testprometheus.lua`及七组双语reference全部映射；Collector/Prometheus/Registry剩余问题归入既有`METRIC-003/005/009至011`与`DOC-051/054/068/070`，无未归档高置信候选。
 - 2026-08-13：当时完成一次发布收口：主报告与HANDOFF的323组ID/严重度逐项相同，无重复编号；除已留有撤回记录的`HPACK-003`外各模块编号连续，模块与严重度合计一致。随后按真实文件清单做完成性反证时发现目录级账本不足以证明逐文件覆盖，故重新打开审计；该历史结论不再代表最终封板。

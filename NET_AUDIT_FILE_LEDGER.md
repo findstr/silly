@@ -179,7 +179,7 @@
 | `lualib/silly/hive.lua` | 范围外 | optional hive codec wrapper | cluster只接收caller-supplied marshal |
 | `lualib/silly/internal/autoload.lua` | 已审无新增 | native module searcher | net/codec native加载与types路径已核对 |
 | `lualib/silly/internal/stdin.lua` | 范围外 | REPL/stdin helper | 不参与socket engine协议处理 |
-| `lualib/silly/patch.lua` | 范围外 | Lua patch helper | 不在net/storage调用图 |
+| `lualib/silly/patch.lua` | 已审有归档 | CORE-012 | hot-reload guide依赖；module exports/upvalue traversal |
 | `lualib/silly/security/jwt.lua` | 范围外 | application JWT实现 | 非内建net认证；其文档错误用genid已归CORE-011 |
 | `lualib/silly/signal.lua` | 已审有归档 | DOC-058 | single-handler replacement与logger SIGUSR1 ownership |
 | `lualib/zproto.lua` | 范围外 | optional zproto wrapper | 非cluster固定wire codec |
@@ -273,7 +273,7 @@
 | `test/testlog.lua` | 已审有归档 | CORE-010、MYSQLC-008等日志路径 | trace/log formatting与payload producer边界 |
 | `test/testmutex.lua` | 已审无新增 | DNS/cluster/gRPC/Redis互斥 | FIFO/owner/wakeup正常与错误路径 |
 | `test/testmysql.lua` | 已审有归档 | MYSQL/MYSQLC全部项 | 41组auth/pool/prepare/result/transaction/data type |
-| `test/testpatch.lua` | 范围外 | Lua patch helper | 不在net调用图 |
+| `test/testpatch.lua` | 已审有归档 | CORE-012 | hot-reload依赖；仅覆盖纯function export table |
 | `test/testprometheus.lua` | 已审有归档 | METRIC-001至011、CORE-008 | counter/gauge/histogram/registry正常路径与wire/异常/重入/GC盲区 |
 | `test/testredis.lua` | 已审有归档 | REDIS-001至010 | 18组RESP/pipeline/concurrency/reconnect/close |
 | `test/testrsa.lua` | 已审有归档 | MYSQL auth/pkey依赖 | RSA encrypt/decrypt/sign/verify正常路径 |
@@ -310,7 +310,7 @@
 | `docs/src/en/concepts/README.md` | 范围外 | 英文概念索引 | 无net契约 |
 | `docs/src/en/guides/README.md` | 已审无新增 | guide索引 | 页面集合与链接 |
 | `docs/src/en/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/en/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
+| `docs/src/en/guides/hot-reload.md` | 审阅中 | CORE-012、reload/close/config契约 | 继续核timer与rollback生命周期示例 |
 | `docs/src/en/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/en/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/en/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
@@ -375,7 +375,7 @@
 
 | `docs/src/guides/README.md` | 已审无新增 | 中文guide索引 | 页面集合与链接 |
 | `docs/src/guides/error-handling.md` | 已审有归档 | DOC-001/002及storage错误项 | errno、HTTP、DB错误示例 |
-| `docs/src/guides/hot-reload.md` | 审阅中 | reload/close/config契约 | 需再核TLS listener与task生命周期示例 |
+| `docs/src/guides/hot-reload.md` | 审阅中 | CORE-012、reload/close/config契约 | 继续核timer与rollback生命周期示例 |
 | `docs/src/guides/http-best-practices.md` | 已审有归档 | DOC-017/048至052/054至056、METRIC-001/002 | 1885行逐段收口：TLS/body/timeout/rate/proxy/status/metrics |
 | `docs/src/guides/logging-monitoring.md` | 已审有归档 | CORE-010/011、DOC-051/054/057至062/064、METRIC-002至006 | logger/trace/HTTP/metrics/PromQL/alert逐例收口 |
 | `docs/src/guides/mysql-connection-pool.md` | 已审有归档 | DOC-027/028/030至033 | pool/transaction/retry/monitoring示例 |
