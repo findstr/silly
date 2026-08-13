@@ -47,6 +47,8 @@
 
 状态只允许 `待审`、`审阅中`、`已审无新增`、`已审有归档`。已有问题数量不能自动把文件标为完成。
 
+本节保留阶段摘要；可执行的逐路径账本在[`NET_AUDIT_FILE_LEDGER.md`](NET_AUDIT_FILE_LEDGER.md)。当前第一版已与仓库实际`src/**`和`luaclib-src/**`集合做差，两个集合均无漏项或多项；Lua runtime依赖已逐路径列出。tests、LuaLS和双语文档仍待追加，因此完成判定继续暂缓。
+
 ### 3.1 Engine 和 native 层
 
 - `src/socket.c`：已审有归档；既有 `SOCK-001` 至 `SOCK-014`，本轮新增 `SOCK-015`、`SOCK-017`、`SOCK-019`，平台共用调用链另见 `SOCK-016/018`。

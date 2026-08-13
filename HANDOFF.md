@@ -567,7 +567,7 @@ SPEC-ID | MUST/SHOULD | 实现位置 | client/server | 符合/偏离/不适用 |
 ## 11. 给新会话的可复制启动指令
 
 ```text
-Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 335项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md和NET_1_0_RELEASE_AUDIT_PLAN.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
+Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 335项及cluster分支4项，逐文件覆盖账本尚未收口，P1/P2 blocker也尚未修复。先完整读取HANDOFF.md、SILLY_NET_REVIEW.md、NET_1_0_RELEASE_AUDIT_PLAN.md和NET_AUDIT_FILE_LEDGER.md，核对当前分支与工作树，继续按仓库真实文件清单补齐零引用文件、测试、LuaLS及双语文档；每个新问题独立记录和提交。保留用户改动；当前只做静态审阅，不修改产品源码，不新增或运行重现、协议流量、畸形输入、并发barrier和fault injection。
 ```
 
 ## 12. 当前文件清单
@@ -575,6 +575,8 @@ Silly net 1.0完成性反证审计仍在进行；当前滚动基线为master 335
 ```text
 SILLY_NET_REVIEW.md
 HANDOFF.md
+NET_1_0_RELEASE_AUDIT_PLAN.md
+NET_AUDIT_FILE_LEDGER.md
 review-repros/socket_exit_pending_wlist.lua
 review-repros/socket_stat_close_race.lua
 review-repros/tcp_immediate_connect_fd_leak.lua
