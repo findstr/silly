@@ -497,6 +497,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：拆分为`ciphers`（TLS<=1.2）与`ciphersuites`（TLS1.3），对每个certificate ctx分别调用并检查对应API；或提供结构化TLS policy后集中生成两套列表。启动时记录最终生效的min/max version和两套suite集合，未知/全被忽略的token应fail fast；同步修正双语指南，不能再把TLS 1.3名称传给旧API。
 - 回归测试：修复阶段用OpenSSL 1.1.1/3.x分别配置只允许一个TLS1.2 suite和一个TLS1.3 suite，枚举实际协商结果；覆盖未知token、空列表、混合列表、多SNI ctx及reload，断言未列出的TLS1.3 suite被拒绝且失败不会留下listener/污染旧策略。当前只保存静态证据。
 
+### TLS-011 — P1 — plaintext buffer 以 signed int 无检查扩容，远端累计数据可触发溢出与越界写
+
+- 状态：已确认；native buffer算术、`SSL_read`目标范围与Lua默认limit数据流静态核对。本轮不发送大流量、不做内存压力或sanitizer复现。
+- 内存安全契约：攻击者可推动的累计buffer尺寸必须在任何有符号运算和allocation前以checked `size_t`验证；达到hard cap应在仍有合法指针/长度时终止连接，不能依赖接近地址空间耗尽后的整数回绕。
+- 位置：TLS plaintext `struct buf`全部字段为`int`在`luaclib-src/ltls.c:30-35`；首次分配、`size+offset+size`与`cap*3/2`扩容在`:96-135`；每个record循环取得目标指针/长度并调用`SSL_read`在`:646-664`。Lua默认无`buflimit`且先push/decrypt后检查可选limit在`lualib/silly/net/tls.lua:105-137,242-279`，资源无界性另见`SOCK-012`。
+- 触发：已握手peer持续发送application data，而handler不读取或读取速度长期低于输入，且未设置较小limit；累计未读plaintext让`cap/size`接近`INT_MAX`。这可由正常长连接流量累计，不需要畸形TLS record；32-bit构建或受限地址空间会更早碰到分配边界。
+- 影响：`b->size+b->offset+size`和`b->cap*3/2`发生C signed overflow（UB），优化器可据此产生不可预测控制流；现实结果包括比较错误而跳过扩容、负/过小capacity隐式转为巨大`size_t`、丢失原realloc pointer，随后以错误的`s/e`指针和`e-s`长度调用`SSL_read`。最终可造成heap越界写、崩溃或内存破坏，而不只是已有条目描述的可控内存耗尽。
+- 证据：四个容量字段及`buf_prepsize`参数均为int，所有加法/乘法在signed域发生；没有`INT_MAX`、`SIZE_MAX`、hard cap或checked helper。`buf_prepsize`返回`b->buf+b->offset+b->size`，caller又以`buf+cap`相减并窄化给`SSL_read`，因此任何回绕都会直接污染写地址/长度。可选Lua high-water检查发生在整次`tls.push`和SSL_read循环之后，且默认nil，不能作为native安全边界。
+- 根因：早期固定小buffer实现把OpenSSL I/O的`int`长度类型扩展成了整个累计storage的类型，并用增长算法保证容量，却没有区分单次read长度与总容量，也没有协议/产品资源上限。
+- 建议解法：累计offset/size/cap改用`size_t`并使用checked-add/multiply；在每次指针计算前验证invariant `offset<=cap && size<=cap-offset`，单次传给OpenSSL的长度再限制为`INT_MAX`。设置远低于表示上限的native hard cap和安全默认Lua limit，达到cap时返回结构化limit错误并关闭TLS状态；realloc使用临时指针并定义OOM收尾，不能覆盖旧owner。
+- 回归测试：修复阶段用小型可配置cap/allocator stub覆盖恰好cap、cap+1、compact后增长、乘法/加法边界与realloc失败；断言只返回limit/OOM并释放一次，ASan/UBSan无越界或signed overflow。再以慢reader验证远端输入受硬上限约束。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -2942,7 +2954,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为233项：P0为0，P1为94，P2为127，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 10、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为234项：P0为0，P1为95，P2为127，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 11、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -2984,6 +2996,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：排除DNS共享TCP recv task覆盖新连接的候选；close只将reader排入wakeup queue，worker在下一条消息前完成旧task收尾，期间没有可发布新连接的yield点。
 - 2026-08-13：确认DNS双语reference声明的`sys.dns.resolv_conf`/`sys.dns.hosts`环境变量没有任何实现consumer，设置后仍读取固定系统路径；归档为`DOC-008`。
 - 2026-08-13：按OpenSSL契约确认TLS `ciphers`只调用旧cipher-list API，TLS1.3 suites仍使用库默认；双语安全指南的混合列表会静默假成功；归档为`TLS-010`。
+- 2026-08-13：确认TLS plaintext buffer以signed int累计并做无检查加法/倍增，远端长期输入接近表示上限时可回绕并污染SSL_read写地址/长度；归档为`TLS-011`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
