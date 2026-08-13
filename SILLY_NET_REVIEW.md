@@ -1687,17 +1687,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在connect/login/query最外层使用protected cleanup guard：创建后立即登记connecting资源，任意异常原子标broken、物理关闭、递减capacity并转换成structured ERR；只有完整消费且验证终态后commit健康状态。C codec可改为`nil,error`，但仍需finally防守应用/runtime异常。
 - 回归测试：修复阶段在每个handshake/prepare/column/row字段边界截断并触发各codec error，断言无异常越出public API、fd/open_count恢复、连接不入idle，后续query新建干净连接。当前不生成畸形packet。
 
-### MYSQL-012 — P2 — handshake auth seed 用错 capability 且固定读取 12 bytes
+### MYSQL-012 — P2 — handshake/auth-switch 错误裁剪认证数据并越过 capability 交集
 
 - 状态：已确认；HandshakeV10 layout与parser静态核对。
-- 规范：[MySQL HandshakeV10](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_connection_phase_packets_protocol_handshake_v10.html)按`auth_plugin_data_len`定义part-2长度；[MariaDB connection protocol](https://mariadb.com/docs/server/reference/clientserver-protocol/1-connecting/connection)明确part 2由`CLIENT_SECURE_CONNECTION`控制，而`PLUGIN_AUTH_LENENC_CLIENT_DATA`控制的是client handshake response中auth data的长度编码。
-- 位置：capability constants在`lualib/silly/store/mysql.lua:152-167`；initial handshake解析在`:359-403`；client response flag/format在`:414-465`。
-- 触发：server支持SECURE_CONNECTION/PLUGIN_AUTH但不支持PLUGIN_AUTH_LENENC_CLIENT_DATA，或auth plugin data长度不是代码假定的20-byte seed/12-byte part 2；合法旧版、代理或其他auth plugin可出现。
-- 影响：driver遗漏part 2而用8-byte seed计算native/caching token，或从seed中间解析plugin name，导致合法server认证失败；固定offset还可能把NUL/plugin name切错并触发unpack异常。对未知plugin代码又默认计算mysql_native token却宣告原plugin，进一步制造不一致握手。
-- 证据：`:373`以`CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA`决定是否读取server seed part 2；内部`local len = 12`完全忽略已解析的`auth_plugin_data_len`和SECURE_CONNECTION。之后若PLUGIN_AUTH存在便从该假定offset读取NUL string。
-- 根因：把server handshake字段presence、client response encoding和具体plugin seed长度合并成一个MySQL-8特例。
-- 建议解法：按negotiated capability逐字段、remaining length和advertised auth length解析HandshakeV10；part 2长度使用规范公式并安全处理terminating NUL，再把完整plugin data交给plugin-specific handler。client flags取双方intersection，未知plugin明确拒绝或走实现的auth-switch机制。
-- 回归测试：修复阶段构造SECURE/PLUGIN_AUTH/LENENC三flag组合及auth length 0/9/20/21/其他plugin，分别与MySQL 5.7/8和MariaDB代理互操作；当前不新增handshake fixture。
+- 规范：[MySQL HandshakeV10](https://dev.mysql.com/doc/dev/mysql-server/8.0.46/page_protocol_connection_phase_packets_protocol_handshake_v10.html)按`auth_plugin_data_len`定义part-2长度；[MariaDB connection protocol](https://mariadb.com/docs/server/reference/clientserver-protocol/1-connecting/connection)明确part 2由`CLIENT_SECURE_CONNECTION`控制，而`PLUGIN_AUTH_LENENC_CLIENT_DATA`控制client response的auth长度编码；[MySQL AuthSwitchRequest](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_switch_request.html)把plugin data定义成`string[EOF]`，不是无条件NUL结尾字符串。
+- 位置：capability constants在`lualib/silly/store/mysql.lua:152-167`；initial handshake解析在`:359-403`；client response flag/format在`:414-465`；auth-switch extraction在`:482-505`。
+- 触发：server支持SECURE_CONNECTION/PLUGIN_AUTH但不支持PLUGIN_AUTH_LENENC_CLIENT_DATA，auth plugin data长度不是代码假定的20-byte seed/12-byte part 2，或AuthSwitchRequest携带不以NUL结尾的合法20-byte opaque nonce；合法旧版、代理或其他auth plugin均可出现。server不提供代码无条件声明的某个base capability时也会产生不一致response grammar。
+- 影响：driver遗漏part 2而用8-byte seed计算native/caching token，或从seed中间解析plugin name，导致合法server认证失败；固定offset还可能把NUL/plugin name切错并触发unpack异常。AuthSwitch路径无条件删除payload最后一byte，使20-byte nonce变19-byte并确定性生成错误token。对未知plugin代码又默认计算mysql_native token却宣告原plugin，进一步制造不一致握手；不取server capability交集会让双方按不同字段presence解释response。
+- 证据：`:373`以`CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA`决定是否读取server seed part 2；内部`local len=12`完全忽略已解析的`auth_plugin_data_len`和SECURE_CONNECTION。AuthSwitch随后固定`sub(data,pos,#data-1)`，没有检查最后一byte是否真为NUL，直接违反其EOF边界。client flags只有PLUGIN_AUTH/LENENC两项按server条件加入，其余LONG/CONNECT_WITH_DB/PROTOCOL_41/TRANSACTIONS/SECURE/MULTI项无条件声明，并非双方intersection。若initial plugin不在两个已知值内，`:409-412`还生成native token但在response中发送原plugin名。
+- 根因：把server handshake字段presence、client response encoding、可选NUL和具体plugin seed长度合并成一个MySQL-8特例；capability也按本地愿望拼装而未形成唯一negotiated state。
+- 建议解法：按negotiated capability逐字段、remaining length和advertised auth length解析HandshakeV10；part 2长度使用规范公式，只在plugin规则明确要求且最后一byte确为NUL时移除terminator，再把完整EOF payload交给plugin handler。client flags取双方intersection，未知plugin明确拒绝或走实现的auth-switch机制。
+- 回归测试：修复阶段构造SECURE/PLUGIN_AUTH/LENENC三flag组合及auth length 0/9/20/21/其他plugin；AuthSwitch覆盖19/20/21-byte data、末尾为零/非零和embedded NUL，断言nonce逐byte保真；分别与MySQL 5.7/8和MariaDB/proxy互操作。当前不新增handshake fixture。
 
 ### MYSQL-013 — P2 — `COM_PING` 响应无条件按 OK 解码，server ERR 可被伪造成健康
 
@@ -4032,6 +4032,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：扩展`DOC-027`证据：双语通用错误处理指南还有第二个接受任意SQL的2006/2013自动重试wrapper，即使注释未实现重建，也会在结果未知后重新调用原statement；不重复计数。
 - 2026-08-13：扩展`DOC-028`到全部MySQL文档调用面：六份双语文件共60行不存在的`silly.wait/sleep/time`，另有把signal函数当object及错误`INT`名称、standalone block缺task/time import；不重复计数。
 - 2026-08-13：确认MySQL双语监控在调用pool query前连续采集wait/query时间戳，所谓等待几乎恒为零，真实checkout排队全被误算成SQL执行；归档为`DOC-031`，未运行计时或并发barrier。
+- 2026-08-13：补强`MYSQL-012`：AuthSwitch的plugin data按规范是EOF opaque bytes，代码却无条件删除末byte；initial response多数capability也未取server交集，未知plugin名与native token可不一致；不重复计数。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
