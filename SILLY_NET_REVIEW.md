@@ -2278,6 +2278,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：删除通用SQL自动重放示例；连接失败后淘汰旧pool/connection只供**后续**操作使用，本次调用返回结构化`outcome_unknown`。只允许在可证明write前失败或调用方明确标记幂等read时自动重试；写操作必须由业务使用唯一请求ID/unique constraint、幂等表或可验证transaction设计，并显式处理session state丢失。
 - 回归检查：文档测试建立read-only重试与unknown-write两条API示例；修复阶段在write前、server execute前、commit后OK前分别断链，只有第一类可透明重试，后两类向调用方暴露不确定结果且数据库最多出现一次业务效果。当前不执行SQL或fault injection。
 
+### DOC-028 — P3 — MySQL 双语示例调用不存在的 `silly.wait/sleep/time`，预热和监控首次运行即失败
+
+- 状态：已确认；MySQL双语reference/guide与真实module export逐项静态核对。本轮不运行文档代码。
+- 位置：reference健康检查调用`silly.sleep`在`docs/src/{en/,}reference/store/mysql.md:732-785`；连接池guide的预热、活跃连接、错误率和监控面板在`docs/src/{en/,}guides/mysql-connection-pool.md:884-1120`，使用`silly.wait`、`silly.sleep`、`silly.time.now`及未导入的`task`。真实顶层export在`lualib/silly.lua:1-39`，等待/睡眠/时间API分别属于`task.wait`、`silly.time.sleep/now`与`waitgroup`。
+- 触发：读者复制reference的生产连接池健康检查，或guide中任一“预热连接池/监控指标”示例；这些块被作为可直接使用的完整代码展示。
+- 影响：reference首次走到30秒暂停即抛`attempt to call a nil value (field 'sleep')`；guide预热在`task.fork`处就因全局task为nil失败，即使补import也在`silly.wait`失败。监控示例同样在fork、time或首次sleep失败，无法建立文档承诺的连接、等待任务或持续采样。reference还在health task未join时由外层关闭pool，使修正函数名后仍会让后台task访问已关闭对象。
+- 证据：`require "silly"`只导出pid/version/register/exit等runtime入口，没有`wait`、`sleep`或`time`字段；`task.fork`也不是可由`silly.wait(thread)`join的future API。guide四个代码块未`require "silly.task"`/`silly.time`，并把local loop变量命名为`task`进一步混淆module。双语文件逐行复制同一调用，因此不是单一翻译笔误。
+- 根因：文档把多个module的API聚合到想象中的`silly` façade，并用裸thread list模拟join；代码围栏只做语法展示，没有unknown-member/standalone import或生命周期检查。
+- 建议解法：所有示例显式`local task=require "silly.task"`、`local time=require "silly.time"`并调用`time.sleep/time.now`；预热改用`waitgroup:fork/wait`，健康检查保存stop/join owner并在pool close前结束。将`lua validate`块加入最小stub/LuaLS执行检查，禁止未声明global和不存在member。
+- 回归检查：逐个提取双语MySQL代码块，在stub pool上推进一次fork/sleep/wakeup/close，断言无unknown member/global且关闭发生在background task结束后；中英文调用序列保持一致。当前不执行示例。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3680,7 +3691,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为295项：P0为0，P1为106，P2为163，P3为26。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 27。
+当前滚动统计为296项：P0为0，P1为106，P2为163，P3为27。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 38、REDIS 10、MYSQLC 8、MYSQL 20、ETCD 16、DOC 28。
 
 建议按依赖关系分五批修复：
 
@@ -3981,6 +3992,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认initial handshake宣告`sha256_password`时driver仍生成mysql_native SHA-1 token，只有auth-switch分支实现RSA exchange，合法账号可确定性认证失败；归档为`MYSQL-020`，未创建账号或连接server。
 - 2026-08-13：确认capability协商前initial ERR没有SQLSTATE，但native parser无条件消费一个marker byte且不回退，message首字节丢失、空message抛异常；归档为`MYSQLC-008`，未构造packet。
 - 2026-08-13：确认MySQL双语连接池指南在Lost connection后重连并无条件重放任意SQL，commit后丢回包可重复执行非幂等写并丢失session状态；归档为`DOC-027`，未执行SQL或断线。
+- 2026-08-13：确认MySQL双语reference/连接池guide的健康检查、预热和监控调用不存在的`silly.wait/sleep/time`并遗漏task import，首次运行即失败；归档为`DOC-028`，未执行示例。
 - 2026-08-12：确认etcd client关闭后keepalive仍静默写registry但没有存活owner，lease可在调用“成功”后到期，记录为`ETCD-015`；未等待lease或运行close竞态。
 - 2026-08-12：确认MySQL transaction conn没有command并发门禁，第二协程可先写命令再触发single-reader断言并留下错配response，记录为`MYSQL-017`；未运行并发barrier或数据库请求。
 - 2026-08-12：确认MySQL pool以array尾部pop实现waiter handoff，持续新请求可让最旧waiter无限饥饿，记录为`MYSQL-018`；未运行连接池压力或barrier。
