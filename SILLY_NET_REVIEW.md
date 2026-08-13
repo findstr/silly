@@ -2116,6 +2116,17 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：示例至少显式加入`tls=true`与`alpnprotos={"h2","http/1.1"}`，检查listen返回值，并说明顺序/选择策略；所有双语说明统一声明certs本身不会启用TLS、未协商h2会回退H1。产品层可考虑在提供certs但`tls~=true`时fail closed，或为HTTP TLS server给出文档化安全ALPN默认，但不能静默明文。
 - 回归测试：修复阶段把双语示例提取为配置契约测试，以stub断言选择tls.listen且certs/ALPN被转发；独立client验证协商h2并实际得到`stream.version=="HTTP/2"`。另覆盖certs无tls时参数错误、TLS无ALPN时明确H1/failure策略，防止安全示例再次漂移。当前只保存静态证据。
 
+### DOC-018 — P2 — WebSocket 教程的消息大小检查发生在无界缓冲之后，不能防止其声称的内存耗尽
+
+- 状态：已确认；双语安全建议与WebSocket frame/message读取数据流的确定性静态对照。本轮不发送大frame或无限fragments。
+- 位置：双语教程把应用层检查描述为“防止恶意大消息”，见`docs/src/{en/,}tutorials/websocket-chat.md:1839-1864`；完整frame读取与fragment聚合在`lualib/silly/net/websocket.lua:51-95,139-176`，公开API没有size option，详见既有`WS-005`。
+- 触发：部署者照教程在`local data,typ=sock:read()`成功返回后检查`#data > 10240`；恶意peer先声明巨大单帧长度并缓慢发送，或发送总量无界、最后才置FIN的fragment序列。
+- 影响：10 KiB判断只会拒绝已经完整驻留Lua内存的结果。单帧路径在检查前要求底层收齐wire length，fragment路径在检查前保留每段并最终`table.concat`再分配完整消息；进程可在进入示例判断前已经OOM、长时间GC或被大量连接耗尽。教程将事后业务校验包装为资源防护，容易让1.0部署错误认为已设置协议输入预算。
+- 证据：`read_frame`把未设上限的64-bit payload直接传给`conn:read(payload)`；`s.read`直到FIN才concat并返回。教程示例只能观察返回后的`data`，既不能在header后拒绝frame，也不能在每段累积前中止，而且`websocket.connect/upgrade/newsocket`均没有`max_frame_size`或`max_message_size`入口。连接数限制同样在upgrade已完成后执行，但本条只记录明确标为消息大小防护的错误承诺。
+- 根因：文档把应用语义层的post-read长度校验误当成transport/protocol层的admission limit，没有核对异步API返回前的缓冲所有权与分配顺序。
+- 建议解法：先按`WS-005`在WebSocket parser中提供有安全默认值、可配置的frame/message上限，并在读取payload及追加fragment之前检查；教程显式把这些选项配置在listener/upgrade或socket创建处。返回后的`#data`检查可以保留为房间业务上限，但必须说明它不承担内存DoS防护。
+- 回归测试：修复阶段让文档示例使用真实size配置，并以注入式reader覆盖header声明超限但payload未到、许多小fragment累计越界及恰好边界；断言在分配/拼接超限内容前终止并释放stash。双语代码块做同一schema检查。本轮不执行示例或构造流量。
+
 ### SOCK-001 — P2 — 排队 UDP 发送失败后 `sendsize` 永久虚高
 
 - 状态：已确认；确定性路径推导，动态故障注入待补。
@@ -3350,7 +3361,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为268项：P0为0，P1为100，P2为147，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 17。
+当前滚动统计为269项：P0为0，P1为100，P2为148，P3为21。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 9、HTTP1 23、COMP 1、WS 10、H2 41、HPACK 3、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 18。
 
 建议按依赖关系分五批修复：
 
@@ -3428,6 +3439,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认zero-length H2 frame会在检查PADDED前按空payload短路，缺失Pad Length的DATA仍可正常END_STREAM；归档为`H2-041`。
 - 2026-08-13：补强`H2-003`：padding在flow-control记账前已被剥离，守规peer发送padded DATA也会因Pad Length/padding credit永不回补而停顿；不重复计数。
 - 2026-08-13：确认双语HTTP/2最佳实践示例遗漏tls开关和server ALPN，原样实际启动明文H1且证书不生效；归档为`DOC-017`并按安全误导定为P2。
+- 2026-08-13：确认双语WebSocket教程在`sock:read()`完整缓冲后才检查10 KiB并错误声称可防恶意大消息；归档为`DOC-018`，实现侧根因仍由`WS-005`覆盖。
 - 2026-08-13：确认H2 pool entry以lastfree=0发布且stream close无release时间，首次扫描会把刚空闲channel当超时；归档为`HTTPC-008`。
 - 2026-08-13：确认HTTP pool以浮点除法派生timer周期，奇数idle_timeout在入池后抛类型异常，非正值可形成0ms扫描循环；归档为`HTTPC-009`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
