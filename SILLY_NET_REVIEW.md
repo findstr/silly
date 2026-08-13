@@ -557,6 +557,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：在任何SSL_CTX创建前先于Lua层/独立C pass完整验证cert数组、每项table及cert/key string并固定引用；随后构造阶段不再调用会抛的API。或创建后立即写入entry让userdata成为owner，失败时清空/幂等销毁。公开listen/reload用protected copy-build-commit返回稳定错误，并保证敏感PEM不进入日志。
 - 回归测试：修复阶段逐项覆盖cert/key缺失、boolean/table、抛错`__index`、第一/第二证书失败与重复reload；allocator/OpenSSL计数回基线，旧listener/config保持可用，端口无泄漏，错误不含key内容。当前只保存静态证据。
 
+### TLS-016 — P2 — 未协商 ALPN 返回空字符串而非 nil，Lua truthiness 会误判为已协商
+
+- 状态：已确认；OpenSSL absence表示、native返回值、Lua字段传播与双语公开契约静态核对。本轮不建立无ALPN/no-overlap握手。
+- API契约：没有协商出ALPN必须以明确absence值表示；双语reference规定`conn:alpnproto()`在未协商时返回nil。Lua中空字符串为truthy，不能把`""`作为nil的等价替代。
+- 位置：native握手成功后无条件读取并push ALPN string在`luaclib-src/ltls.c:611-626`；Lua client/server保存返回值在`lualib/silly/net/tls.lua:169-180,242-263`，getter在`:459-463`；公开契约与示例在双语`docs/src/{en/,}reference/net/tls.md:493-525`。
+- 触发：client未发送ALPN、server未配置ALPN，或双方配置列表没有交集；TLS规范允许握手成功但不选择应用协议。直接`tls.connect`不传`alpnprotos`就是常规可达场景。
+- 影响：OpenSSL以selection length 0表示absence，binding却返回Lua空字符串，`s.alpn`因而不是初始化的nil。任何按文档写`if conn:alpnproto() then ...`或`alpnproto() or default`的代码都会进入“已协商”分支/拒绝使用default，可能把未受ALPN约束的连接交给错误协议parser或绕过required-protocol检查。精确比较`=="h2"`的现有HTTP路径不受truthiness影响，但通用API及其他上层会分叉。
+- 证据：`SSL_get0_alpn_selected`之后不检查`len==0`，始终`lua_pushlstring(data,len)`；Lua handshake对任何成功都执行`s.alpn=alpnproto`。reference明确写“returns nil if not negotiated”，示例也把else作为no negotiation。testssl只覆盖双方共同选择h2，没有未配置/no-overlap断言。
+- 根因：native binding把OpenSSL的字节串输出机械转换为Lua string，没有在FFI边界把zero-length sentinel规范化为Lua optional value；测试只验证positive selection。
+- 建议解法：`len==0`时push nil，否则push非空string；Lua field保持nil。若调用方声明某协议required，另提供/执行显式`required_alpn`校验并在absence/no-overlap时关闭，而不是依赖truthiness；generic TLS仍可允许无ALPN。同步native type stub的optional返回。
+- 回归测试：修复阶段覆盖双方无配置、仅client、仅server、无交集、共同h2/http1和自定义protocol；absence必须严格`==nil`，共同项为非空string，required模式无选择时失败且连接关闭。当前只保存静态证据。
+
 ### DNS-001 — P2 — typed RDATA 解析不受 `RDLENGTH` 边界约束
 
 - 状态：已确认；RFC wire format与确定性parser边界推导。本阶段不新增畸形DNS packet复现。
@@ -3002,7 +3014,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为238项：P0为0，P1为95，P2为131，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 15、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
+当前滚动统计为239项：P0为0，P1为95，P2为132，P3为12。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 16、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 17、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 8。
 
 建议按依赖关系分五批修复：
 
@@ -3049,6 +3061,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认TLS native将可由`__len`提供的Lua证书数量直接窄化为int并以int计算flexible-array大小，可形成零entry ctx或越界写；归档为`TLS-013`。
 - 2026-08-13：确认TLS vectored write逐段进入SSL后才校验后续元素，后段异常/错误会把已生成prefix ciphertext留在out BIO并由未来write迟发；归档为`TLS-014`。
 - 2026-08-13：确认TLS certificate loader先创建SSL_CTX再调用可longjmp的Lua字段类型检查，异常绕过cleanup且指针尚未提交给userdata owner；归档为`TLS-015`。
+- 2026-08-13：确认OpenSSL未协商ALPN的零长度结果被binding转换为空字符串而非文档承诺的nil，Lua truthiness可误判为已协商；归档为`TLS-016`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
