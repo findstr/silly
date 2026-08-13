@@ -206,6 +206,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | HTTPC-003 | P2 | pool lookup为每个失败origin永久创建H1/H2空表，高基数host可使client内存无界增长。 |
 | HTTPC-004 | P2 | hostname固定单次A lookup且只连接首地址，IPv6-only或首地址故障origin不可用。 |
 | HTTPC-005 | P1 | close可与在途建连交错，返回后迟到H1/H2 transport仍重新入池并继续请求。 |
+| HTTPC-006 | P2 | redirect把301/302/303的所有方法改成GET且只清两项body header，破坏PUT/PATCH/DELETE/HEAD语义。 |
 | COMP-001 | P2 | gzip inflate不要求`Z_STREAM_END`或完整消费输入，截断/拼接流可被部分成功接受。 |
 | REDIS-001 | P1 | 畸形RESP会抛出未清理异常并永久占住reader token，使后续请求全部挂起。 |
 | REDIS-002 | P2 | command write失败调用reader-only清理并assert，pipeline则遗留坏socket。 |
@@ -379,7 +380,7 @@ make -j4 TEST=ON MALLOC=glibc SNAPPY=OFF all
 | GRPC-023 | P2 | grpc.listen静默丢弃公开ciphers/backlog配置，TLS策略和listen queue未按调用方设置生效。 |
 | GRPC-024 | P2 | request超限/压缩错误在initial metadata后再次respond，生成含`:status`的非法final HEADERS。 |
 
-当前统计为247条：P1 98、P2 133、P3 16。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11；以主报告中的编号和证据为准。
+当前统计为248条：P1 98、P2 134、P3 16。模块分布为CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11；以主报告中的编号和证据为准。
 
 ## 6. 已保存的三个重现资产
 

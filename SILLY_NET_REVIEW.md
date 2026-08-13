@@ -1084,6 +1084,18 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 建议解法：为client建立lifecycle generation和in-flight connect registry；每个让出点后、创建channel后及返回stream前复查generation/closed，失效时关闭局部conn/channel并返回closed。close先禁止admission，再取消/关闭在途attempt并等待其收尾，最后清pool；releaseh1遇closed只能close，绝不重新归池。与HTTPC-002统一为可取消absolute request context。
 - 回归测试：修复阶段分别把DNS、TCP、TLS、H2 init停在close两侧，覆盖H1/H2和release晚到；断言close返回后无request发送、pool/h1using/in-flight均为空，所有transport关闭且重复close幂等。当前仅记录静态时序。
 
+### HTTPC-006 — P2 — redirect 过度改写 method 且残留 entity headers，跨跳请求语义错误
+
+- 状态：已确认；301/302/303/307/308 method/body/header转换与RFC 9110 redirect语义静态核对。本轮不建立redirect endpoint。
+- 规范：RFC 9110 §15.4.2/15.4.3只允许历史兼容下把`POST`随301/302改为`GET`；其他方法应保留。§15.4.4的303后续是GET或HEAD，原方法为HEAD时仍应HEAD。参见[RFC 9110 3xx定义](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4)。
+- 位置：status分类在`lualib/silly/net/http/client.lua:19-33`，redirect循环与转换在`:329-399`，H1 Expect/body许可消费在`lualib/silly/net/http/h1.lua:556-601`，H2使用同一高层method/header输入。
+- 触发：高层redirect helper以PUT/PATCH/DELETE/HEAD等方法收到301/302/303；也可让POST redirect前header包含`Expect`、`Transfer-Encoding`、`Trailer`、`Content-Encoding`等body元数据。
+- 影响：301/302把PUT/PATCH/DELETE静默改成GET，redirect目标不再执行调用者要求的写操作；303把HEAD改成GET，可能下载本应省略的representation。转换时仅删除Content-Length/Content-Type，残留Expect、TE及其他entity headers会描述一个已被删除的body；H1上的`Expect: 100-continue`还能让新GET在发送结束前等待100/final，与不预期该组合的server永久互等，H2则收到语义不一致字段。行为在H1/H2间还可能因各自body许可不同而分叉。
+- 证据：`method_change_redirect`对301/302/303一律为true，分支无条件`cur_method="GET"; send_body=nil`，完全不检查原method/status组合。清理清单只有`content-length`和`content-type`两项；header table在所有跳之间复用，其余representation/framing/expect字段原样传给下一stream。
+- 根因：redirect policy被简化为status布尔值，没有把原method、status、body replayability与header transformation建模为一次受约束转换。
+- 建议解法：按(status,method)矩阵处理：301/302仅在明确兼容策略下POST→GET，303为HEAD→HEAD、其他→GET，307/308严格保留method/body；提供禁用自动改写/redirect hook。丢弃body时统一移除全部body-specific/framing/Expect/trailer字段并重新生成，保留body时确认可重放且每跳错误/预算受总deadline约束。
+- 回归测试：修复阶段覆盖五种status×GET/HEAD/POST/PUT/PATCH/DELETE、自定义method，以及有无body和Expect/TE/content-* headers；捕获每跳method/header/body，断言语义矩阵、不可重放body策略及H1/H2一致。当前只保存静态证据。
+
 ### HTTP1-008 — P1 — server 不要求唯一合法 Host，也不处理 absolute-form authority
 
 - 状态：已确认；RFC 9112 mandatory routing规则与server parser调用链推导。本阶段不新增Host ambiguity报文。
@@ -3104,7 +3116,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 
 ## 8. 最终统计与修复路线
 
-当前滚动统计为247项：P0为0，P1为98，P2为133，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 5、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
+当前滚动统计为248项：P0为0，P1为98，P2为134，P3为16。模块分布：CORE 7、NET 6、SOCK 19、UDP 1、TLS 18、DNS 18、CLUSTER 15、ADDR 2、URL 3、HTTPC 6、HTTP1 20、COMP 1、WS 10、H2 34、HPACK 2、GRPC 24、REDIS 9、MYSQLC 7、MYSQL 19、ETCD 16、DOC 11。
 
 建议按依赖关系分五批修复：
 
@@ -3162,6 +3174,7 @@ gRPC 审计清单（状态：首轮静态核对完成；修复阶段补独立 pe
 - 2026-08-13：确认H1 fixed-length增量读取每批把`recvbytes`累计两次，可提前通过close完整性检查并把带残留body的连接归池；归档为`HTTP1-018`。
 - 2026-08-13：确认H1 chunked普通空写会编码协议last-chunk却保持stream可写，closewrite空串还会生成双终止块并污染下一消息；归档为`HTTP1-019`。
 - 2026-08-13：确认H1 sender/client/server均以Lua `tonumber`解释Content-Length，符号/hex/指数/小数等非法wire值可与严格peer形成消息边界分叉；归档为`HTTP1-020`。
+- 2026-08-13：确认HTTP redirect把301/302/303的所有method一律改GET，且删除body时残留Expect/TE等entity fields，破坏方法与下一跳消息语义；归档为`HTTPC-006`。
 - 2026-08-06：排除合法 UDP datagram 因 2 MiB 固定接收 buffer 被截断的候选；保留未来 buffer/GSO 变更时的复查条件。
 - 2026-08-06：用 close/stat 最小复现将 `CAND-SOCK-003` 升级为 `SOCK-005`；TSAN 确认 fd/type 数据竞争，同一轮触发未检查 `getsockname` 后的 address-family 断言。
 - 2026-08-06：开始 HTTP/1 RFC 9112 静态矩阵；确认 TE+CL 请求被接受后连接仍可复用，记录为 `HTTP1-001`。按用户要求暂停新增复现代码，先完成协议 review。
