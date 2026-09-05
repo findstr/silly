@@ -9,7 +9,7 @@ local pack = table.pack
 local unpack = table.unpack
 
 local task_running = task.running
-local task_yield = task._yield
+local task_wait = task.wait
 local task_resume = task._resume
 
 local M = {}
@@ -39,7 +39,7 @@ function M.invoke(worker, ...)
 	local t = task_running()
 	local id = c.push(worker, ...)
 	working[id] = t
-	local ok, dat = task_yield("HIVE")
+	local ok, dat = task_wait()
 	if not ok then
 		error(dat[1])
 	end

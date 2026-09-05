@@ -73,6 +73,10 @@ jobs:
           push: true
           tags:   ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Aliyun ACR rejects the OCI 1.1 provenance attestation manifest
+          # ("unknown manifest class for application/vnd.oci.empty.v1+json").
+          # Disabling here keeps the push working on both ghcr.io and ACR.
+          provenance: false
   clean:
     needs: build
     if: github.ref == 'refs/heads/master' || github.event_name == 'release'

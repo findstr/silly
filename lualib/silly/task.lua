@@ -8,6 +8,7 @@ local c = require "silly.c"
 local trace = require "silly.trace.c"
 local queue = require "silly.adt.queue"
 local logger = require "silly.logger.c"
+local debug = debug
 
 local task = {}
 local error = error
@@ -110,9 +111,20 @@ local function task_create(f)
 		local running = corunning()
 		while true do
 			local ret
-			f = NIL
+			local status = task_status[running]
 			task_traceid[running] = nil
 			task_status[running] = nil
+			if status ~= "RUN" then
+				--A swallowed yield error (e.g. yield across a C-call
+				--boundary) leaves the status dirty. Such a task may
+				--have leaked registrations pointing at itself, so it
+				--must never go back to the pool.
+				local info = debug.getinfo(f, "S")
+				log_error("[silly] task exit with stat:", tostring(status),
+					info.short_src, info.linedefined)
+				return
+			end
+			f = NIL
 			copool[#copool + 1] = running
 			ret, f = coyield("EXIT")
 			if ret ~= "STARTUP" then
@@ -178,7 +190,7 @@ function task.wait()
 	local t = task_running
 	local status = task_status[t]
 	if status ~= "RUN" then
-		error("BUG: wait on task stat:" .. status)
+		error("BUG: wait on task stat:" .. tostring(status), 2)
 	end
 	task_status[t] = "WAIT"
 	return task_yield("WAIT")
@@ -223,7 +235,6 @@ end
 
 task._create = task_create
 task._resume = task_resume
-task._yield = task_yield
 
 function task._dispatch_wakeup()
 	while true do

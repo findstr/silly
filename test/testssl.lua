@@ -9,15 +9,21 @@ local testaux = require "test.testaux"
 local errno = require "silly.errno"
 local ETIMEDOUT<const> = errno.TIMEDOUT
 local EEOF<const> = errno.EOF
+local EPIPE<const> = errno.PIPE
+local ECONNRESET<const> = errno.CONNRESET
 
 local is_iocp = silly.multiplexer == "iocp"
 
 local function assert_eof(dat, err, msg_data, msg_err)
+	-- Abrupt close (no close_notify) races: clean FIN -> EOF,
+	-- RST -> CONNRESET, RST with undrained server writes (TLS 1.3
+	-- NewSessionTicket) -> EPIPE. All mean the peer is gone.
+	local gone = err == EEOF or err == EPIPE or err == ECONNRESET
 	if is_iocp then
-		local ok = (dat == nil) and err == EEOF
+		local ok = (dat == nil) and gone
 		testaux.asserteq(ok, true, msg_err)
 	else
-		testaux.asserteq(err, EEOF, msg_err)
+		testaux.asserteq(gone, true, msg_err)
 		testaux.asserteq(dat, nil, msg_data)
 	end
 end
