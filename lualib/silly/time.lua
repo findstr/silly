@@ -6,7 +6,7 @@ local type = type
 local task_running = task.running
 local task_create = task._create
 local task_resume = task._resume
-local task_yield = task._yield
+local task_wait = task.wait
 local timeafter = c.after
 local timercancel = c.cancel
 
@@ -23,7 +23,7 @@ function M.sleep(ms)
 	local t = task_running()
 	local session = timeafter(ms)
 	sleep_session_task[session] = t
-	task_yield("SLEEP")
+	task_wait()
 end
 
 ---@param ms integer

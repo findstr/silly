@@ -1,4 +1,5 @@
 local time = require "silly.time"
+local task = require "silly.task"
 local hc = require "silly.hive.c"
 local hive = require "silly.hive"
 local waitgroup = require "silly.sync.waitgroup"
@@ -68,7 +69,30 @@ do
 	testaux.asserteq(c, 9, "Case 4: result[3]")
 end
 
--- Test 5: Thread Pool Expansion
+-- Test 5: Task status is WAIT while invoking
+--(placed before the timing-sensitive thread scaling tests,
+-- so it always runs even if they fail)
+do
+	local worker = hive.spawn([[
+		return function()
+			return true
+		end
+	]])
+	local invoker
+	task.fork(function()
+		invoker = task.running()
+		local ok = hive.invoke(worker)
+		testaux.asserteq(ok, true, "Case 5: invoke result")
+	end)
+	task.fork(function()
+		--runs while the invoker is blocked waiting for the worker
+		testaux.asserteq(task.status(invoker), "WAIT",
+			"Case 5: invoking task status is WAIT")
+	end)
+	time.sleep(100)
+end
+
+-- Test 6: Thread Pool Expansion
 do
 	hive.limit(2, 4)
 	-- After previous tests, threads might be at min. Let's run one task to ensure the pool is active.
@@ -78,7 +102,7 @@ do
 	hive.invoke(pre_worker)
 
 	local initial_threads = hive.threads()
-	testaux.asserteq(initial_threads, 1, "Case 5: initial threads")
+	testaux.asserteq(initial_threads, 1, "Case 6: initial threads")
 
 	local wg = waitgroup.new()
 	for i = 1, 10 do
@@ -91,21 +115,21 @@ do
 				end
 			]])
 			local ok = hive.invoke(worker)
-			testaux.asserteq(ok, true, "Case 5: task result for i="..i)
+			testaux.asserteq(ok, true, "Case 6: task result for i="..i)
 		end)
 	end
 	wg:wait()
-	testaux.asserteq(hive.threads(), 4, "Case 5: threads scaled up")
+	testaux.asserteq(hive.threads(), 4, "Case 6: threads scaled up")
 end
 
 
--- Test 6: Thread Pool Pruning
+-- Test 7: Thread Pool Pruning
 do
 	-- Ensure pool is scaled up first from previous test
-	testaux.asserteq(hive.threads(), 4, "Case 6: threads before prune")
+	testaux.asserteq(hive.threads(), 4, "Case 7: threads before prune")
 	print("sleep 6 seconds for idle threads")
 	time.sleep(6000)
 	prune()
 	local threads = hive.threads()
-	testaux.asserteq(threads, 2, "Case 6: threads scaled down")
+	testaux.asserteq(threads, 2, "Case 7: threads scaled down")
 end

@@ -470,4 +470,41 @@ testaux.case("Test 17: task.hook", function()
 	testaux.asserteq(#created_tasks, before_count, "Test 17.9: hook cleared successfully")
 end)
 
+testaux.case("Test 18: status is WAIT while sleeping", function()
+	local sleeper
+	task.fork(function()
+		sleeper = task.running()
+		time.sleep(100)
+	end)
+	task.fork(function()
+		--runs while the sleeper is blocked in time.sleep
+		testaux.asserteq(task.status(sleeper), "WAIT",
+			"Test 18.1: sleeping task status is WAIT")
+	end)
+	time.sleep(200)
+end)
+
+testaux.case("Test 19: task with dirty status is not recycled", function()
+	collectgarbage("stop")
+	local dump = task._dump()
+	local dirty
+	task.fork(function()
+		dirty = task.running()
+		--yield across a C-call boundary, error swallowed by pcall
+		local ok = pcall(string.gsub, "x", "x", function()
+			time.sleep(10)
+		end)
+		testaux.asserteq(ok, false, "Test 19.1: yield across C-call boundary fails")
+	end)
+	task.fork(function()
+		--runs after the dirty task exited
+		testaux.asserteq(dump.task_status[dirty], nil,
+			"Test 19.2: dirty task status cleaned")
+		local probe = task.fork(function() end)
+		testaux.assertneq(probe, dirty,
+			"Test 19.3: dirty coroutine is not recycled")
+	end)
+	time.sleep(50) --let the leaked timer fire
+end)
+
 collectgarbage("restart")
