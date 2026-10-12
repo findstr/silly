@@ -1,28 +1,28 @@
 ## Unreleased
 
 ### Added
-- `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
-- HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
-- `client.close()` to gracefully shut down pooled connections.
-- Tests for host header deduplication and user header preservation in both h1 and h2.
+- `net.http.url` for URL parsing, resolution, reconstruction, and query/path escaping; replaces the URL helpers in `net.http.helper` (`parseurl`, `urlencode`, `urldecode`).
+- HTTP client redirects (301/302/303/307/308) with loop detection and a redirect limit, and `client.close()` for graceful connection-pool shutdown.
+- Configurable HTTP/2 PING keepalive for HTTP and gRPC clients and servers: `keepalive.read_idle_timeout` and `keepalive.ping_timeout` (milliseconds). Probes are disabled by default, work without active streams and outside DATA flow control, require a matching ACK, and wake waiters on timeout.
+- `silly.errno` for uniform transport errors with human-readable messages and numeric suffixes. Only `net`, `net.tcp`, `net.tls`, and `net.udp` expose comparable errno contracts; higher-level errors remain opaque strings.
+- Go-backed HTTP/1.1 and HTTP/2 conformance tests, including bidirectional interoperability and HPACK decoder comparisons.
 
 ### Changed
-- URL parsing and encoding extracted from `net.http.helper` into `net.http.url`; `helper.parseurl`/`urlencode`/`urldecode` replaced by `url.parse`/`queryescape`/`pathunescape`.
-- h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
-- h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
-- h1 client `read`/`readall` use a single deadline timer instead of passing timeout to each internal `conn:read`, eliminating timeout amplification across chunked/content-length reads.
-- `cluster.connect` is now eager: DNS resolution and TCP connect happen immediately (yields, must be called in a coroutine). Return signature changed to `peer?, err?`. Connecting to the same address creates independent connections.
-- Auto-reconnect removed. When a connection drops, `call`/`send` returns `nil, "Peer closed"`. Call `cluster.connect()` again to obtain a new peer.
-- `accept` callback signature changed from `function(peer, addr)` to `function(peer)`; client address available via `peer.remoteaddr`.
-- Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field removed.
-- `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
+- HTTP/1.1 and HTTP/2 derive Host/`:authority` from the URL authority and preserve caller-supplied header tables, with one authoritative host header per request.
+- HTTP/1.1 `request()` accepts an optional timeout for `Expect: 100-continue`.
+- Cluster connections are eager and independent: `connect()` performs DNS/TCP setup in a coroutine and returns `peer?, err?`; auto-reconnect is removed, and callers reconnect after `call`/`send` reports `"Peer closed"`. `accept(peer)` receives the client address through `peer.remoteaddr`, replacing `addr` and the callback's address argument.
+- Cluster calls use raw data strings instead of `cmd` and `marshal`/`unmarshal` options. Sessions are 64-bit, with `[session(8)][traceid(8)]` request and `[session(8)]` response headers. This breaks wire compatibility; all peers must upgrade together.
+- API references refreshed against the implementation in English and Chinese; repository agent guidance consolidated in `AGENTS.md`.
 
 ### Fixed
-- Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
-- Host header no longer duplicated when both the URL and user header table contain a host value.
-- Chunk size parsing handles missing hex before `tonumber` in h1.
-- h1 client now correctly skips 1xx informational responses (100, 103, etc.) and waits for the final response.
-- Reset eof flag after 100-continue response in h1.
+- Cluster drops late responses after request timeout instead of waking a missing coroutine.
+- HTTP/1.1 handles malformed chunk sizes without calling `tonumber` on missing hex, skips informational responses until the final response, and resets body EOF after `100 Continue`. Client body reads share one deadline to prevent timeout amplification.
+- HPACK preserves the correct send/receive table direction when applying SETTINGS, emits required table-size updates, evicts only the oldest entries needed on insertion or shrink, handles oversized indexed entries without changing the table for unindexed fields, preserves opaque field bytes with unambiguous cache keys, and rejects truncated or overflowing integers.
+- HTTP/2 emits contiguous HEADERS/CONTINUATION blocks with correct frame types and flags, validates initial SETTINGS, GOAWAY, padding, server ENABLE_PUSH settings, disabled server push and response trailers, and distinguishes informational from final responses.
+- HTTP/2 maintains stream/connection windows and stream limits, isolates malformed-message errors to their streams, preserves valid completed responses after `RST_STREAM NO_ERROR` and handler cleanup failures without losing validation errors, sends graceful GOAWAY, and wakes blocked readers, writers and stream openers on connection shutdown. Cleartext server streams report the `http` scheme.
+- gRPC retains status and message from trailers-only error responses.
+- Task recycling quarantines coroutines left in an invalid state after failed yields, preventing stale events from resuming a reused coroutine.
+- TLS skips zero-length buffers in `SSL_write`; Windows uses explicit socket errno handling and supports `writev` on non-socket file descriptors.
 
 ## v0.7.1 (Apr 10, 2026)
 

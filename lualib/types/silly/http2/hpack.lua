@@ -21,6 +21,7 @@ function M.pack(self, header, ...) end
 function M.unpack(self, dat, header_list) end
 
 ---@param self silly.http2.hpack
+--- Sets the table limit. The encoder announces changes at the next block start.
 ---@param limit integer
 function M.hardlimit(self, limit) end
 

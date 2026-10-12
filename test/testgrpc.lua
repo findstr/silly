@@ -1,4 +1,5 @@
-local time = require "silly.time"
+local tcp = require "silly.net.tcp"
+local channel = require "silly.sync.channel"
 local protoc = require "protoc"
 local grpc = require "silly.net.grpc"
 local code = require "silly.net.grpc.code"
@@ -6,6 +7,9 @@ local waitgroup = require "silly.sync.waitgroup"
 local registrar = require "silly.net.grpc.registrar".new()
 local testaux = require "test.testaux"
 
+local _, wait_readers = testaux.track_connections(tcp)
+local slow_done = channel.new()
+local slow_started = false
 local p = protoc:new()
 
 local ok = p:load([[
@@ -47,6 +51,8 @@ service TestService {
   rpc BidiStream (stream EchoRequest) returns (stream EchoResponse) {}
   rpc ErrorTest (ErrorRequest) returns (ErrorResponse) {}
   rpc SlowCall (EchoRequest) returns (EchoResponse) {}
+  rpc MissingServerStream (EchoRequest) returns (stream EchoResponse) {}
+  rpc MissingUnary (EchoRequest) returns (EchoResponse) {}
 }
 ]], "test.proto")
 
@@ -118,7 +124,10 @@ registrar:register(proto, "TestService", {
 	end,
 
 	SlowCall = function(input)
-		time.sleep(3000)
+		slow_started = true
+		-- Application latency is the input to the RPC deadline test.
+		testaux.elapse(3000)
+		slow_done:push(true)
 		return {
 			message = "slow: " .. input.message,
 			value = input.value
@@ -129,12 +138,14 @@ registrar:register(proto, "TestService", {
 local server = grpc.listen {
 	addr = "127.0.0.1:8991",
 	registrar = registrar,
+	keepalive = {read_idle_timeout = 50, ping_timeout = 1000},
 }
 
 testaux.assertneq(server, nil, "Test 0.2: Server should start successfully")
 
 local conn = grpc.newclient {
 	targets = {"127.0.0.1:8991"},
+	keepalive = {read_idle_timeout = 50, ping_timeout = 1000},
 }
 
 testaux.assertneq(conn, nil, "Test 0.3: Client connection should be created")
@@ -151,6 +162,8 @@ testaux.case("Test 1: Basic Unary RPC", function()
 	testaux.asserteq(err, nil, "Test 1.2: Error should be nil")
 	testaux.asserteq(resp.message, "echo: hello", "Test 1.3: Response message should match")
 	testaux.asserteq(resp.value, 84, "Test 1.4: Response value should be doubled")
+	testaux.asserteq(conn[1].channel.read_idle_timeout, 50, "gRPC client passes HTTP/2 probe configuration")
+	testaux.asserteq(conn[1].channel.authority, "127.0.0.1:8991", "gRPC channel preserves target authority")
 end)
 
 testaux.case("Test 2: Server Streaming RPC", function()
@@ -304,9 +317,17 @@ testaux.case("Test 9: gRPC DNS failure returns host-specific string", function()
 	end)
 end)
 
-time.sleep(1000)
+testaux.case("Test 10: Trailers-only UNIMPLEMENTED response", function()
+	local stream<close> = assert(client:MissingServerStream({message = "missing"}))
+	testaux.asserteq(stream:read(), nil, "missing streaming method has no messages")
+	testaux.asserteq(stream.status, code.UNIMPLEMENTED, "status is read from initial headers")
+	testaux.asserteq(stream.message, "Method not found: /test.TestService/MissingServerStream", "initial error message retained")
+	local response, err = client:MissingUnary({message = "missing"})
+	testaux.asserteq(response, nil, "missing unary method has no response")
+	testaux.assertcontains(err, "Method not found: /test.TestService/MissingUnary", "unary initial error message retained")
+end)
 
+if slow_started then testaux.await(slow_done, "slow RPC handler completed") end
 conn:close()
 server:close()
-
-time.sleep(500)
+wait_readers()

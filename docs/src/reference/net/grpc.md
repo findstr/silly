@@ -158,6 +158,9 @@ reg:register(p.loaded["hello.proto"], {
     - `alpnprotos`: `string[]|nil` (可选) - ALPN 协议列表，默认 `{"h2"}`
     - `ciphers`: `string|nil` (可选) - TLS 密码套件配置
     - `backlog`: `integer|nil` (可选) - 监听队列大小
+    - `keepalive`: `table|nil` (可选) - HTTP/2 服务端主动连接探测配置
+      - `read_idle_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；默认 0（关闭主动探测）
+      - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；默认 15000
 - **返回值**:
   - 成功: `server` - 服务器对象
   - 失败: `nil, string` - nil 和错误信息
@@ -271,6 +274,9 @@ end)
   - `conf`: `table` - 客户端配置表
     - `targets`: `string[]` (必需) - gRPC 目标地址列表，格式 `"host:port"`（或 `dns://host:port`）
     - `tls`: `boolean|nil` (可选) - 是否使用 TLS，默认 false
+    - `keepalive`: `table|nil` (可选) - HTTP/2 客户端主动连接探测配置
+      - `read_idle_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；默认 0（关闭主动探测）
+      - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；默认 15000
 - **返回值**:
   - 成功: `conn` - gRPC 连接对象
   - 失败: `nil, string` - nil 和错误信息
@@ -1756,3 +1762,9 @@ service DataService {
 - [silly.net.tcp](./tcp.md) - TCP 协议
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+
+### HTTP/2 PING 保活
+
+`keepalive = {read_idle_timeout = 60000, ping_timeout = 15000}` 表示 60 秒未收到帧时发起 PING，探测超过 15 秒仍未收到匹配 ACK 就关闭连接并唤醒等待者。任何接收帧会推迟下一次探测，发送数据不会重置接收静默计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+客户端选项控制客户端探测服务端；监听选项控制服务端探测客户端，两端独立配置。默认不主动探测，但始终回复合法 PING。PING 不受 DATA 流控限制，也不会自动延长连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。

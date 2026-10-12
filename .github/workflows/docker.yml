@@ -58,10 +58,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}-${{ matrix.variant }},enable=${{ github.event_name == 'release' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=Docker image for ${matrix.variant}
-            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
-            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.description=Docker image for ${{ matrix.variant }}
             org.opencontainers.image.licenses=MIT
 
       - name: Build & push ${{ matrix.variant }} image

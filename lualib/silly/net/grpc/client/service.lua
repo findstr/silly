@@ -41,10 +41,10 @@ end
 local function check_trailer(h2stream, err)
 	local status, message
 	local trailer = h2stream.trailer
-	local grpc_status = trailer['grpc-status']
+	local grpc_status = trailer['grpc-status'] or h2stream.header['grpc-status']
 	if grpc_status then
 		status = tonumber(grpc_status)
-		message = trailer['grpc-message'] or code[status] or "Unknown"
+		message = trailer['grpc-message'] or h2stream.header['grpc-message'] or code[status] or "Unknown"
 	else
 		status = code.UNKNOWN
 		message = err or "No status in trailer"
@@ -169,7 +169,7 @@ local function unary(method, fullname)
 		local n = tonumber(grpc_status)
 		if n ~= code.OK then
 			return nil, format("code = %s desc = %s",
-				code[n], trailer['grpc-message'])
+				code[n] or "UNKNOWN", trailer['grpc-message'] or h2stream.header['grpc-message'] or "Unknown")
 		end
 		return resp, err
 	end

@@ -33,12 +33,13 @@ end
 ---	ciphers:string?,
 ---	registrar:silly.net.grpc.registrar,
 ---	certs:{cert:string, key:string}[],
+---	keepalive:silly.net.http.h2.keepalive?,
 ---}
 ---@return silly.net.tcp.listener|silly.net.tls.listener|nil, string? error
 local function listen(conf)
 	local handler = dispatch(conf.registrar)
 	local accept = function(conn)
-		h2.httpd(handler, conn)
+		h2.httpd(handler, conn, conf.keepalive)
 	end
 	if not conf.tls then
 		return tcp.listen {

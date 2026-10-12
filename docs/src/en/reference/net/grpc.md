@@ -158,6 +158,9 @@ Create a gRPC server and start listening.
     - `alpnprotos`: `string[]|nil` (optional) - ALPN protocol list, default `{"h2"}`
     - `ciphers`: `string|nil` (optional) - TLS cipher suite configuration
     - `backlog`: `integer|nil` (optional) - Listen queue size
+    - `keepalive`: `table|nil` (optional) - Active HTTP/2 connection probes initiated by this server
+      - `read_idle_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; default 0 disables probes
+      - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; default 15000
 - **Returns**:
   - Success: `server` - Server object
   - Failure: `nil, string` - nil and error message
@@ -271,6 +274,9 @@ Create a gRPC connection pool.
   - `conf`: `table` - Client configuration table
     - `targets`: `string[]` (required) - List of gRPC targets, format `"host:port"` (or `dns://host:port`)
     - `tls`: `boolean|nil` (optional) - Whether to use TLS, default false
+    - `keepalive`: `table|nil` (optional) - Active HTTP/2 connection probes initiated by this client
+      - `read_idle_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; default 0 disables probes
+      - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; default 15000
 - **Returns**:
   - Success: `conn` - gRPC connection object
   - Failure: `nil, string` - nil and error message
@@ -1756,3 +1762,9 @@ service DataService {
 - [silly.net.tcp](./tcp.md) - TCP protocol
 - [silly.net.tls](./tls.md) - TLS/SSL encryption
 - [silly.sync.waitgroup](../sync/waitgroup.md) - Coroutine wait group
+
+### HTTP/2 PING keepalive
+
+`keepalive = {read_idle_timeout = 60000, ping_timeout = 15000}` starts a PING after 60 seconds without received frames. If no matching ACK arrives within the 15-second probe timeout, the connection closes and blocked callers wake. Any received frame postpones the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run when no streams are active.
+
+Client options control client probes of the server; listener options control server probes of clients. Each endpoint configures its own probes independently. Active probes are disabled by default, while valid PING requests are always acknowledged. PING bypasses DATA flow control and does not extend a connection pool idle timeout. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).

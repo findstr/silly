@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 type Manager struct {
@@ -28,7 +31,17 @@ type ServerInfo struct {
 	Addr string `json:"addr"`
 }
 
-func (m *Manager) Start(addr string, handler http.Handler) (*ServerInfo, error) {
+func (m *Manager) Start(addr string, handler http.Handler, params map[string]any) (*ServerInfo, error) {
+	var tlsConfig *tls.Config
+	if enabled, _ := params["http2"].(bool); enabled {
+		cert, _ := params["cert"].(string)
+		key, _ := params["key"].(string)
+		pair, err := tls.X509KeyPair([]byte(cert), []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("test TLS certificate: %w", err)
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
@@ -42,13 +55,23 @@ func (m *Manager) Start(addr string, handler http.Handler) (*ServerInfo, error) 
 	}
 
 	id := fmt.Sprintf("s%d", m.nextID.Add(1))
-	srv := &http.Server{Handler: handler}
+	srv := &http.Server{Handler: handler, TLSConfig: tlsConfig}
+	if n, ok := params["header_table_size"].(float64); ok {
+		if err := http2.ConfigureServer(srv, &http2.Server{MaxDecoderHeaderTableSize: uint32(n)}); err != nil {
+			ln.Close()
+			return nil, err
+		}
+	}
 
 	m.mu.Lock()
 	m.servers[id] = srv
 	m.mu.Unlock()
 
-	go srv.Serve(ln)
+	if tlsConfig != nil {
+		go srv.ServeTLS(ln, "", "")
+	} else {
+		go srv.Serve(ln)
+	}
 
 	return &ServerInfo{ID: id, Addr: actualAddr}, nil
 }
