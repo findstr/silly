@@ -17,6 +17,7 @@ local M = {}
 ---		key:string,
 ---	}>?,
 ---@field alpnprotos string[]?
+---@field keepalive silly.net.http.h2.keepalive? -- Server-side HTTP/2 probes
 ---}
 
 ---@param conf silly.net.http.transport.listen.conf
@@ -25,7 +26,7 @@ function M.listen(conf)
 	local accept = function(conn)
 		local alpnproto = conn.alpnproto
 		if alpnproto and alpnproto(conn) == "h2" then
-			h2.httpd(conf.handler, conn)
+			h2.httpd(conf.handler, conn, conf.keepalive)
 		else
 			local scheme = conf.tls and "https" or "http"
 			h1.httpd(conf.handler, conn, scheme)

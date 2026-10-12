@@ -1,4 +1,5 @@
 local silly = require "silly"
+local pcall = silly.pcall
 local task = require "silly.task"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
@@ -22,6 +23,8 @@ local EEOF<const> = errno.EOF
 
 local set_nil = true
 local server_handler
+local handler_done = channel.new()
+local readers, wait_readers = testaux.track_connections(tls)
 
 local server = http.listen {
 	tls = true,
@@ -40,6 +43,7 @@ local server = http.listen {
 		if set_nil then
 			server_handler = nil
 		end
+		handler_done:push(true)
 	end
 }
 
@@ -50,13 +54,13 @@ local httpc = http.newclient({
 })
 
 local function wait_done()
-	while server_handler do
-		time.sleep(100)
-	end
+	if server_handler then testaux.await(handler_done, "server handler completed") end
+	handler_done:clear()
 end
 
 local function case(name, fn)
 	testaux.case(name, function()
+		handler_done:clear()
 		local ok, err = pcall(fn)
 		server_handler = nil
 		set_nil = true
@@ -475,7 +479,9 @@ case("Test 16: Flow control - Stream window 63KB single stream", function()
 	testaux.assertneq(stream, nil, "Test 16.1: stream should not be nil")
 	-- Write 63KB - this should consume most of stream window (65535 initial)
 	stream:write(data)
-	time.sleep(1000)
+	readers[stream.channel.conn]:wait_until(function()
+		return stream.channel.sendwindow == 4 * 1024 * 1024
+	end, "connection WINDOW_UPDATE applied")
 	testaux.asserteq(stream.sendwindow, 1023, "Test 16.2: sendwindow should be 1023")
 	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 16.3: channel sendwindow should be 65535")
 	ch:push("")
@@ -497,9 +503,11 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	-- This should exhaust connection window and require flow control
 
 	local data = crypto.randomkey(4 * 1024 * 1024 - 1024)
-	local stream1_arrived = false
-	local stream2_arrived = false
-	local responses = {}
+	local stream1_arrived = channel.new()
+	local stream2_arrived = channel.new()
+	local release_first = channel.new()
+	local requests = waitgroup.new()
+	set_nil = false
 
 	-- Server handler will be called twice
 	local call_count = 0
@@ -509,13 +517,11 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 
 		-- Mark stream arrival
 		if current_call == 1 then
-			stream1_arrived = true
-			-- Wait for stream2 to arrive
-			while not stream2_arrived do
-				time.sleep(100)
-			end
+			stream1_arrived:push(true)
+			testaux.await(release_first, "second stream arrived")
 		else
-			stream2_arrived = true
+			stream2_arrived:push(true)
+			release_first:push(true)
 		end
 
 		local body, err = stream:readall()
@@ -523,12 +529,10 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 
 		stream:respond(200, {})
 		stream:closewrite("OK" .. current_call)
-
-		responses[current_call] = true
 	end
 
 	-- Launch two concurrent requests
-	task.fork(function()
+	requests:fork(function()
 		local s<close>, err = httpc:request("POST", "https://127.0.0.1:8082", {
 			["content-length"] = #data,
 		})
@@ -542,13 +546,10 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	end)
 
 	-- Wait for first stream to arrive at server
-	while not stream1_arrived do
-		time.sleep(10)
-	end
-	testaux.asserteq(stream1_arrived, true, "Test 17.3: Stream1 should arrive first")
+	testaux.await(stream1_arrived, "first stream arrived")
 
 	-- Second stream
-	task.fork(function()
+	requests:fork(function()
 		local s<close>, err = httpc:request("POST", "https://127.0.0.1:8082", {
 			["content-length"] = #data,
 		})
@@ -563,26 +564,22 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	end)
 
 	-- Wait for second stream to arrive
-	while not stream2_arrived do
-		time.sleep(10)
-	end
-	testaux.asserteq(stream2_arrived, true, "Test 17.6: Stream2 should arrive")
+	testaux.await(stream2_arrived, "second stream arrived")
 
 	-- Wait for both handlers to complete
-	while not (responses[1] and responses[2]) do
-		time.sleep(100)
-	end
-	wait_done()
+	requests:wait()
+	testaux.await(handler_done, "first handler completed")
+	testaux.await(handler_done, "second handler completed")
 end)
 
 case("Test 18: Flow control - Window recovery after read", function()
 	-- Test that reading data sends WINDOW_UPDATE and recovers window
 	local data = crypto.randomkey(66 * 1024)
+	local release = channel.new()
+	local writer = waitgroup.new()
 
 	server_handler = function(stream)
-		-- Don't read immediately, let client send data
-		time.sleep(100)
-
+		testaux.await(release, "client exhausted stream send window")
 		local body, err = stream:readall()
 		testaux.asserteq(#body, #data, "Test 18.1: Should receive " .. tostring(#data) .. " KB")
 
@@ -595,7 +592,16 @@ case("Test 18: Flow control - Window recovery after read", function()
 	})
 	testaux.assertneq(stream, nil, "Test 18.2: stream should not be nil")
 
-	stream:closewrite(data)
+	local started = channel.new()
+	writer:fork(function()
+		started:push(true)
+		assert(stream:closewrite(data))
+	end)
+	testaux.await(started, "body writer started")
+	testaux.asserteq(stream.sendwindow, 0, "Test 18: writer exhausted stream window before server reads")
+	testaux.assertneq(stream.writeco, nil, "Test 18: writer waits for window credit")
+	release:push(true)
+	writer:wait()
 	stream:waitresponse()
 	testaux.asserteq(stream.sendwindow, 65535, "Test 18.2: sendwindow should be full")
 	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 18.2: channel sendwindow should be full")
@@ -852,18 +858,20 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	testaux.asserteq(ch.streamcount, max, "Test 27.4: streamcount should equal streammax")
 
 	-- Step 2: Try to open one more stream (should block)
+	local started = channel.new()
 	local blocked = false
 	local opened_after_close = false
 	local new_stream = nil
 	local sync = channel.new()
 	task.fork(function()
 		blocked = true
+		started:push(true)
 		new_stream = ch:openstream()
 		opened_after_close = true
 		sync:push("done")
 	end)
 
-	time.sleep(0)
+	testaux.await(started, "openstream waiter started")
 	testaux.asserteq(blocked, true, "Test 27.5: openstream should be blocked when at max")
 	testaux.asserteq(opened_after_close, false, "Test 27.6: openstream should still be waiting")
 	testaux.asserteq(ch.streamcount, max, "Test 27.7: streamcount should still be at max")
@@ -885,7 +893,6 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	for i = 2, 6 do
 		streams[i]:close()
 	end
-	time.sleep(0)
 
 	testaux.asserteq(ch.streamcount, max - 5, "Test 27.11: streamcount should decrease by 5")
 	-- Try to open 5 new streams concurrently
@@ -905,7 +912,6 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	end
 
 	wg:wait()
-	time.sleep(0)
 	set_nil = true
 	testaux.asserteq(created_count, 5, "Test 27.12: Should create exactly 5 new streams")
 	testaux.asserteq(ch.streamcount, max - 5, "Test 27.13: streamcount should be consistent after concurrent operations")
@@ -916,7 +922,6 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 		streams[i]:close()
 	end
 	new_stream:close()
-	time.sleep(0)
 
 	testaux.asserteq(ch.streamcount, 0, "Test 27.14: All streams should be closed")
 
@@ -933,15 +938,15 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 
 	-- Cleanup - graceful close
 	ch:close()
-	time.sleep(100)
-	-- After graceful close, streams are still open
-	testaux.asserteq(ch.streamcount, max, "Test 27.17: streamcount should still be max after graceful close")
+	readers[conn]:wait_closed()
+	-- These reservations never sent HEADERS. Once GOAWAY reaches the peer,
+	-- it closes its idle connection and the reservations are released.
+	testaux.asserteq(ch.streamcount, 0, "Test 27.17: unused reservations released after peer closes")
 
 	-- Close all streams
 	for i = 1, max do
 		final_streams[i]:close()
 	end
-	time.sleep(100)
 
 	-- Now streamcount should be 0
 	testaux.asserteq(ch.streamcount, 0, "Test 27.18: streamcount should be 0 after all streams closed")
@@ -1260,13 +1265,919 @@ case("Test 36: h2 redirect preserves query string in Location", function()
 	testaux.asserteq(received_query["original"], nil, "Test 36.5: original query should not leak")
 end)
 
-time.sleep(2000)
+-- Frame-level regression tests use independent wire frames and public APIs.
+do
+local builder = require "silly.http2.framebuilder"
+local hpack = require "silly.http2.hpack"
+testaux.case("Header fragments use CONTINUATION", function()
+	for _, size in ipairs({0, 16384, 16385, 32768, 40000}) do
+		local payload = string.rep("x", size)
+		local wire = builder.header(1, 16384, payload, true)
+		local offset, count, chunks = 1, 0, {}
+		while offset <= #wire do
+			local len, typ, flags, id = string.unpack(">I3I1I1I4", wire, offset)
+			count = count + 1
+			testaux.asserteq(typ, count == 1 and 1 or 9, "fragment type")
+			testaux.asserteq(id, 1, "fragment stream")
+			testaux.asserteq(flags & 1, count == 1 and 1 or 0, "END_STREAM only on HEADERS")
+			testaux.asserteq(flags & 4, offset + 9 + len > #wire and 4 or 0, "END_HEADERS only on last fragment")
+			chunks[count] = wire:sub(offset + 9, offset + 8 + len)
+			offset = offset + 9 + len
+		end
+		testaux.asserteq(table.concat(chunks), payload, "fragment payload")
+	end
+end)
 
-if server then
-	server:close()
+local peer = (function()
+-- A raw HTTP/2 peer for testing public channel APIs against independent wire frames.
+local task = require "silly.task"
+local time = require "silly.time"
+local tcp = require "silly.net.tcp"
+local h2 = require "silly.net.http.h2"
+local hpack = require "silly.http2.hpack"
+local testaux = require "test.testaux"
+
+local M = {}
+local port = 18082
+local function nextaddr()
+	port = port + 1
+	return "127.0.0.1:" .. port
+end
+M.preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+function M.frame(typ, flags, id, data)
+	data = data or ""
+	return string.pack(">I3I1I1I4", #data, typ, flags, id) .. data
 end
 
-time.sleep(2000)
+function M.read(conn, timeout)
+	local hdr, err = conn:read(9, timeout or 2000)
+	if not hdr then return nil, err end
+	local len, typ, flags, id = string.unpack(">I3I1I1I4", hdr)
+	local data = ""
+	if len > 0 then data, err = conn:read(len, timeout or 2000) end
+	if not data then return nil, err end
+	return {type = typ, flags = flags, id = id & 0x7fffffff, data = data, length = len}
+end
+
+function M.untilframe(conn, typ)
+	for _ = 1, 100 do
+		local frame, err = M.read(conn)
+		assert(frame, tostring(err))
+		if frame.type == typ then return frame end
+	end
+	error("expected frame " .. typ)
+end
+
+function M.server_handshake(conn, settings)
+	assert(conn:read(#M.preface, 2000) == M.preface)
+	assert(M.read(conn).type == 4)
+	assert(conn:write(M.frame(4, 0, 0, settings) .. M.frame(4, 1, 0)))
+	M.untilframe(conn, 4)
+end
+
+function M.client_handshake(conn)
+	assert(conn:write(M.preface .. M.frame(4, 0, 0)))
+	assert(M.read(conn).type == 4)
+	assert(conn:write(M.frame(4, 1, 0)))
+	M.untilframe(conn, 4)
+end
+
+function M.headers(encoder, id, status, fields, flags)
+	return M.frame(1, flags or 5, id, hpack.pack(encoder, fields or {}, ":status", status))
+end
+
+function M.with_client(peer, body, opts)
+	local addr = nextaddr()
+	local peererr, accepted
+	local done = channel.new()
+	local listener = assert(tcp.listen {
+		addr = addr,
+		accept = function(conn)
+			accepted = conn
+			local ok, err = pcall(peer, conn)
+			if not ok then peererr = err end
+			conn:close()
+			done:push(true)
+		end,
+	})
+	local conn = assert(tcp.connect(addr))
+	local watchdog = time.after(5000, function() conn:close(); if accepted then accepted:close() end end)
+	local observer = testaux.observe_reads(conn)
+	local ch
+	local ok, err = pcall(function()
+		local channel, cause = h2.newchannel("http", conn, "example.test", opts)
+		ch = channel
+		body(channel, cause, observer)
+	end)
+	if ok then testaux.await(done, "peer consumed buffered writes") end
+	conn:close()
+	if accepted then accepted:close() end
+	if not ok then testaux.await(done, "raw peer completed") end
+	if ch then observer:wait_closed() end
+	listener:close()
+	time.cancel(watchdog)
+	if not ok then error(err, 0) end
+	if peererr then error(peererr, 0) end
+end
+
+function M.with_server(handler, body, opts)
+	local addr = nextaddr()
+	local servererr, accepted
+	local done = channel.new()
+	local listener = assert(tcp.listen {
+		addr = addr,
+		accept = function(conn)
+			accepted = conn
+			local ok, err = pcall(h2.httpd, handler, conn, opts)
+			if not ok then servererr = err end
+			conn:close()
+			done:push(true)
+		end,
+	})
+	local conn = assert(tcp.connect(addr))
+	local watchdog = time.after(5000, function() conn:close(); if accepted then accepted:close() end end)
+	local ok, err = pcall(body, conn)
+	conn:close()
+	if accepted then accepted:close() end
+	testaux.await(done, "h2 server completed")
+	listener:close()
+	time.cancel(watchdog)
+	if not ok then error(err, 0) end
+	if servererr then error(servererr, 0) end
+end
+
+return M
+
+end)()
+local frame = peer.frame
+local function get(ch)
+	local s = assert(ch:openstream())
+	assert(s:request("GET", "/", {}))
+	assert(s:closewrite())
+	return s
+end
+
+local function answer(conn, text)
+	local request = peer.untilframe(conn, 1)
+	assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {}, 4) .. frame(0, 1, request.id, text)))
+	return request
+end
+
+testaux.case("PING ignores unknown flags and echoes payload", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		assert(conn:write(frame(6, 8, 0, "12345678")))
+		local reply, request
+		while not reply or not request do
+			local incoming = assert(peer.read(conn))
+			if incoming.type == 6 then reply = incoming end
+			if incoming.type == 1 then request = incoming end
+		end
+		testaux.asserteq(reply.flags, 1, "PING ACK")
+		testaux.asserteq(reply.data, "12345678", "opaque payload echoed")
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {}, 4) .. frame(0, 1, request.id, "ok")))
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		testaux.asserteq(s:readall(2000), "ok", "request survives unknown PING flag")
+	end)
+end)
+
+testaux.case("Graceful client close sends GOAWAY before EOF", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local reply = peer.untilframe(conn, 7)
+		local last, code = string.unpack(">I4I4", reply.data)
+		testaux.asserteq(last, 0, "client processed no peer-initiated streams")
+		testaux.asserteq(code, 0, "graceful GOAWAY")
+	end, function(ch)
+		assert(ch):close()
+	end)
+end)
+
+testaux.case("EOF wakes blocked openstream", function()
+	local closepeer = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn, string.pack(">I2I4", 3, 1))
+		testaux.await(closepeer, "client filled stream slot")
+	end, function(ch)
+		local s<close> = assert(assert(ch):openstream())
+		local started, done = channel.new(), channel.new()
+		task.fork(function()
+			started:push(true)
+			local _, err = ch:openstream()
+			done:push({cause = err})
+		end)
+		testaux.await(started, "openstream waiter started")
+		closepeer:push(true)
+		local cause = testaux.await(done, "openstream wakes on EOF").cause
+		testaux.assertneq(cause, nil, "openstream returns connection error")
+	end)
+end)
+
+testaux.case("GOAWAY stops reuse and refuses unprocessed streams", function()
+	local release = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(frame(7, 0, 0, string.pack(">I4I4", 0, 0))))
+		testaux.await(release, "GOAWAY assertions completed")
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		local ok, err = s:waitresponse(1000)
+		testaux.asserteq(ch:isalive(), false, "GOAWAY channel is not reusable")
+		testaux.asserteq(ok, false, "unprocessed stream fails promptly")
+		testaux.assertneq(err, nil, "GOAWAY cause returned")
+		local nextstream, cause = ch:openstream()
+		testaux.asserteq(nextstream, nil, "no streams after GOAWAY")
+		testaux.assertneq(cause, nil, "openstream has error")
+		release:push(true)
+	end)
+end)
+
+testaux.case("Malformed GOAWAY length is a connection error", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		assert(conn:write(frame(7, 0, 0, "short")))
+		local reply = peer.untilframe(conn, 7)
+		testaux.asserteq(string.unpack(">I4", reply.data, 5), 6, "FRAME_SIZE_ERROR")
+	end, function(ch, err, observer) observer:wait_closed() end)
+end)
+
+testaux.case("SETTINGS shrink changes encoder, not decoder", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local encoder = hpack.new(4096)
+		local first = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(encoder, first.id, "200", {["x-cache"] = "retained"})))
+		local second = peer.untilframe(conn, 1)
+		-- A static-only block resets the decoder's eviction cursor.
+		assert(conn:write(peer.headers(encoder, second.id, "204")))
+		assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 1, 0))))
+		peer.untilframe(conn, 4)
+		local third = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(encoder, third.id, "200", {["x-cache"] = "retained"})))
+	end, function(ch)
+		for i = 1, 3 do
+			local s<close> = get(assert(ch))
+			testaux.asserteq(s:waitresponse(2000), true, "response after peer shrinks its decoder")
+			if i ~= 2 then testaux.asserteq(s.header["x-cache"], "retained", "incoming dynamic table unchanged") end
+		end
+	end)
+end)
+
+testaux.case("Informational response precedes final response", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		local encoder = hpack.new(4096)
+		assert(conn:write(peer.headers(encoder, request.id, "103", {["link"] = "</style.css>"}, 4)))
+		assert(conn:write(peer.headers(encoder, request.id, "200", {["x-final"] = "yes"}, 4) .. frame(0, 1, request.id, "ok")))
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		testaux.asserteq(s:waitresponse(2000), true, "final response received")
+		testaux.asserteq(s.status, 200, "final status replaces information response")
+		testaux.asserteq(s.header["x-final"], "yes", "final response headers")
+		testaux.asserteq(s.header.link, nil, "information headers do not leak into final response")
+		testaux.asserteq(s:readall(2000), "ok", "final body")
+	end)
+end)
+
+testaux.case("Initial SETTINGS ACK is rejected", function()
+	peer.with_client(function(conn)
+		assert(conn:read(#peer.preface, 2000) == peer.preface)
+		peer.untilframe(conn, 4)
+		assert(conn:write(frame(4, 1, 0) .. frame(4, 1, 0)))
+		peer.untilframe(conn, 7)
+		testaux.asserteq(peer.read(conn), nil, "invalid handshake closes connection")
+	end, function(ch, err)
+		testaux.asserteq(ch, nil, "ACK is not a valid preface")
+		testaux.assertneq(err, nil, "invalid preface error")
+	end)
+end)
+
+testaux.case("SETTINGS reduction permits negative send windows", function()
+	local lowered, started = channel.new(), channel.new()
+	local completed = false
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		peer.untilframe(conn, 0)
+		assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 4, 0))))
+		peer.untilframe(conn, 4)
+		lowered:push(true)
+		testaux.await(started, "writer entered closewrite")
+		testaux.asserteq(completed, false, "write blocks while stream window is negative")
+		assert(conn:write(frame(8, 0, request.id, string.pack(">I4", 2))))
+		local body = peer.untilframe(conn, 0)
+		testaux.asserteq(body.data, "b", "write resumes after window credit")
+	end, function(ch)
+		local s<close> = assert(assert(ch):openstream())
+		assert(s:request("POST", "/", {}))
+		assert(s:write("a"))
+		testaux.await(lowered, "SETTINGS reduced window")
+		testaux.asserteq(s.sendwindow, -1, "SETTINGS reduction makes send window negative")
+		started:push(true)
+		assert(s:closewrite("b"))
+		completed = true
+	end)
+end)
+
+testaux.case("Padding is restored to both receive windows", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {}, 4)))
+		assert(conn:write(frame(0, 8, request.id, "\x03a\0\0\0")))
+		local connection, stream = 0, 0
+		while connection < 5 or stream < 5 do
+			local update = peer.untilframe(conn, 8)
+			local n = string.unpack(">I4", update.data)
+			if update.id == 0 then connection = connection + n else stream = stream + n end
+		end
+		assert(conn:write(frame(0, 1, request.id)))
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		testaux.asserteq(s:read(1, 2000), "a", "padding excluded from body")
+		testaux.asserteq(s:readall(2000), "", "padded stream finishes")
+	end)
+end)
+
+testaux.case("Receive stream window overflow resets only offending stream", function()
+	local reset_seen = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {}, 4)))
+		assert(conn:write(string.rep(frame(0, 0, request.id, string.rep("x", 16384)), 5)))
+		local reset = peer.untilframe(conn, 3)
+		testaux.asserteq(string.unpack(">I4", reset.data), 3, "FLOW_CONTROL_ERROR")
+		reset_seen:push(true)
+		answer(conn, "ok")
+	end, function(ch)
+		local s = get(assert(ch))
+		assert(s:waitresponse(2000))
+		testaux.await(reset_seen, "peer received stream reset")
+		s:close()
+		local nextstream<close> = get(ch)
+		testaux.asserteq(nextstream:readall(2000), "ok", "other streams survive receive overflow")
+	end)
+end)
+
+testaux.case("Invalid content length does not consume server slots", function()
+	peer.with_server(function(s) s:respond(200, {}); s:closewrite("ok") end, function(conn)
+		peer.client_handshake(conn)
+		local encoder = hpack.new(4096)
+		for id = 1, 199, 2 do
+			local data = hpack.pack(encoder, {["content-length"] = "invalid"}, ":method", "GET", ":scheme", "http", ":path", "/")
+			assert(conn:write(frame(1, 5, id, data)))
+			peer.untilframe(conn, 3)
+		end
+		local data = hpack.pack(encoder, {}, ":method", "GET", ":scheme", "http", ":path", "/")
+		assert(conn:write(frame(1, 5, 201, data)))
+		local reply = peer.untilframe(conn, 1)
+		testaux.asserteq(reply.id, 201, "valid request still admitted")
+		testaux.asserteq(peer.untilframe(conn, 0).data, "ok", "response after malformed requests")
+	end)
+end)
+
+testaux.case("Content length mismatch does not kill unrelated stream", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {["content-length"] = "1"})))
+		peer.untilframe(conn, 3)
+		answer(conn, "ok")
+	end, function(ch)
+		local s = get(assert(ch))
+		local body, err = s:readall(2000)
+		testaux.asserteq(body, nil, "malformed response rejected")
+		testaux.assertneq(err, nil, "content length mismatch error")
+		s:close()
+		local nextstream<close> = get(ch)
+		testaux.asserteq(nextstream:readall(2000), "ok", "connection survives malformed response")
+	end)
+end)
+
+testaux.case("Server handler failure resets its stream and releases slots", function()
+	peer.with_server(function(s)
+		if s.path == "/fail" then error("intentional handler failure") end
+		s:respond(200, {}); s:closewrite("ok")
+	end, function(conn)
+		peer.client_handshake(conn)
+		local encoder = hpack.new(4096)
+		assert(conn:write(frame(1, 5, 1, hpack.pack(encoder, {}, ":method", "GET", ":scheme", "http", ":path", "/fail"))))
+		peer.untilframe(conn, 3)
+		assert(conn:write(frame(1, 5, 3, hpack.pack(encoder, {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		testaux.asserteq(peer.untilframe(conn, 0).data, "ok", "next request survives handler error")
+	end)
+end)
+
+testaux.case("Client keepalive probes without streams and matches ACK", function()
+	local probes_done = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		for _ = 1, 2 do
+			local ping = peer.untilframe(conn, 6)
+			testaux.asserteq(ping.id, 0, "connection PING")
+			testaux.asserteq(#ping.data, 8, "eight-byte token")
+			assert(conn:write(frame(6, 1, 0, ping.data)))
+		end
+		probes_done:push(true)
+		answer(conn, "ok")
+	end, function(ch)
+		testaux.await(probes_done, "two idle probes acknowledged")
+		local s<close> = get(assert(ch))
+		testaux.asserteq(s:readall(2000), "ok", "channel survives ACKs while idle")
+	end, {read_idle_timeout = 30, ping_timeout = 300})
+end)
+
+testaux.case("Client PING timeout wakes readers and openstream waiters", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn, string.pack(">I2I4", 3, 1))
+		peer.untilframe(conn, 6)
+		testaux.asserteq(peer.read(conn), nil, "client closes on PING timeout")
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		local started, done = channel.new(), channel.new()
+		task.fork(function()
+			started:push(true)
+			local _, err = ch:openstream()
+			done:push({cause = err})
+		end)
+		testaux.await(started, "openstream waiter started before PING timeout")
+		local ok, err = s:waitresponse(2000)
+		testaux.asserteq(ok, false, "reader fails on PING timeout")
+		testaux.asserteq(err, "PING timeout", "specific timeout cause")
+		local cause = testaux.await(done, "openstream wakes on PING timeout").cause
+		testaux.asserteq(cause, "PING timeout", "openstream timeout cause")
+	end, {read_idle_timeout = 30, ping_timeout = 50})
+end)
+
+testaux.case("Wrong ACK and other frames do not complete a pending PING", function()
+	local probe_seen, send_frames, processed = channel.new(), channel.new(), channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local ping = peer.untilframe(conn, 6)
+		probe_seen:push(ping.data)
+		testaux.await(send_frames, "pending probe captured")
+		assert(conn:write(frame(6, 1, 0, "wrongACK") .. frame(0xfe, 0, 0) .. frame(6, 0, 0, "activity")))
+		local ack = peer.untilframe(conn, 6)
+		testaux.asserteq(ack.data, "activity", "PING barrier follows wrong ACK and other frame")
+		processed:push(true)
+		testaux.asserteq(peer.read(conn), nil, "peer observes PING timeout EOF")
+	end, function(ch, err, observer)
+		local token = testaux.await(probe_seen, "peer received pending probe")
+		send_frames:push(true)
+		testaux.await(processed, "wrong ACK and other frame processed")
+		testaux.asserteq(assert(ch).pingtoken, token, "unrelated frames leave probe pending")
+		observer:wait_closed()
+		testaux.asserteq(ch:isalive(), false, "wrong ACK cannot complete probe")
+		testaux.asserteq(ch.errstr, "PING timeout", "pending probe fails before peer closes")
+	end, {read_idle_timeout = 30, ping_timeout = 300})
+end)
+
+testaux.case("Server keepalive probes idle connections", function()
+	peer.with_server(function() end, function(conn)
+		peer.client_handshake(conn)
+		for _ = 1, 2 do
+			local ping = peer.untilframe(conn, 6)
+			assert(conn:write(frame(6, 1, 0, ping.data)))
+		end
+	end, {read_idle_timeout = 30, ping_timeout = 200})
+end)
+
+testaux.case("Server PING timeout closes idle connections", function()
+	peer.with_server(function() end, function(conn)
+		peer.client_handshake(conn)
+		peer.untilframe(conn, 6)
+		local nextframe = peer.read(conn, 1000)
+		testaux.asserteq(nextframe, nil, "server closes without matching ACK")
+	end, {read_idle_timeout = 30, ping_timeout = 50})
+end)
+
+testaux.case("Received frames postpone keepalive", function()
+	local ready = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local ch = testaux.await(ready, "client channel ready")
+		local function activity()
+			assert(conn:write(frame(0xfe, 0, 0) .. frame(6, 0, 0, "activity")))
+			while true do
+				local incoming = peer.untilframe(conn, 6)
+				if incoming.flags & 1 ~= 0 then
+					testaux.asserteq(incoming.data, "activity", "activity barrier processed")
+					return
+				end
+				-- A slow runner may legitimately become idle between inputs.
+				assert(conn:write(frame(6, 1, 0, incoming.data)))
+			end
+		end
+		for _ = 1, 6 do activity(); testaux.elapse(20) end
+		activity()
+		-- Drain any probe queued before the last activity barrier.
+		while ch.pingtoken do
+			local pending = peer.untilframe(conn, 6)
+			assert(conn:write(frame(6, 1, 0, pending.data)))
+			activity()
+		end
+		local lastrecv = ch.lastrecv
+		local ping = peer.untilframe(conn, 6)
+		testaux.asserteq(time.monotonic() - lastrecv >= 60, true, "probe follows a full idle interval after processed activity")
+		assert(conn:write(frame(6, 1, 0, ping.data)))
+	end, function(ch) ready:push(assert(ch)) end, {read_idle_timeout = 60, ping_timeout = 1000})
+end)
+
+testaux.case("Local reset makes subsequent readall fail immediately", function()
+	local arrived, release = channel.new(), channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn); peer.untilframe(conn, 1); arrived:push(true)
+		peer.untilframe(conn, 3); testaux.await(release, "local reset assertions completed")
+	end, function(ch)
+		local s = get(assert(ch)); testaux.await(arrived, "peer received request"); s:close()
+		local started = time.monotonic()
+		local body, err = s:readall(500)
+		testaux.asserteq(body, nil, "closed stream has no body")
+		testaux.asserteq(type(err), "string", "local reset returns a string error")
+		testaux.asserteq(time.monotonic() - started < 100, true, "readall does not wait after reset")
+		release:push(true)
+	end)
+end)
+
+testaux.case("PING works with exhausted connection and stream windows", function()
+	local received = false
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		local bytes = 0
+		while bytes < 65535 do bytes = bytes + #peer.untilframe(conn, 0).data end
+		local ping = peer.untilframe(conn, 6)
+		assert(conn:write(frame(6, 1, 0, ping.data)))
+		received = true
+		assert(conn:write(frame(8, 0, 0, string.pack(">I4", 1)) .. frame(8, 0, request.id, string.pack(">I4", 1))))
+		testaux.asserteq(peer.untilframe(conn, 0).data, "b", "DATA resumes with both windows restored")
+	end, function(ch)
+		local s<close> = assert(assert(ch):openstream()); assert(s:request("POST", "/", {}))
+		assert(s:write(string.rep("a", 65535))); assert(s:closewrite("b"))
+		testaux.asserteq(received, true, "PING bypassed flow control")
+	end, {read_idle_timeout = 30, ping_timeout = 500})
+end)
+
+testaux.case("PING does not split outgoing HEADERS and CONTINUATION", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		while request.flags & 4 == 0 do
+			request = assert(peer.read(conn))
+			testaux.asserteq(request.type, 9, "header block stays contiguous")
+		end
+		local ping = peer.untilframe(conn, 6)
+		assert(conn:write(frame(6, 1, 0, ping.data)))
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200")))
+	end, function(ch)
+		local s<close> = assert(assert(ch):openstream())
+		assert(s:request("GET", "/", {["x-large"] = string.rep("abcdef0123456789", 2500)})); assert(s:closewrite())
+		testaux.asserteq(s:waitresponse(2000), true, "fragmented request survives probe")
+	end, {read_idle_timeout = 30, ping_timeout = 500})
+end)
+
+testaux.case("Closing channel cancels all keepalive timers", function()
+	local snapshot = time._dump().timer_user_data
+	local captured
+	local ping_seen = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn); peer.untilframe(conn, 6); ping_seen:push(true); peer.untilframe(conn, 7)
+	end, function(ch)
+		captured = assert(ch); testaux.await(ping_seen, "keepalive probe pending"); ch:close()
+	end, {read_idle_timeout = 30, ping_timeout = 500})
+	for _, user_data in pairs(snapshot) do testaux.assertneq(user_data, captured, "no timer retains closed channel") end
+end)
+
+testaux.case("Server receive limit is independent of peer concurrent-stream settings", function()
+	peer.with_server(function(s) s:respond(200, {}); s:closewrite("ok") end, function(conn)
+		peer.client_handshake(conn)
+		assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 3, 0)))); peer.untilframe(conn, 4)
+		local encoder = hpack.new(4096)
+		assert(conn:write(frame(1, 5, 1, hpack.pack(encoder, {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		testaux.asserteq(peer.untilframe(conn, 0).data, "ok", "peer setting only limits server-initiated streams")
+	end)
+end)
+
+testaux.case("Late WINDOW_UPDATE for closed client stream is ignored", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200")))
+		local nextrequest = peer.untilframe(conn, 1)
+		assert(conn:write(frame(8, 0, request.id, string.pack(">I4", 1))))
+		assert(conn:write(peer.headers(hpack.new(4096), nextrequest.id, "200")))
+	end, function(ch)
+		local s = get(assert(ch)); assert(s:waitresponse(2000)); s:close()
+		local nextstream<close> = get(ch)
+		testaux.asserteq(nextstream:waitresponse(2000), true, "late update does not close channel")
+	end)
+end)
+
+testaux.case("Response trailers require END_STREAM and forbid pseudo-headers", function()
+	for _, trailer in ipairs({{flags = 4, fields = {"x-trailer", "value"}}, {flags = 5, fields = {":status", "200"}}}) do
+		peer.with_client(function(conn)
+			peer.server_handshake(conn)
+			local request = peer.untilframe(conn, 1)
+			local encoder = hpack.new(4096)
+			assert(conn:write(peer.headers(encoder, request.id, "200", {}, 4)))
+			assert(conn:write(frame(1, trailer.flags, request.id, hpack.pack(encoder, {}, table.unpack(trailer.fields)))))
+			local reset = peer.untilframe(conn, 3)
+			testaux.asserteq(string.unpack(">I4", reset.data), 1, "malformed trailer is a stream error")
+		end, function(ch)
+			local s<close> = get(assert(ch))
+			local body, err = s:readall(2000)
+			testaux.asserteq(body, nil, "invalid trailer fails reader"); testaux.assertneq(err, nil, "trailer error propagated")
+		end)
+	end
+end)
+
+testaux.case("Completed response survives RST_STREAM NO_ERROR", function()
+	local reset_processed = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200") .. frame(3, 0, request.id, string.pack(">I4", 0)) .. frame(6, 0, 0, "rst-done")))
+		local ack = peer.untilframe(conn, 6)
+		testaux.asserteq(ack.data, "rst-done", "PING barrier follows processed reset")
+		reset_processed:push(true)
+		answer(conn, "ok")
+	end, function(ch)
+		local s = get(assert(ch)); testaux.await(reset_processed, "NO_ERROR reset processed")
+		testaux.asserteq(s:waitresponse(2000), true, "complete response status survives reset")
+		testaux.asserteq(s:readall(2000), "", "complete empty body survives reset")
+		s:close()
+		local nextstream<close> = get(ch)
+		testaux.asserteq(nextstream:readall(2000), "ok", "connection remains usable")
+	end)
+end)
+
+testaux.case("Completed early response NO_ERROR stops a request without another reset", function()
+	local processed, closed = channel.new(), channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		peer.untilframe(conn, 0)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200") .. frame(3, 0, request.id, string.pack(">I4", 0)) .. frame(6, 0, 0, "rst-done")))
+		peer.untilframe(conn, 6)
+		processed:push(true)
+		testaux.await(closed, "application released stopped request")
+		assert(conn:write(frame(6, 0, 0, "no-reset")))
+		while true do
+			local incoming = assert(peer.read(conn))
+			testaux.assertneq(incoming.type, 3, "peer reset must not trigger another reset")
+			if incoming.type == 6 then break end
+		end
+	end, function(ch)
+		local s<close> = assert(assert(ch):openstream())
+		assert(s:request("POST", "/", {}))
+		assert(s:write("partial"))
+		testaux.await(processed, "early complete response and reset processed")
+		testaux.asserteq(s:waitresponse(2000), true, "valid early response survives NO_ERROR")
+		testaux.asserteq(s:readall(2000), "", "valid early empty body retained")
+		s:close()
+		closed:push(true)
+	end)
+end)
+
+testaux.case("Server NO_ERROR reset cancels an incomplete response writer", function()
+	local finished = channel.new()
+	peer.with_server(function(s)
+		assert(s:respond(200, {}))
+		local ok, err = s:closewrite("unfinished")
+		finished:push({ok = ok, err = err})
+	end, function(conn)
+		peer.client_handshake(conn)
+		assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 4, 0))))
+		peer.untilframe(conn, 4)
+		assert(conn:write(frame(1, 5, 1, hpack.pack(hpack.new(4096), {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		local headers = peer.untilframe(conn, 1)
+		testaux.asserteq(headers.flags & 1, 0, "response writer waits for flow-control credit")
+		assert(conn:write(frame(3, 0, 1, string.pack(">I4", 0))))
+		local result = testaux.await(finished, "reset woke incomplete response writer")
+		testaux.asserteq(result.ok, false, "client reset stops response writer")
+		testaux.asserteq(result.err, "Graceful shutdown", "server receives reset reason rather than preserving a request as a response")
+		assert(conn:write(frame(6, 0, 0, "no-reset")))
+		while true do
+			local incoming = assert(peer.read(conn))
+			testaux.assertneq(incoming.type, 3, "server must not reset an already reset stream")
+			testaux.assertneq(incoming.type, 0, "server must not continue the canceled response body")
+			if incoming.type == 6 then break end
+		end
+	end)
+end)
+
+testaux.case("Disabled server push is rejected after SETTINGS acknowledgement", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		local encoder = hpack.new(4096)
+		assert(conn:write(frame(5, 4, request.id, string.pack(">I4", 2) .. hpack.pack(encoder, {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		local reply = peer.untilframe(conn, 7)
+		testaux.asserteq(string.unpack(">I4", reply.data, 5), 1, "disabled push is PROTOCOL_ERROR")
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		local ok, err = s:waitresponse(2000)
+		testaux.asserteq(ok, false, "disabled push closes connection")
+		testaux.assertneq(err, nil, "push error wakes response waiter")
+	end)
+end)
+
+testaux.case("Truncated padding field is rejected", function()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local request = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200", {}, 4) .. frame(0, 8, request.id)))
+		local reply = peer.untilframe(conn, 7)
+		testaux.asserteq(string.unpack(">I4", reply.data, 5), 6, "missing pad-length byte is FRAME_SIZE_ERROR")
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		local body = s:readall(2000)
+		testaux.asserteq(body, nil, "truncated DATA rejected")
+	end)
+end)
+
+testaux.case("Invalid server ENABLE_PUSH setting is rejected", function()
+	peer.with_client(function(conn)
+		assert(conn:read(#peer.preface, 2000) == peer.preface); peer.untilframe(conn, 4)
+		assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 2, 1)) .. frame(4, 1, 0)))
+		peer.untilframe(conn, 7)
+		testaux.asserteq(peer.read(conn), nil, "invalid handshake closes connection")
+	end, function(ch, err)
+		testaux.asserteq(ch, nil, "server cannot enable push via SETTINGS")
+		testaux.assertneq(err, nil, "invalid setting fails handshake")
+	end)
+end)
+
+testaux.case("Cleartext HTTP2 server reports http scheme", function()
+	peer.with_server(function(s) s:respond(200, {["x-scheme"] = s.scheme}); s:closewrite() end, function(conn)
+		peer.client_handshake(conn)
+		assert(conn:write(frame(1, 5, 1, hpack.pack(hpack.new(4096), {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		local reply = peer.untilframe(conn, 1)
+		local headers = {}; assert(hpack.unpack(hpack.new(4096), reply.data, headers))
+		local scheme
+		for i = 1, #headers, 2 do if headers[i] == "x-scheme" then scheme = headers[i + 1] end end
+		testaux.asserteq(scheme, "http", "server uses transport scheme")
+	end)
+end)
+
+for _, finish in ipairs({"HEADERS", "DATA", "trailers", "flow-controlled DATA"}) do
+	testaux.case("Completed " .. finish .. " response survives handler cleanup failure", function()
+		local release = channel.new()
+		peer.with_server(function(s)
+			assert(s:respond(200, {}))
+			local data = finish ~= "HEADERS" and "valid" or nil
+			local trailer = finish == "trailers" and {["x-trailer"] = "done"} or nil
+			assert(s:closewrite(data, trailer))
+			testaux.await(release, "response received before cleanup fails")
+			error("intentional cleanup failure")
+		end, function(conn)
+			peer.client_handshake(conn)
+			if finish == "flow-controlled DATA" then
+				assert(conn:write(frame(4, 0, 0, string.pack(">I2I4", 4, 0))))
+				peer.untilframe(conn, 4)
+			end
+			assert(conn:write(frame(1, 5, 1, hpack.pack(hpack.new(4096), {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+			local complete = false
+			while not complete do
+				local incoming = assert(peer.read(conn))
+				assert(incoming.type ~= 3, "response reset before completion")
+				if finish == "flow-controlled DATA" and incoming.type == 1 then
+					assert(conn:write(frame(8, 0, 1, string.pack(">I4", 5))))
+				end
+				complete = (incoming.type == 1 or incoming.type == 0) and incoming.flags & 1 ~= 0
+			end
+			release:push(true)
+			assert(conn:write(frame(6, 0, 0, "cleanup1")))
+			while true do
+				local incoming = assert(peer.read(conn))
+				assert(incoming.type ~= 3, "completed response received RST_STREAM after cleanup failure")
+				if incoming.type == 6 then break end
+			end
+		end)
+	end)
+end
+
+testaux.case("NO_ERROR preserves local response validation failure", function()
+	local processed = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local req = peer.untilframe(conn, 1)
+		assert(conn:write(peer.headers(hpack.new(4096), req.id, "200", {["content-length"] = "1"}) .. frame(3, 0, req.id, string.pack(">I4", 0)) .. frame(6, 0, 0, "reset-ok")))
+		peer.untilframe(conn, 6)
+		processed:push(true)
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		testaux.await(processed, "all response frames processed")
+		local ok, err = s:waitresponse(2000)
+		local body, bodyerr = s:readall(2000)
+		assert(not ok, "malformed response accepted after RST_STREAM(NO_ERROR)")
+		assert(body == nil, "malformed response body exposed as success")
+		testaux.asserteq(err, "Protocol error detected", "NO_ERROR preserves original validation error")
+		testaux.asserteq(bodyerr, err, "body retains the same validation error")
+	end)
+end)
+
+for _, informational in ipairs({false, true}) do
+	testaux.case(informational and "DATA after 103 resets only its stream" or "DATA before final response headers resets only its stream", function()
+		local processed = channel.new()
+		peer.with_client(function(conn)
+			peer.server_handshake(conn)
+			local first = peer.untilframe(conn, 1)
+			local second = peer.untilframe(conn, 1)
+			local enc = hpack.new(4096)
+			local dat = informational and peer.headers(enc, first.id, "103", {}, 4) or ""
+			assert(conn:write(dat .. frame(0, 0, first.id, "invalid")))
+			local reply
+			repeat reply = assert(peer.read(conn)) until reply.type == 3 or reply.type == 7
+			if reply.type == 3 then
+				assert(conn:write(peer.headers(enc, second.id, "200", {}, 4) .. frame(0, 1, second.id, "valid") .. frame(6, 0, 0, "data-end")))
+				peer.untilframe(conn, 6)
+			end
+			processed:push(reply)
+		end, function(ch)
+			local first<close> = get(assert(ch))
+			local second<close> = get(ch)
+			local reply = testaux.await(processed, "error scope observed")
+			testaux.asserteq(reply.type, 3, "malformed response resets only its stream")
+			testaux.asserteq(string.unpack(">I4", reply.data), 1, "expected stream PROTOCOL_ERROR")
+			assert(ch:isalive(), "unrelated stream lost its connection")
+			assert(second:waitresponse(2000))
+			assert(second:readall(2000) == "valid", "unrelated response should remain usable")
+		end)
+	end)
+end
+
+testaux.case("DATA on an idle client stream remains a connection error", function()
+	local opened = channel.new()
+	peer.with_client(function(conn)
+		peer.server_handshake(conn)
+		local id = testaux.await(opened, "local idle stream allocated")
+		assert(conn:write(frame(0, 0, id, "invalid")))
+		local goaway = peer.untilframe(conn, 7)
+		testaux.asserteq(string.unpack(">I4", goaway.data, 5), 1, "idle DATA is connection PROTOCOL_ERROR")
+	end, function(ch, err, observer)
+		local s<close> = assert(assert(ch):openstream())
+		opened:push(s.id)
+		observer:wait_closed()
+		testaux.asserteq(ch:isalive(), false, "idle stream DATA closes connection")
+	end)
+end)
+
+testaux.case("Trailer encoding failure resets an incomplete response", function()
+	peer.with_server(function(s)
+		assert(s:respond(200, {}))
+		local badkey = setmetatable({}, {__tostring = function() error("intentional trailer encoding failure") end})
+		local ok, err = pcall(s.closewrite, s, "partial", {[badkey] = "bad"})
+		assert(not ok, "trailer encoding must fail")
+		error(err)
+	end, function(conn)
+		peer.client_handshake(conn)
+		assert(conn:write(frame(1, 5, 1, hpack.pack(hpack.new(4096), {}, ":method", "GET", ":scheme", "http", ":path", "/"))))
+		local complete = false
+		while true do
+			local f = assert(peer.read(conn))
+			if f.type == 1 or f.type == 0 then complete = complete or f.flags & 1 ~= 0 end
+			if f.type == 3 then
+				assert(not complete, "response must not have END_STREAM")
+				assert(string.unpack(">I4", f.data) == 2, "encoding failure still needs INTERNAL_ERROR")
+				break
+			end
+		end
+	end)
+end)
+
+testaux.case("Completed early response survives handler cleanup failure", function()
+	local release = channel.new()
+	peer.with_server(function(s)
+		assert(s:respond(200, {}))
+		assert(s:closewrite("valid"))
+		testaux.await(release, "early response received")
+		error("intentional cleanup failure with request still open")
+	end, function(conn)
+		peer.client_handshake(conn)
+		assert(conn:write(frame(1, 4, 1, hpack.pack(hpack.new(4096), {}, ":method", "POST", ":scheme", "http", ":path", "/"))))
+		while true do
+			local f = assert(peer.read(conn))
+			if (f.type == 0 or f.type == 1) and f.flags & 1 ~= 0 then break end
+		end
+		release:push(true)
+		assert(conn:write(frame(6, 0, 0, "cleanup2")))
+		local codes = {}
+		while true do
+			local f = assert(peer.read(conn))
+			if f.type == 3 then codes[#codes + 1] = string.unpack(">I4", f.data) end
+			if f.type == 6 then break end
+		end
+		testaux.asserteq(#codes, 1, "stop unfinished request with exactly one reset")
+		testaux.asserteq(codes[1], 0, "NO_ERROR preserves completed early response")
+	end)
+end)
+end
 
 -- Check h1 pool (should be empty since we only use h2)
 for key, entries in pairs(httpc.h1pool) do
@@ -1281,5 +2192,9 @@ for key, entries in pairs(httpc.h2pool) do
 		channel:close()
 	end
 end
+
+httpc:close()
+if server then server:close() end
+wait_readers()
 
 print("All tests completed!")

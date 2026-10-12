@@ -32,12 +32,14 @@ end
 ---@class silly.net.grpc.client.endpoint
 ---@field addr string
 ---@field hostname string
+---@field authority string
 ---@field channel silly.net.http.h2.channel.client?
 
 ---@class silly.net.grpc.client.conn
 ---@field scheme string
 ---@field robin integer
 ---@field closed boolean
+---@field keepalive silly.net.http.h2.keepalive?
 ---@field [integer]silly.net.grpc.client.endpoint
 local conn = {}
 
@@ -70,7 +72,7 @@ local function newchannel(self, endpoint)
 	if not conn then
 		return nil, err
 	end
-	local ch, err = h2.newchannel(scheme, conn)
+	local ch, err = h2.newchannel(scheme, conn, endpoint.authority, self.keepalive)
 	if not ch then
 		conn:close()
 		return nil, err
@@ -121,6 +123,7 @@ local client_mt = {__index = conn, __close = conn.close}
 ---@class silly.net.grpc.client.conn.opts
 ---@field targets string[]
 ---@field tls boolean?
+---@field keepalive silly.net.http.h2.keepalive?
 
 ---@param opts silly.net.grpc.client.conn.opts
 ---@return silly.net.grpc.client.conn?, string?
@@ -134,6 +137,7 @@ function conn.new(opts)
 		scheme = opts.tls and "https" or "http",
 		robin = 1,
 		closed = false,
+		keepalive = opts.keepalive,
 	}
 	for i = 1, #targets do
 		local target = targets[i]
@@ -148,6 +152,7 @@ function conn.new(opts)
 		c[i] = {
 			addr = join_addr(ip, port),
 			hostname = host,
+			authority = join_addr(host, port),
 			channel = nil,
 		}
 	end

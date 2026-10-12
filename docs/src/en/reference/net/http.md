@@ -53,6 +53,9 @@ Creates an HTTP server and starts listening.
       - `key`: `string` - PEM format private key
     - `alpnprotos`: `string[]|nil` (optional) - ALPN protocols to advertise (e.g. `{"h2", "http/1.1"}`). Only meaningful with `tls = true`.
     - `backlog`: `integer|nil` (optional) - Listen queue size
+    - `keepalive`: `table|nil` (optional) - Active HTTP/2 connection probes initiated by this server
+      - `read_idle_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; default 0 disables probes
+      - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; default 15000
 - **Returns**:
   - Success: `server` - Server object
   - Failure: `nil, silly.errno` - nil and transport-layer error
@@ -162,6 +165,9 @@ Sends response body and closes the connection.
   - `body`: `string|nil` (optional) - Response body content
 - **Returns**: None
 - **Note**: After calling this method, the stream will no longer be usable
+
+For HTTP/2, a handler error resets only its unfinished response stream. Once `closewrite()` succeeds, later handler cleanup errors are logged without invalidating the completed response. If a request body is still arriving, the server stops it with `RST_STREAM(NO_ERROR)` so the client can retain the response.
+
 - **Example**:
 
 ```lua validate
@@ -391,6 +397,9 @@ Creates a new HTTP client with connection pooling.
     - `max_idle_per_host`: `integer?` - Maximum idle connections per host (default: 10)
     - `idle_timeout`: `integer?` - Idle connection timeout in ms (default: 30000)
     - `alpnprotos`: `string[]?` - ALPN protocols (default: `{"http/1.1", "h2"}`)
+    - `keepalive`: `table|nil` (optional) - Active HTTP/2 connection probes initiated by this client
+      - `read_idle_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; default 0 disables probes
+      - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; default 15000
 - **Returns**: `client` - HTTP client object
 - **Example**:
 
@@ -985,3 +994,9 @@ end)
 - [silly.net.tls](./tls.md) - TLS/SSL encryption
 - [silly.encoding.json](../encoding/json.md) - JSON encoding/decoding
 - [silly.sync.waitgroup](../sync/waitgroup.md) - Coroutine wait group
+
+### HTTP/2 PING keepalive
+
+`keepalive = {read_idle_timeout = 60000, ping_timeout = 15000}` starts a PING after 60 seconds without received frames. If no matching ACK arrives within the 15-second probe timeout, the connection closes and blocked callers wake. Any received frame postpones the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run when no streams are active.
+
+Client options control client probes of the server; listener options control server probes of clients. Each endpoint configures its own probes independently. Active probes are disabled by default, while valid PING requests are always acknowledged. PING bypasses DATA flow control and does not extend a connection pool idle timeout. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).

@@ -52,6 +52,9 @@ HTTP 模块使用 stream 对象表示 HTTP 连接：
       - `key`: `string` - PEM 格式私钥
     - `alpnprotos`: `string[]|nil` (可选) - 广告的 ALPN 协议（如 `{"h2", "http/1.1"}`），仅在 `tls = true` 时有意义
     - `backlog`: `integer|nil` (可选) - 监听队列大小
+    - `keepalive`: `table|nil` (可选) - HTTP/2 服务端主动连接探测配置
+      - `read_idle_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；默认 0（关闭主动探测）
+      - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；默认 15000
 - **返回值**:
   - 成功: `server` - 服务器对象
   - 失败: `nil, silly.errno` - nil 和传输层错误
@@ -159,6 +162,9 @@ end
   - `body`: `string|nil` (可选) - 响应体内容
 - **返回值**: 无
 - **注意**: 调用此方法后，stream 将不可再使用
+
+对于 HTTP/2，handler 异常只会重置尚未完成的响应流。`closewrite()` 成功后，后续清理异常会记录日志，但不会使已完成的响应失效。如果请求体仍在传输，服务器使用 `RST_STREAM(NO_ERROR)` 停止请求体，以保留客户端收到的响应。
+
 - **示例**:
 
 ```lua validate
@@ -261,6 +267,9 @@ http.listen {
     - `idle_timeout`: `integer` (可选) - 空闲连接超时时间(ms) (默认: 30000)
     - `read_timeout`: `integer` (可选) - 读超时时间(ms) (默认: 5000)
     - `alpnprotos`: `string[]` (可选) - ALPN 协议列表 (默认: `{"http/1.1", "h2"}`)
+    - `keepalive`: `table|nil` (可选) - HTTP/2 客户端主动连接探测配置
+      - `read_idle_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；默认 0（关闭主动探测）
+      - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；默认 15000
 - **返回值**: `silly.net.http.client` - 客户端对象
 - **示例**:
 ```lua validate
@@ -998,3 +1007,9 @@ end)
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.encoding.json](../encoding/json.md) - JSON 编解码
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+
+### HTTP/2 PING 保活
+
+`keepalive = {read_idle_timeout = 60000, ping_timeout = 15000}` 表示 60 秒未收到帧时发起 PING，探测超过 15 秒仍未收到匹配 ACK 就关闭连接并唤醒等待者。任何接收帧会推迟下一次探测，发送数据不会重置接收静默计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+客户端选项控制客户端探测服务端；监听选项控制服务端探测客户端，两端独立配置。默认不主动探测，但始终回复合法 PING。PING 不受 DATA 流控限制，也不会自动延长连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。

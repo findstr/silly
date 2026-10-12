@@ -379,6 +379,15 @@ func emptyEOFHandler() http.Handler {
 func multi1xxHandler(params map[string]interface{}) http.Handler {
 	body := getString(params, "body", "final")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 {
+			w.WriteHeader(100)
+			w.Header().Set("Link", "</style.css>; rel=preload")
+			w.WriteHeader(103)
+			w.Header().Del("Link")
+			w.WriteHeader(200)
+			w.Write([]byte(body))
+			return
+		}
 		conn, buf, ok := hijackConn(w)
 		if !ok {
 			return

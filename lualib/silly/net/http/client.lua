@@ -63,6 +63,7 @@ local MAX_FOLLOW_REDIRECTS = 10
 ---@field package timer integer?
 ---@field package max_idle_per_host integer
 ---@field package idle_timeout integer
+---@field package keepalive silly.net.http.h2.keepalive?
 ---@field package alpnprotos silly.net.tls.alpn_proto[]
 ---@field package h1pool table<string, silly.net.http.client.pool.h1[]>
 ---@field package h2pool table<string, silly.net.http.client.pool.h2[]>
@@ -207,6 +208,7 @@ end
 ---@field max_idle_per_host integer?  -- Maximum idle connections per host (default: 10)
 ---@field idle_timeout integer?       -- Idle connection timeout in ms (default: 30000)
 ---@field alpnprotos silly.net.tls.alpn_proto[]? -- ALPN protocols (default: {"http/1.1", "h2"})
+---@field keepalive silly.net.http.h2.keepalive? -- HTTP/2 active connection probes
 
 ---@param opts silly.net.http.client.opts?
 ---@return silly.net.http.client
@@ -217,6 +219,7 @@ function M.new(opts)
 		timer = nil,
 		max_idle_per_host = opts and opts.max_idle_per_host or default_opts.max_idle_per_host,
 		idle_timeout = opts and opts.idle_timeout or default_opts.idle_timeout,
+		keepalive = opts and opts.keepalive,
 		alpnprotos = opts and opts.alpnprotos or default_opts.alpnprotos,
 		h1pool = setmetatable({}, pool_mt),
 		h2pool = setmetatable({}, pool_mt),
@@ -254,7 +257,7 @@ local function connect(client, u)
 	end
 	local alpnproto = conn.alpnproto
 	if alpnproto and alpnproto(conn) == "h2" then
-		local channel, err = h2.newchannel(u.scheme, conn, u.authority)
+		local channel, err = h2.newchannel(u.scheme, conn, u.authority, client.keepalive)
 		if not channel then
 			conn:close()
 			return nil, err
