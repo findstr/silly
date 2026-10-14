@@ -36,11 +36,17 @@ end
 
 
 ---@param h2stream silly.net.http.h2.stream
+---@return table<string, string|string[]>
+local function response_trailer(h2stream)
+	return h2stream.headeronly and h2stream.header or h2stream.trailer
+end
+
+---@param h2stream silly.net.http.h2.stream
 ---@param err string?
 ---@return integer, string?
 local function check_trailer(h2stream, err)
 	local status, message
-	local trailer = h2stream.trailer
+	local trailer = response_trailer(h2stream)
 	local grpc_status = trailer['grpc-status']
 	if grpc_status then
 		status = tonumber(grpc_status)
@@ -161,15 +167,16 @@ local function unary(method, fullname)
 			waiting_stream[timer] = nil
 			time.cancel(timer)
 		end
-		local trailer = h2stream.trailer
-		local grpc_status = trailer['grpc-status'] or h2stream.header['grpc-status']
+		local trailer = response_trailer(h2stream)
+		local grpc_status = trailer['grpc-status']
 		if not grpc_status then
 			return nil, err or "No status in trailer"
 		end
 		local n = tonumber(grpc_status)
 		if n ~= code.OK then
 			return nil, format("code = %s desc = %s",
-				code[n], trailer['grpc-message'])
+				code[n] or "UNKNOWN",
+				trailer['grpc-message'] or "Unknown")
 		end
 		return resp, err
 	end
@@ -212,17 +219,36 @@ local function sstreaming(method, fullname)
 	end
 end
 
+---@param self silly.net.grpc.client.service
+---@param fullname string
+---@return silly.net.http.h2.stream?, string? error
+local function newstream(self, fullname)
+	local stream, err = self._conn:openstream()
+	if not stream then
+		return nil, err
+	end
+	local ok
+	ok, err = stream:request("POST", fullname, {
+		["content-type"] = "application/grpc",
+	})
+	if ok then
+		ok, err = stream:flush()
+	end
+	if not ok then
+		stream:close()
+		return nil, err
+	end
+	return stream, nil
+end
+
 local function cstreaming(method, fullname)
 	---@param self silly.net.grpc.client.service
 	---@return silly.net.grpc.client.cstream?, string? error
 	return function(self)
-		local h2stream, err = self._conn:openstream()
+		local h2stream, err = newstream(self, fullname)
 		if not h2stream then
 			return nil, err
 		end
-		h2stream:request("POST", fullname, {
-			["content-type"] = "application/grpc",
-		})
 		---@type silly.net.grpc.client.cstream
 		local s = {
 			h2stream = h2stream,
@@ -238,13 +264,10 @@ local function bstreaming(method, fullname)
 	---@param self silly.net.grpc.client.service
 	---@return silly.net.grpc.client.bstream?, string? error
 	return function(self)
-		local h2stream, err = self._conn:openstream()
+		local h2stream, err = newstream(self, fullname)
 		if not h2stream then
 			return nil, err
 		end
-		h2stream:request("POST", fullname, {
-			["content-type"] = "application/grpc",
-		})
 		---@type silly.net.grpc.client.bstream
 		local s = {
 			h2stream = h2stream,

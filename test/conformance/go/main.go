@@ -2,13 +2,17 @@ package main
 
 import (
 	"conformance/control"
+	"conformance/http2peer"
 	"conformance/httpclient"
 	"conformance/httpserver"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+
+	"golang.org/x/net/http2/hpack"
 )
 
 func main() {
@@ -22,8 +26,17 @@ func main() {
 	}
 
 	srvMgr := httpserver.NewManager()
+	peers := &http2peer.Manager{}
+	defer peers.CloseAll()
 
 	handlers := map[string]control.Handler{
+		"http2_peer": func(cmd *control.Command) *control.Response {
+			result, err := peers.Handle(cmd.Params)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"start_server": func(cmd *control.Command) *control.Response {
 			handlerName, _ := cmd.Params["handler"].(string)
 			if handlerName == "" {
@@ -37,7 +50,7 @@ func main() {
 			if err != nil {
 				return &control.Response{Error: err.Error()}
 			}
-			info, err := srvMgr.Start(listenAddr, h)
+			info, err := srvMgr.Start(listenAddr, h, cmd.Params)
 			if err != nil {
 				return &control.Response{Error: err.Error()}
 			}
@@ -57,6 +70,14 @@ func main() {
 			}
 			return &control.Response{Result: result}
 		},
+		"http2_flow": func(cmd *control.Command) *control.Response {
+			addr, _ := cmd.Params["addr"].(string)
+			result, err := httpclient.FlowWindow(addr)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"http_request_pair": func(cmd *control.Command) *control.Response {
 			result, err := httpclient.DoRequestPair(cmd.Params)
 			if err != nil {
@@ -67,10 +88,43 @@ func main() {
 		"shutdown": func(cmd *control.Command) *control.Response {
 			go func() {
 				srvMgr.StopAll()
+				peers.CloseAll()
 				ln.Close()
 				os.Exit(0)
 			}()
 			return &control.Response{Result: "ok"}
+		},
+		"hpack_decode": func(cmd *control.Command) *control.Response {
+			blocks, ok := cmd.Params["blocks"].([]any)
+			if !ok {
+				return &control.Response{Error: "missing HPACK blocks"}
+			}
+			size := uint32(4096)
+			if n, ok := cmd.Params["table_size"].(float64); ok {
+				size = uint32(n)
+			}
+			var headers []hpack.HeaderField
+			decoder := hpack.NewDecoder(size, func(field hpack.HeaderField) { headers = append(headers, field) })
+			decoded := make([][]hpack.HeaderField, 0, len(blocks))
+			for _, block := range blocks {
+				encoded, ok := block.(string)
+				if !ok {
+					return &control.Response{Error: "HPACK block must be base64"}
+				}
+				wire, err := base64.StdEncoding.DecodeString(encoded)
+				if err != nil {
+					return &control.Response{Error: err.Error()}
+				}
+				headers = nil
+				if _, err := decoder.Write(wire); err != nil {
+					return &control.Response{Error: err.Error()}
+				}
+				if err := decoder.Close(); err != nil {
+					return &control.Response{Error: err.Error()}
+				}
+				decoded = append(decoded, headers)
+			}
+			return &control.Response{Result: decoded}
 		},
 	}
 

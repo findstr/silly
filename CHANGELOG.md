@@ -1,28 +1,33 @@
 ## Unreleased
 
 ### Added
-- `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
-- HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
-- `client.close()` to gracefully shut down pooled connections.
-- Tests for host header deduplication and user header preservation in both h1 and h2.
+- `adt.queue:remove(value)`.
+- `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
+- `net.http.url` for URL parsing and escaping; replaces `net.http.helper` URL functions (`parseurl`, `urlencode`, `urldecode`).
+- HTTP client redirects (301/302/303/307/308) with loop detection and a redirect limit, and `client.close()` for graceful connection-pool shutdown.
+- Optional HTTP/2 PING keepalive for HTTP and gRPC clients via `send_ping_timeout`, `ping_timeout` (milliseconds), and `channel:keepalive()`. Disabled by default.
+- `silly.errno` for comparable errors from `net`, `net.tcp`, `net.tls`, and `net.udp`; higher-level errors remain opaque strings.
+- Go-backed HTTP/1.1, HTTP/2 and HPACK conformance tests.
 
 ### Changed
-- URL parsing and encoding extracted from `net.http.helper` into `net.http.url`; `helper.parseurl`/`urlencode`/`urldecode` replaced by `url.parse`/`queryescape`/`pathunescape`.
-- h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
-- h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
-- h1 client `read`/`readall` use a single deadline timer instead of passing timeout to each internal `conn:read`, eliminating timeout amplification across chunked/content-length reads.
-- `cluster.connect` is now eager: DNS resolution and TCP connect happen immediately (yields, must be called in a coroutine). Return signature changed to `peer?, err?`. Connecting to the same address creates independent connections.
-- Auto-reconnect removed. When a connection drops, `call`/`send` returns `nil, "Peer closed"`. Call `cluster.connect()` again to obtain a new peer.
-- `accept` callback signature changed from `function(peer, addr)` to `function(peer)`; client address available via `peer.remoteaddr`.
-- Peer objects now have `remoteaddr` field (set for both incoming and outgoing connections); `addr` field removed.
-- `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
+- HTTP/2 waits for a stream slot when sending initial request headers instead of in `openstream()`; reads no longer flush headers. gRPC streaming calls send headers before returning.
+- HTTP/2 validates incoming fields, joins split Cookie fields and enforces a 65535-byte decoded header-list limit.
+- `h2.httpd(handler, conn, scheme)` now requires the transport scheme.
+- HTTP/1.1 Host and HTTP/2 `:authority` follow the URL; request APIs preserve supplied header tables.
+- HTTP/1.1 `request()` accepts an optional timeout for `Expect: 100-continue`.
+- Cluster `connect()` connects immediately and returns `peer?, err?`. Connections are independent and no longer reconnect automatically.
+- Cluster callbacks use `accept(peer)`; the client address is available via `peer.remoteaddr`, replacing `peer.addr`.
+- Cluster RPC APIs exchange raw strings; `cmd`, `marshal` and `unmarshal` are removed. The wire protocol is incompatible with earlier versions; all peers must upgrade together.
 
 ### Fixed
-- Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
-- Host header no longer duplicated when both the URL and user header table contain a host value.
-- Chunk size parsing handles missing hex before `tonumber` in h1.
-- h1 client now correctly skips 1xx informational responses (100, 103, etc.) and waits for the final response.
-- Reset eof flag after 100-continue response in h1.
+- Cluster ignores late responses after request timeout.
+- HTTP/1.1: fix informational responses, malformed chunk handling and read timeout behavior.
+- HPACK: fix table synchronization, incorrect header decoding and packing memory errors.
+- HTTP/2: fix framing, flow control, stream limits and CONNECT handling.
+- HTTP/2: prevent blocked operations and leaked streams during errors or shutdown; preserve completed responses.
+- gRPC: preserve status and message from trailers-only responses.
+- Task: prevent invalid coroutine wakeups after failed yields.
+- TLS: fix empty writes. Windows: fix socket error reporting and vectored writes.
 
 ## v0.7.1 (Apr 10, 2026)
 

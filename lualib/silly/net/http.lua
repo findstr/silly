@@ -9,7 +9,7 @@ local httpc = client.new()
 local M = {}
 
 ---@class silly.net.http.transport.listen.conf
----@field handler fun(s:silly.net.http.h1.stream.client|silly.net.http.h2.stream)
+---@field handler fun(s:silly.net.http.h1.stream.server|silly.net.http.h2.stream)
 ---@field addr string
 ---@field tls boolean?
 ---@field certs table<number, {
@@ -22,12 +22,12 @@ local M = {}
 ---@param conf silly.net.http.transport.listen.conf
 ---@return silly.net.tcp.listener|silly.net.tls.listener|nil, string?
 function M.listen(conf)
+	local scheme = conf.tls and "https" or "http"
 	local accept = function(conn)
 		local alpnproto = conn.alpnproto
 		if alpnproto and alpnproto(conn) == "h2" then
-			h2.httpd(conf.handler, conn)
+			h2.httpd(conf.handler, conn, scheme)
 		else
-			local scheme = conf.tls and "https" or "http"
 			h1.httpd(conf.handler, conn, scheme)
 		end
 	end

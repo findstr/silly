@@ -69,6 +69,8 @@ service MyService {
 
 ### 状态码
 
+RPC 的最终状态和消息取自同一块元数据。只有 trailers-only 响应（`headeronly == true`）才读取初始响应头；普通响应必须从尾部头读取状态。
+
 gRPC 使用标准的状态码表示操作结果，定义在 `silly.net.grpc.code` 模块：
 
 - `code.OK` (0): 成功
@@ -271,6 +273,8 @@ end)
   - `conf`: `table` - 客户端配置表
     - `targets`: `string[]` (必需) - gRPC 目标地址列表，格式 `"host:port"`（或 `dns://host:port`）
     - `tls`: `boolean|nil` (可选) - 是否使用 TLS，默认 false
+    - `send_ping_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
+    - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
 - **返回值**:
   - 成功: `conn` - gRPC 连接对象
   - 失败: `nil, string` - nil 和错误信息
@@ -456,7 +460,7 @@ end)
 
 ## 流式 RPC API
 
-当 RPC 方法定义为流式时（使用 `stream` 关键字），客户端调用返回流对象：
+当 RPC 方法定义为流式时（使用 `stream` 关键字），客户端调用返回流对象。客户端流和双向流调用在返回前发送首次请求头，必要时等待并发流名额，因此双向流的服务端可以在客户端写入首条消息前发送响应：
 
 ### stream:write(request)
 
@@ -1756,3 +1760,9 @@ service DataService {
 - [silly.net.tcp](./tcp.md) - TCP 协议
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+
+### HTTP/2 PING 保活
+
+`send_ping_timeout = 60000, ping_timeout = 15000` 表示 60 秒未收到帧时发起 PING，探测超过 15 秒仍未收到匹配 ACK 就关闭连接并唤醒等待者。任何接收帧会推迟下一次探测，发送数据不会重置接收静默计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+客户端选项控制客户端探测服务端，默认不主动探测。服务端不启用主动探测；两端均始终回复合法 PING。PING 不受 DATA 流控限制，也不会自动延长连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。

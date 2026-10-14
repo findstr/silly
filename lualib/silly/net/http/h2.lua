@@ -1,3 +1,4 @@
+local silly = require "silly"
 local task = require "silly.task"
 local base64 = require "silly.encoding.base64"
 local time = require "silly.time"
@@ -15,15 +16,17 @@ local error = error
 local pairs = pairs
 local assert = assert
 local tonumber = tonumber
+local tostring = tostring
+local tointeger = math.tointeger
 local sub = string.sub
 local format = string.format
 local wakeup = task.wakeup
-local pack = string.pack
 local unpack = string.unpack
 local EEOF<const> = errno.EOF
 local ETIMEDOUT<const> = errno.TIMEDOUT
 local setmetatable = setmetatable
 local parsetarget = helper.parsetarget
+local pcall = silly.pcall
 
 local hpack_new = hpack.new
 local hpack_pack = hpack.pack
@@ -36,6 +39,7 @@ local build_rst = builder.rst
 local build_setting = builder.setting
 local build_winupdate = builder.winupdate
 local build_goaway = builder.goaway
+local build_ping = builder.ping
 
 local FRAME_DATA<const>		= 0
 local FRAME_HEADERS<const>	= 1
@@ -72,6 +76,7 @@ local STATE_RST<const>		        = STATE_CLOSE | 0x02
 --- @alias silly.net.http.h2.state `STATE_NONE` | `STATE_HEADER` | `STATE_DATA` | `STATE_TRAILER` | `STATE_CLOSE` | `STATE_END` | `STATE_RST`
 
 local max_header_wire_size<const> = 65535
+local max_header_list_size<const> = 65535
 local default_header_table_size<const> = 4096
 local default_frame_size<const> = 16384
 local default_window_size<const> = 65535
@@ -97,7 +102,7 @@ local INADEQUATE_SECURITY<const>	=0x0c	--Negotiated TLS parameters not acceptabl
 local HTTP_1_1_REQUIRED<const>		=0x0d	--Use HTTP/1.1 for the request	[RFC9113, Section 7]
 
 local CLOSED_STREAM_COUNT<const> = 100
-local MAX_STREAM_ID<const> = 0x7fffffff-2
+local MAX_STREAM_ID<const> = 0x7fffffff
 local TIMEOUT<const> = {}
 
 local err_str = setmetatable({
@@ -131,6 +136,7 @@ local pseudo_header_server = {
 }
 
 local pseudo_must_mask = 0x07  -- :method, :scheme, :path
+local pseudo_connect_mask = 0x09  -- :method, :authority
 
 -- RFC 7540 Section 8.1.2.2: Connection-specific header fields forbidden in HTTP/2
 local forbidden_headers = {
@@ -146,31 +152,39 @@ global _
 --- @class silly.net.http.h2.channel
 --- connection
 --- @field scheme string
---- @field conn silly.net.tcp.conn|silly.net.tls.conn
+--- @field conn silly.net.tcp.conn|silly.net.tls.conn|nil -- Cleared only after GOAWAY
 --- @field authority string
 --- @field package writeco thread?
 --- streams
---- @field package streamidx integer
+--- @field package streamidx integer -- Highest locally initiated stream ID queued for sending
 --- @field package laststreamid integer
---- @field package streamcount integer
+--- @field package streamcount integer -- Client: sent streams not yet closed; server: accepted requests
+--- @field package streammax integer -- Peer limit on locally initiated concurrent streams
 --- @field package streams table<integer, silly.net.http.h2.stream>
---- @field package streammax integer
 --- send control
 --- @field package sendframemaxsize integer
 --- @field package sendbuf string[]
 --- @field package sendwindow integer
---- @field package writewaitq silly.adt.queue
+--- @field package writewaitq silly.adt.queue<silly.net.http.h2.stream>
 --- @field package initialwindowsize integer
 --- recv control
 --- @field package recvframemaxsize integer
 --- @field package recvwindebt integer
+--- @field package recvwindowsize integer -- Connection receive capacity, expanded after handshake
 --- hpack
 --- @field package sendhpack silly.http2.hpack
 --- @field package recvhpack silly.http2.hpack
 --- misc
---- @field package closingq silly.adt.queue
+--- @field package closingq silly.adt.queue<silly.net.http.h2.stream>
 --- @field package enablepush boolean
 --- @field package goaway boolean
+--- @field package errstr string?
+--- @field package goawaylast integer?
+--- @field package lastrecvtime integer
+--- @field package sendpingtimeout integer?
+--- @field package pingtimeout integer?
+--- @field package pingtoken string?
+--- @field package timer integer?
 local C = {}
 local channel_mt = {
 	__index = C,
@@ -187,12 +201,13 @@ local channel_mt = {
 --- @field header table<string, string|string[]>
 --- @field trailer table<string, string|string[]>
 --- @field status integer?
+--- @field headeronly boolean? -- Client: initial headers end response; valid after waitresponse succeeds
 --- @field query table<string, string>?
 --- stream
---- @field package id integer
+--- @field package id integer -- Zero until the first request HEADERS are sent
 --- @field package active boolean
 --- @field package closed boolean
---- @field package errstr string?
+--- @field package errstr string? -- Set before either state enters STATE_RST
 --- @field package localstate silly.net.http.h2.state
 --- @field package remotestate silly.net.http.h2.state
 --- read
@@ -205,11 +220,11 @@ local channel_mt = {
 --- @field package recvbytes integer
 --- @field package recvexpect integer?
 --- write
---- @field package writeco thread?
+--- @field package writeco thread? -- Write-side HEADERS admission or DATA flow control
 --- @field package writedat string?
 --- @field package writeoffset integer
---- @field package writelength integer
---- @field package writeeoffset boolean
+--- @field package writequeued boolean -- In openwaitq (id == 0) or writewaitq (id > 0)
+--- @field package writeeof boolean -- Set END_STREAM when pending DATA finishes
 --- @field package writeheader table?
 --- @field package sendwindow integer
 local S = {}
@@ -220,10 +235,10 @@ local stream_mt = {
 
 --- @class silly.net.http.h2.channel.client: silly.net.http.h2.channel
 --- @field package dispatchco thread?
---- @field package openwaitq silly.adt.queue
+--- @field package openwaitq silly.adt.queue<silly.net.http.h2.stream>
 
 --- @class silly.net.http.h2.channel.server: silly.net.http.h2.channel
---- @field package handler fun(s:silly.net.http.h2.stream): any
+--- @field package handler fun(s:silly.net.http.h2.stream)
 
 ---@param scheme string
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
@@ -237,10 +252,10 @@ local function newchannel(scheme, conn, host)
 		conn = conn,
 		--- streams
 		streamidx = -1,
-		laststreamid = -1,
+		laststreamid = 0,
 		streamcount = 0,
-		streams = {},
 		streammax = max_stream_per_channel,
+		streams = {},
 		--- send control
 		initialwindowsize = default_window_size,      -- Stream initial window size (from SETTINGS)
 		sendframemaxsize = default_frame_size,
@@ -250,6 +265,7 @@ local function newchannel(scheme, conn, host)
 		--- recv control
 		recvframemaxsize = default_frame_size,
 		recvwindebt = 0,
+		recvwindowsize = default_window_size,
 		--- hpack
 		sendhpack = hpack_new(default_header_table_size),
 		recvhpack = hpack_new(default_header_table_size),
@@ -257,16 +273,24 @@ local function newchannel(scheme, conn, host)
 		closingq = queue.new(),
 		enablepush = false,
 		goaway = false,
+		lastrecvtime = time.monotonic(),
 	}
 	return setmetatable(ch, channel_mt)
 end
 
 ---@type fun(ch: silly.net.http.h2.channel, errorcode: integer)
 local channel_goaway
+---@type fun(ch: silly.net.http.h2.channel, err: string)
+local channel_abort
+local stream_reset
 
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
 ---@param ch silly.net.http.h2.channel
----@return integer?, integer?, string?, integer?
+---@return integer? typ
+---@return integer? flags
+---@return string? payload
+---@return integer? streamid
+---@return integer? length # Wire payload length, including padding
 local function read_frame(conn, ch)
 	local x9, err = conn:read(9)
 	if err then
@@ -277,6 +301,12 @@ local function read_frame(conn, ch)
 	-- RFC 7540 Section 4.1: Ignore the reserved bit (bit 32) in stream identifier
 	id = id & 0x7FFFFFFF
 	local dat
+	local padded = f & PADDED ~= 0
+		and (t == FRAME_DATA or t == FRAME_HEADERS or t == FRAME_PUSHPROMISE)
+	if n == 0 and padded then
+		channel_goaway(ch, FRAME_SIZE_ERROR)
+		return nil, nil, nil, nil
+	end
 	if n > 0 then
 		if n > ch.recvframemaxsize then
 			channel_goaway(ch, FRAME_SIZE_ERROR)
@@ -287,7 +317,7 @@ local function read_frame(conn, ch)
 			ch.goaway = true
 			return nil, nil, nil, nil
 		end
-		if f & PADDED == PADDED then
+		if padded then
 			if #dat < 1 then
 				channel_goaway(ch, PROTOCOL_ERROR)
 				return nil, nil, nil, nil
@@ -303,7 +333,8 @@ local function read_frame(conn, ch)
 	else
 		dat = ""
 	end
-	return t, f, dat, id
+	ch.lastrecvtime = time.monotonic()
+	return t, f, dat, id, n
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -313,10 +344,8 @@ end
 ---@return string[]?, integer?
 local function read_header(ch, stream_id, flag, dat)
 	local offset = 1
-	local min_length = 0
 	if flag & PRIORITY == PRIORITY then
-		min_length = min_length + 5
-		if #dat < min_length then
+		if #dat < 5 then
 			return nil, FRAME_SIZE_ERROR
 		end
 		-- RFC 7540 Section 5.3.1: A stream cannot depend on itself
@@ -331,36 +360,35 @@ local function read_header(ch, stream_id, flag, dat)
 	if offset > 1 then
 		dat = dat:sub(offset, -1)
 	end
-	local header_list = {}
-	if flag & END_HEADERS == END_HEADERS then --all headers
-		local ok = hpack_unpack(ch.recvhpack, dat, header_list)
-		if not ok then
-			return nil, COMPRESSION_ERROR
-		end
-	else
+	---@type string|string[]
+	local payload = dat
+	if #dat > max_header_wire_size then
+		return nil, ENHANCE_YOUR_CALM
+	end
+	if flag & END_HEADERS == 0 then
 		local conn = ch.conn
-		local tbl = {dat}
-		local total_size = #dat
+		local fragments = {dat}
+		local wire_size = #dat
 		repeat
-			local t, f, d, id = read_frame(conn, ch)
-			if not t then
-				-- Connection closed/failed
+			local typ, flags, fragment, id = read_frame(conn, ch)
+			if not typ then
 				return nil, CONNECT_ERROR
 			end
-			if t ~= FRAME_CONTINUATION or id ~= stream_id then
-				-- Interleaved frame of wrong type or on wrong stream is a PROTOCOL_ERROR
+			if typ ~= FRAME_CONTINUATION or id ~= stream_id then
 				return nil, PROTOCOL_ERROR
 			end
-			total_size = total_size + #d
-			if total_size > max_header_wire_size then
-				return nil, FRAME_SIZE_ERROR
+			wire_size = wire_size + #fragment
+			if wire_size > max_header_wire_size then
+				return nil, ENHANCE_YOUR_CALM
 			end
-			tbl[#tbl + 1] = d
-		until f & END_HEADERS == END_HEADERS
-		local ok = hpack_unpack(ch.recvhpack, tbl, header_list)
-		if not ok then
-			return nil, COMPRESSION_ERROR
-		end
+			fragments[#fragments + 1] = fragment
+		until flags & END_HEADERS ~= 0
+		payload = fragments
+	end
+	local header_list = {}
+	local ok, limited = hpack_unpack(ch.recvhpack, payload, header_list, max_header_list_size)
+	if not ok then
+		return nil, limited and ENHANCE_YOUR_CALM or COMPRESSION_ERROR
 	end
 	return header_list, nil
 end
@@ -373,7 +401,10 @@ local function map_header(hlist, header)
 		local v = hlist[i + 1]
 		local hv = header[k]
 		if hv then
-			if type(hv) == "table" then
+			if k == "cookie" then
+				-- RFC 9113 Section 8.2.3: restore the field before application delivery.
+				header[k] = hv .. "; " .. v
+			elseif type(hv) == "table" then
 				hv[#hv + 1] = v
 			else
 				header[k] = {hv, v}
@@ -384,19 +415,30 @@ local function map_header(hlist, header)
 	end
 end
 
+-- RFC 9113 Section 8.2.1: validate names and values before exposing HTTP fields.
+local function valid_header(k, v)
+	if k == "" or k:find("[^!#$%%&'*+.^_`|~0-9a-z:-]") or k:find(":", 2, true)
+		or v:find("[%z\r\n]") then
+		return false
+	end
+	local first, last = v:byte(1), v:byte(-1)
+	return first ~= 32 and first ~= 9 and last ~= 32 and last ~= 9
+end
+
 ---@param hlist string[]
 ---@param first_header boolean
 ---@return integer?
 local function check_req_header(hlist, first_header)
 	local header_mask = 0
 	local normal_header_appeared = false
+	local method, authority
 	-- RFC 7540 Section 8.1.2: Header field names MUST be lowercase
 	-- RFC 7540 Section 8.1.2.1: Validate pseudo-header fields
 	-- RFC 7540 Section 8.1.2.2: Connection-specific header fields
 	for i = 1, #hlist, 2 do
 		local k = hlist[i]
 		local v = hlist[i + 1]
-		if k:match("%u") then
+		if not valid_header(k, v) then
 			return PROTOCOL_ERROR
 		end
 		if k:byte(1) == 58 then  -- 58 is ':' in ASCII
@@ -411,9 +453,19 @@ local function check_req_header(hlist, first_header)
 				-- Unknown or response-only pseudo-header (e.g., :status) in request
 				return PROTOCOL_ERROR
 			end
-			-- RFC 7540 Section 8.1.2.3: :path pseudo-header field MUST NOT be empty
-			if k == ":path" and v == "" then
+			if k == ":method" then
+				if v == "" or v:find("[^!#$%%&'*+.^_`|~0-9A-Za-z-]") then
+					return PROTOCOL_ERROR
+				end
+				method = v
+			elseif k == ":scheme" then
+				if not v:match("^[A-Za-z][A-Za-z0-9+.-]*$") then
+					return PROTOCOL_ERROR
+				end
+			elseif k == ":path" and v == "" then
 				return PROTOCOL_ERROR
+			elseif k == ":authority" then
+				authority = v
 			end
 			header_mask = header_mask | mask
 		else
@@ -432,23 +484,41 @@ local function check_req_header(hlist, first_header)
 	-- All HTTP/2 requests MUST include exactly one valid value for the
 	-- :method, :scheme, and :path pseudo-header fields
 	-- This check only applies to initial headers, not trailers
-	if first_header and (header_mask & pseudo_must_mask) ~= pseudo_must_mask then
-		-- Missing one of :method, :scheme, or :path
-		return PROTOCOL_ERROR
+	if first_header then
+		if method == "CONNECT" then
+			if header_mask ~= pseudo_connect_mask or authority == "" then
+				return PROTOCOL_ERROR
+			end
+		elseif (header_mask & pseudo_must_mask) ~= pseudo_must_mask then
+			return PROTOCOL_ERROR
+		end
 	end
 	return nil
 end
 
 local function check_content_length(header)
-	local clen = header['content-length']
-	if not clen then
+	-- Accept Lua numeric syntax, but require a nonnegative length within Lua's integer range.
+	-- Surrounding whitespace is rejected by HTTP field validation before this check.
+	local values = header['content-length']
+	if not values then
 		return true, nil
 	end
-	clen = tonumber(clen)
-	if not clen or clen < 0 then
-		return false, PROTOCOL_ERROR
+	if type(values) ~= "table" then
+		local n = tointeger(values)
+		if not n or n < 0 then
+			return false, PROTOCOL_ERROR
+		end
+		return true, n
 	end
-	return true, clen
+	local expected
+	for _, value in pairs(values) do
+		local n = tointeger(value)
+		if not n or n < 0 or expected and n ~= expected then
+			return false, PROTOCOL_ERROR
+		end
+		expected = n
+	end
+	return true, expected
 end
 
 ------------channel functions
@@ -486,8 +556,8 @@ local function channel_newstream(ch, id, active, method, path, header)
 		writeco = nil,
 		writedat = nil,
 		writeoffset = 0,
-		writelength = 0,
-		writeeoffset = false,
+		writequeued = false,
+		writeeof = false,
 		writeheader = nil,
 		sendwindow = ch.initialwindowsize,  -- Stream-level send window
 	}
@@ -529,6 +599,59 @@ local function channel_write(ch, dat)
 	end
 end
 
+local function channel_canceltimer(ch)
+	if ch.timer then
+		time.cancel(ch.timer)
+		ch.timer = nil
+	end
+end
+
+local function channel_pingtimeout(ch)
+	ch.timer = nil
+	if ch.goaway then
+		return
+	end
+	channel_abort(ch, "PING timeout")
+end
+
+local function channel_idletimer(ch)
+	ch.timer = nil
+	if ch.goaway or not ch.sendpingtimeout then
+		return
+	end
+	local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
+	if delay > 0 then
+		ch.timer = time.after(delay, channel_idletimer, ch)
+		return
+	end
+	local dat
+	dat, ch.pingtoken = build_ping(0)
+	channel_write(ch, dat)
+	ch.timer = time.after(ch.pingtimeout, channel_pingtimeout, ch)
+end
+
+---@param ch silly.net.http.h2.channel
+---@param send_ping_timeout integer? -- Receive idle time in ms; nil or <= 0 disables probes
+---@param ping_timeout integer? -- ACK timeout in ms; nil or <= 0 uses 15000 when enabled
+function C.keepalive(ch, send_ping_timeout, ping_timeout)
+	channel_canceltimer(ch)
+	if ping_timeout and ping_timeout <= 0 then
+		ping_timeout = nil
+	end
+	if send_ping_timeout and send_ping_timeout > 0 then
+		ping_timeout = ping_timeout or 15000
+	else
+		send_ping_timeout = nil
+	end
+	ch.sendpingtimeout = send_ping_timeout
+	ch.pingtimeout = ping_timeout
+	ch.pingtoken = nil
+	if not ch.goaway and ch.sendpingtimeout then
+		local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
+		ch.timer = time.after(delay, channel_idletimer, ch)
+	end
+end
+
 ---@param ch silly.net.http.h2.channel
 ---@param increment integer
 local function channel_windebt(ch, increment)
@@ -553,41 +676,87 @@ local function channel_checkclose(ch)
 	end
 	local conn = ch.conn
 	if conn then
+		channel_canceltimer(ch)
+		channel_flushwrite(ch)
+		local streams = ch.streams
+		for id, stream in pairs(streams) do
+			streams[id] = nil
+			stream.channel = nil
+		end
+		ch.writewaitq:clear()
+		ch.closingq:clear()
 		conn:close()
 		ch.conn = nil
 	end
 	return true
 end
 
----@param ch silly.net.http.h2.channel
-local function channel_clearstream(ch)
-	local t = ch.streams
-	if ch.streamcount == 0 then
-		channel_checkclose(ch)
+---@param s silly.net.http.h2.stream
+local function stream_unqueue(s)
+	if not s.writequeued then
 		return
 	end
-	for k, v in pairs(t) do
-		t[k] = nil
-		-- Set state before waking up coroutines to ensure consistent state
-		v.closed = true
-		v.channel = nil
-		v.errstr = "Channel goaway"
-		v.localstate = STATE_RST
-		v.remotestate = STATE_RST
-		-- Wakeup readco with nil, it will read errstr
-		local co = v.readco
-		if co then
-			v.readco = nil
-			wakeup(co, nil)
-		end
-		-- Wakeup writeco with error string
-		co = v.writeco
-		if co then
-			v.writeco = nil
-			wakeup(co, "channel closed")
-		end
+	s.writequeued = false
+	local ch = s.channel
+	local waitq = s.id == 0 and ch.openwaitq or ch.writewaitq
+	waitq:remove(s)
+end
+
+---@param s silly.net.http.h2.stream
+---@param err string
+local function stream_clear(s, err)
+	s.closed = true
+	s.channel = nil
+	s.errstr = err
+	s.localstate = STATE_RST
+	s.remotestate = STATE_RST
+	s.writequeued = false
+	local co = s.readco
+	if co then
+		s.readco = nil
+		s.readtype = nil
+		s.readneed = 0
+		wakeup(co, nil)
 	end
+	co = s.writeco
+	if co then
+		s.writeco = nil
+		s.writedat = nil
+		wakeup(co, err)
+	end
+end
+
+---@param ch silly.net.http.h2.channel
+---@param err string
+local function channel_failopen(ch, err)
+	local waitq = ch.openwaitq
+	if not waitq then
+		return
+	end
+	while true do
+		local s = waitq:pop()
+		if not s then
+			break
+		end
+		stream_clear(s, err)
+	end
+end
+
+---@param streams table<integer, silly.net.http.h2.stream>
+---@param err string
+local function channel_clearstream(streams, err)
+	for id, s in pairs(streams) do
+		streams[id] = nil
+		stream_clear(s, err)
+	end
+end
+
+channel_abort = function(ch, err)
+	ch.goaway = true
+	ch.errstr = err
+	channel_clearstream(ch.streams, err)
 	ch.streamcount = 0
+	channel_failopen(ch, err)
 	channel_checkclose(ch)
 end
 
@@ -597,6 +766,7 @@ channel_goaway = function(ch, errorcode)
 	ch.goaway = true
 	if errorcode == NO_ERROR then
 		channel_write(ch, build_goaway(ch.laststreamid, errorcode))
+		channel_flushwrite(ch)
 		return
 	end
 	logger.warn("[h2] channel goaway with error:", errorcode)
@@ -606,27 +776,36 @@ channel_goaway = function(ch, errorcode)
 	end
 	channel_write(ch, build_goaway(ch.laststreamid, errorcode))
 	channel_flushwrite(ch)
-	channel_clearstream(ch)
+	channel_abort(ch, ch.errstr or "Channel goaway")
 end
 
 ---@param ch silly.net.http.h2.channel.client | silly.net.http.h2.channel
 local function channel_wakeupopen(ch)
 	local waitq = ch.openwaitq
-	if not waitq then
+	if not waitq or ch.goaway then
 		return
 	end
-	local max = ch.streammax
-	local n = ch.streamcount
-	local count = 0
-	for i = n+1, max do
-		local co = waitq:pop()
-		if not co then
+	if ch.streamidx >= MAX_STREAM_ID then
+		channel_failopen(ch, "Stream id exhausted")
+		return
+	end
+	local available = ch.streammax - ch.streamcount
+	for _ = 1, waitq:size() do
+		if available <= 0 then
 			break
 		end
-		wakeup(co, nil)
-		count = count + 1
+		local s = waitq:pop()
+		local co = s.writeco
+		if co then
+			s.writequeued = false
+			s.writeco = nil
+			wakeup(co, nil)
+			available = available - 1
+		else
+			-- A read before flush is retained only so channel shutdown can cancel it.
+			waitq:push(s)
+		end
 	end
-	ch.streamcount = ch.streamcount + count
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -636,8 +815,8 @@ end
 
 ---@param ch silly.net.http.h2.channel
 function C.isalive(ch)
-	local conn = ch.conn
-	return conn and conn:isalive() and ch.streamidx + ch.streamcount < MAX_STREAM_ID
+	return not ch.goaway and ch.conn:isalive()
+		and ch.streamidx < MAX_STREAM_ID
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -647,32 +826,13 @@ end
 ---@param ch silly.net.http.h2.channel.client
 ---@return silly.net.http.h2.stream?, string?
 function C.openstream(ch)
-	local add = 1
-	local streamcount = ch.streamcount
-	if streamcount >= ch.streammax then
-		local co = task.running()
-		ch.openwaitq:push(co)
-		local err = task.wait()
-		if err then
-			return nil, err
-		end
-		add = 0
-	end
 	if ch.goaway then
-		return nil, "Channel goaway"
+		return nil, ch.errstr or "Channel goaway"
 	end
-	-- RFC 7540: Stream identifiers cannot be reused
-	-- If we've exhausted the stream ID space, the connection must be closed
-	local id = ch.streamidx
-	if id + streamcount >= MAX_STREAM_ID then
+	if ch.streamidx >= MAX_STREAM_ID then
 		return nil, "Stream id exhausted"
 	end
-	id = id + 2
-	local stream = channel_newstream(ch, id, true, "", "", {})
-	ch.streamidx = id
-	ch.streams[id] = stream
-	ch.streamcount = ch.streamcount + add
-	return stream, nil
+	return channel_newstream(ch, 0, true, "", "", {}), nil
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -680,68 +840,21 @@ function C.close(ch)
 	if ch.goaway then
 		return
 	end
-	ch.streamidx = MAX_STREAM_ID -- prevent open stream
 	channel_goaway(ch, NO_ERROR)
-	---@cast ch silly.net.http.h2.channel.client
-	local waitq = ch.openwaitq
-	if waitq then
-		while true do
-			local co = waitq:pop()
-			if not co then
-				break
-			end
-			wakeup(co, "channel closed")
-		end
-	end
+	channel_failopen(ch, "channel closed")
 	channel_checkclose(ch)
 end
 
 ---------------------------stream
 
 ---@param s silly.net.http.h2.stream
----@param header table
----@param endstream boolean
-local function stream_writeheader(s, header, endstream)
-	local hdat
-	local ch = s.channel
-	local id = s.id
-	if s.active then --client request stream
-		-- stream ID may have advanced since openstream() if other streams
-		-- were sent first; reassign to the latest ID in that case
-		local idx = ch.streamidx
-		if id ~= idx then
-			local streams = ch.streams
-			streams[id] = nil
-			id = idx + 2
-			ch.streamidx = id
-			s.id = id
-			streams[id] = s
-		end
-		-- :authority replaces host in HTTP/2; save/restore prevents mutating caller's table.
-		-- host must not be sent as a regular header (RFC 7540 Section 8.1.2.2).
-		-- header keys are assumed to be pre-normalized to lowercase
-		-- (by client.lua do_with_redirects or the caller of M.request).
-		local saved_host = header["host"]
-		header["host"] = nil
-		hdat = hpack_pack(ch.sendhpack, header,
-			":authority", ch.authority,
-			":method", s.method,
-			":path", s.path,
-			":scheme", ch.scheme)
-		header["host"] = saved_host
-	else --server response stream
-		hdat = hpack_pack(ch.sendhpack, header, ":status", s.status)
-	end
-	s.localstate = STATE_HEADER
-	local dat = build_header(id, ch.sendframemaxsize, hdat, endstream)
-	channel_write(ch, dat)
-end
-
----@param s silly.net.http.h2.stream
 ---@param dat string|table|nil
 local function stream_readwakeup(s, dat)
 	local co = s.readco
 	if co then
+		if s.id == 0 and not s.writeco then
+			stream_unqueue(s)
+		end
 		s.readtype = nil
 		s.readco = nil
 		s.readneed = 0
@@ -754,21 +867,110 @@ local function read_timer(s)
 	stream_readwakeup(s, TIMEOUT)
 end
 
-local function stream_flush(s)
+---@param s silly.net.http.h2.stream
+---@param endstream boolean
+---@return boolean, string? error
+local function stream_writeheader(s, endstream)
+	local hdat
 	local ch = s.channel
-	if not ch then
-		return
+	local id = s.id
+	if s.active and id == 0 then
+		if s.writeco then
+			error("[h2] initial headers can't be written while write is pending", 2)
+		end
+		while true do
+			local err = s.errstr
+			if not err and ch.goaway then
+				err = ch.errstr or "Channel goaway"
+			elseif not err and ch.streamidx >= MAX_STREAM_ID then
+				err = "Stream id exhausted"
+			end
+			if err then
+				stream_unqueue(s)
+				stream_clear(s, err)
+				return false, err
+			end
+			if ch.streamcount < ch.streammax then
+				break
+			end
+			s.writeco = task.running()
+			if not s.writequeued then
+				s.writequeued = true
+				ch.openwaitq:push(s)
+			end
+			err = task.wait()
+			if err then
+				return false, err
+			end
+			-- Notifications reserve no slot; close and SETTINGS may have run first.
+		end
 	end
+	-- Claiming HEADERS, assigning the ID and queueing the frame below must not yield.
 	local header = s.writeheader
-	if header then
-		s.writeheader = nil
-		stream_writeheader(s, header, false)
+	if s.active then --client request stream
+		-- :authority replaces host in HTTP/2; save/restore prevents mutating caller's table.
+		-- host must not be sent as a regular header (RFC 7540 Section 8.1.2.2).
+		-- header keys are assumed to be pre-normalized to lowercase
+		-- (by client.lua do_with_redirects or the caller of M.request).
+		local saved_host = header["host"]
+		header["host"] = nil
+		if s.method == "CONNECT" then
+			hdat = hpack_pack(ch.sendhpack, header, ":authority", s.path, ":method", s.method)
+		else
+			hdat = hpack_pack(ch.sendhpack, header,
+				":authority", ch.authority,
+				":method", s.method,
+				":path", s.path,
+				":scheme", ch.scheme)
+		end
+		header["host"] = saved_host
+		if id == 0 then
+			-- Remove any pre-flush reader registration before assigning the wire ID.
+			stream_unqueue(s)
+			id = ch.streamidx + 2
+			ch.streamidx = id
+			ch.streamcount = ch.streamcount + 1
+			ch.streams[id] = s
+			s.id = id
+			s.sendwindow = ch.initialwindowsize
+		end
+	else --server response stream
+		hdat = hpack_pack(ch.sendhpack, header, ":status", s.status)
 	end
+	local dat = build_header(id, ch.sendframemaxsize, hdat, endstream)
+	s.writeheader = nil
+	channel_write(ch, dat)
+	s.localstate = endstream and STATE_END or STATE_HEADER
+	if s.active and id == MAX_STREAM_ID then
+		channel_failopen(ch, "Stream id exhausted")
+	end
+	return true, nil
+end
+
+---@param s silly.net.http.h2.stream
+local function stream_flushrecv(s)
+	local ch = s.channel
 	local recvwindebt = s.recvwindebt
-	if recvwindebt > 0 then
+	if ch and s.localstate ~= STATE_RST and recvwindebt > 0 then
 		s.recvwindebt = 0
-		channel_write(s.channel, build_winupdate(s.id, 0, recvwindebt))
+		channel_write(ch, build_winupdate(s.id, 0, recvwindebt))
 	end
+end
+
+---@param s silly.net.http.h2.stream
+---@return boolean, string? error
+local function stream_flush(s)
+	if not s.channel or s.localstate == STATE_RST then
+		return false, s.errstr or "Local closed"
+	end
+	if s.writeheader then
+		local ok, err = stream_writeheader(s, false)
+		if not ok then
+			return false, err
+		end
+	end
+	stream_flushrecv(s)
+	return true, nil
 end
 
 ---@param s silly.net.http.h2.stream
@@ -778,7 +980,27 @@ end
 ---@return string?, string? error
 local function stream_readwait(s, state, size, timeout)
 	local dat
-	stream_flush(s)
+	local ch = s.channel
+	if not ch or s.localstate == STATE_RST then
+		return nil, s.errstr
+	end
+	if s.id == 0 then
+		local err
+		if ch.goaway then
+			err = ch.errstr or "Channel goaway"
+		elseif ch.streamidx >= MAX_STREAM_ID then
+			err = "Stream id exhausted"
+		end
+		if err then
+			stream_clear(s, err)
+			return nil, err
+		end
+		if not s.writequeued then
+			s.writequeued = true
+			ch.openwaitq:push(s)
+		end
+	end
+	stream_flushrecv(s)
 	s.readtype = state
 	s.readneed = size
 	s.readco = task.running()
@@ -798,6 +1020,15 @@ local function stream_readwait(s, state, size, timeout)
 	return nil, s.errstr
 end
 
+---@param ch silly.net.http.h2.channel
+---@param s silly.net.http.h2.stream
+local function channel_waitwrite(ch, s)
+	if not s.writequeued then
+		s.writequeued = true
+		ch.writewaitq:push(s)
+	end
+end
+
 ---@param s silly.net.http.h2.stream
 ---@param data string
 ---@param endstream boolean
@@ -811,26 +1042,37 @@ local function stream_writewait(s, data, endstream)
 	local chwin = ch.sendwindow
 	local dlen = #data
 	local win = swin < chwin and swin or chwin
-	if win >= dlen then
+	if win < 0 then
+		win = 0
+	end
+	if dlen == 0 or win >= dlen then
 		s.sendwindow = swin - dlen
 		ch.sendwindow = chwin - dlen
 		channel_write(ch, build_body(s.id, ch.sendframemaxsize, data, endstream))
+		if endstream then
+			s.localstate = STATE_END
+		end
 		return true, nil
 	end
-	channel_write(ch, build_body(s.id, ch.sendframemaxsize, data, false, 0, win))
+	if win > 0 then
+		channel_write(ch, build_body(s.id, ch.sendframemaxsize, data, false, 0, win))
+	end
 	swin = swin - win
 	chwin = chwin - win
 	ch.sendwindow = chwin
 	s.sendwindow = swin
 	s.writedat = data
 	s.writeoffset = win
-	s.writelength = dlen - win
-	s.writeeoffset = endstream
+	s.writeeof = endstream
 	if chwin <= 0 then
-		ch.writewaitq:push(s)
+		channel_waitwrite(ch, s)
 	end
 	s.writeco = task.running()
 	local err = task.wait()
+	-- A queued success can be followed by a peer reset before this task resumes.
+	if err == nil and (s.localstate == STATE_RST or s.localstate == STATE_END and not endstream) then
+		err = s.errstr
+	end
 	if err then
 		s.errstr = err
 		return false, err
@@ -843,10 +1085,10 @@ end
 local function stream_writewakeup(s, err)
 	local co = s.writeco
 	if co then
+		stream_unqueue(s)
 		s.writedat = nil
 		s.writeoffset = 0
-		s.writelength = 0
-		s.writeeoffset = false
+		s.writeeof = false
 		s.writeco = nil
 		wakeup(co, err)
 	end
@@ -861,7 +1103,7 @@ local function stream_remoteend(s, state, err)
 	if state == STATE_END then
 		-- RFC 7540 Section 8.1.2.6: Validate content-length matches actual received length
 		if s.recvexpect and s.recvbytes ~= s.recvexpect then
-			channel_goaway(s.channel, PROTOCOL_ERROR)
+			stream_reset(s.id, s.channel, PROTOCOL_ERROR)
 			return
 		end
 		local readtype = s.readtype
@@ -871,6 +1113,7 @@ local function stream_remoteend(s, state, err)
 			stream_readwakeup(s, nil)
 		end
 	else
+		s.localstate = STATE_RST
 		stream_readwakeup(s, nil)
 		stream_writewakeup(s, err)
 	end
@@ -879,23 +1122,23 @@ end
 ---@param id integer
 ---@param ch silly.net.http.h2.channel
 ---@param errorcode integer
-local function stream_reset(id, ch, errorcode)
+stream_reset = function(id, ch, errorcode)
 	channel_write(ch, build_rst(id, errorcode))
 	local s = ch.streams[id]
 	if not s then
 		return
 	end
 	local err = err_str[errorcode]
+	s.errstr = err
 	s.localstate = STATE_RST
-	s.errstr = "Local reset"
 	stream_readwakeup(s, nil)
 	stream_writewakeup(s, err)
 end
 
 ---@param s silly.net.http.h2.stream
 local function stream_trysend(s)
-	local sendinglen = s.writelength
-	if sendinglen == 0 then
+	local sendingdat = s.writedat
+	if not sendingdat then
 		return
 	end
 	local swin = s.sendwindow
@@ -903,13 +1146,16 @@ local function stream_trysend(s)
 		return
 	end
 	local ch = s.channel
-	local chwin = ch.sendwindow
-	if chwin <= 0 then
-		ch.writewaitq:push(s)
+	if not ch or not s.writeco then
 		return
 	end
-	local sendingdat = s.writedat
+	local chwin = ch.sendwindow
+	if chwin <= 0 then
+		channel_waitwrite(ch, s)
+		return
+	end
 	local sendingoff = s.writeoffset
+	local sendinglen = #sendingdat - sendingoff
 	local win = sendinglen
 	if win > swin then
 		win = swin
@@ -917,23 +1163,25 @@ local function stream_trysend(s)
 	if win > chwin then
 		win = chwin
 	end
-	s.sendwindow = s.sendwindow - win
-	ch.sendwindow = ch.sendwindow - win
+	s.sendwindow = swin - win
+	ch.sendwindow = chwin - win
 	local left = sendinglen - win
-	local endstream = left == 0 and s.writeeoffset
+	local endstream = left == 0 and s.writeeof
 	channel_write(ch, build_body(s.id, ch.sendframemaxsize, sendingdat, endstream, sendingoff, win))
+	if endstream then
+		s.localstate = STATE_END
+	end
 	s.writeoffset = sendingoff + win
-	s.writelength = left
 	if left == 0 then
 		stream_writewakeup(s, nil)
 	elseif ch.sendwindow <= 0 then
-		ch.writewaitq:push(s)
+		channel_waitwrite(ch, s)
 	end
 end
 
 ---@param s silly.net.http.h2.stream
 ---@param method string
----@param path string
+---@param path string -- Request target; CONNECT uses host:port
 ---@param header table<string, string|string[]>
 function S.request(s, method, path, header)
 	local err = s.errstr
@@ -951,9 +1199,8 @@ end
 ---@param header table<string, string|string[]|number>
 ---@return boolean, string|?
 function S.respond(s, status, header)
-	local ch = s.channel
-	if not ch then
-		return false, s.errstr
+	if s.localstate >= STATE_CLOSE then
+		return false, "Local closed"
 	end
 	s.status = status
 	s.writeheader = header
@@ -969,17 +1216,21 @@ function S.write(s, data)
 	if not data or #data == 0 then
 		return true, nil
 	end
-	if s.localstate >= STATE_END then
+	if s.localstate >= STATE_CLOSE then
 		return false, "Local closed"
+	end
+	if s.writeco then
+		error("[h2] write can't be called while write is pending", 2)
 	end
 	local ch = s.channel
 	if not ch then
 		return false, s.errstr
 	end
-	local header = s.writeheader
-	if header then
-		s.writeheader = nil
-		stream_writeheader(s, header, false)
+	if s.writeheader then
+		local ok, err = stream_writeheader(s, false)
+		if not ok then
+			return false, err
+		end
 	end
 	s.localstate = STATE_DATA
 	return stream_writewait(s, data, false)
@@ -997,17 +1248,21 @@ function S.closewrite(s, data, trailer)
 		error("[h2] closewrite can't be called while write is pending", 2)
 	end
 	local ch = s.channel
+	if not ch then
+		return false, s.errstr
+	end
 	local nopayload = not (data or trailer)
-	local header = s.writeheader
-	if header then
-		s.writeheader = nil
-		stream_writeheader(s, header, nopayload)
+	if s.writeheader then
+		local ok, err = stream_writeheader(s, nopayload)
+		if not ok then
+			return false, err
+		end
 		if nopayload then
-			s.localstate = STATE_END
 			return true, nil
 		end
 	end
-	s.localstate = STATE_END
+	-- Closing blocks further writes; END_STREAM is recorded only once queued.
+	s.localstate = STATE_CLOSE
 	if nopayload then
 		data = ""
 	end
@@ -1021,6 +1276,7 @@ function S.closewrite(s, data, trailer)
 		local hdr = hpack_pack(ch.sendhpack, trailer)
 		local dat = build_header(s.id, ch.sendframemaxsize, hdr, true)
 		channel_write(ch, dat)
+		s.localstate = STATE_END
 	end
 	return true, nil
 end
@@ -1035,6 +1291,9 @@ function S.waitresponse(s, timeout)
 			return false, err
 		end
 	end
+	if s.localstate == STATE_RST or s.remotestate == STATE_RST then
+		return false, s.errstr
+	end
 	return true, nil
 end
 
@@ -1045,15 +1304,27 @@ function S.close(s)
 	end
 	s.closed = true
 	local ch = s.channel
+	local id = s.id
 	local localstate = s.localstate
 	local remotestate = s.remotestate
-	-- If localstate < STATE_CLOSE, we haven't sent END_STREAM or RST yet
-	-- If remotestate < STATE_CLOSE, remote hasn't closed yet
-	if localstate >= STATE_CLOSE and remotestate >= STATE_CLOSE then
-		ch.streams[s.id] = nil
+	if id == 0 then
+		s.errstr = s.errstr or "Local closed"
+		s.localstate = STATE_RST
+		s.remotestate = STATE_RST
+		stream_readwakeup(s, nil)
+		stream_writewakeup(s, s.errstr)
 		s.channel = nil
-	elseif not s.active or localstate >= STATE_HEADER then
-		stream_reset(s.id, ch, CANCEL)
+		channel_wakeupopen(ch)
+		return
+	elseif localstate > STATE_CLOSE and remotestate >= STATE_CLOSE then
+		ch.streams[id] = nil
+		s.channel = nil
+	else
+		if localstate ~= STATE_RST and remotestate ~= STATE_RST then
+			-- RFC 9113 8.1: preserve a complete response when stopping a request body.
+			local code = not s.active and localstate == STATE_END and NO_ERROR or CANCEL
+			stream_reset(id, ch, code)
+		end
 		local streams = ch.streams
 		local closingq = ch.closingq
 		local n = closingq:push(s)
@@ -1062,14 +1333,6 @@ function S.close(s)
 			streams[s.id] = nil
 			s.channel = nil
 		end
-	else --not send request, just clear
-		s.localstate = STATE_RST
-		s.remotestate = STATE_RST
-		s.errstr = "Local closed"
-		ch.streams[s.id] = nil
-		s.channel = nil
-		stream_readwakeup(s, nil)
-		stream_writewakeup(s, "Local closed")
 	end
 	ch.streamcount = ch.streamcount - 1
 	if channel_checkclose(ch) then
@@ -1089,11 +1352,11 @@ function S.read(s, size, timeout)
 	local recvbuf = s.recvbuf
 	local dat = recvbuf:read(size)
 	if dat then
-		stream_flush(s)
+		stream_flushrecv(s)
 		return dat, nil
 	end
 	if s.localstate == STATE_RST then
-		return nil, "Local reset"
+		return nil, s.errstr
 	end
 	local remotestate = s.remotestate
 	if remotestate == STATE_END then
@@ -1108,6 +1371,9 @@ end
 ---@param timeout integer? --ms
 ---@return string?, string?
 function S.readall(s, timeout)
+	if s.localstate == STATE_RST then
+		return nil, s.errstr
+	end
 	local remotestate = s.remotestate
 	if remotestate >= STATE_CLOSE then
 		local dat = s.recvbuf:readall()
@@ -1128,6 +1394,20 @@ function S.eof(s)
 	return s.remotestate == STATE_END
 end
 -----------------------------frame functions-------------------------------
+local function stream_istunnel(s)
+	local status = s.status
+	return s.method == "CONNECT" and status and status >= 200 and status < 300
+end
+
+-- Local allocation does not open a stream on the wire. Skipped IDs are closed.
+local function channel_recvstream(ch, id)
+	local last = ch.openwaitq and ch.streamidx or ch.laststreamid
+	if id % 2 == 0 or id > last then
+		return nil, true
+	end
+	return ch.streams[id], false
+end
+
 ---@param ch silly.net.http.h2.channel
 ---@param increment integer
 local function channel_winupdate(ch, increment)
@@ -1149,51 +1429,91 @@ local function channel_winupdate(ch, increment)
 		if not s then
 			break
 		end
+		s.writequeued = false
 		stream_trysend(s)
 	end
 end
 
 ---@param s silly.net.http.h2.stream
 ---@param increment integer
+---@return boolean
 local function stream_winupdate(s, increment)
-	-- Connection-level WINDOW_UPDATE: update connection send window
-	local owindow = s.sendwindow
-	local nwindow = owindow + increment
-	-- RFC 7540 Section 6.9.1: Window size MUST NOT exceed 2^31-1
+	-- Retained reset records must not affect later connection state.
+	if s.closed or s.localstate == STATE_RST then
+		return true
+	end
+	local nwindow = s.sendwindow + increment
 	if nwindow > 0x7FFFFFFF then
-		stream_reset(s.id, s.channel, FLOW_CONTROL_ERROR)
-		return
+		return false
 	end
 	s.sendwindow = nwindow
 	if increment > 0 then
 		stream_trysend(s)
 	end
+	return true
 end
 
 ---@param ch silly.net.http.h2.channel
 ---@param id integer
 ---@param flag integer
 ---@param dat string
-local function frame_data(ch, id, flag, dat)
-	local streams = ch.streams
-	local s = streams[id]
-	-- RFC 7540 Section 5.1: Check stream state
-	if not s or s.remotestate >= STATE_CLOSE then
-		-- Stream is idle. Receiving DATA is a connection error.
+local function frame_data(ch, id, flag, dat, wirelen)
+	local datlen = #dat
+	wirelen = wirelen or datlen
+	if id == 0 then
 		channel_goaway(ch, PROTOCOL_ERROR)
 		return
 	end
-	channel_windebt(ch, #dat)
+	if wirelen > ch.recvwindowsize - ch.recvwindebt then
+		channel_goaway(ch, FLOW_CONTROL_ERROR)
+		return
+	end
+	channel_windebt(ch, wirelen)
+	local s, idle = channel_recvstream(ch, id)
+	if not s then
+		if idle then
+			channel_goaway(ch, PROTOCOL_ERROR)
+		else
+			stream_reset(id, ch, STREAM_CLOSED)
+		end
+		return
+	end
+	if s.localstate == STATE_RST then
+		return
+	end
+	if s.remotestate == STATE_NONE then
+		if s.localstate == STATE_NONE then
+			channel_goaway(ch, PROTOCOL_ERROR)
+		else
+			stream_reset(id, ch, PROTOCOL_ERROR)
+		end
+		return
+	end
+	if s.remotestate >= STATE_CLOSE then
+		stream_reset(id, ch, STREAM_CLOSED)
+		return
+	end
+	if wirelen > stream_init_window_size - s.recvwindebt then
+		stream_reset(id, ch, FLOW_CONTROL_ERROR)
+		return
+	end
+	local padding = wirelen - datlen
+	if padding > 0 then
+		channel_write(ch, build_winupdate(id, 0, padding))
+	end
 	s.remotestate = STATE_DATA
-	if #dat > 0 and s.localstate ~= STATE_RST then
+	if datlen > 0 then
 		local readtype = s.readtype
 		local total = s.recvbuf:append(dat)
-		-- RFC 7540 Section 8.1.2.6: Track received data length for content-length validation
-		s.recvbytes = s.recvbytes + #dat
+		s.recvbytes = s.recvbytes + datlen
+		if s.recvexpect and s.recvbytes > s.recvexpect then
+			stream_reset(id, ch, PROTOCOL_ERROR)
+			return
+		end
 		if readtype == STATE_DATA and total < s.readneed or readtype == STATE_CLOSE then
-			channel_write(ch, build_winupdate(id, 0, #dat))
+			channel_write(ch, build_winupdate(id, 0, datlen))
 		else
-			s.recvwindebt = s.recvwindebt + #dat
+			s.recvwindebt = s.recvwindebt + datlen
 		end
 		if readtype == STATE_DATA and total >= s.readneed then
 			stream_readwakeup(s, s.recvbuf:read(s.readneed))
@@ -1236,7 +1556,7 @@ local function frame_settings(ch, stream_id, flag, dat)
 		-- RFC 7540 Section 6.5.2: Validate SETTINGS parameter values
 		if id == SETTINGS_ENABLE_PUSH then
 			-- SETTINGS_ENABLE_PUSH can only be 0 or 1
-			if val ~= 0 and val ~= 1 then
+			if val ~= 0 and (val ~= 1 or ch.openwaitq) then
 				channel_goaway(ch, PROTOCOL_ERROR)
 				return
 			end
@@ -1252,7 +1572,10 @@ local function frame_settings(ch, stream_id, flag, dat)
 			ch.initialwindowsize = val
 			if delta ~= 0 then
 				for _, s in pairs(ch.streams) do
-					stream_winupdate(s, delta)
+					if s.localstate <= STATE_CLOSE and not stream_winupdate(s, delta) then
+						channel_goaway(ch, FLOW_CONTROL_ERROR)
+						return
+					end
 				end
 			end
 		elseif id == SETTINGS_MAX_FRAME_SIZE then
@@ -1263,7 +1586,8 @@ local function frame_settings(ch, stream_id, flag, dat)
 			end
 			ch.sendframemaxsize = val
 		elseif id == SETTINGS_HEADER_TABLE_SIZE then
-			hpack_hardlimit(ch.recvhpack, val)
+			hpack_hardlimit(ch.sendhpack, val < default_header_table_size
+				and val or default_header_table_size)
 		elseif id == SETTINGS_MAX_CONCURRENT then
 			ch.streammax = val
 			channel_wakeupopen(ch)
@@ -1323,20 +1647,23 @@ local function frame_ping(ch, streamid, flag, dat)
 	end
 	-- RFC 7540 Section 6.7: If ACK flag is set, do not respond
 	if flag & ACK == ACK then
-		-- This is a PING response, do nothing
+		if ch.pingtoken == dat then
+			ch.pingtoken = nil
+			channel_canceltimer(ch)
+			channel_idletimer(ch)
+		end
 		return
 	end
-	-- Send PING response with ACK flag
-	channel_write(ch, pack(">I3I1I1I4", #dat, FRAME_PING, ACK, 0) .. dat)
+	-- Batch ACK with ready frames; sendbuf never waits for flow-control credit.
+	channel_write(ch, build_ping(ACK, dat))
 end
 
 ---@param ch silly.net.http.h2.channel
 ---@param streamid integer
 ---@param dat string
 local function frame_rst(ch, streamid, _, dat)
-	local s = ch.streams[streamid]
-	if not s then
-		-- RST_STREAM on an idle stream is a connection error.
+	local s, idle = channel_recvstream(ch, streamid)
+	if streamid == 0 then
 		channel_goaway(ch, PROTOCOL_ERROR)
 		return
 	end
@@ -1345,18 +1672,56 @@ local function frame_rst(ch, streamid, _, dat)
 		channel_goaway(ch, FRAME_SIZE_ERROR)
 		return
 	end
-	stream_remoteend(s, STATE_RST, err_str[unpack(">I4", dat)])
+	if not s then
+		if idle then
+			channel_goaway(ch, PROTOCOL_ERROR)
+		end
+		return
+	end
+	if s.localstate == STATE_RST then
+		return
+	end
+	local code = unpack(">I4", dat)
+	if s.active and code == NO_ERROR and s.remotestate == STATE_END then
+		-- RFC 9113 8.1: stop the request body without discarding a complete response.
+		s.localstate = STATE_END
+		s.errstr = "Request stopped by peer"
+		stream_writewakeup(s, s.errstr)
+		return
+	end
+	stream_remoteend(s, STATE_RST, err_str[code])
 end
 
 ---@param ch silly.net.http.h2.channel
 ---@param streamid integer
-local function frame_goaway(ch, streamid, _, _)
-	-- RFC 7540 Section 6.8: GOAWAY frames MUST be sent on stream 0
+local function frame_goaway(ch, streamid, _, dat)
 	if streamid ~= 0 then
 		channel_goaway(ch, PROTOCOL_ERROR)
 		return
 	end
+	if #dat < 8 then
+		channel_goaway(ch, FRAME_SIZE_ERROR)
+		return
+	end
+	local last, code = unpack(">I4I4", dat)
+	last = last & 0x7fffffff
+	if ch.goawaylast and last > ch.goawaylast then
+		channel_goaway(ch, PROTOCOL_ERROR)
+		return
+	end
+	ch.goawaylast = last
+	if code ~= NO_ERROR then
+		channel_abort(ch, err_str[code])
+		return
+	end
 	ch.goaway = true
+	channel_failopen(ch, "Channel goaway")
+	for id, s in pairs(ch.streams) do
+		if s.active and id > last then
+			stream_remoteend(s, STATE_RST, "Stream refused by GOAWAY")
+		end
+	end
+	channel_checkclose(ch)
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -1382,11 +1747,11 @@ local function frame_winupdate(ch, id, flag, dat)
 		channel_winupdate(ch, increment)
 	else
 		-- Stream-level WINDOW_UPDATE: update stream send window
-		local s = ch.streams[id]
+		local s, idle = channel_recvstream(ch, id)
 		if not s then
 			-- RFC 7540 Section 6.9: WINDOW_UPDATE for a closed stream should be ignored
 			-- Only WINDOW_UPDATE for an idle stream (never existed) is a connection error
-			if id > ch.laststreamid then
+			if idle then
 				-- Stream ID is greater than any we've seen, this is an idle stream
 				channel_goaway(ch, PROTOCOL_ERROR)
 			end
@@ -1398,7 +1763,9 @@ local function frame_winupdate(ch, id, flag, dat)
 			stream_reset(id, ch, PROTOCOL_ERROR)
 			return
 		end
-		stream_winupdate(s, increment)
+		if not stream_winupdate(s, increment) then
+			stream_reset(id, ch, FLOW_CONTROL_ERROR)
+		end
 	end
 end
 
@@ -1426,17 +1793,17 @@ local function common_dispatch(args)
 		return
 	end
 	while true do
-		local t,f,d,id = read_frame(conn, ch)
+		local t,f,d,id,n = read_frame(conn, ch)
 		if not t then
 			ch.goaway = true
 			break
 		end
 		local func = frame_process[t]
 		if func then
-			func(ch, id, f, d)
+			func(ch, id, f, d, n)
 		end
 	end
-	channel_clearstream(ch)
+	channel_abort(ch, ch.errstr or "Channel goaway")
 end
 
 ---@param ch silly.net.http.h2.channel
@@ -1444,15 +1811,8 @@ end
 ---@param flag integer
 ---@param dat string
 local function frame_header_client(ch, streamid, flag, dat)
-	local s = ch.streams[streamid]
-	if not s then
+	if streamid == 0 then
 		channel_goaway(ch, PROTOCOL_ERROR)
-		return
-	end
-	local remotestate = s.remotestate
-	-- RFC 7540: Check stream state
-	if remotestate >= STATE_CLOSE then
-		channel_goaway(ch, STREAM_CLOSED)
 		return
 	end
 	local hlist, err = read_header(ch, streamid, flag, dat)
@@ -1460,44 +1820,85 @@ local function frame_header_client(ch, streamid, flag, dat)
 		channel_goaway(ch, err)
 		return
 	end
-	if remotestate == STATE_NONE then
-		local header = s.header
-		map_header(hlist, header)
-		local ok, clen = check_content_length(header)
-		if not ok then
-			channel_goaway(ch, clen)
+	local s, idle = channel_recvstream(ch, streamid)
+	if not s then
+		if idle then
+			channel_goaway(ch, PROTOCOL_ERROR)
+		end
+		return
+	end
+	if s.localstate == STATE_RST then
+		return
+	end
+	if s.remotestate >= STATE_CLOSE then
+		stream_reset(streamid, ch, STREAM_CLOSED)
+		return
+	end
+	local initial = s.remotestate == STATE_NONE
+	local status, normal
+	for i = 1, #hlist, 2 do
+		local k, v = hlist[i], hlist[i + 1]
+		if not valid_header(k, v) or forbidden_headers[k] or k == "te" then
+			stream_reset(streamid, ch, PROTOCOL_ERROR)
 			return
 		end
-		s.remotestate = STATE_HEADER
-		local status = header[":status"]
+		if k:byte(1) == 58 then
+			if not initial or k ~= ":status" or status or normal then
+				stream_reset(streamid, ch, PROTOCOL_ERROR)
+			return
+			end
+			status = v
+		else
+			normal = true
+		end
+	end
+	if initial then
+		local nstatus = status and status:match("^%d%d%d$") and tonumber(status)
+		if not nstatus or nstatus < 100 or nstatus == 101 then
+			stream_reset(streamid, ch, PROTOCOL_ERROR)
+			return
+		end
+		if nstatus < 200 then
+			if flag & END_STREAM ~= 0 then
+				stream_reset(streamid, ch, PROTOCOL_ERROR)
+			end
+			return -- waitresponse waits for the final response.
+		end
+		local header = s.header
+		map_header(hlist, header)
 		header[":status"] = nil
-		local nstatus = tonumber(status)
-		-- RFC 7540 Section 8.1.2.4: Response pseudo-header :status is mandatory
-		if not nstatus then
-			channel_goaway(ch, PROTOCOL_ERROR)
+		local ok, clen = check_content_length(header)
+		if not ok then
+			stream_reset(streamid, ch, PROTOCOL_ERROR)
 			return
 		end
 		s.status = nstatus
-		-- RFC 9110 Section 6.4.1: Responses to HEAD, 204, 304, 1xx, and successful CONNECT
-		-- must not have a body, skip content-length validation
+		s.headeronly = flag & END_STREAM ~= 0
+		s.remotestate = STATE_HEADER
 		local method = s.method
-		if method ~= "HEAD" and nstatus ~= 204 and nstatus ~= 304 and nstatus // 100 ~= 1
-			and not (method == "CONNECT" and nstatus >= 200 and nstatus < 300) then
-			s.recvexpect = clen
+		if not stream_istunnel(s) then
+			s.recvexpect = (method == "HEAD" or nstatus == 204 or nstatus == 304) and 0 or clen
 		end
 		if s.readtype == STATE_HEADER then
 			stream_readwakeup(s, "")
 		end
 	else
+		if flag & END_STREAM == 0 or stream_istunnel(s) then
+			stream_reset(streamid, ch, PROTOCOL_ERROR)
+			return
+		end
 		s.remotestate = STATE_TRAILER
 		map_header(hlist, s.trailer)
 	end
-	if flag & END_STREAM == END_STREAM then
+	if flag & END_STREAM ~= 0 then
 		stream_remoteend(s, STATE_END, EEOF)
 	end
 end
 
 local frame_client = {
+	[FRAME_PUSHPROMISE] = function(ch)
+		channel_goaway(ch, PROTOCOL_ERROR)
+	end,
 	[FRAME_HEADERS] = frame_header_client,
 	[FRAME_DATA] = frame_data,
 	[FRAME_PRIORITY] = frame_priority,
@@ -1523,27 +1924,41 @@ local function handshake_as_client(ch)
 		return false, err
 	end
 	local t, f, dat, id = read_frame(conn, ch)
-	if not t or t ~= FRAME_SETTINGS then
-		return false, "Expect settings"
+	if t ~= FRAME_SETTINGS or f & ACK ~= 0 then
+		channel_goaway(ch, PROTOCOL_ERROR)
+		return false, "Expect initial settings"
 	end
 	frame_settings(ch, id, f, dat)
+	if ch.goaway then
+		return false, "Invalid initial settings"
+	end
 	while true do
-		local t,f,dat,id = read_frame(conn, ch)
+		local t,f,dat,id,n = read_frame(conn, ch)
 		if not t then
 			return false, "Handshake closed"
 		end
 		local cb = frame_client[t]
 		if cb then
-			cb(ch, id, f, dat)
+			cb(ch, id, f, dat, n)
+		end
+		if ch.goaway then
+			return false, "Handshake closed"
 		end
 		if t == FRAME_SETTINGS and f & ACK == ACK then
 			break
 		end
 	end
-	channel_write(ch, build_setting(0, SETTINGS_INITIAL_WINDOW_SIZE, stream_init_window_size))
+	ch.recvwindowsize = ch.recvwindowsize + channel_init_window_size
 	channel_write(ch, build_winupdate(0, 0, channel_init_window_size))
 	ch.dispatchco = task.fork(common_dispatch, {ch = ch, frame_process = frame_client})
 	return true, nil
+end
+
+---@param s silly.net.http.h2.stream
+---@param handler fun(s:silly.net.http.h2.stream)
+local function server_response(s, handler)
+	handler(s)
+	s:closewrite()
 end
 
 ---@param s silly.net.http.h2.stream
@@ -1553,92 +1968,73 @@ local function server_handler(s)
 		return
 	end
 	---@cast ch silly.net.http.h2.channel.server
-	ch.handler(s)
-	s:closewrite()
+	local ok, err = pcall(server_response, s, ch.handler)
+	if not ok then
+		logger.error("[h2] handler failed:", err)
+		if s.channel and s.localstate <= STATE_CLOSE and s.remotestate ~= STATE_RST then
+			stream_reset(s.id, ch, INTERNAL_ERROR)
+		end
+	end
 	s:close()
 end
 
 ---@param ch silly.net.http.h2.channel.server
 local function frame_header_server(ch, id, flag, dat)
-	local hlist, errcode = read_header(ch, id, flag, dat)
+	if id == 0 or id % 2 == 0 then
+		channel_goaway(ch, PROTOCOL_ERROR)
+		return
+	end
+	local hlist, err = read_header(ch, id, flag, dat)
 	if not hlist then
-		-- RFC 7540 Section 4.3: COMPRESSION_ERROR is a connection error
-		channel_goaway(ch, errcode)
+		channel_goaway(ch, err)
 		return
 	end
 	local s = ch.streams[id]
-	local first_header = not s
-	if ch.goaway and first_header then
-		stream_reset(id, ch, PROTOCOL_ERROR)
-		return
-	end
-	if not first_header and s.remotestate >= STATE_CLOSE then
-		channel_goaway(ch, STREAM_CLOSED)
-		return
-	end
-	local err = check_req_header(hlist, first_header)
-	if err then
-		-- RFC 7540 Section 8.1.2: Invalid request headers are stream errors
-		stream_reset(id, ch, PROTOCOL_ERROR)
-		return
-	end
-	if first_header then
-		-- RFC 7540 Section 5.1.1: Validate stream identifier
-		-- 1. Client-initiated streams MUST use odd-numbered identifiers
-		if id % 2 == 0 then
-			channel_goaway(ch, PROTOCOL_ERROR)
+	if s then
+		if s.localstate == STATE_RST then
 			return
 		end
-		-- 2. Stream identifier MUST be numerically greater than all previous streams
-		local stream_max = ch.streammax
-		local stream_count = ch.streamcount
-		local laststreamid = ch.laststreamid
-		if id <= laststreamid then
-			-- Stream ID went backwards - connection error (PROTOCOL_ERROR)
-			channel_goaway(ch, STREAM_CLOSED)
-			return
-		elseif id == laststreamid then
-			-- id == stream_idx, stream was already used and closed - stream error
+		if s.remotestate >= STATE_CLOSE then
 			stream_reset(id, ch, STREAM_CLOSED)
 			return
 		end
-		-- RFC 7540 Section 5.1.2: Check concurrent stream limit
-		-- Streams in "open" or "half-closed" states count toward the limit
-		if stream_count >= stream_max then
-			-- Exceeded advertised concurrent stream limit
+	end
+	local first = not s
+	if first then
+		if id <= ch.laststreamid then
+			channel_goaway(ch, PROTOCOL_ERROR)
+			return
+		end
+		-- A rejected stream ID is consumed too; it cannot be reopened later.
+		ch.laststreamid = id
+		if ch.goaway or ch.streamcount >= max_stream_per_channel then
 			stream_reset(id, ch, REFUSED_STREAM)
 			return
 		end
-		ch.laststreamid = id
-		ch.streamcount = stream_count + 1
+	end
+	local err = check_req_header(hlist, first)
+	if err then
+		stream_reset(id, ch, err)
+		return
+	end
+	if first then
 		local header = {}
 		map_header(hlist, header)
 		local ok, clen = check_content_length(header)
-		if not ok then
-			stream_reset(id, ch, clen)
-			return
-		end
-		local path, query = parsetarget(header[':path'])
-		local s = channel_newstream(ch, id, false, header[':method'], path, header)
-		s.recvexpect = clen
-		s.query = query
-		if flag & END_STREAM == END_STREAM then
-			-- RFC 7540 Section 8.1.2.6: Validate content-length for requests without body
-			stream_remoteend(s, STATE_END, EEOF)
-		else
-			s.remotestate = STATE_HEADER
-		end
-		ch.streams[id] = s
-		task.fork(server_handler, s)
-	else
-		-- RFC 7540 Section 8.1: Trailing header blocks MUST have END_STREAM flag
-		if flag & END_STREAM ~= END_STREAM then
+		if not ok or flag & END_STREAM ~= 0 and clen and clen ~= 0 then
 			stream_reset(id, ch, PROTOCOL_ERROR)
 			return
 		end
-		-- RFC 7540 Section 8.1: Trailing header fields MUST NOT include pseudo-header fields
-		local err = check_req_header(hlist, false)
-		if err then
+		local path, query = parsetarget(header[':path'] or "")
+		local stream = channel_newstream(ch, id, false, header[':method'], path, header)
+		stream.recvexpect = clen
+		stream.query = query
+		stream.remotestate = flag & END_STREAM ~= 0 and STATE_END or STATE_HEADER
+		ch.streams[id] = stream
+		ch.streamcount = ch.streamcount + 1
+		task.fork(server_handler, stream)
+	else
+		if flag & END_STREAM == 0 or stream_istunnel(s) and s.localstate >= STATE_HEADER then
 			stream_reset(id, ch, PROTOCOL_ERROR)
 			return
 		end
@@ -1646,7 +2042,6 @@ local function frame_header_server(ch, id, flag, dat)
 		stream_remoteend(s, STATE_END, EEOF)
 	end
 end
-
 
 local frame_server = {
 	[FRAME_HEADERS] = frame_header_server,
@@ -1684,29 +2079,37 @@ local function handshake_as_server(ch)
 
 	-- Only after valid preface, send SETTINGS frame
 	dat = build_setting(0x0,
-		SETTINGS_ENABLE_PUSH, 0, SETTINGS_MAX_CONCURRENT, max_stream_per_channel,
+		SETTINGS_MAX_CONCURRENT, max_stream_per_channel,
 		SETTINGS_HEADER_TABLE_SIZE, default_header_table_size
 	)
 	conn:write(dat)
-	local t,f,dat,id = read_frame(conn, ch)
-	if not t or t ~= FRAME_SETTINGS then
+	local t,f,dat,id,n = read_frame(conn, ch)
+	if t ~= FRAME_SETTINGS or f & ACK ~= 0 then
+		channel_goaway(ch, PROTOCOL_ERROR)
 		return false
 	end
 	frame_settings(ch, id, f, dat)
+	if ch.goaway then
+		return false, "Invalid initial settings"
+	end
 	while true do
-		local t,f,dat,id = read_frame(conn, ch)
+		local t,f,dat,id,n = read_frame(conn, ch)
 		if not t then
 			return false
 		end
 		local cb = frame_server[t]
 		if cb then
-			cb(ch, id, f, dat)
+			cb(ch, id, f, dat, n)
+		end
+		if ch.goaway then
+			-- Requests accepted before the SETTINGS ACK still drain after graceful GOAWAY.
+			return ch.streamcount > 0
 		end
 		if t == FRAME_SETTINGS and f & ACK == ACK then
 			break
 		end
 	end
-	channel_write(ch, build_setting(0, SETTINGS_INITIAL_WINDOW_SIZE, stream_init_window_size))
+	ch.recvwindowsize = ch.recvwindowsize + channel_init_window_size
 	channel_write(ch, build_winupdate(0, 0, channel_init_window_size))
 	return true, nil
 end
@@ -1718,24 +2121,27 @@ end
 function M.newchannel(scheme, conn, host)
 	local ch = newchannel(scheme, conn, host)
 	--- @cast ch silly.net.http.h2.channel.client
-	ch.scheme = scheme
 	ch.openwaitq = queue.new()
 	local ok, err = handshake_as_client(ch)
 	if ok then
 		return ch, nil
 	end
+	channel_abort(ch, "Handshake failed")
 	return nil, err
 end
 
 ---@param handler fun(s:silly.net.http.h2.stream)
 ---@param conn silly.net.tcp.conn|silly.net.tls.conn
-function M.httpd(handler, conn)
-	local ch = newchannel("https", conn, "")
+---@param scheme string
+function M.httpd(handler, conn, scheme)
+	local ch = newchannel(scheme, conn, "")
 	--- @cast ch silly.net.http.h2.channel.server
 	ch.handler = handler
 	local ok = handshake_as_server(ch)
 	if ok then
 		common_dispatch({ch = ch, frame_process = frame_server})
+	else
+		channel_abort(ch, "Handshake failed")
 	end
 end
 

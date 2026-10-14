@@ -9,6 +9,9 @@
 #include "http2_table.h"
 
 #define STATIC_TBL_SIZE (61)
+#define HPACK_STATIC_UPVALUE (1)
+#define HPACK_NAME_UPVALUE (2)
+#define HPACK_HUFFMAN_UPVALUE (3)
 #ifdef SILLY_TEST
 #define HTTP2_HEADER_SIZE (4096)
 #else
@@ -23,21 +26,59 @@ struct lstr {
 
 ///////////////////////////hpack///////////////////////////
 
+// RFC 7541 Sections 5.2 and 6: integer prefix widths and wire-format flags.
+#define HPACK_INDEXED_BITS (7)
+#define HPACK_LITERAL_INDEXED_BITS (6)
+#define HPACK_LITERAL_UNINDEXED_BITS (4)
+#define HPACK_LITERAL_NEVERINDEXED_BITS (4)
+#define HPACK_TABLE_SIZE_BITS (5)
+#define HPACK_STRING_BITS (7)
+
+#define HPACK_PREFIX_MASK(bits) ((1 << (bits)) - 1)
+
+#define HPACK_IS_INDEXED(B) (((B) & 0x80u) == 0x80u)
+#define HPACK_IS_LITERAL_INDEXED(B) (((B) & 0xc0u) == 0x40u)
+#define HPACK_IS_LITERAL_UNINDEXED(B) (((B) & 0xf0u) == 0x00u)
+#define HPACK_IS_LITERAL_NEVERINDEXED(B) (((B) & 0xf0u) == 0x10u)
+#define HPACK_IS_TABLE_SIZE(B) (((B) & 0xe0u) == 0x20u)
+#define HPACK_IS_HUFFMAN(B) (((B) & 0x80u) == 0x80u)
+
+// These write the leading integer only; literal/string bytes follow separately.
+#define HPACK_WRITE_INDEXED(b, I) \
+	write_varint((b), (0x01u << HPACK_INDEXED_BITS), (I), HPACK_INDEXED_BITS)
+#define HPACK_WRITE_LITERAL_INDEXED(b, I) \
+	write_varint((b), (0x01u << HPACK_LITERAL_INDEXED_BITS), (I), HPACK_LITERAL_INDEXED_BITS)
+#define HPACK_WRITE_LITERAL_UNINDEXED(b, I) \
+	write_varint((b), (0x00u << HPACK_LITERAL_UNINDEXED_BITS), (I), HPACK_LITERAL_UNINDEXED_BITS)
+#define HPACK_WRITE_LITERAL_NEVERINDEXED(b, I) \
+	write_varint((b), (0x01u << HPACK_LITERAL_NEVERINDEXED_BITS), (I), HPACK_LITERAL_NEVERINDEXED_BITS)
+#define HPACK_WRITE_LITERAL_NAME(b, cache) \
+	luaL_addchar((b), (cache) ? 0x40u : 0x00u)
+#define HPACK_WRITE_TABLE_SIZE(b, I) \
+	write_varint((b), (0x01u << HPACK_TABLE_SIZE_BITS), (I), HPACK_TABLE_SIZE_BITS)
+#define HPACK_WRITE_RAW_LENGTH(b, I) \
+	write_varint((b), (0x00u << HPACK_STRING_BITS), (I), HPACK_STRING_BITS)
+#define HPACK_WRITE_HUFFMAN_LENGTH(b, I) \
+	write_varint((b), (0x01u << HPACK_STRING_BITS), (I), HPACK_STRING_BITS)
+
 struct hpack {
 	int hard_limit;
 	int soft_limit;
 	int table_size;
 	int queue_head;
 	int queue_tail;
-	int queue_used_min;
 	int evict_count;
+	int update_pending;
+	int update_min;
+	int pack_incomplete; // Set until pack returns; Lua errors leave it set.
 };
 
 struct unpack_ctx {
 	struct root *huffman;
+	int names;
 	int stat;
 	int dyna;
-	unsigned int flag;
+	unsigned int flag; // First-octet flag bits in their wire positions.
 	const unsigned char *p;
 	const unsigned char *e;
 	struct hpack *hpack;
@@ -45,6 +86,7 @@ struct unpack_ctx {
 
 struct pack_ctx {
 	int stat;
+	int names;
 	int dyna;
 	int kstk;
 	int vstk;
@@ -237,36 +279,42 @@ static void create_huffman_tree(lua_State *L)
 		add_node(huffman, i, huffman_codes[i], huffman_codelen[i]);
 }
 
-static inline size_t field_size(const struct lstr *kstr,
-				const struct lstr *vstr)
+static inline size_t field_size(size_t ksize, size_t vsize)
 {
-	return kstr->len + vstr->len + 32;
+	// RFC 7541 Section 4.1: count decoded octets, before Huffman encoding.
+	return ksize + vsize + 32;
 }
 
 static int lhpack_new(lua_State *L)
 {
 	struct hpack *ctx;
+	lua_Integer limit = luaL_checkinteger(L, 1);
+	luaL_argcheck(L, limit >= 0 && limit <= INT_MAX, 1, "invalid table size");
 	ctx = lua_newuserdatauv(L, sizeof(*ctx), 1);
 	luaL_newmetatable(L, "HPACK");
 	lua_setmetatable(L, -2);
 	ctx->table_size = 0;
-	ctx->hard_limit = luaL_checkinteger(L, 1);
+	ctx->hard_limit = limit;
 	ctx->soft_limit = ctx->hard_limit;
 	ctx->queue_head = ctx->queue_tail = 1;
 	ctx->evict_count = 0;
+	ctx->update_pending = 0;
+	ctx->update_min = ctx->hard_limit;
+	ctx->pack_incomplete = 0;
 	lua_createtable(L, ctx->hard_limit / 32, ctx->hard_limit / 32);
 	lua_setiuservalue(L, -2, 1);
 	return 1;
 }
 
+// flag is already shifted into its position in the first octet.
 static void write_varint(luaL_Buffer *b, uint8_t flag, uint32_t I, int bits)
 {
-	uint32_t max = ((1 << bits) - 1);
+	uint32_t max = HPACK_PREFIX_MASK(bits);
 	if (I < max) {
-		uint8_t n = I | (uint8_t)(flag << bits);
+		uint8_t n = I | flag;
 		luaL_addchar(b, n);
 	} else {
-		luaL_addchar(b, max | (uint8_t)(flag << bits));
+		luaL_addchar(b, max | flag);
 		I = I - max;
 		while (I >= 128) {
 			luaL_addchar(b, (I & 0x7f) | 0x80);
@@ -292,17 +340,17 @@ static inline uint32_t dynamic_index(struct hpack *ctx, int id)
 
 static inline void write_index_kv(luaL_Buffer *b, uint32_t id)
 {
-	write_varint(b, 0x01, id, 7);
+	HPACK_WRITE_INDEXED(b, id);
 }
 
 static inline void write_literal(luaL_Buffer *b, const struct lstr *str)
 {
 	size_t len = huffman_len(str->str, str->len);
 	if (len < str->len) {
-		write_varint(b, 0x1, len, 7);
+		HPACK_WRITE_HUFFMAN_LENGTH(b, len);
 		huffman_encode(b, str->str, str->len);
 	} else {
-		write_varint(b, 0x0, str->len, 7);
+		HPACK_WRITE_RAW_LENGTH(b, str->len);
 		luaL_addlstring(b, str->str, str->len);
 	}
 }
@@ -311,9 +359,9 @@ static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid,
 			       const struct lstr *vstr, int cache)
 {
 	if (cache) {
-		write_varint(b, 0x01, kid, 6);
+		HPACK_WRITE_LITERAL_INDEXED(b, kid);
 	} else {
-		write_varint(b, 0x0, kid, 4);
+		HPACK_WRITE_LITERAL_UNINDEXED(b, kid);
 	}
 	write_literal(b, vstr);
 }
@@ -321,11 +369,7 @@ static inline void write_ik_sv(luaL_Buffer *b, uint32_t kid,
 static inline void write_sk_sv(luaL_Buffer *b, const struct lstr *ks,
 			       const struct lstr *vs, int cache)
 {
-	if (cache) {
-		luaL_addchar(b, 0x40);
-	} else {
-		luaL_addchar(b, 0);
-	}
+	HPACK_WRITE_LITERAL_NAME(b, cache);
 	write_literal(b, ks);
 	write_literal(b, vs);
 }
@@ -335,8 +379,10 @@ static inline void push_kv(lua_State *L, const struct lstr *kstr,
 {
 	luaL_Buffer b;
 	luaL_buffinit(L, &b);
+	// This length is an internal key prefix, not an HPACK wire integer.
+	// Names and values are opaque octets, so a delimiter is not sufficient.
+	luaL_addlstring(&b, (const char *)&kstr->len, sizeof(kstr->len));
 	luaL_addlstring(&b, kstr->str, kstr->len);
-	luaL_addlstring(&b, ": ", 2);
 	luaL_addlstring(&b, vstr->str, vstr->len);
 	luaL_pushresult(&b);
 }
@@ -367,7 +413,6 @@ static void prune(lua_State *L, struct hpack *ctx, int dyna)
 		lua_pushnil(L);
 		lua_seti(L, dyna, i);
 	}
-	ctx->queue_used_min -= (ctx->queue_tail - 1);
 	ctx->queue_tail = 1;
 	ctx->queue_head = idx + 1;
 	ctx->evict_count = 0;
@@ -375,10 +420,11 @@ static void prune(lua_State *L, struct hpack *ctx, int dyna)
 
 static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 {
+	int en;
 	if ((ctx->soft_limit - ctx->table_size) >= left)
 		return 1;
-	int min_idx = ctx->queue_used_min;
-	while (ctx->queue_tail < min_idx) {
+	// RFC 7541 Sections 4.3 and 4.4: evict oldest entries only until they fit.
+	while (ctx->queue_tail < ctx->queue_head && (ctx->soft_limit - ctx->table_size) < left) {
 		struct lstr kstr, vstr;
 		int i = ctx->queue_tail++;
 		int type = lua_geti(L, dyna, i);
@@ -397,9 +443,9 @@ static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 		lua_pushnil(L);
 		lua_seti(L, dyna, i);
 		++ctx->evict_count;
-		ctx->table_size -= field_size(&kstr, &vstr);
+		ctx->table_size -= field_size(kstr.len, vstr.len);
 	}
-	int en = ctx->evict_count;
+	en = ctx->evict_count;
 	if (en > (ctx->queue_head / 2) && en > 64)
 		prune(L, ctx, dyna);
 	return (ctx->soft_limit - ctx->table_size) >= left;
@@ -408,9 +454,10 @@ static inline int try_evict(lua_State *L, struct hpack *ctx, int dyna, int left)
 static inline int add_to_table(lua_State *L, struct hpack *ctx, int dyna, int k,
 			       int v, int kv, int fsz)
 {
+	int idx;
 	if (!try_evict(L, ctx, dyna, fsz))
 		return 0;
-	int idx = ctx->queue_head++;
+	idx = ctx->queue_head++;
 	lua_createtable(L, 2, 0);
 	lua_pushvalue(L, k);
 	lua_seti(L, -2, 1);
@@ -432,7 +479,7 @@ static inline void pack_field(lua_State *L, struct pack_ctx *pctx)
 	int cancache;
 	luaL_Buffer *b = &pctx->b;
 	struct hpack *ctx = pctx->hpack;
-	int fsz = field_size(&pctx->kstr, &pctx->vstr);
+	size_t fsz = field_size(pctx->kstr.len, pctx->vstr.len);
 	cancache = fsz < HTTP2_HEADER_SIZE;
 	top = lua_gettop(L);
 	if (cancache) { //try index key and value
@@ -453,21 +500,20 @@ static inline void pack_field(lua_State *L, struct pack_ctx *pctx)
 		type = lua_gettable(L, pctx->dyna);
 		if (type == LUA_TNUMBER) {
 			int idx = lua_tointeger(L, -1);
-			lua_settop(L, top);
 			int id = dynamic_id(ctx, idx);
-			if (idx < ctx->queue_used_min)
-				ctx->queue_used_min = idx;
+			lua_settop(L, top);
 			write_index_kv(b, id);
 			return;
 		}
 		lua_pop(L, 1);
 	}
 	if (cancache) {
-		cancache = add_to_table(L, ctx, pctx->dyna, pctx->kstk,
-					pctx->vstk, top + 1, fsz);
+		// A literal without indexing must leave the dynamic table unchanged.
+		cancache = fsz <= (size_t)ctx->soft_limit &&
+			   add_to_table(L, ctx, pctx->dyna, pctx->kstk, pctx->vstk, top + 1, fsz);
 	}
 	lua_pushvalue(L, pctx->kstk);
-	if (lua_gettable(L, pctx->stat) == LUA_TNUMBER) {
+	if (lua_gettable(L, pctx->names) == LUA_TNUMBER) {
 		int id = lua_tointeger(L, -1);
 		lua_settop(L, top);
 		write_ik_sv(b, id, &pctx->vstr, cancache);
@@ -492,12 +538,13 @@ static int lhpack_pack(lua_State *L)
 	int kstk, vstk, kbackup, vbackup;
 	struct pack_ctx pctx;
 	pctx.hpack = luaL_checkudata(L, 1, "HPACK");
-	pctx.hpack->queue_used_min = pctx.hpack->queue_head;
 	argc = lua_gettop(L);
-	lua_pushvalue(L, lua_upvalueindex(1)); //static_table
+	lua_pushvalue(L, lua_upvalueindex(HPACK_STATIC_UPVALUE)); //static_table
+	lua_pushvalue(L, lua_upvalueindex(HPACK_NAME_UPVALUE));   //static names
 	lua_getiuservalue(L, 1, 1);            //dynamic_table
 	pctx.stat = argc + 1;
-	pctx.dyna = pctx.stat + 1;
+	pctx.names = pctx.stat + 1;
+	pctx.dyna = pctx.names + 1;
 	lua_settop(L, pctx.dyna + 4);
 	kbackup = pctx.dyna + 1;
 	vbackup = pctx.dyna + 2;
@@ -506,19 +553,30 @@ static int lhpack_pack(lua_State *L)
 	luaL_buffinit(L, &pctx.b);
 	top = lua_gettop(L);
 	lua_checkstack(L, LUA_MINSTACK);
+	if (pctx.hpack->pack_incomplete) {
+		// The previous block was not returned. Reset both tables before reusing indices.
+		try_evict(L, pctx.hpack, pctx.dyna, pctx.hpack->soft_limit);
+		pctx.hpack->update_min = 0;
+		pctx.hpack->update_pending = 1;
+	}
+	if (pctx.hpack->update_pending) {
+		HPACK_WRITE_TABLE_SIZE(&pctx.b, pctx.hpack->update_min);
+		if (pctx.hpack->update_min != pctx.hpack->soft_limit)
+			HPACK_WRITE_TABLE_SIZE(&pctx.b, pctx.hpack->soft_limit);
+		pctx.hpack->update_pending = 0;
+	}
+	pctx.kstk = kstk;
+	pctx.vstk = vstk;
+	pctx.hpack->pack_incomplete = 1;
 	for (i = 3; i < argc; i += 2) {
-		pctx.kstk = i;
-		pctx.vstk = i + 1;
-		pctx.kstr.str = luaL_tolstring(L, pctx.kstk, &pctx.kstr.len);
-		pctx.vstr.str = luaL_tolstring(L, pctx.vstk, &pctx.vstr.len);
+		copy_str_to_stack(L, i, kstk, &pctx.kstr);
+		copy_str_to_stack(L, i + 1, vstk, &pctx.vstr);
+		lua_settop(L, top); // buffer must be on top before it can grow
 		pack_field(L, &pctx);
-		lua_settop(L, top); // keep the luaL_buffer on the top
 	}
 
 	if (lua_type(L, 2) != LUA_TNIL) {
 		lua_pushnil(L); //next key
-		pctx.kstk = kstk;
-		pctx.vstk = vstk;
 		while (lua_next(L, 2) != 0) {
 			lua_copy(L, top + 1, kbackup); //backup the key
 			lua_copy(L, top + 2, vbackup); //backup the value
@@ -544,6 +602,7 @@ static int lhpack_pack(lua_State *L)
 		}
 	}
 	luaL_pushresult(&pctx.b);
+	pctx.hpack->pack_incomplete = 0;
 	return 1;
 }
 
@@ -561,21 +620,26 @@ static void concat_table(lua_State *L, luaL_Buffer *b, int t)
 
 static int read_varint(struct unpack_ctx *ctx, int bits)
 {
-	int M = 0;
-	unsigned int max, I;
+	unsigned int M = 0;
+	uint32_t max, I;
 	if (ctx->p >= ctx->e)
-		return 0;
+		return -1;
 	I = *ctx->p++;
-	max = (1 << bits) - 1;
-	ctx->flag = (I >> bits);
+	max = HPACK_PREFIX_MASK(bits);
+	ctx->flag = I & ~max;
 	I = I & max;
 	if (I >= max) {
-		while (ctx->p < ctx->e) {
-			unsigned char B = *ctx->p++;
-			I = I + ((B & 0x7f) << M);
+		for (;;) {
+			unsigned char B;
+			if (ctx->p >= ctx->e)
+				return -1;
+			B = *ctx->p++;
+			if (M >= 31 || (uint32_t)(B & 0x7f) > ((uint32_t)INT_MAX - I) >> M)
+				return -1;
+			I += (uint32_t)(B & 0x7f) << M;
 			if ((B & 0x80) == 0x00)
 				break;
-			M = M + 7;
+			M += 7;
 		}
 	}
 	return I;
@@ -585,10 +649,10 @@ static int push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 {
 	int tx, type;
 	// RFC 7541 Section 2.3.2: Static table index range is [1, 61]
-	if (id == 0)
+	if (id <= 0)
 		return -1;
 	if (id <= STATIC_TBL_SIZE) {
-		tx = uctx->stat;
+		tx = uctx->names;
 	} else {
 		// RFC 7541 Section 2.3.3: Validate dynamic table index range
 		// Valid range: [STATIC_TBL_SIZE + 1, STATIC_TBL_SIZE + (queue_head - queue_tail)]
@@ -615,13 +679,10 @@ static int push_ik(lua_State *L, struct unpack_ctx *uctx, int id)
 static int push_sv(lua_State *L, struct unpack_ctx *uctx)
 {
 	int ret, len;
-	// Check if there's data to read the length varint
-	if (uctx->p >= uctx->e)
+	len = read_varint(uctx, HPACK_STRING_BITS);
+	if (len < 0 || (size_t)len > (size_t)(uctx->e - uctx->p))
 		return -1;
-	len = read_varint(uctx, 7);
-	if (uctx->p + len > uctx->e)
-		return -1;
-	if (uctx->flag == 1) { //huffman decode
+	if (HPACK_IS_HUFFMAN(uctx->flag)) {
 		luaL_Buffer b;
 		luaL_buffinit(L, &b);
 		if ((ret = huffman_decode(uctx, len, &b)) < 0)
@@ -636,16 +697,15 @@ static int push_sv(lua_State *L, struct unpack_ctx *uctx)
 
 static int read_index_kv(lua_State *L, struct unpack_ctx *uctx)
 {
-	int tx, type;
-	// Check if there's data to read the index varint
-	if (uctx->p >= uctx->e)
-		return -1;
-	int id = read_varint(uctx, 7);
+	int tx, type, id;
+	id = read_varint(uctx, HPACK_INDEXED_BITS);
 	// RFC 7541 Section 2.3.2: Static table index range is [1, 61]
-	if (id == 0)
+	if (id <= 0)
 		return -1;
 	if (id <= STATIC_TBL_SIZE) {
-		tx = uctx->stat;
+		lua_geti(L, uctx->names, id);
+		lua_geti(L, uctx->stat, id);
+		return 0;
 	} else {
 		// RFC 7541 Section 2.3.3: Validate dynamic table index range
 		// Valid range: [STATIC_TBL_SIZE + 1, STATIC_TBL_SIZE + (queue_head - queue_tail)]
@@ -659,8 +719,7 @@ static int read_index_kv(lua_State *L, struct unpack_ctx *uctx)
 	if (type == LUA_TTABLE) {
 		lua_geti(L, -1, 1);
 		lua_geti(L, -2, 2);
-	} else if (type == LUA_TSTRING) {
-		lua_pushliteral(L, "");
+
 	} else {
 		return -1;
 	}
@@ -671,7 +730,7 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 {
 	int ret;
 	unsigned char n = *uctx->p;
-	int id = n & ((1 << bits) - 1);
+	int id = n & HPACK_PREFIX_MASK(bits);
 	if (id != 0) {
 		id = read_varint(uctx, bits);
 		ret = push_ik(L, uctx, id);
@@ -689,17 +748,23 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 	return 0;
 }
 
-//hpack.unpack(ctx, data, header_list)
+//hpack.unpack(ctx, data, header_list, limit?) -> success, limited?
+// limit counts decoded name/value octets plus 32 per field; omitted means no list limit.
 static int lhpack_unpack(lua_State *L)
 {
 	int i;
 	int htbl, top;
+	int limited = 0;
+	lua_Integer limit;
+	lua_Unsigned list_size = 0;
 	luaL_Buffer b;
 	struct unpack_ctx uctx;
 	int seen_header_field = 0; // RFC 7541 Section 4.2: Track if we've seen any header fields
+
+	limit = luaL_optinteger(L, 4, LUA_MAXINTEGER);
+	luaL_argcheck(L, limit >= 0, 4, "invalid header list size");
 	uctx.hpack = luaL_checkudata(L, 1, "HPACK");
-	uctx.hpack->queue_used_min = uctx.hpack->queue_head;
-	uctx.huffman = lua_touserdata(L, lua_upvalueindex(2));
+	uctx.huffman = lua_touserdata(L, lua_upvalueindex(HPACK_HUFFMAN_UPVALUE));
 	if (lua_type(L, 2) != LUA_TTABLE) {
 		size_t sz;
 		uctx.p = (const unsigned char *)luaL_checklstring(L, 2, &sz);
@@ -713,53 +778,63 @@ static int lhpack_unpack(lua_State *L)
 	//try predict the header hash size
 	htbl = 3;
 	top = lua_gettop(L);
-	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_pushvalue(L, lua_upvalueindex(HPACK_STATIC_UPVALUE));
+	lua_pushvalue(L, lua_upvalueindex(HPACK_NAME_UPVALUE));
 	lua_getiuservalue(L, 1, 1);
 	uctx.stat = top + 1;
-	uctx.dyna = top + 2;
-	top += 2;
+	uctx.names = top + 2;
+	uctx.dyna = top + 3;
+	top += 3;
 	i = lua_rawlen(L, htbl);
 	while (uctx.p < uctx.e) {
 		int ret;
+		size_t size;
 		unsigned char n = *uctx.p;
 		lua_settop(L, top);
-		if ((n & 0x80) == 0x80) {
-			if ((ret = read_index_kv(L, &uctx)) < 0) { //bit7
+		if (HPACK_IS_INDEXED(n)) {
+			if ((ret = read_index_kv(L, &uctx)) < 0) {
 				lua_pushboolean(L, 0);
 				return 1;
 			}
 			seen_header_field = 1;
-		} else if ((n & 0xc0) == 0x40) { //bit6
+		} else if (HPACK_IS_LITERAL_INDEXED(n)) {
 			int stk;
+			size_t fsz;
 			struct lstr kstr, vstr;
-			if ((ret = read_ik_sv(L, &uctx, 6)) < 0) {
+			if ((ret = read_ik_sv(L, &uctx, HPACK_LITERAL_INDEXED_BITS)) < 0) {
 				lua_pushboolean(L, 0);
 				return 1;
 			}
 			kstr.str = lua_tolstring(L, -2, &kstr.len);
 			vstr.str = lua_tolstring(L, -1, &vstr.len);
-			push_kv(L, &kstr, &vstr);
-			stk = lua_absindex(L, -3);
-			add_to_table(L, uctx.hpack, uctx.dyna, stk, stk + 1,
-				     stk + 2, field_size(&kstr, &vstr));
-			lua_pop(L, 1);
+			fsz = field_size(kstr.len, vstr.len);
+			// An oversized indexed literal clears the table without needing a cache key.
+			if (fsz > (size_t)uctx.hpack->soft_limit) {
+				try_evict(L, uctx.hpack, uctx.dyna, uctx.hpack->soft_limit);
+			} else {
+				push_kv(L, &kstr, &vstr);
+				stk = lua_absindex(L, -3);
+				add_to_table(L, uctx.hpack, uctx.dyna, stk, stk + 1, stk + 2, fsz);
+				lua_pop(L, 1);
+			}
 			seen_header_field = 1;
-		} else if ((n & 0xf0) == 0x0 || (n & 0xf0) == 0x10) { //bit4
-			if ((ret = read_ik_sv(L, &uctx, 4)) < 0) {
+		} else if (HPACK_IS_LITERAL_UNINDEXED(n) || HPACK_IS_LITERAL_NEVERINDEXED(n)) {
+			if ((ret = read_ik_sv(L, &uctx, HPACK_LITERAL_UNINDEXED_BITS)) < 0) {
 				lua_pushboolean(L, 0);
 				return 1;
 			}
 			seen_header_field = 1;
-		} else if ((n & 0xe0) == 0x20) { //bit5
+		} else if (HPACK_IS_TABLE_SIZE(n)) {
+			int len;
 			// RFC 7541 Section 4.2: Dynamic table size update MUST occur at the beginning
 			if (seen_header_field) {
 				lua_pushboolean(L, 0);
 				return 1;
 			}
-			int len = read_varint(&uctx, 5);
+			len = read_varint(&uctx, HPACK_TABLE_SIZE_BITS);
 			// RFC 7541 Section 6.3: The new maximum size MUST be lower than or equal
 			// to the limit determined by the protocol (SETTINGS_HEADER_TABLE_SIZE)
-			if (len > uctx.hpack->hard_limit) {
+			if (len < 0 || len > uctx.hpack->hard_limit) {
 				lua_pushboolean(L, 0);
 				return 1;
 			}
@@ -767,6 +842,15 @@ static int lhpack_unpack(lua_State *L)
 			try_evict(L, uctx.hpack, uctx.dyna, 0);
 			continue;
 		}
+		// Keep decoding and updating the table after the output limit is reached.
+		if (limited)
+			continue;
+		size = field_size(lua_rawlen(L, -2), lua_rawlen(L, -1));
+		if ((lua_Unsigned)size > (lua_Unsigned)limit - list_size) {
+			limited = 1;
+			continue;
+		}
+		list_size += size;
 		lua_pushvalue(L, -2); // push key
 		lua_rawseti(L, htbl, ++i);
 		lua_pushvalue(L, -1); // push value
@@ -775,6 +859,11 @@ static int lhpack_unpack(lua_State *L)
 	}
 	// RFC 7540 Section 4.3: All header block data must be consumed
 	// If there's remaining unparsed data, the header block is malformed
+	if (limited) {
+		lua_pushboolean(L, 0);
+		lua_pushboolean(L, 1);
+		return 2;
+	}
 	lua_pushboolean(L, uctx.p == uctx.e);
 	return 1;
 }
@@ -782,8 +871,16 @@ static int lhpack_unpack(lua_State *L)
 static int lhpack_hardlimit(lua_State *L)
 {
 	struct hpack *hpack;
+	lua_Integer limit;
 	hpack = luaL_checkudata(L, 1, "HPACK");
-	hpack->hard_limit = luaL_checkinteger(L, 2);
+	limit = luaL_checkinteger(L, 2);
+	luaL_argcheck(L, limit >= 0 && limit <= INT_MAX, 2, "invalid table size");
+	if (limit == hpack->hard_limit)
+		return 0;
+	if (!hpack->update_pending || limit < hpack->update_min)
+		hpack->update_min = limit;
+	hpack->update_pending = 1;
+	hpack->hard_limit = limit;
 	hpack->soft_limit = hpack->hard_limit;
 	lua_getiuservalue(L, 1, 1);
 	try_evict(L, hpack, lua_gettop(L), 0);
@@ -793,43 +890,37 @@ static int lhpack_hardlimit(lua_State *L)
 
 static void create_static_table(lua_State *L)
 {
-	size_t i, t;
+	int i, stat, names;
+	// Both tables have 61 reverse indices; name->first-index has <=61 keys.
 	lua_createtable(L, STATIC_TBL_SIZE, STATIC_TBL_SIZE);
-	t = lua_gettop(L);
-	for (i = 0; i < ARRAY_SIZE(static_tbl); i++) {
-		int type;
+	stat = lua_gettop(L);
+	lua_createtable(L, STATIC_TBL_SIZE, STATIC_TBL_SIZE);
+	names = lua_gettop(L);
+	for (i = 0; i < STATIC_TBL_SIZE; i++) {
 		int id = i + 1;
+		struct lstr kstr, vstr;
 		const char *k = static_tbl[i][0];
 		const char *v = static_tbl[i][1];
+		if (v == NULL)
+			v = "";
 		lua_pushstring(L, k);
-		type = lua_gettable(L, t);
+		lua_seti(L, names, id);
+		lua_pushstring(L, k);
+		if (lua_gettable(L, names) == LUA_TNIL) {
+			lua_pushstring(L, k);
+			lua_pushinteger(L, id);
+			lua_settable(L, names);
+		}
 		lua_pop(L, 1);
-		if (type == LUA_TNIL) {
-			lua_pushstring(L, k);
-			lua_seti(L, t, id);
-			lua_pushstring(L, k);
-			lua_pushinteger(L, id);
-			lua_settable(L, t);
-		}
-		if (v != NULL) {
-			struct lstr kstr, vstr;
-			//local t = {k, v}
-			lua_createtable(L, 2, 0);
-			lua_pushstring(L, k);
-			lua_seti(L, -2, 1);
-			lua_pushstring(L, v);
-			lua_seti(L, -2, 2);
-			//static_table[id] = t
-			lua_seti(L, t, id);
-			//static_tbl[format("%s %s", k, v)] = id
-			kstr.str = k;
-			kstr.len = strlen(k);
-			vstr.str = v;
-			vstr.len = strlen(v);
-			push_kv(L, &kstr, &vstr);
-			lua_pushinteger(L, id);
-			lua_settable(L, t);
-		}
+		lua_pushstring(L, v);
+		lua_seti(L, stat, id);
+		kstr.str = k;
+		kstr.len = strlen(k);
+		vstr.str = v;
+		vstr.len = strlen(v);
+		push_kv(L, &kstr, &vstr);
+		lua_pushinteger(L, id);
+		lua_settable(L, stat);
 	}
 }
 
@@ -843,10 +934,10 @@ static int dbg_evictcount(lua_State *L)
 
 static int dbg_stringid(lua_State *L)
 {
-	int type;
-	lua_getiuservalue(L, 1, 1); //dynamic_table
-	int dyna = lua_gettop(L);
+	int type, dyna;
 	struct lstr kstr, vstr;
+	lua_getiuservalue(L, 1, 1); //dynamic_table
+	dyna = lua_gettop(L);
 	kstr.str = luaL_tolstring(L, 2, &kstr.len);
 	vstr.str = luaL_tolstring(L, 3, &vstr.len);
 	push_kv(L, &kstr, &vstr);
@@ -876,7 +967,7 @@ SILLY_MOD_API int luaopen_silly_http2_hpack(lua_State *L)
 	luaL_newlibtable(L, tbl);
 	create_static_table(L);
 	create_huffman_tree(L);
-	luaL_setfuncs(L, tbl, 2);
+	luaL_setfuncs(L, tbl, 3);
 	return 1;
 }
 
@@ -939,7 +1030,7 @@ static int lframe_build_header(lua_State *L)
 		flag = 0;
 		type = FRAME_CONTINUATION;
 	}
-	write_frame_header(p, sz, FRAME_HEADERS, flag | END_HEADERS, id);
+	write_frame_header(p, sz, type, flag | END_HEADERS, id);
 	p += FRAME_HDR_SIZE;
 	memcpy(p, hdr, sz);
 	p += sz;
@@ -1054,6 +1145,36 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
+static uint64_t pingseq;
+
+//ping(flag, payload?): returns the complete frame and its eight-byte token.
+static int lframe_build_ping(lua_State *L)
+{
+	char frame[FRAME_HDR_SIZE + 8];
+	const char *payload = NULL;
+	size_t size;
+	uint64_t token;
+	int flag;
+	flag = luaL_checkinteger(L, 1);
+	if (!lua_isnoneornil(L, 2)) {
+		payload = luaL_checklstring(L, 2, &size);
+		luaL_argcheck(L, size == 8, 2, "PING payload must be eight bytes");
+	}
+	write_frame_header(frame, 8, FRAME_PING, flag, 0);
+	if (payload) {
+		memcpy(frame + FRAME_HDR_SIZE, payload, 8);
+	} else {
+		token = ++pingseq;
+		memcpy(frame + FRAME_HDR_SIZE, &token, sizeof(token));
+	}
+	lua_pushlstring(L, frame, sizeof(frame));
+	if (payload)
+		lua_pushvalue(L, 2);
+	else
+		lua_pushlstring(L, frame + FRAME_HDR_SIZE, 8);
+	return 2;
+}
+
 //goaway(last_stream_id, errorcode)
 static int lframe_build_goaway(lua_State *L)
 {
@@ -1081,6 +1202,7 @@ SILLY_MOD_API int luaopen_silly_http2_framebuilder(lua_State *L)
 		{ "winupdate", lframe_build_winupdate },
 		{ "rst",       lframe_build_rst       },
 		{ "goaway",    lframe_build_goaway    },
+		{ "ping",      lframe_build_ping      },
 		{ NULL,        NULL                   }
 	};
 	luaL_newlib(L, tbl);

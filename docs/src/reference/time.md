@@ -106,7 +106,7 @@ end, {host = "localhost", port = 8080})
   - 只能取消由 `time.after` 创建的定时器
   - 不能取消 `time.sleep` 创建的定时器
   - **未知 session 时是 no-op**：如果 `session` 已经被取消、从未注册、或已经触发过，调用会静默返回 —— 没有错误也没有可检查的返回值。
-  - **与 EXPIRE 事件无竞态**：即便内核已经把对应 session 的 EXPIRE 入了队，只要在 worker 处理下一条消息之前，从其他协程调用 `cancel`，就保证回调不会运行。原理是 worker 在每条消息之后都会清空 wakeup 队列 —— 详见 CLAUDE.md 的 *Event Loop Ordering* 一节。
+  - **与 EXPIRE 事件无竞态**：即便内核已经把对应 session 的 EXPIRE 入了队，只要在 worker 处理下一条消息之前，从其他协程调用 `cancel`，就保证回调不会运行。原理是 worker 在每条消息之后都会清空 wakeup 队列 —— 详见 AGENTS.md 的 *Event Loop Ordering* 一节。
 - **示例**:
 ```lua validate
 local time = require "silly.time"

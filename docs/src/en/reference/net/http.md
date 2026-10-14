@@ -162,6 +162,9 @@ Sends response body and closes the connection.
   - `body`: `string|nil` (optional) - Response body content
 - **Returns**: None
 - **Note**: After calling this method, the stream will no longer be usable
+
+For HTTP/2, a handler error resets only its unfinished response stream. Once `closewrite()` succeeds, later handler cleanup errors are logged without invalidating the completed response. If a request body is still arriving, the server stops it with `RST_STREAM(NO_ERROR)` so the client can retain the response.
+
 - **Example**:
 
 ```lua validate
@@ -336,6 +339,8 @@ end)
 
 ### http.request(method, url [, headers])
 
+HTTP/2 client streams expose `headeronly`, valid after `waitresponse()` succeeds: `true` if the initial final response HEADERS block carries `END_STREAM`, otherwise `false`. Informational responses do not set it; later DATA or trailers do not change it. For HTTP/2, `stream:eof()` reports whether `END_STREAM` has arrived; buffered body data may still remain unread.
+
 Sends a custom HTTP request and returns a raw stream (no redirect handling).
 
 - **Parameters**:
@@ -391,6 +396,8 @@ Creates a new HTTP client with connection pooling.
     - `max_idle_per_host`: `integer?` - Maximum idle connections per host (default: 10)
     - `idle_timeout`: `integer?` - Idle connection timeout in ms (default: 30000)
     - `alpnprotos`: `string[]?` - ALPN protocols (default: `{"http/1.1", "h2"}`)
+    - `send_ping_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
+    - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 15000 when probes are enabled
 - **Returns**: `client` - HTTP client object
 - **Example**:
 
@@ -791,6 +798,8 @@ end)
 
 When sending responses, the correct `content-length` header should be set:
 
+HTTP/2 receives numeric values leniently, accepting formats understood by Lua `tonumber`. The value must be a nonnegative integer within Lua's integer range. Repeated fields must denote the same length.
+
 ```lua validate
 local http = require "silly.net.http"
 
@@ -985,3 +994,23 @@ end)
 - [silly.net.tls](./tls.md) - TLS/SSL encryption
 - [silly.encoding.json](../encoding/json.md) - JSON encoding/decoding
 - [silly.sync.waitgroup](../sync/waitgroup.md) - Coroutine wait group
+
+### HTTP/2 PING keepalive
+
+`send_ping_timeout = 60000, ping_timeout = 15000` starts a PING after 60 seconds without received frames. If no matching ACK arrives within the 15-second probe timeout, the connection closes and blocked callers wake. Any received frame postpones the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run when no streams are active.
+
+Client options control client probes of the server. Active probes are disabled by default. Servers do not enable active probes; both endpoints always acknowledge valid PING requests. PING bypasses DATA flow control and does not extend a connection pool idle timeout. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).
+
+The low-level constructor remains `h2.newchannel(scheme, conn, authority)`. Configure an established client channel with `ch:keepalive(send_ping_timeout, ping_timeout)`: both arguments are optional integer milliseconds. A nil or nonpositive first argument disables probes. When probes are enabled, a nil or nonpositive second argument uses 15000 ms. Reconfiguration cancels the outstanding probe and replaces the timer using the last receive time, preserving elapsed receive inactivity. PING idle and ACK timeouts share one channel timer; stream read timeouts use their existing independent timers.
+
+The server entry point is `h2.httpd(handler, conn, scheme)`, matching HTTP/1.1. The caller supplies `scheme` (`"http"` or `"https"`); ALPN selects the HTTP protocol version.
+
+For a classic CONNECT tunnel on a low-level HTTP/2 stream, call `stream:request("CONNECT", "target.example:443", headers)`. The request target supplies `:authority`; `:scheme` and `:path` are omitted.
+
+### HTTP/2 stream admission
+
+`ch:openstream()` creates an unsent stream without waiting or occupying a concurrency slot. `stream:request()` buffers its headers. The first operation that sends those headers waits if the peer's concurrent-stream limit is reached: `flush()`, a nonempty `write()`, or `closewrite()`. Closing the stream or shutting down the channel interrupts that wait. An unsent stream does not delay channel shutdown.
+
+Reads do not send pending headers. Use `flush()` before waiting for a response when the request body remains open. This also applies to buffered server response headers. For HTTP/2, `stream:flush()` returns `true` on success or `false, error` if sending fails.
+
+A stream supports one concurrent reader and one concurrent writer; `close()` may interrupt both. Concurrent reads or concurrent writes are not supported. A read started before headers are flushed waits for a writer or explicit flush to send them; its read timeout still applies.

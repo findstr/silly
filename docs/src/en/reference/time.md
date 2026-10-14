@@ -106,7 +106,7 @@ Cancel a timer.
   - Can only cancel timers created with `time.after`
   - Cannot cancel timers created with `time.sleep`
   - **No-op for unknown sessions**: if `session` was already cancelled, never registered, or already fired, the call returns silently — there is no error and no return value to inspect.
-  - **Race-free with the EXPIRE event**: even if the kernel has already queued the EXPIRE for `session`, calling `cancel` from another coroutine before the worker processes the next message guarantees the callback will not run. This is because the worker drains all wakeups after every message — see the *Event Loop Ordering* note in CLAUDE.md.
+  - **Race-free with the EXPIRE event**: even if the kernel has already queued the EXPIRE for `session`, calling `cancel` from another coroutine before the worker processes the next message guarantees the callback will not run. This is because the worker drains all wakeups after every message — see the *Event Loop Ordering* note in AGENTS.md.
 - **Example**:
 ```lua validate
 local time = require "silly.time"

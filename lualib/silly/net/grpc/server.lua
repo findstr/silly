@@ -37,8 +37,9 @@ end
 ---@return silly.net.tcp.listener|silly.net.tls.listener|nil, string? error
 local function listen(conf)
 	local handler = dispatch(conf.registrar)
+	local scheme = conf.tls and "https" or "http"
 	local accept = function(conn)
-		h2.httpd(handler, conn)
+		h2.httpd(handler, conn, scheme)
 	end
 	if not conf.tls then
 		return tcp.listen {

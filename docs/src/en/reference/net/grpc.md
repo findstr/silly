@@ -69,6 +69,8 @@ service MyService {
 
 ### Status Codes
 
+Final RPC status and message come from the same metadata block. Initial response headers are used only for a trailers-only response (`headeronly == true`); ordinary responses require status in their trailing headers.
+
 gRPC uses standard status codes to represent operation results, defined in the `silly.net.grpc.code` module:
 
 - `code.OK` (0): Success
@@ -271,6 +273,8 @@ Create a gRPC connection pool.
   - `conf`: `table` - Client configuration table
     - `targets`: `string[]` (required) - List of gRPC targets, format `"host:port"` (or `dns://host:port`)
     - `tls`: `boolean|nil` (optional) - Whether to use TLS, default false
+    - `send_ping_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
+    - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 15000 when probes are enabled
 - **Returns**:
   - Success: `conn` - gRPC connection object
   - Failure: `nil, string` - nil and error message
@@ -456,7 +460,7 @@ end)
 
 ## Streaming RPC API
 
-When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object:
+When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object. Client-streaming and bidirectional calls send their initial request headers before returning, waiting for a stream slot if necessary. A bidirectional server can therefore reply before the client writes its first message:
 
 ### stream:write(request)
 
@@ -1756,3 +1760,9 @@ service DataService {
 - [silly.net.tcp](./tcp.md) - TCP protocol
 - [silly.net.tls](./tls.md) - TLS/SSL encryption
 - [silly.sync.waitgroup](../sync/waitgroup.md) - Coroutine wait group
+
+### HTTP/2 PING keepalive
+
+`send_ping_timeout = 60000, ping_timeout = 15000` starts a PING after 60 seconds without received frames. If no matching ACK arrives within the 15-second probe timeout, the connection closes and blocked callers wake. Any received frame postpones the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run when no streams are active.
+
+Client options control client probes of the server. Active probes are disabled by default. Servers do not enable active probes; both endpoints always acknowledge valid PING requests. PING bypasses DATA flow control and does not extend a connection pool idle timeout. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).

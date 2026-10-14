@@ -63,6 +63,8 @@ local MAX_FOLLOW_REDIRECTS = 10
 ---@field package timer integer?
 ---@field package max_idle_per_host integer
 ---@field package idle_timeout integer
+---@field package send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms
+---@field package ping_timeout integer? -- HTTP/2 probe timeout in ms
 ---@field package alpnprotos silly.net.tls.alpn_proto[]
 ---@field package h1pool table<string, silly.net.http.client.pool.h1[]>
 ---@field package h2pool table<string, silly.net.http.client.pool.h2[]>
@@ -207,16 +209,28 @@ end
 ---@field max_idle_per_host integer?  -- Maximum idle connections per host (default: 10)
 ---@field idle_timeout integer?       -- Idle connection timeout in ms (default: 30000)
 ---@field alpnprotos silly.net.tls.alpn_proto[]? -- ALPN protocols (default: {"http/1.1", "h2"})
+---@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
+---@field ping_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 15000
 
 ---@param opts silly.net.http.client.opts?
 ---@return silly.net.http.client
 function M.new(opts)
+	local send_ping_timeout = opts and opts.send_ping_timeout
+	local ping_timeout = opts and opts.ping_timeout
+	if ping_timeout and ping_timeout <= 0 then
+		ping_timeout = nil
+	end
+	if send_ping_timeout and send_ping_timeout <= 0 then
+		send_ping_timeout = nil
+	end
 	---@type silly.net.http.client
 	local c = {
 		closed = false,
 		timer = nil,
 		max_idle_per_host = opts and opts.max_idle_per_host or default_opts.max_idle_per_host,
 		idle_timeout = opts and opts.idle_timeout or default_opts.idle_timeout,
+		send_ping_timeout = send_ping_timeout,
+		ping_timeout = ping_timeout,
 		alpnprotos = opts and opts.alpnprotos or default_opts.alpnprotos,
 		h1pool = setmetatable({}, pool_mt),
 		h2pool = setmetatable({}, pool_mt),
@@ -258,6 +272,9 @@ local function connect(client, u)
 		if not channel then
 			conn:close()
 			return nil, err
+		end
+		if client.send_ping_timeout then
+			channel:keepalive(client.send_ping_timeout, client.ping_timeout)
 		end
 		local entry = {
 			key = key,

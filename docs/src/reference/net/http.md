@@ -159,6 +159,9 @@ end
   - `body`: `string|nil` (可选) - 响应体内容
 - **返回值**: 无
 - **注意**: 调用此方法后，stream 将不可再使用
+
+对于 HTTP/2，handler 异常只会重置尚未完成的响应流。`closewrite()` 成功后，后续清理异常会记录日志，但不会使已完成的响应失效。如果请求体仍在传输，服务器使用 `RST_STREAM(NO_ERROR)` 停止请求体，以保留客户端收到的响应。
+
 - **示例**:
 
 ```lua validate
@@ -261,6 +264,8 @@ http.listen {
     - `idle_timeout`: `integer` (可选) - 空闲连接超时时间(ms) (默认: 30000)
     - `read_timeout`: `integer` (可选) - 读超时时间(ms) (默认: 5000)
     - `alpnprotos`: `string[]` (可选) - ALPN 协议列表 (默认: `{"http/1.1", "h2"}`)
+    - `send_ping_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
+    - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
 - **返回值**: `silly.net.http.client` - 客户端对象
 - **示例**:
 ```lua validate
@@ -404,9 +409,10 @@ Stream 对象用于处理 HTTP 请求和响应。
 - `stream.query`: `table` - 查询参数表
 - `stream.header`: `table` - 头表
 - `stream.trailer`: `table` - 尾部头表 (Trailer)
+- `stream.headeronly`: `boolean?` - 仅 HTTP/2 客户端，在 `waitresponse()` 成功后有效：初始最终响应 HEADERS 块带 `END_STREAM` 时为 true，否则为 false。1xx 响应不设置它，后续 DATA 或尾部头也不会改变它。
 - `stream.version`: `string` - 协议版本
 - `stream.remoteaddr`: `string` - 远程地址
-- `stream.eof`: `boolean` - 是否已读到 EOF
+- `stream.eof`: `boolean` - HTTP/1 的 EOF 标志。HTTP/2 使用 `stream:eof()` 判断是否已收到 `END_STREAM`，此时缓冲区仍可能有未读数据。
 
 ### stream:read(n [, timeout])
 
@@ -435,9 +441,9 @@ Stream 对象用于处理 HTTP 请求和响应。
 
 ### stream:flush()
 
-刷新发送缓冲区。
+刷新发送缓冲区。HTTP/2 首次发送请求头时可能等待并发名额。
 
-- **返回值**: 无
+- **返回值**: HTTP/2 返回 `boolean, error`；HTTP/1.1 无返回值
 
 ### stream:respond(status, headers [, close])
 
@@ -804,6 +810,8 @@ end)
 
 发送响应时应该设置正确的 `content-length` 头部：
 
+HTTP/2 接收时宽容地接受 Lua `tonumber` 支持的数字格式，但长度必须是 Lua 整数范围内的非负整数。重复字段的数值必须一致。
+
 ```lua validate
 local http = require "silly.net.http"
 
@@ -998,3 +1006,23 @@ end)
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.encoding.json](../encoding/json.md) - JSON 编解码
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+
+### HTTP/2 PING 保活
+
+`send_ping_timeout = 60000, ping_timeout = 15000` 表示 60 秒未收到帧时发起 PING，探测超过 15 秒仍未收到匹配 ACK 就关闭连接并唤醒等待者。任何接收帧会推迟下一次探测，发送数据不会重置接收静默计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+客户端选项控制客户端探测服务端，默认不主动探测。服务端不启用主动探测；两端均始终回复合法 PING。PING 不受 DATA 流控限制，也不会自动延长连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。
+
+底层构造函数保持 `h2.newchannel(scheme, conn, authority)` 三个参数。通过 `ch:keepalive(send_ping_timeout, ping_timeout)` 配置已建立的客户端连接，两个参数均为可选整数毫秒；第一个传 nil 或非正数关闭探测，启用探测时第二个传 nil 或非正数使用 15000 ms。重新配置会取消待确认的探测，并基于最后接收时间重设定时器，保留已经过去的接收空闲时间。PING 空闲探测和 ACK 超时共用一个 channel 定时器；stream 读取超时保留原有的独立定时器。
+
+服务端入口为 `h2.httpd(handler, conn, scheme)`，与 HTTP/1.1 保持一致。调用方传入 `scheme`（`"http"` 或 `"https"`）；ALPN 用于选择 HTTP 协议版本。
+
+在底层 HTTP/2 stream 上建立普通 CONNECT 隧道时，调用 `stream:request("CONNECT", "target.example:443", headers)`。请求目标用于 `:authority`，不发送 `:scheme` 和 `:path`。
+
+### HTTP/2 流的并发限制
+
+`ch:openstream()` 创建尚未发送的流，不等待也不占用并发名额。`stream:request()` 缓存请求头。首次发送这些请求头时，如果已达到对端的并发流上限，调用会等待；入口包括 `flush()`、非空 `write()` 和 `closewrite()`。关闭流或关闭 channel 会中断等待。尚未发送的流不会延迟 channel 关闭。
+
+读取不会发送缓存的头部。请求体尚未结束时，等待响应前应先调用 `flush()`；服务端缓存的响应头也遵循这一规则。HTTP/2 的 `stream:flush()` 成功返回 `true`，发送失败返回 `false, error`。
+
+同一 stream 支持一个读协程和一个写协程并发操作，`close()` 可以中断两者。不支持多个读操作或多个写操作并发执行。在头部刷新前开始读取，会等待写操作或显式 flush 发送头部；读取超时仍然生效。
