@@ -11,14 +11,21 @@ local ETIMEDOUT<const> = errno.TIMEDOUT
 local EEOF<const> = errno.EOF
 local EPIPE<const> = errno.PIPE
 local ECONNRESET<const> = errno.CONNRESET
+local ECONNABORTED<const> = errno.CONNABORTED
 
 local is_iocp = silly.multiplexer == "iocp"
 
 local function assert_eof(dat, err, msg_data, msg_err)
 	-- Abrupt close (no close_notify) races: clean FIN -> EOF,
-	-- RST -> CONNRESET, RST with undrained server writes (TLS 1.3
+	-- RST -> CONNRESET, Windows transport abort -> CONNABORTED,
+	-- RST with undrained server writes (TLS 1.3
 	-- NewSessionTicket) -> EPIPE. All mean the peer is gone.
-	local gone = err == EEOF or err == EPIPE or err == ECONNRESET
+	local gone = err == EEOF or err == EPIPE or err == ECONNRESET or err == ECONNABORTED
+	if dat ~= nil or not gone then
+		local detail = string.format(" (dat=%q, err=%s)", dat, tostring(err))
+		msg_data = msg_data .. detail
+		msg_err = msg_err .. detail
+	end
 	if is_iocp then
 		local ok = (dat == nil) and gone
 		testaux.asserteq(ok, true, msg_err)

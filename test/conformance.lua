@@ -92,4 +92,8 @@ function conformance:close()
 	end
 end
 
+function conformance:hpackdecode(blocks, table_size)
+	return send_command(self.conn, "hpack_decode", {blocks = blocks, table_size = table_size})
+end
+
 return conformance
