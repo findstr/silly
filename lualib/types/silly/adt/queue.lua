@@ -1,25 +1,37 @@
 --- @meta silly.adt.queue
 
----@class silly.adt.queue
+---@class silly.adt.queue<T>
 local M = {}
 
----@return silly.adt.queue
+---@generic T
+---@return silly.adt.queue<T>
 function M.new() end
 
----@param self silly.adt.queue
----@param ... any
----@return integer
-function M.push(self, ...) end
+---@generic T
+---@param self silly.adt.queue<T>
+---@param value T
+---@return integer size
+function M.push(self, value) end
 
----@param self silly.adt.queue
----@return any
+---@generic T
+---@param self silly.adt.queue<T>
+---@return T? value
 function M.pop(self) end
 
----@param self silly.adt.queue
----@return integer
+---Remove the first raw-equal value in FIFO order, preserving the remaining order. O(n).
+---@generic T
+---@param self silly.adt.queue<T>
+---@param value T
+---@return boolean removed
+function M.remove(self, value) end
+
+---@generic T
+---@param self silly.adt.queue<T>
+---@return integer size
 function M.size(self) end
 
----@param self silly.adt.queue
+---@generic T
+---@param self silly.adt.queue<T>
 function M.clear(self) end
 
 return M
