@@ -120,6 +120,38 @@ static int lpop(lua_State *L)
 	return 1;
 }
 
+// queue:remove(value) -> boolean
+static int lremove(lua_State *L)
+{
+	int ref, values, equal, i;
+	struct queue *q = check_queue(L, 1);
+	luaL_checkany(L, 2);
+	lua_getiuservalue(L, 1, 1);
+	values = lua_gettop(L);
+	for (i = q->readi; i < q->writei; i++) {
+		lua_rawgeti(L, values, q->buf[i]);
+		equal = lua_rawequal(L, -1, 2);
+		lua_pop(L, 1);
+		if (equal) {
+			break;
+		}
+	}
+	if (i == q->writei) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+	ref = q->buf[i];
+	lua_pushnil(L);
+	lua_rawseti(L, values, ref);
+	memmove(q->buf + i, q->buf + i + 1, (q->writei - i - 1) * sizeof(int));
+	q->writei--;
+	if (unlikely(id_pool_free(&q->idx, ref) != 0)) {
+		luaL_error(L, "queue corrupted: invalid reference id");
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 // queue:size() -> integer
 static int lsize(lua_State *L)
 {
@@ -167,6 +199,7 @@ SILLY_MOD_API int luaopen_silly_adt_queue(lua_State *L)
 		{"pop", lpop},
 		{"size", lsize},
 		{"clear", lclear},
+		{"remove", lremove},
 		{NULL, NULL}
 	};
 	luaL_newlib(L, methods);

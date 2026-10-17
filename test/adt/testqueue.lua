@@ -1,5 +1,7 @@
 local queue = require "silly.adt.queue"
 local testaux = require "test.testaux"
+local silly = require "silly"
+local pcall = silly.pcall
 
 -- Test 1: Basic push/pop operations
 do
@@ -825,5 +827,182 @@ do
 		end
 	end
 end
+
+testaux.case("Test 32: Remove preserves FIFO order and reports whether a value was found", function()
+	local q = queue.new()
+	testaux.asserteq(q:remove("missing"), false, "empty removal returns false")
+	for i = 1, 5 do
+		q:push(i)
+	end
+	testaux.asserteq(q:remove(3), true, "remove a middle value")
+	testaux.asserteq(q:remove(1), true, "remove the head")
+	testaux.asserteq(q:remove(5), true, "remove the tail")
+	testaux.asserteq(q:remove(3), false, "a removed value is no longer present")
+	testaux.asserteq(q:size(), 2, "only two values remain")
+	testaux.asserteq(q:pop(), 2, "remaining head retains its position")
+	testaux.asserteq(q:pop(), 4, "remaining tail retains its position")
+	q:push("last")
+	testaux.asserteq(q:remove("last"), true, "remove a singleton")
+	testaux.asserteq(q:size(), 0, "singleton removal empties the queue")
+	testaux.asserteq(q:pop(), nil, "nothing remains to pop")
+end)
+
+testaux.case("Test 33: Remove finds the first duplicate after reference ID reuse", function()
+	local q = queue.new()
+	q:push("filler")
+	q:push("same")
+	q:push("middle")
+	testaux.asserteq(q:pop(), "filler", "free an earlier reference ID")
+	q:push("same")
+	testaux.asserteq(q:remove("same"), true, "remove one matching occurrence")
+	testaux.asserteq(q:size(), 2, "the later duplicate is preserved")
+	testaux.asserteq(q:pop(), "middle", "remove follows FIFO order rather than reference order")
+	testaux.asserteq(q:pop(), "same", "the most recently pushed duplicate remains")
+end)
+
+testaux.case("Test 34: Remove preserves queue state after accidental nil input", function()
+	local q = queue.new()
+	-- Defensive behavior for accidental nil input, outside the documented contract.
+	q:push(nil)
+	q:push(false)
+	q:push(0)
+	q:push(nil)
+	testaux.asserteq(q:remove(nil), true, "remove the first queued nil")
+	testaux.asserteq(q:size(), 3, "a queued nil counts as an element")
+	testaux.asserteq(q:pop(), false, "false remains distinct from nil")
+	testaux.asserteq(q:remove(false), false, "popped false is no longer queued")
+	testaux.asserteq(q:remove(nil), true, "remove the remaining queued nil")
+	testaux.asserteq(q:remove(nil), false, "empty reference slots are not queued nil values")
+	testaux.asserteq(q:pop(), 0, "nil and false removal preserve zero")
+	testaux.asserteq(q:size(), 0, "all values are accounted for")
+end)
+
+testaux.case("Test 35: Remove uses raw equality without invoking callbacks", function()
+	local q = queue.new()
+	local mt = {__eq = function()
+		error("remove must not invoke __eq")
+	end}
+	local a, b = setmetatable({}, mt), setmetatable({}, mt)
+	local co = coroutine.create(function() end)
+	local f = function() end
+	q:push(a)
+	q:push(b)
+	q:push(1)
+	q:push("1")
+	q:push(co)
+	q:push(f)
+	testaux.asserteq(q:remove(setmetatable({}, mt)), false, "equal-looking tables are distinct")
+	testaux.asserteq(q:remove(b), true, "table identity matches")
+	testaux.asserteq(q:remove(1.0), true, "integer and equal float match")
+	testaux.asserteq(q:remove(co), true, "coroutine identity matches")
+	testaux.asserteq(q:remove(f), true, "function identity matches")
+	testaux.asserteq(rawequal(q:pop(), a), true, "the other table is preserved")
+	testaux.asserteq(q:pop(), "1", "numeric removal does not match a string")
+	local nan = 0 / 0
+	q:push(nan)
+	testaux.asserteq(q:remove(nan), false, "NaN does not equal itself")
+	q:clear()
+	testaux.asserteq(q:size(), 0, "unmatched NaN can still be cleared")
+end)
+
+testaux.case("Test 36: Remove releases only the removed occurrence's reference", function()
+	local q = queue.new()
+	local weak = setmetatable({}, {__mode = "v"})
+	do
+		local value = {}
+		weak[1] = value
+		q:push(value)
+		q:push(value)
+		testaux.asserteq(q:remove(value), true, "remove the first reference")
+	end
+	collectgarbage("collect")
+	testaux.asserteq(weak[1] ~= nil, true, "the remaining occurrence retains the object")
+	do
+		local value = weak[1]
+		testaux.asserteq(q:remove(value), true, "remove the final reference")
+	end
+	collectgarbage("collect")
+	testaux.asserteq(weak[1], nil, "the object is collectible after its last removal")
+	testaux.asserteq(q:size(), 0, "both occurrences were removed")
+end)
+
+testaux.case("Test 37: Remove survives compaction expansion and repeated ID reuse", function()
+	local q = queue.new()
+	for round = 1, 8 do
+		for i = 1, 64 do
+			q:push(i)
+		end
+		for i = 1, 16 do
+			testaux.asserteq(q:pop(), i, "advance the queue head")
+		end
+		for i = 18, 64, 2 do
+			testaux.asserteq(q:remove(i), true, "remove alternating values")
+		end
+		for i = 65, 160 do
+			q:push(i)
+		end
+		testaux.asserteq(q:size(), 120, "removed slots do not count after growth")
+		for i = 17, 63, 2 do
+			testaux.asserteq(q:pop(), i, "old values retain their order")
+		end
+		for i = 65, 160 do
+			testaux.asserteq(q:pop(), i, "new values follow the surviving values")
+		end
+		testaux.asserteq(q:size(), 0, "every round returns all reference IDs")
+	end
+	q:push("clear")
+	q:clear()
+	testaux.asserteq(q:remove("clear"), false, "clear discards values visible to remove")
+end)
+
+testaux.case("Test 38: Mixed queue operations match an independent sequence model", function()
+	local q = queue.new()
+	local model = {}
+	local values = {false, true, 0, "0", {}, {}, coroutine.create(function() end)}
+	local state = 20261016
+	local function random(n)
+		state = (state * 48271) % 2147483647
+		return state % n + 1
+	end
+	for step = 1, 3000 do
+		local value = values[random(#values + 1)] -- Also exercise accidental nil input defensively.
+		local op = random(5)
+		if op <= 2 then
+			q:push(value)
+			model[#model + 1] = {value = value}
+		elseif op <= 4 then
+			local found = false
+			for i, entry in ipairs(model) do
+				if rawequal(entry.value, value) then
+					table.remove(model, i)
+					found = true
+					break
+				end
+			end
+			testaux.asserteq(q:remove(value), found, "removal agrees with FIFO search")
+		else
+			local entry = table.remove(model, 1)
+			local want
+			if entry then
+				want = entry.value
+			end
+			testaux.asserteq(rawequal(q:pop(), want), true, "pop agrees with the sequence model")
+		end
+		testaux.asserteq(q:size(), #model, "queue size agrees with the sequence model")
+	end
+	for _, entry in ipairs(model) do
+		testaux.asserteq(rawequal(q:pop(), entry.value), true, "remaining values preserve FIFO order")
+	end
+	testaux.asserteq(q:size(), 0, "all remaining values are popped")
+end)
+
+testaux.case("Test 39: Remove requires an argument without modifying the queue", function()
+	local q = queue.new()
+	q:push("kept")
+	local ok = pcall(q.remove, q)
+	testaux.asserteq(ok, false, "missing argument is distinct from explicit nil")
+	testaux.asserteq(q:size(), 1, "invalid removal leaves the queue intact")
+	testaux.asserteq(q:pop(), "kept", "invalid removal preserves the value")
+end)
 
 print("All queue tests completed successfully!")

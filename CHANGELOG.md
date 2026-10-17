@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- `adt.queue:remove(value)`.
 - `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
 - HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
 - `client.close()` to gracefully shut down pooled connections.

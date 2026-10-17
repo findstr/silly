@@ -8,6 +8,13 @@
 local queue = require "silly.adt.queue"
 ```
 
+The queue supports generic annotations, for example:
+
+```lua
+---@type silly.adt.queue<string>
+local q = queue.new()
+```
+
 ## API Reference
 
 ### queue.new()
@@ -21,14 +28,24 @@ Creates a new queue object.
 Adds an element to the end of the queue.
 
 - **Parameters**:
-  - `value`: `any` - The value to store (cannot be `nil`)
+  - `value`: `T` - The value to store (cannot be `nil`)
 - **Returns**: `integer` - Current size of the queue
 
 ### queue:pop()
 
 Removes and returns an element from the front of the queue.
 
-- **Returns**: `any|nil` - The element at the front of the queue, or `nil` if the queue is empty
+- **Returns**: `T|nil` - The element at the front of the queue, or `nil` if the queue is empty
+
+### queue:remove(value)
+
+Removes the first matching value in FIFO order and preserves the order of all
+remaining elements. Uses raw equality (`rawequal`) without invoking `__eq`.
+Lookup and removal take O(n) time; no reverse index is maintained.
+
+- **Parameters**:
+  - `value`: `T` - The value to remove
+- **Returns**: `boolean` - `true` if one occurrence was removed, otherwise `false`
 
 ### queue:size()
 
