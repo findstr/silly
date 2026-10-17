@@ -2,6 +2,7 @@
 
 ### Added
 - `adt.queue:remove(value)`.
+- Optional decoded field-list limit in `http2.hpack.unpack()`.
 - `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
 - HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
 - `client.close()` to gracefully shut down pooled connections.
@@ -19,6 +20,7 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- HPACK: fix table synchronization, incorrect header decoding and packing memory errors.
 - Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
 - Host header no longer duplicated when both the URL and user header table contain a host value.
 - Chunk size parsing handles missing hex before `tonumber` in h1.
