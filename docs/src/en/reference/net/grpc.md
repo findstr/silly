@@ -69,6 +69,8 @@ service MyService {
 
 ### Status Codes
 
+Final RPC status and message come from the same metadata block. Initial response headers are used only for a trailers-only response (`headeronly == true`); ordinary responses require status in their trailing headers.
+
 gRPC uses standard status codes to represent operation results, defined in the `silly.net.grpc.code` module:
 
 - `code.OK` (0): Success
@@ -456,7 +458,7 @@ end)
 
 ## Streaming RPC API
 
-When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object:
+When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object. Client-streaming and bidirectional calls send their initial request headers before returning, waiting for a stream slot if necessary. A bidirectional server can therefore reply before the client writes its first message:
 
 ### stream:write(request)
 

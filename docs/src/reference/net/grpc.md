@@ -69,6 +69,8 @@ service MyService {
 
 ### 状态码
 
+RPC 的最终状态和消息取自同一块元数据。只有 trailers-only 响应（`headeronly == true`）才读取初始响应头；普通响应必须从尾部头读取状态。
+
 gRPC 使用标准的状态码表示操作结果，定义在 `silly.net.grpc.code` 模块：
 
 - `code.OK` (0): 成功
@@ -456,7 +458,7 @@ end)
 
 ## 流式 RPC API
 
-当 RPC 方法定义为流式时（使用 `stream` 关键字），客户端调用返回流对象：
+当 RPC 方法定义为流式时（使用 `stream` 关键字），客户端调用返回流对象。客户端流和双向流调用在返回前发送首次请求头，必要时等待并发流名额，因此双向流的服务端可以在客户端写入首条消息前发送响应：
 
 ### stream:write(request)
 

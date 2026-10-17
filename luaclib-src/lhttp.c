@@ -1030,7 +1030,7 @@ static int lframe_build_header(lua_State *L)
 		flag = 0;
 		type = FRAME_CONTINUATION;
 	}
-	write_frame_header(p, sz, FRAME_HEADERS, flag | END_HEADERS, id);
+	write_frame_header(p, sz, type, flag | END_HEADERS, id);
 	p += FRAME_HDR_SIZE;
 	memcpy(p, hdr, sz);
 	p += sz;

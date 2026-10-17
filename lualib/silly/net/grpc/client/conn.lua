@@ -24,7 +24,7 @@ local function parse_target(target)
 		if not host or not port then
 			return nil, "Invalid target: " .. target
 		end
-		return host, port
+		return host, port, rest
 	end
 	return nil, "Unsupported scheme: " .. scheme
 end
@@ -32,6 +32,7 @@ end
 ---@class silly.net.grpc.client.endpoint
 ---@field addr string
 ---@field hostname string
+---@field authority string
 ---@field channel silly.net.http.h2.channel.client?
 
 ---@class silly.net.grpc.client.conn
@@ -70,7 +71,7 @@ local function newchannel(self, endpoint)
 	if not conn then
 		return nil, err
 	end
-	local ch, err = h2.newchannel(scheme, conn)
+	local ch, err = h2.newchannel(scheme, conn, endpoint.authority)
 	if not ch then
 		conn:close()
 		return nil, err
@@ -137,7 +138,7 @@ function conn.new(opts)
 	}
 	for i = 1, #targets do
 		local target = targets[i]
-		local host, port = parse_target(target)
+		local host, port, authority = parse_target(target)
 		if not host then
 			return nil, port
 		end
@@ -145,9 +146,14 @@ function conn.new(opts)
 		if not ip then
 			return nil, format("dns lookup %s failed: %s", host, err)
 		end
+		local address = authority
+		if ip ~= host then
+			address = join_addr(ip, port)
+		end
 		c[i] = {
-			addr = join_addr(ip, port),
+			addr = address,
 			hostname = host,
+			authority = authority,
 			channel = nil,
 		}
 	end

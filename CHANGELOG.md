@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
 - `adt.queue:remove(value)`.
 - Optional decoded field-list limit in `http2.hpack.unpack()`.
 - `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
@@ -9,6 +10,9 @@
 - Tests for host header deduplication and user header preservation in both h1 and h2.
 
 ### Changed
+- HTTP/2 waits for a stream slot when sending initial request headers instead of in `openstream()`; reads no longer flush headers. gRPC streaming calls send headers before returning.
+- HTTP/2 validates incoming fields, joins split Cookie fields and enforces a 65535-byte decoded header-list limit.
+- `h2.httpd(handler, conn, scheme)` now requires the transport scheme.
 - URL parsing and encoding extracted from `net.http.helper` into `net.http.url`; `helper.parseurl`/`urlencode`/`urldecode` replaced by `url.parse`/`queryescape`/`pathunescape`.
 - h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
 - h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
@@ -20,6 +24,9 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- HTTP/2: fix framing, flow control, stream limits and CONNECT handling.
+- HTTP/2: prevent blocked operations and leaked streams during errors or shutdown; preserve completed responses.
+- gRPC: preserve status and message from trailers-only responses.
 - HPACK: fix table synchronization, incorrect header decoding and packing memory errors.
 - Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
 - Host header no longer duplicated when both the URL and user header table contain a host value.

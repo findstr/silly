@@ -159,6 +159,9 @@ end
   - `body`: `string|nil` (可选) - 响应体内容
 - **返回值**: 无
 - **注意**: 调用此方法后，stream 将不可再使用
+
+对于 HTTP/2，handler 异常只会重置尚未完成的响应流。`closewrite()` 成功后，后续清理异常会记录日志，但不会使已完成的响应失效。如果请求体仍在传输，服务器使用 `RST_STREAM(NO_ERROR)` 停止请求体，以保留客户端收到的响应。
+
 - **示例**:
 
 ```lua validate
@@ -404,9 +407,10 @@ Stream 对象用于处理 HTTP 请求和响应。
 - `stream.query`: `table` - 查询参数表
 - `stream.header`: `table` - 头表
 - `stream.trailer`: `table` - 尾部头表 (Trailer)
+- `stream.headeronly`: `boolean?` - 仅 HTTP/2 客户端，在 `waitresponse()` 成功后有效：初始最终响应 HEADERS 块带 `END_STREAM` 时为 true，否则为 false。1xx 响应不设置它，后续 DATA 或尾部头也不会改变它。
 - `stream.version`: `string` - 协议版本
 - `stream.remoteaddr`: `string` - 远程地址
-- `stream.eof`: `boolean` - 是否已读到 EOF
+- `stream.eof`: `boolean` - HTTP/1 的 EOF 标志。HTTP/2 使用 `stream:eof()` 判断是否已收到 `END_STREAM`，此时缓冲区仍可能有未读数据。
 
 ### stream:read(n [, timeout])
 
@@ -435,9 +439,9 @@ Stream 对象用于处理 HTTP 请求和响应。
 
 ### stream:flush()
 
-刷新发送缓冲区。
+刷新发送缓冲区。HTTP/2 首次发送请求头时可能等待并发名额。
 
-- **返回值**: 无
+- **返回值**: HTTP/2 返回 `boolean, error`；HTTP/1.1 无返回值
 
 ### stream:respond(status, headers [, close])
 
@@ -804,6 +808,8 @@ end)
 
 发送响应时应该设置正确的 `content-length` 头部：
 
+HTTP/2 接收时宽容地接受 Lua `tonumber` 支持的数字格式，但长度必须是 Lua 整数范围内的非负整数。重复字段的数值必须一致。
+
 ```lua validate
 local http = require "silly.net.http"
 
@@ -998,3 +1004,19 @@ end)
 - [silly.net.tls](./tls.md) - TLS/SSL 加密
 - [silly.encoding.json](../encoding/json.md) - JSON 编解码
 - [silly.sync.waitgroup](../sync/waitgroup.md) - 协程等待组
+
+### HTTP/2 底层接口
+
+底层构造函数为 `h2.newchannel(scheme, conn, authority)`。
+
+服务端入口为 `h2.httpd(handler, conn, scheme)`，与 HTTP/1.1 保持一致。调用方传入 `scheme`（`"http"` 或 `"https"`）；ALPN 用于选择 HTTP 协议版本。
+
+在底层 HTTP/2 stream 上建立普通 CONNECT 隧道时，调用 `stream:request("CONNECT", "target.example:443", headers)`。请求目标用于 `:authority`，不发送 `:scheme` 和 `:path`。
+
+### HTTP/2 流的并发限制
+
+`ch:openstream()` 创建尚未发送的流，不等待也不占用并发名额。`stream:request()` 缓存请求头。首次发送这些请求头时，如果已达到对端的并发流上限，调用会等待；入口包括 `flush()`、非空 `write()` 和 `closewrite()`。关闭流或关闭 channel 会中断等待。尚未发送的流不会延迟 channel 关闭。
+
+读取不会发送缓存的头部。请求体尚未结束时，等待响应前应先调用 `flush()`；服务端缓存的响应头也遵循这一规则。HTTP/2 的 `stream:flush()` 成功返回 `true`，发送失败返回 `false, error`。
+
+同一 stream 支持一个读协程和一个写协程并发操作，`close()` 可以中断两者。不支持多个读操作或多个写操作并发执行。在头部刷新前开始读取，会等待写操作或显式 flush 发送头部；读取超时仍然生效。
