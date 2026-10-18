@@ -557,9 +557,16 @@ end
 ---@param method string
 ---@param path string
 ---@param header table<string, string>
+---@param endstream boolean?
 ---@param timeout integer? -- ms, timeout for Expect: 100-continue
 ---@return boolean, string?
-function h1c.request(s, method, path, header, timeout)
+function h1c.request(s, method, path, header, endstream, timeout)
+	if endstream then
+		local cl = header["content-length"]
+		if cl and tonumber(cl) ~= 0 then
+			return false, "Content-length conflicts with endstream"
+		end
+	end
 	s.method = method
 	s.path = path
 	s.keepalive = header["connection"] ~= "close"
@@ -572,9 +579,16 @@ function h1c.request(s, method, path, header, timeout)
 	s.allowbody = not bodyless_request[method]
 	local expect = header["expect"]
 	local expect100 = expect and lower(expect) == "100-continue"
-	if expect100 then
+	if endstream then
+		h1c.closewrite(s)
+		if s.err then
+			return false, s.err
+		end
+	elseif expect100 then
 		flush_header(s, false)
 		flushwrite(s)
+	end
+	if expect100 then
 		local timer
 		if timeout then
 			timer = time.after(timeout, read_timeout, s)
@@ -758,16 +772,34 @@ end
 ---@param s silly.net.http.h1.stream.server
 ---@param status integer
 ---@param header table<string, string>
-function h1s.respond(s, status, header)
+---@param endstream boolean?
+---@return boolean, string?
+function h1s.respond(s, status, header, endstream)
+	if s.writeclosed then
+		return false, "Write closed"
+	end
+	local nobody = bodyless_response(s.method, status)
+	if endstream and not nobody then
+		local cl = header["content-length"]
+		if cl and tonumber(cl) ~= 0 then
+			return false, "Content-length conflicts with endstream"
+		end
+	end
 	local buf = s.sendbuf
 	buf[#buf + 1] = response_line[status]
 	s.writeheader = header
-	local nobody = bodyless_response(s.method, status)
 	s.allowbody = not nobody
 	if nobody then
 		header["content-length"] = nil
 		header["transfer-encoding"] = nil
 	end
+	if endstream then
+		h1s.closewrite(s)
+	end
+	if s.err then
+		return false, s.err
+	end
+	return true, nil
 end
 
 h1s.read = read

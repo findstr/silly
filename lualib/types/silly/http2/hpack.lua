@@ -9,18 +9,17 @@ local M = {}
 function M.new(hardlimit) end
 
 ---@param self silly.http2.hpack
----@param header table<string, string>
----@param ... any
+---@param header table?
+---@param ... any -- Alternating names and values; converted through Lua tostring.
 ---@return string
 function M.pack(self, header, ...) end
 
 ---@param self silly.http2.hpack
 ---@param dat string|string[]
----@param header_list string[]
 ---@param limit integer? -- Decoded field-list size: sum of name/value octets plus 32 per field
----@return boolean success
+---@return string[]? header_list
 ---@return boolean? limited -- True on limit failure; the complete block still updates the dynamic table
-function M.unpack(self, dat, header_list, limit) end
+function M.unpack(self, dat, limit) end
 
 ---@param self silly.http2.hpack
 --- Sets the table limit. The encoder announces changes at the next block start.

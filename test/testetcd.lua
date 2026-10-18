@@ -877,6 +877,7 @@ testaux.case("Test 17: Lease keepalive stream reconnection", function()
 	-- Test 17.5: Simulate stream disconnection by closing all streams
 	print("Simulating keepalive stream disconnection...")
 	server:clear_keepalive_requests()  -- Clear to track reconnect requests
+	local oldstream = c.keepstream
 	server:close_all_streams()
 
 	-- Test 17.6: Wait for keepalive to reconnect and resume
@@ -885,6 +886,7 @@ testaux.case("Test 17: Lease keepalive stream reconnection", function()
 	ka_reqs = server:get_keepalive_requests()
 	local count_after = #ka_reqs
 	testaux.assertgt(count_after, 0, "Test 17.6: Keepalive reconnected and resumed")
+	testaux.asserteq(oldstream.h2stream.closed, true, "Test 17.6.1: reconnect releases the old keepalive stream")
 	print(string.format("Test 17.7: %d keepalive requests after reconnect", count_after))
 
 	-- Test 17.7: Verify lease is still alive (keepalive is working)

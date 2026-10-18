@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -357,12 +358,15 @@ static void read_line(lua_State *L, struct buffer *b, int delim)
 static int lread(lua_State *L)
 {
 	int vstk;
+	lua_Integer bytes;
 	struct luastr delim;
 	struct buffer *b = check_buffer(L, BUFFER);
 	vstk = BUFFER+1;
 	switch (lua_type(L, vstk)) {
 	case LUA_TNUMBER:
-		read_bytes(L, b, lua_tointeger(L, vstk));
+		bytes = luaL_checkinteger(L, vstk);
+		luaL_argcheck(L, bytes <= INT_MAX, vstk, "read size exceeds INT_MAX");
+		read_bytes(L, b, bytes > 0 ? (int)bytes : 0);
 		break;
 	case LUA_TSTRING:
 		luastr_check(L, BUFFER + 1, &delim);
@@ -423,21 +427,26 @@ static int lappend(lua_State *L)
 		case LUA_TSTRING:
 			ptr = lua_tolstring(L, vstk, &len);
 			if (len > 0) {
+				luaL_argcheck(L, len <= (size_t)(INT_MAX - b->bytes),
+					vstk, "buffer size exceeds INT_MAX");
 				ref = ref_value(L, b, vstk);
-				bytes = push_data(L, ptr, len, ref);
+				bytes = push_data(L, ptr, (int)len, ref);
 			}
 			vstk++;
 			break;
-		case LUA_TLIGHTUSERDATA:
+		case LUA_TLIGHTUSERDATA: {
+			lua_Integer size = luaL_checkinteger(L, vstk+1);
+			luaL_argcheck(L, size >= 0 && size <= INT_MAX - b->bytes,
+				vstk+1, "append size out of range");
 			ptr = lua_touserdata(L, vstk);
-			len = luaL_checkinteger(L, vstk+1);
-			if (len > 0) {
-				bytes = push_data(L, ptr, len, 0);
+			if (size > 0) {
+				bytes = push_data(L, ptr, (int)size, 0);
 			} else {
 				silly_free((void *)ptr);
 			}
 			vstk+=2;
 			break;
+		}
 		default:
 			return luaL_error(L, "invalid append argument type");
 		}

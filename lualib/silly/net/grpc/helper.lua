@@ -21,8 +21,7 @@ function M.readbody(h2stream, isreq, pbtype)
 	end
 	local compress, frame_size = unpack(">I1I4", data)
 	if isreq and frame_size > REQ_MAX_LEN then
-		h2stream:respond(200, {
-			['content-type'] = 'application/grpc',
+		h2stream:closewrite(nil, {
 			['grpc-status'] = code.RESOURCE_EXHAUSTED,
 		})
 		return nil, "Received message larger than max"
@@ -31,8 +30,7 @@ function M.readbody(h2stream, isreq, pbtype)
 	if compress ~= 0 then
 		h2stream:read(frame_size) -- drain compressed payload to keep stream aligned
 		if isreq then
-			h2stream:respond(200, {
-				['content-type'] = 'application/grpc',
+			h2stream:closewrite(nil, {
 				['grpc-status'] = code.UNIMPLEMENTED,
 				['grpc-message'] = "Compression not supported",
 			})

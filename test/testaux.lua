@@ -3,6 +3,7 @@ local hive = require "silly.hive"
 local time = require "silly.time"
 local json = require "silly.encoding.json"
 local metrics = require "silly.metrics.c"
+local channel = require "silly.sync.channel"
 local c = require "test.aux.c"
 local type = type
 local pairs = pairs
@@ -11,6 +12,109 @@ local format = string.format
 local testaux = {}
 local m = ""
 local rand = math.random
+
+-- A deadline only detects a missing event; it never signals completion.
+function testaux.await(signal, label, timeout)
+	local timer = time.after(timeout or 5000, function()
+		signal:close(label .. " timed out")
+	end)
+	local value, err = signal:pop()
+	time.cancel(timer)
+	assert(value, err)
+	return value
+end
+
+-- Use only when elapsed time is itself a test input (e.g. read deadlines).
+function testaux.elapse(ms)
+	local signal = channel.new()
+	local timer = time.after(ms, function()
+		signal:push(true)
+	end)
+	testaux.await(signal, "test time elapsed", ms + 5000)
+	time.cancel(timer)
+end
+
+-- Install before starting the protocol reader. The next read begins after
+-- the previous frame handler has applied its state changes. EOF wakes the
+-- waiter after the reader has returned and completed connection cleanup.
+function testaux.observereads(conn)
+	local read = conn.read
+	local close = conn.close
+	local closed = channel.new()
+	local observer = {waiters = {}, closed = false, reading = false}
+	conn.read = function(self, ...)
+		for i = #observer.waiters, 1, -1 do
+			local waiter = observer.waiters[i]
+			if waiter.predicate() then
+				table.remove(observer.waiters, i)
+				waiter.signal:push(true)
+			end
+		end
+		observer.reading = true
+		local data, err = read(self, ...)
+		observer.reading = false
+		if not data then
+			observer.closed = true
+			closed:push(true)
+		end
+		return data, err
+	end
+	-- A protocol error can close after a successful read, without reading EOF.
+	-- If a read is pending, its return remains the completion barrier.
+	conn.close = function(self, ...)
+		local ok, err = close(self, ...)
+		if not observer.reading then
+			observer.closed = true
+			closed:push(true)
+		end
+		return ok, err
+	end
+	function observer:waituntil(predicate, label)
+		if predicate() then
+			return
+		end
+		local signal = channel.new()
+		self.waiters[#self.waiters + 1] = {predicate = predicate, signal = signal}
+		testaux.await(signal, label)
+	end
+	function observer:waitclosed()
+		if not self.closed and (conn.fd or self.reading) then
+			testaux.await(closed, "protocol reader EOF")
+		end
+	end
+	return observer
+end
+
+function testaux.trackconnections(transport)
+	local connect = transport.connect
+	local listen = transport.listen
+	local observers = {}
+	transport.connect = function(...)
+		local conn, err = connect(...)
+		if conn then
+			observers[conn] = testaux.observereads(conn)
+		end
+		return conn, err
+	end
+	transport.listen = function(opts)
+		local copied = {}
+		for key, value in pairs(opts) do
+			copied[key] = value
+		end
+		copied.accept = function(conn, ...)
+			observers[conn] = testaux.observereads(conn)
+			return opts.accept(conn, ...)
+		end
+		return listen(copied)
+	end
+	return observers, function()
+		transport.connect = connect
+		transport.listen = listen
+		for _, observer in pairs(observers) do
+			observer:waitclosed()
+		end
+	end
+end
 
 local meta_str = "abcdefghijklmnopqrstuvwxyz"
 local meta = {}

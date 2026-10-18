@@ -55,7 +55,9 @@ function conformance:http_request(method, url, opts)
 		method = method,
 		url = url,
 		headers = opts.headers,
+		http2 = opts.http2,
 		body = opts.body,
+		max_response_header_bytes = opts.max_response_header_bytes,
 		response_timeout_ms = opts.timeout or 10000,
 		disable_keep_alives = opts.disable_keep_alives,
 	}
@@ -75,6 +77,7 @@ function conformance:http_request_pair(first_url, second_url, opts)
 		},
 		response_timeout_ms = opts.timeout or 10000,
 		disable_keep_alives = opts.disable_keep_alives,
+		http2 = opts.http2,
 	}
 	return send_command(self.conn, "http_request_pair", params)
 end
@@ -92,8 +95,16 @@ function conformance:close()
 	end
 end
 
+function conformance:h2flow(addr)
+	return send_command(self.conn, "http2_flow", {addr = addr})
+end
+
 function conformance:hpackdecode(blocks, table_size)
 	return send_command(self.conn, "hpack_decode", {blocks = blocks, table_size = table_size})
+end
+
+function conformance:h2peer(params)
+	return send_command(self.conn, "http2_peer", params)
 end
 
 return conformance

@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 )
 
 type ResponseInfo struct {
+	Protocol string            `json:"protocol"`
 	Status   int               `json:"status"`
 	Headers  map[string]string `json:"headers"`
 	Body     string            `json:"body"`
@@ -55,6 +57,9 @@ func doSingle(client *http.Client, params map[string]any) (*ResponseInfo, error)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if required, _ := params["http2"].(bool); required && resp.ProtoMajor != 2 {
+		return nil, fmt.Errorf("expected HTTP/2, got %s", resp.Proto)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -75,6 +80,7 @@ func doSingle(client *http.Client, params map[string]any) (*ResponseInfo, error)
 	}
 
 	return &ResponseInfo{
+		Protocol: resp.Proto,
 		Status:   resp.StatusCode,
 		Headers:  headers,
 		Body:     string(body),
@@ -91,11 +97,18 @@ func newClient(params map[string]any) *http.Client {
 	if v, ok := params["disable_keep_alives"].(bool); ok {
 		disableKeepAlives = v
 	}
+	http2, _ := params["http2"].(bool)
+	transport := &http.Transport{DisableKeepAlives: disableKeepAlives, ForceAttemptHTTP2: http2}
+	if n, ok := params["max_response_header_bytes"].(float64); ok {
+		transport.MaxResponseHeaderBytes = int64(n)
+	}
+	if http2 {
+		// The conformance process only connects to local fixture servers.
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
+	}
 	return &http.Client{
-		Timeout: time.Duration(timeoutMs) * time.Millisecond,
-		Transport: &http.Transport{
-			DisableKeepAlives: disableKeepAlives,
-		},
+		Timeout:   time.Duration(timeoutMs) * time.Millisecond,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -117,6 +130,10 @@ func DoRequestPair(params map[string]any) ([]*ResponseInfo, error) {
 	if !ok {
 		return nil, fmt.Errorf("missing second request params")
 	}
+	if required, _ := params["http2"].(bool); required {
+		first["http2"] = true
+		second["http2"] = true
+	}
 
 	client := newClient(params)
 	defer client.CloseIdleConnections()
@@ -131,4 +148,3 @@ func DoRequestPair(params map[string]any) ([]*ResponseInfo, error) {
 	}
 	return []*ResponseInfo{r1, r2}, nil
 }
-

@@ -6,14 +6,14 @@ local M = {}
 ---@param id integer
 ---@param maxsize integer
 ---@param header string
----@param endstream boolean
+---@param endstream boolean?
 ---@return string
 function M.header(id, maxsize, header, endstream) end
 
 ---@param id integer
 ---@param maxsize integer
 ---@param data string
----@param endstream boolean
+---@param endstream boolean?
 ---@param offset integer?
 ---@param size integer?
 ---@return string

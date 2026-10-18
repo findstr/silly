@@ -18,7 +18,7 @@ Creates a new buffer object.
 
 ### buffer:append(data [, ...])
 
-Appends data to the buffer.
+Appends data to the buffer. The buffer can hold at most `2^31-1` bytes; exceeding this limit raises an argument error.
 
 - **Parameters**:
   - `data`: `string` | `lightuserdata` - Data to append
@@ -27,10 +27,11 @@ Appends data to the buffer.
 - **Notes**:
   - If the parameter is `lightuserdata`, it must be followed by an `integer` type length parameter.
   - Example: `buf:append(ptr, len)`
+  - Pointer lengths must be nonnegative. A pointer rejected by length validation remains owned by the caller.
 
 ### buffer:read(n)
 
-Reads a specified number of bytes from the buffer.
+Reads a specified number of bytes from the buffer. `n` must be an integer no greater than `2^31-1`; exceeding this limit raises an argument error. A nonpositive `n` returns an empty string.
 
 - **Parameters**:
   - `n`: `integer` - Number of bytes to read

@@ -2,6 +2,7 @@ package main
 
 import (
 	"conformance/control"
+	"conformance/http2peer"
 	"conformance/httpclient"
 	"conformance/httpserver"
 	"encoding/base64"
@@ -25,8 +26,17 @@ func main() {
 	}
 
 	srvMgr := httpserver.NewManager()
+	peers := &http2peer.Manager{}
+	defer peers.CloseAll()
 
 	handlers := map[string]control.Handler{
+		"http2_peer": func(cmd *control.Command) *control.Response {
+			result, err := peers.Handle(cmd.Params)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"start_server": func(cmd *control.Command) *control.Response {
 			handlerName, _ := cmd.Params["handler"].(string)
 			if handlerName == "" {
@@ -40,7 +50,7 @@ func main() {
 			if err != nil {
 				return &control.Response{Error: err.Error()}
 			}
-			info, err := srvMgr.Start(listenAddr, h)
+			info, err := srvMgr.Start(listenAddr, h, cmd.Params)
 			if err != nil {
 				return &control.Response{Error: err.Error()}
 			}
@@ -60,6 +70,14 @@ func main() {
 			}
 			return &control.Response{Result: result}
 		},
+		"http2_flow": func(cmd *control.Command) *control.Response {
+			addr, _ := cmd.Params["addr"].(string)
+			result, err := httpclient.FlowWindow(addr)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"http_request_pair": func(cmd *control.Command) *control.Response {
 			result, err := httpclient.DoRequestPair(cmd.Params)
 			if err != nil {
@@ -70,6 +88,7 @@ func main() {
 		"shutdown": func(cmd *control.Command) *control.Response {
 			go func() {
 				srvMgr.StopAll()
+				peers.CloseAll()
 				ln.Close()
 				os.Exit(0)
 			}()

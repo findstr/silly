@@ -1,4 +1,5 @@
 local silly = require "silly"
+local pcall = silly.pcall
 local task = require "silly.task"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
@@ -22,6 +23,8 @@ local EEOF<const> = errno.EOF
 
 local set_nil = true
 local server_handler
+local handler_done = channel.new()
+local readers, wait_readers = testaux.trackconnections(tls)
 
 local server = http.listen {
 	tls = true,
@@ -40,6 +43,7 @@ local server = http.listen {
 		if set_nil then
 			server_handler = nil
 		end
+		handler_done:push(true)
 	end
 }
 
@@ -50,23 +54,28 @@ local httpc = http.newclient({
 })
 
 local function wait_done()
-	while server_handler do
-		time.sleep(100)
+	if server_handler then
+		testaux.await(handler_done, "server handler completed")
 	end
+	handler_done:clear()
 end
 
 local function case(name, fn)
 	testaux.case(name, function()
+		handler_done:clear()
 		local ok, err = pcall(fn)
 		server_handler = nil
 		set_nil = true
-		if not ok then error(err) end
+		if not ok then
+			error(err)
+		end
 	end)
 end
 
 case("Test 1: Basic HTTP/2 Server Setup", function()
 	testaux.asserteq(not not server, true, "Server should start successfully")
 end)
+
 
 case("Test 2: HTTP/2 Chunked Transfer", function()
 	server_handler = function(stream)
@@ -475,7 +484,9 @@ case("Test 16: Flow control - Stream window 63KB single stream", function()
 	testaux.assertneq(stream, nil, "Test 16.1: stream should not be nil")
 	-- Write 63KB - this should consume most of stream window (65535 initial)
 	stream:write(data)
-	time.sleep(1000)
+	readers[stream.channel.conn]:waituntil(function()
+		return stream.channel.sendwindow == 4 * 1024 * 1024
+	end, "connection WINDOW_UPDATE applied")
 	testaux.asserteq(stream.sendwindow, 1023, "Test 16.2: sendwindow should be 1023")
 	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 16.3: channel sendwindow should be 65535")
 	ch:push("")
@@ -497,9 +508,11 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	-- This should exhaust connection window and require flow control
 
 	local data = crypto.randomkey(4 * 1024 * 1024 - 1024)
-	local stream1_arrived = false
-	local stream2_arrived = false
-	local responses = {}
+	local stream1_arrived = channel.new()
+	local stream2_arrived = channel.new()
+	local release_first = channel.new()
+	local requests = waitgroup.new()
+	set_nil = false
 
 	-- Server handler will be called twice
 	local call_count = 0
@@ -509,13 +522,11 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 
 		-- Mark stream arrival
 		if current_call == 1 then
-			stream1_arrived = true
-			-- Wait for stream2 to arrive
-			while not stream2_arrived do
-				time.sleep(100)
-			end
+			stream1_arrived:push(true)
+			testaux.await(release_first, "second stream arrived")
 		else
-			stream2_arrived = true
+			stream2_arrived:push(true)
+			release_first:push(true)
 		end
 
 		local body, err = stream:readall()
@@ -523,12 +534,10 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 
 		stream:respond(200, {})
 		stream:closewrite("OK" .. current_call)
-
-		responses[current_call] = true
 	end
 
 	-- Launch two concurrent requests
-	task.fork(function()
+	requests:fork(function()
 		local s<close>, err = httpc:request("POST", "https://127.0.0.1:8082", {
 			["content-length"] = #data,
 		})
@@ -542,13 +551,10 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	end)
 
 	-- Wait for first stream to arrive at server
-	while not stream1_arrived do
-		time.sleep(10)
-	end
-	testaux.asserteq(stream1_arrived, true, "Test 17.3: Stream1 should arrive first")
+	testaux.await(stream1_arrived, "first stream arrived")
 
 	-- Second stream
-	task.fork(function()
+	requests:fork(function()
 		local s<close>, err = httpc:request("POST", "https://127.0.0.1:8082", {
 			["content-length"] = #data,
 		})
@@ -563,26 +569,22 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	end)
 
 	-- Wait for second stream to arrive
-	while not stream2_arrived do
-		time.sleep(10)
-	end
-	testaux.asserteq(stream2_arrived, true, "Test 17.6: Stream2 should arrive")
+	testaux.await(stream2_arrived, "second stream arrived")
 
 	-- Wait for both handlers to complete
-	while not (responses[1] and responses[2]) do
-		time.sleep(100)
-	end
-	wait_done()
+	requests:wait()
+	testaux.await(handler_done, "first handler completed")
+	testaux.await(handler_done, "second handler completed")
 end)
 
 case("Test 18: Flow control - Window recovery after read", function()
 	-- Test that reading data sends WINDOW_UPDATE and recovers window
 	local data = crypto.randomkey(66 * 1024)
+	local release = channel.new()
+	local writer = waitgroup.new()
 
 	server_handler = function(stream)
-		-- Don't read immediately, let client send data
-		time.sleep(100)
-
+		testaux.await(release, "client exhausted stream send window")
 		local body, err = stream:readall()
 		testaux.asserteq(#body, #data, "Test 18.1: Should receive " .. tostring(#data) .. " KB")
 
@@ -595,7 +597,16 @@ case("Test 18: Flow control - Window recovery after read", function()
 	})
 	testaux.assertneq(stream, nil, "Test 18.2: stream should not be nil")
 
-	stream:closewrite(data)
+	local started = channel.new()
+	writer:fork(function()
+		started:push(true)
+		assert(stream:closewrite(data))
+	end)
+	testaux.await(started, "body writer started")
+	testaux.asserteq(stream.sendwindow, 0, "Test 18: writer exhausted stream window before server reads")
+	testaux.assertneq(stream.writeco, nil, "Test 18: writer waits for window credit")
+	release:push(true)
+	writer:wait()
 	stream:waitresponse()
 	testaux.asserteq(stream.sendwindow, 65535, "Test 18.2: sendwindow should be full")
 	testaux.asserteq(stream.channel.sendwindow, 4*1024*1024, "Test 18.2: channel sendwindow should be full")
@@ -633,8 +644,8 @@ case("Test 20: Connection broken during read", function()
 	server_handler = function(stream)
 		stream:respond(200, {})
 		stream:write("partial")
-		-- Close connection without finishing
-		stream.channel:close()
+		-- Break the transport; channel:close() allows accepted responses to finish.
+		stream.channel.conn:close()
 	end
 
 	local stream<close>, err = httpc:request("GET", "https://127.0.0.1:8082", {})
@@ -644,7 +655,7 @@ case("Test 20: Connection broken during read", function()
 
 	local body, err = stream:readall()
 	testaux.asserteq(body, nil, "Test 20.2: Should fail to read")
-	testaux.asserteq(err, "Channel goaway", "Test 20.3: Should have error")
+	testaux.asserteq(err, EEOF, "Test 20.3: Transport EOF is preserved")
 
 	-- server_handler already set to nil by broken connection
 	server_handler = nil
@@ -740,61 +751,33 @@ case("Test 24: HTTP/2 GET with Accept-Encoding header check", function()
 	wait_done()
 end)
 
-case("Test 25: HTTP/2 cocurrent stream stream", function()
-	local x = function(stream)
-		stream:respond(200, {
-			["content-type"] = "text/plain",
-		})
-		stream:closewrite("OK")
+case("Test 25: HTTP/2 concurrent request admission", function()
+	set_nil = false
+	server_handler = function(s)
+		assert(s:respond(200, {}, true))
 	end
-	local conn, err = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
-	testaux.assertneq(conn, nil, "Test 25.1: Connect should be ok")
-	local ch, err = h2.newchannel("https", conn)
-	testaux.assertneq(ch, nil, "Test 25.2: New channel should be ok")
-	assert(ch)
-	local max = ch.streammax
-	local streams = {}
-	for i = 1, max do
-		server_handler = x
-		local s = ch:openstream()
-		testaux.assertneq(s, nil, "Test 25.3: Openstream should be ok")
-		local ok, err = s:request("GET", "/", {})
-		testaux.asserteq(ok, true, "Test 25.4: Request should be ok")
-		testaux.asserteq(err, nil, "Test 25.4: Request should be ok")
-		s:closewrite("foo")
-		local body, err = s:readall()
-		testaux.asserteq(body, "OK", "Test 25.4: Request should be ok")
-		streams[i] = s
-	end
-	local block = false
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+	ch.streammax = 1
+	local first = assert(ch:request("GET", "/", {}, true))
+	local started, done = channel.new(), channel.new()
 	task.fork(function()
-		block = true
-		streams[1]:close()
+		started:push(true)
+		local s = assert(ch:request("GET", "/", {}, true))
+		done:push(s)
 	end)
-	local s = ch:openstream()
-	testaux.asserteq(block, true, "Test 25.5: Openstream should be block")
-	testaux.assertneq(s, nil, "Test 25.5: Openstream should be success")
-
-	local wg = waitgroup.new()
-	for i = 1, 100 do
-		wg:fork(function()
-			local s, err = ch:openstream()
-			testaux.asserteq(s, nil, "Test 25.6: Openstream should fail")
-			testaux.asserteq(err, "channel closed", "Test 25.6: Openstream should fail")
-		end)
-	end
-	wg:fork(function()
-		ch:close()
-	end)
-	wg:wait()
-	-- Close all remaining streams to avoid leaks
-	for i = 2, max do
-		streams[i]:close()
-	end
-	s:close()
+	testaux.await(started, "Test 25: second request entered admission")
+	testaux.asserteq(ch.openwaitq:size(), 1, "Test 25.1: only request waits for concurrency")
+	assert(first:waitresponse(2000))
+	first:close()
+	local second<close> = testaux.await(done, "Test 25: request admitted after release")
+	assert(second:waitresponse(2000))
+	testaux.asserteq(ch.streamcount, 1, "Test 25.2: admission occupies one slot")
+	second:close()
+	ch:close()
 end)
 
-case("Test 26: HTTP/2 opensream on a closed channel", function()
+case("Test 26: HTTP/2 existing stream survives local channel close", function()
 	local x = function(stream)
 		stream:respond(200, {
 			["content-type"] = "text/plain",
@@ -803,22 +786,23 @@ case("Test 26: HTTP/2 opensream on a closed channel", function()
 	end
 	local conn, err = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
 	testaux.assertneq(conn, nil, "Test 26.1: Connect should be ok")
-	local ch, err = h2.newchannel("https", conn)
+	local ch, err = h2.newchannel("https", conn, "127.0.0.1:8082")
 	testaux.assertneq(ch, nil, "Test 26.2: New channel should be ok")
 	assert(ch)
 	server_handler = x
-	local s = ch:openstream()
+	local s = ch:request("GET", "/", {})
 	testaux.assertneq(s, nil, "Test 26.3: Openstream should be ok")
 	ch:close()
-	s:request("GET", "/", {})
+
 	s:closewrite("foo")
 	local body, err = s:readall()
-	testaux.asserteq(body, nil, "Test 26.4: Request should fail")
-	testaux.asserteq(err, "Channel goaway", "Test 26.4: Request should fail")
+	testaux.asserteq(body, "OK", "Test 26.4: Existing request completes after local close")
+	s:close()
+	testaux.asserteq(ch.conn, nil, "Test 26.4: Existing stream releases the closing transport")
 
-	local s, err = ch:openstream()
+	local s, err = ch:request("GET", "/", {})
 	testaux.asserteq(s, nil, "Test 26.5: Openstream should fail")
-	testaux.asserteq(err, "Channel goaway", "Test 26.5: Openstream should fail")
+	testaux.asserteq(err, "Graceful shutdown", "Test 26.5: Openstream should report completed local shutdown")
 end)
 
 case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function()
@@ -831,7 +815,7 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 
 	local conn, err = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
 	testaux.assertneq(conn, nil, "Test 27.1: Connect should succeed")
-	local ch, err = h2.newchannel("https", conn)
+	local ch, err = h2.newchannel("https", conn, "127.0.0.1:8082")
 	testaux.assertneq(ch, nil, "Test 27.2: New channel should succeed")
 	assert(ch)
 
@@ -841,37 +825,42 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	-- Step 1: Fill up to streammax
 	for i = 1, max do
 		server_handler = x
-		local s = ch:openstream()
+		local s = ch:request("GET", "/", {})
 		testaux.assertneq(s, nil, "Test 27.3." .. i .. ": Should open stream " .. i)
 		streams[i] = s
-		s:request("GET", "/", {})
+
 		s:closewrite()
 		s:readall()
 	end
 
 	testaux.asserteq(ch.streamcount, max, "Test 27.4: streamcount should equal streammax")
 
-	-- Step 2: Try to open one more stream (should block)
+	-- Step 2: Initial HEADERS for another stream should wait for a slot
+	local started = channel.new()
 	local blocked = false
 	local opened_after_close = false
 	local new_stream = nil
 	local sync = channel.new()
 	task.fork(function()
 		blocked = true
-		new_stream = ch:openstream()
+		started:push(true)
+		new_stream = assert(ch:request("GET", "/", {}))
+		assert(new_stream:closewrite())
 		opened_after_close = true
 		sync:push("done")
 	end)
 
-	time.sleep(0)
-	testaux.asserteq(blocked, true, "Test 27.5: openstream should be blocked when at max")
-	testaux.asserteq(opened_after_close, false, "Test 27.6: openstream should still be waiting")
+	testaux.await(started, "initial HEADERS waiter started")
+	testaux.asserteq(blocked, true, "Test 27.5: Initial HEADERS should wait when at max")
+	testaux.asserteq(opened_after_close, false, "Test 27.6: Initial HEADERS should still be waiting")
 	testaux.asserteq(ch.streamcount, max, "Test 27.7: streamcount should still be at max")
 	-- Step 3: Close one stream to unblock the waiting coroutine
+	server_handler = x
 	streams[1]:close()
 	sync:pop()
+	testaux.asserteq(new_stream:readall(), "OK", "Test 27.8: Admitted request completes")
 
-	testaux.asserteq(opened_after_close, true, "Test 27.8: openstream should complete after close")
+	testaux.asserteq(opened_after_close, true, "Test 27.8: Initial HEADERS should send after close")
 	testaux.assertneq(new_stream, nil, "Test 27.9: new stream should be created")
 
 	-- Critical check: streamcount should NOT exceed streammax
@@ -885,18 +874,17 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	for i = 2, 6 do
 		streams[i]:close()
 	end
-	time.sleep(0)
 
 	testaux.asserteq(ch.streamcount, max - 5, "Test 27.11: streamcount should decrease by 5")
 	-- Try to open 5 new streams concurrently
 	set_nil = false
 	for i = 1, 5 do
 		wg:fork(function()
-			local s = ch:openstream()
+			local s = ch:request("GET", "/", {})
 			if s then
 				server_handler = x
 				created_count = created_count + 1
-				s:request("GET", "/", {})
+
 				s:closewrite()
 				s:readall()
 				s:close()
@@ -905,7 +893,6 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	end
 
 	wg:wait()
-	time.sleep(0)
 	set_nil = true
 	testaux.asserteq(created_count, 5, "Test 27.12: Should create exactly 5 new streams")
 	testaux.asserteq(ch.streamcount, max - 5, "Test 27.13: streamcount should be consistent after concurrent operations")
@@ -916,33 +903,31 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 		streams[i]:close()
 	end
 	new_stream:close()
-	time.sleep(0)
 
 	testaux.asserteq(ch.streamcount, 0, "Test 27.14: All streams should be closed")
 
 	-- Open streammax streams again
+	set_nil = false
 	local final_streams = {}
 	for i = 1, max do
 		server_handler = x
-		local s, err = ch:openstream()
+		local s, err = ch:request("GET", "/", {})
 		testaux.assertneq(s, nil, "Test 27.15." .. i .. ": Should reopen stream " .. i)
 		final_streams[i] = s
 	end
 
-	testaux.asserteq(ch.streamcount, max, "Test 27.16: streamcount should equal streammax again")
+	testaux.asserteq(ch.streamcount, max, "Test 27.16: Returned requests occupy stream slots")
 
 	-- Cleanup - graceful close
 	ch:close()
-	time.sleep(100)
-	-- After graceful close, streams are still open
-	testaux.asserteq(ch.streamcount, max, "Test 27.17: streamcount should still be max after graceful close")
+	testaux.assertneq(ch.conn, nil, "Test 27.17: Admitted requests retain the closing transport")
 
 	-- Close all streams
 	for i = 1, max do
 		final_streams[i]:close()
 	end
-	time.sleep(100)
 
+	readers[conn]:waitclosed()
 	-- Now streamcount should be 0
 	testaux.asserteq(ch.streamcount, 0, "Test 27.18: streamcount should be 0 after all streams closed")
 
@@ -972,31 +957,28 @@ case("Test 28: HPACK encoder state corruption", function()
 	-- Use manual connection to ensure both streams are on the same connection
 	local conn = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
 	testaux.assertneq(conn, nil, "Test 28.1: Connect should succeed")
-	local ch = h2.newchannel("https", conn)
+	local ch = h2.newchannel("https", conn, "127.0.0.1:8082")
 	testaux.assertneq(ch, nil, "Test 28.2: New channel should succeed")
 
 	-- Stream 1: Call request() with custom headers
 	-- HPACK encoder adds these headers to its dynamic table (literal with indexing)
-	local stream1 = ch:openstream()
-	testaux.assertneq(stream1, nil, "Test 28.3: Stream 1 should be created")
-	stream1:request("POST", "/stream1", {
+	local stream1 = ch:request("POST", "/stream1", {
 		["x-shared-header"] = "identical-value-for-both-streams",
 		["x-common-value"] = "this-is-shared-too",
 	})
-	-- stream1 headers are hpack_pack'd but NOT sent yet!
+	testaux.assertneq(stream1, nil, "Test 28.3: Stream 1 should be created")
+
 	-- The encoder's dynamic table now has these headers
 
 	-- Stream 2: Call request() with IDENTICAL headers (same name AND value)
 	-- HPACK encoder recognizes these are already in dynamic table
 	-- It encodes them as indexed references (tiny 1-byte encoding)
-	local stream2 = ch:openstream()
-	testaux.assertneq(stream2, nil, "Test 28.4: Stream 2 should be created")
-	stream2:request("POST", "/stream2", {
+	local stream2 = ch:request("POST", "/stream2", {
 		["x-shared-header"] = "identical-value-for-both-streams",
 		["x-common-value"] = "this-is-shared-too",
 	})
+	testaux.assertneq(stream2, nil, "Test 28.4: Stream 2 should be created")
 
-	-- Send stream2 FIRST - BUG TRIGGER!
 	-- stream2's encoded headers contain indexed references to dynamic table entries
 	-- But those entries were added by stream1 which hasn't been sent yet!
 	-- When server decodes stream2, its dynamic table doesn't have these entries
@@ -1045,78 +1027,35 @@ end)
 -- Bug: If stream.request() sets localstate=STATE_HEADER, then close() would send RST_STREAM
 -- even though no HEADERS frame was sent yet (stream is still IDLE).
 -- According to HTTP/2 spec, sending RST_STREAM in IDLE state causes PROTOCOL_ERROR.
-case("Test 29: Stream close in IDLE state (no data sent)", function()
-	set_nil = false
-	local sync_ch = channel.new()
-	local call_count = 0
-	server_handler = function(stream)
-		call_count = call_count + 1
-		sync_ch:push(call_count)
-		stream:respond(200, {})
-		stream:closewrite("OK")
+case("Test 29: Closing a returned request resets an already started stream", function()
+	local ready, done = channel.new(), channel.new()
+	server_handler = function(s)
+		ready:push(true)
+		local data, err = s:readall(2000)
+		testaux.asserteq(data, nil, "Test 29.1: cancellation wakes the request reader")
+		testaux.assertneq(err, nil, "Test 29.2: cancellation reports its reason")
+		done:push(true)
 	end
-
-	local conn = tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}})
-	testaux.assertneq(conn, nil, "Test 29.1: Connect should succeed")
-	local ch = h2.newchannel("https", conn)
-	testaux.assertneq(ch, nil, "Test 29.2: New channel should succeed")
-
-	-- Scenario 1: openstream → close (no request at all)
-	local s1 = ch:openstream()
-	testaux.assertneq(s1, nil, "Test 29.3: Stream 1 should be created")
-	s1:close()
-	-- No sync needed - if server is wrongly called, call_count will be wrong
-
-	-- Scenario 2: openstream → request → close (request called but no data sent)
-	-- This is the KEY scenario that the bug fix addresses
-	local s2 = ch:openstream()
-	testaux.assertneq(s2, nil, "Test 29.5: Stream 2 should be created")
-	local ok, err = s2:request("GET", "/test", {
-		["x-test-header"] = "test-value"
-	})
-	testaux.asserteq(ok, true, "Test 29.6: request should succeed")
-	testaux.asserteq(err, nil, "Test 29.7: request should not return error")
-
-	-- Close immediately without calling write/closewrite
-	-- BUG (before fix): Would send RST_STREAM because localstate=STATE_HEADER
-	-- FIX: Should NOT send RST_STREAM because writeheader is not nil (headers not sent yet)
-	s2:close()
-	-- No sync needed - if server is wrongly called, call_count will be wrong
-
-	-- Verify no server calls happened yet
-	testaux.asserteq(call_count, 0, "Test 29.8: Server should not be called for stream1 and stream2")
-
-	-- Verify channel is still healthy (no PROTOCOL_ERROR)
-	-- If RST_STREAM was incorrectly sent in IDLE state, the connection might be closed
-	testaux.assertneq(ch.conn, nil, "Test 29.9: Channel connection should still be alive")
-	testaux.asserteq(ch.goaway, false, "Test 29.10: Channel should not have received GOAWAY")
-
-	-- Scenario 3: openstream → request → write → close (should send RST_STREAM)
-	-- This is the normal case - stream has sent HEADERS, so RST_STREAM is valid
-	local s3 = ch:openstream()
-	testaux.assertneq(s3, nil, "Test 29.11: Stream 3 should be created")
-	s3:request("POST", "/test", {})
-	s3:write("some data") -- This sends HEADERS + DATA
-
-	-- Wait for server to be called (blocking wait)
-	local count = sync_ch:pop()
-	testaux.asserteq(count, 1, "Test 29.12: Server should be called exactly once for stream3")
-
-	s3:close() -- Should send RST_STREAM (stream has left IDLE state)
-
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+	local s = assert(ch:request("POST", "/", {}))
+	testaux.await(ready, "Test 29: HEADERS reached the server")
+	s:close()
+	testaux.await(done, "Test 29: server observed the reset")
+	testaux.asserteq(ch:isalive(), true, "Test 29.3: reset leaves the channel reusable")
 	ch:close()
-	set_nil = true
 end)
 
-case("Test 30: Host header not duplicated and user header preserved", function()
-	local received_host
+case("Test 30: Explicit HTTP2 Host is sent and caller headers are preserved", function()
+	local received_host, received_authority
 	server_handler = function(stream)
 		received_host = stream.header["host"]
+		received_authority = stream.header[":authority"]
 		stream:respond(200, { ["content-length"] = 2 })
 		stream:write("OK")
 	end
 
-	local hdr = { ["host"] = "my-custom-host", ["x-test"] = "value" }
+	local hdr = { ["host"] = "127.0.0.1:8082", ["x-test"] = "value" }
 	local stream<close>, err = httpc:request("GET", "https://127.0.0.1:8082/host-test", hdr)
 	testaux.assertneq(stream, nil, "Test 30.1: request should succeed")
 	stream:closewrite()
@@ -1124,11 +1063,11 @@ case("Test 30: Host header not duplicated and user header preserved", function()
 	testaux.asserteq(body, "OK", "Test 30.2: body should be OK")
 
 	-- user header table must not be modified
-	testaux.asserteq(hdr["host"], "my-custom-host", "Test 30.3: user header[\"host\"] should be preserved")
+	testaux.asserteq(hdr["host"], "127.0.0.1:8082", "Test 30.3: user header[\"host\"] should be preserved")
 	testaux.asserteq(hdr["x-test"], "value", "Test 30.4: user header[\"x-test\"] should be preserved")
 
-	-- server should NOT see host (h2 uses :authority pseudo-header)
-	testaux.asserteq(received_host, nil, "Test 30.5: server should not receive host header in h2")
+	testaux.asserteq(received_host, "127.0.0.1:8082", "Test 30.5: explicit Host reaches the server")
+	testaux.asserteq(received_authority, received_host, "Test 30.6: Host and authority identify the same target")
 
 	wait_done()
 end)
@@ -1260,13 +1199,338 @@ case("Test 36: h2 redirect preserves query string in Location", function()
 	testaux.asserteq(received_query["original"], nil, "Test 36.5: original query should not leak")
 end)
 
-time.sleep(2000)
 
-if server then
-	server:close()
+-- Direct builder and buffered flow-control unit tests stay native.
+-- Frame regressions (Test 39–108, 110–111, except Test 52/81) are in conformance/testhttp2.lua.
+do
+local builder = require "silly.http2.framebuilder"
+local hpack = require "silly.http2.hpack"
+local function frame(typ, flags, id, data)
+	data = data or ""
+	return string.pack(">I3I1I1I4", #data, typ, flags, id) .. data
+end
+local client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+testaux.case("Test 38: Header fragments use CONTINUATION", function()
+	for _, size in ipairs({0, 16384, 16385, 32768, 40000}) do
+		local payload = string.rep("x", size)
+		local wire = builder.header(1, 16384, payload, true)
+		local offset, count, chunks = 1, 0, {}
+		while offset <= #wire do
+			local len, typ, flags, id = string.unpack(">I3I1I1I4", wire, offset)
+			count = count + 1
+			testaux.asserteq(typ, count == 1 and 1 or 9, "fragment type")
+			testaux.asserteq(id, 1, "fragment stream")
+			testaux.asserteq(flags & 1, count == 1 and 1 or 0, "END_STREAM only on HEADERS")
+			testaux.asserteq(flags & 4, offset + 9 + len > #wire and 4 or 0, "END_HEADERS only on last fragment")
+			chunks[count] = wire:sub(offset + 9, offset + 8 + len)
+			offset = offset + 9 + len
+		end
+		testaux.asserteq(table.concat(chunks), payload, "fragment payload")
+	end
+end)
+
+for index, expanded in ipairs({false, true}) do
+	local phase = expanded and "after" or "before"
+	testaux.case("Test 52." .. index .. ": Connection receive boundary " .. phase .. " handshake expansion", function()
+		local encoder = hpack.new(4096)
+		local prefix = client_preface .. frame(4, 0, 0)
+		if expanded then
+			prefix = prefix .. frame(4, 1, 0)
+		end
+		local input = {prefix}
+		local capacity = expanded and 4 * 1024 * 1024 or 65535
+		local left, id = capacity, 1
+		while left > 0 do
+			input[#input + 1] = frame(1, 4, id, hpack.pack(encoder, {},
+				":method", "POST", ":scheme", "http", ":path", "/", ":authority", "example.test"))
+			local size = math.min(left, 65535)
+			left = left - size
+			while size > 0 do
+				local n = math.min(size, 16384)
+				input[#input + 1] = frame(0, 0, id, string.rep("x", n))
+				size = size - n
+			end
+			if left > 0 then
+				id = id + 2
+			end
+		end
+		input[#input + 1] = frame(0, 0, id, "x")
+		local wire = table.concat(input)
+		local offset, closed, flushed = 1, false, false
+		local output = {}
+		-- Buffered reads keep refunds pending, so the boundary is independent of packet timing.
+		local conn = {
+			remoteaddr = "buffered HTTP/2 peer",
+			read = function(_, n)
+				if closed or offset > #wire then
+					return nil, "EOF"
+				end
+				if expanded and not flushed and offset == #prefix + 1 then
+					flushed = true
+					local ready = channel.new()
+					task.fork(function()
+						ready:push(true)
+					end)
+					testaux.await(ready, "initial WINDOW_UPDATE was flushed before DATA")
+				end
+				local dat = wire:sub(offset, offset + n - 1)
+				offset = offset + n
+				return dat
+			end,
+			write = function(_, dat)
+				output[#output + 1] = type(dat) == "table" and table.concat(dat) or dat
+				return true
+			end,
+			close = function()
+				closed = true
+			end,
+		}
+		h2.httpd(function()
+			error("buffered request handler should be aborted before it runs")
+		end, conn, "http")
+		local frames = table.concat(output)
+		local pos, code = 1, nil
+		while pos <= #frames do
+			local len, typ = string.unpack(">I3I1", frames, pos)
+			if typ == 7 then
+				code = string.unpack(">I4", frames, pos + 13)
+			end
+			pos = pos + 9 + len
+		end
+		testaux.asserteq(offset, #wire + 1, "entire connection capacity is accepted before the excess byte")
+		testaux.asserteq(code, 3, "excess byte causes connection FLOW_CONTROL_ERROR")
+	end)
 end
 
-time.sleep(2000)
+case("Test 81: TLS listener advertising only HTTP1 preserves https scheme", function()
+	local done = channel.new()
+	local listener = assert(http.listen {
+		tls = true,
+		addr = "127.0.0.1:18443",
+		alpnprotos = {"http/1.1"},
+		certs = {{cert = testaux.CERT_DEFAULT, key = testaux.KEY_DEFAULT}},
+		handler = function(stream)
+			testaux.asserteq(stream.version, "1.1", "HTTP1-only ALPN selects HTTP1")
+			testaux.asserteq(stream.scheme, "https", "HTTP1-only ALPN preserves the TLS scheme")
+			stream:respond(200, {["x-scheme"] = stream.scheme})
+			stream:closewrite("ok")
+			done:push(true)
+		end,
+	})
+	local client = http.newclient({alpnprotos = {"h2", "http/1.1"}})
+	local response = assert(client:get("https://127.0.0.1:18443/"))
+	testaux.asserteq(response.header["x-scheme"], "https", "HTTP1 handler receives listener scheme")
+	testaux.asserteq(response.body, "ok", "HTTP1 response remains usable")
+	testaux.await(done, "HTTP1 handler completed")
+	client:close()
+	listener:close()
+end)
+
+
+case("Test 110: Stream close immediately releases its channel references", function()
+	local ready, done = channel.new(), channel.new()
+	server_handler = function(s)
+		ready:push(true)
+		local data = s:readall(2000)
+		testaux.asserteq(data, nil, "Test 110.1: cancelled request wakes the server reader")
+		done:push(true)
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+	local s<close> = assert(ch:request("POST", "/released", {}))
+
+	s:flush()
+	testaux.await(ready, "server received the open request")
+	s:close()
+	testaux.asserteq(ch.streams[s.id], nil, "Test 110.2: close removes the stream mapping immediately")
+	testaux.asserteq(s.closed, true, "Test 110.3: close marks the stream released immediately")
+	testaux.asserteq(ch.streamcount, 0, "Test 110.4: close releases the admission slot")
+	ch:close()
+	-- No yield: final cleanup must not depend on the dispatch task observing transport closure.
+	testaux.asserteq(ch.conn, nil, "Test 110.5: last stream releases the transport")
+	testaux.asserteq(next(ch.streams), nil, "Test 110.6: final close leaves no stream mappings")
+	testaux.asserteq(s.channel, ch, "Test 110.7: released streams retain their channel ownership")
+	testaux.asserteq(ch.sendwaitq:size(), 0, "Test 110.8: final close releases the writer queue")
+	ch:close()
+	s:close()
+	testaux.await(done, "server reader finished after cancellation")
+end)
+
+
+case("Test 111: Abort preserves a completed request while failing the response writer", function()
+	for _, mode in ipairs({"read", "readall"}) do
+		local input, ready, received, written, done = channel.new(), channel.new(), channel.new(), channel.new(), channel.new()
+		local wire = client_preface .. frame(4, 0, 0, string.pack(">I2I4", 4, 0)) .. frame(4, 1, 0)
+			.. frame(1, 4, 1, hpack.pack(hpack.new(4096), {},
+				":method", "POST", ":scheme", "http", ":path", "/", ":authority", "example.test"))
+		local offset, closed = 1, false
+		local conn = {
+			remoteaddr = "buffered HTTP/2 peer",
+			read = function(_, n)
+				if closed then
+					return nil, errno.CLOSED
+				end
+				if offset > #wire then
+					wire = testaux.await(input, "Test 111: next buffered frame batch")
+					offset = 1
+				end
+				local dat = wire:sub(offset, offset + n - 1)
+				offset = offset + n
+				assert(#dat == n)
+				return dat
+			end,
+			write = function() return true end,
+			close = function() closed = true end,
+		}
+		task.fork(function()
+			h2.httpd(function(s)
+				assert(s:respond(200, {}))
+				task.fork(function()
+					local data, err
+					if mode == "read" then data, err = s:read(9, 2000) else data, err = s:readall(2000) end
+					received:push({data = data, err = err})
+				end)
+				task.fork(function() ready:push(true) end)
+				local ok, err = s:closewrite("blocked")
+				local body, cause = s:readall(2000)
+				written:push({ok = ok, err = err, body = body, cause = cause, headers = s:waitresponse(2000)})
+			end, conn, "http")
+			done:push(true)
+		end)
+		testaux.await(ready, "Test 111: reader and flow-control writer are waiting")
+		-- Buffered parsing processes END and abort before either queued waiter resumes.
+		input:push(frame(0, 1, 1, "short") .. frame(6, 0, 1, "bad-ping"))
+		local response = testaux.await(written, "Test 111: blocked response writer resumed")
+		testaux.asserteq(response.ok, false, "Test 111.1: unfinished response writer fails")
+		testaux.asserteq(response.err, "Protocol error detected", "Test 111.2: writer gets abort reason")
+		local request = testaux.await(received, "Test 111: request reader resumed")
+		testaux.asserteq(request.data, mode == "readall" and "short" or nil, "Test 111.3: queued read retains its completed result")
+		testaux.asserteq(request.err, mode == "read" and EEOF or nil,
+			"Test 111.4: receive EOF is independent of write failure")
+		testaux.asserteq(response.body, mode == "read" and "short" or "", "Test 111.5: remaining completed request stays readable")
+		testaux.asserteq(response.cause, nil, "Test 111.6: readall does not inherit write error")
+		testaux.asserteq(response.headers, true, "Test 111.7: completed request headers remain available")
+		testaux.await(done, "Test 111: dispatcher finished")
+		testaux.asserteq(closed, true, "Test 111.8: abort closes the connection")
+	end
+end)
+
+
+end
+
+case("Test 112: Queued header conversion errors return to the requester", function()
+	for _, trigger in ipairs({"close", "settings", "graceful"}) do
+		local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+		local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+		local ready, done = channel.new(), channel.new()
+		local peer
+		server_handler = function(s)
+			peer = s.channel
+			assert(s:respond(200, {}, true))
+		end
+		local first = assert(ch:request("GET", "/first", {}, true))
+		assert(first:waitresponse(2000))
+		wait_done()
+		ch.streammax = 1
+		if trigger == "settings" then
+			first:close()
+			ch.streammax = 0
+		end
+		local bad = setmetatable({}, {__tostring = function()
+			error("queued header conversion failed")
+		end})
+		task.fork(function()
+			ready:push(true)
+			local ok, err = pcall(ch.request, ch, "GET", "/invalid", {["x-poison"] = {"good", bad}}, true)
+			done:push({ok = ok, err = err})
+		end)
+		testaux.await(ready, "Test 112: invalid request is queued")
+		testaux.asserteq(ch.openwaitq:size(), 1, "Test 112.1: request waits for admission")
+		if trigger == "settings" then
+			-- Raising the peer limit opens admission in the protocol reader.
+			assert(peer.conn:write(require("silly.http2.framebuilder").setting(0, 3, 1)))
+		elseif trigger == "graceful" then
+			ch:close()
+			first:close()
+		else
+			local ok, err = pcall(first.close, first)
+			testaux.asserteq(ok, true, "Test 112.2: conversion does not escape through another stream close: " .. tostring(err))
+		end
+		local result = testaux.await(done, "Test 112: requester receives its conversion error")
+		testaux.asserteq(result.ok, false, "Test 112.3: request rethrows the conversion error")
+		testaux.assertneq(result.err:find("queued header conversion failed", 1, true), nil,
+			"Test 112.4: original conversion error is preserved")
+		if trigger == "graceful" then
+			testaux.asserteq(ch.conn, nil, "Test 112.5: the final failed admission completes graceful close")
+		else
+			server_handler = function(s)
+				testaux.asserteq(s.path, "/valid", "Test 112.6: rejected request emits no headers")
+				testaux.asserteq(s.header["x-poison"], "good", "Test 112.7: HPACK stays synchronized")
+				assert(s:respond(200, {}, true))
+			end
+			local stream<close> = assert(ch:request("GET", "/valid", {["x-poison"] = "good"}, true))
+			assert(stream:waitresponse(2000))
+			wait_done()
+		end
+		ch:close()
+	end
+end)
+
+case("Test 113: Endstream rejects a nonzero request length before encoding headers", function()
+	for _, length in ipairs({1, "1", {"0", "1"}}) do
+		local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+		local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+		local stream, err = ch:request("POST", "/invalid", {
+			["content-length"] = length,
+			["x-reused"] = "must not enter the HPACK table",
+		}, true)
+		testaux.asserteq(stream, nil, "Test 113.1: contradictory headers return no stream")
+		testaux.assertneq(err, nil, "Test 113.2: contradictory headers report an error")
+		testaux.asserteq(ch.streamidx, -1, "Test 113.3: rejection consumes no stream ID")
+		testaux.asserteq(ch.streamcount, 0, "Test 113.4: rejection consumes no stream slot")
+		server_handler = function(s)
+			testaux.asserteq(s.path, "/valid", "Test 113.5: only the valid request reaches the server")
+			testaux.asserteq(s.header["x-reused"], "must not enter the HPACK table",
+				"Test 113.6: rejected headers leave HPACK synchronized")
+			assert(s:respond(200, {}, true))
+		end
+		local valid<close> = assert(ch:request("POST", "/valid", {
+			["content-length"] = "0",
+			["x-reused"] = "must not enter the HPACK table",
+		}, true))
+		testaux.asserteq(valid.id, 1, "Test 113.7: the valid request uses the first stream ID")
+		assert(valid:waitresponse(2000))
+		wait_done()
+		ch:close()
+	end
+end)
+
+case("Test 114: Queued endstream validation returns an error without consuming a slot", function()
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
+	server_handler = function(s)
+		assert(s:respond(200, {}, true))
+	end
+	local first = assert(ch:request("GET", "/first", {}, true))
+	assert(first:waitresponse(2000))
+	wait_done()
+	ch.streammax = 1
+	local ready, done = channel.new(), channel.new()
+	task.fork(function()
+		ready:push(true)
+		local stream, err = ch:request("POST", "/invalid", {["content-length"] = "1"}, true)
+		done:push({stream = stream, err = err})
+	end)
+	testaux.await(ready, "Test 114: invalid request starts admission")
+	first:close()
+	local result = testaux.await(done, "Test 114: invalid request returns")
+	testaux.asserteq(result.stream, nil, "Test 114.1: queued invalid request returns no stream")
+	testaux.assertneq(result.err, nil, "Test 114.2: queued invalid request preserves its error")
+	testaux.asserteq(ch.streamidx, 1, "Test 114.3: queued rejection consumes no ID")
+	testaux.asserteq(ch.streamcount, 0, "Test 114.4: queued rejection consumes no slot")
+	ch:close()
+end)
 
 -- Check h1 pool (should be empty since we only use h2)
 for key, entries in pairs(httpc.h1pool) do
@@ -1281,5 +1545,11 @@ for key, entries in pairs(httpc.h2pool) do
 		channel:close()
 	end
 end
+
+httpc:close()
+if server then
+	server:close()
+end
+wait_readers()
 
 print("All tests completed!")

@@ -456,7 +456,7 @@ end)
 
 ## Streaming RPC API
 
-When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object:
+When an RPC method is defined as streaming (using the `stream` keyword), the client call returns a stream object. For bidirectional streams, the server can reply before the client writes its first message:
 
 ### stream:write(request)
 
