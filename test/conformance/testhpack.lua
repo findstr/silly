@@ -13,8 +13,7 @@ testaux.case("Test 202: Go and Lua HPACK agree on indexed field-list amplificati
 	assert(decoded, err)
 	testaux.asserteq(#wire, 1201, "compressed block is much smaller than the decoded list")
 	testaux.asserteq(#decoded[1], 1201, "Go HPACK accepts all valid fields without a list limit")
-	local fields = {}
-	assert(hpack.unpack(hpack.new(4096), wire, fields))
+	local fields = assert(hpack.unpack(hpack.new(4096), wire))
 	local size = 0
 	for i, field in ipairs(decoded[1]) do
 		testaux.asserteq(fields[i * 2 - 1], field.Name, "amplified names agree")
@@ -23,8 +22,8 @@ testaux.case("Test 202: Go and Lua HPACK agree on indexed field-list amplificati
 	end
 	testaux.asserteq(size, 72042, "RFC field-list size includes every indexed occurrence")
 	for _, limit in ipairs({65535, 72041, 72042}) do
-		local ok, limited = hpack.unpack(hpack.new(4096), wire, {}, limit)
-		testaux.asserteq(ok, limit >= size, "bounded Lua decoding uses the same decoded size")
+		local ok, limited = hpack.unpack(hpack.new(4096), wire, limit)
+		testaux.asserteq(ok ~= nil, limit >= size, "bounded Lua decoding uses the same decoded size")
 		testaux.asserteq(limited, limit < size and true or nil, "list budget is separate from valid HPACK")
 	end
 end)
@@ -33,8 +32,7 @@ testaux.case("Test 205: Go HPACK decoder agrees on same-block eviction", functio
 	local wire = "\x40\x01a\x01b\x40\x01c\x01d\xbe"
 	local decoded, err = c:hpackdecode({base64.encode(wire)}, 64)
 	assert(decoded, err)
-	local lua_headers = {}
-	assert(hpack.unpack(hpack.new(64), wire, lua_headers))
+	local lua_headers = assert(hpack.unpack(hpack.new(64), wire))
 	for i, field in ipairs(decoded[1]) do
 		testaux.asserteq(lua_headers[i * 2 - 1], field.Name, "Go and Lua agree on indexed name")
 		testaux.asserteq(lua_headers[i * 2], field.Value, "Go and Lua agree on indexed value")
@@ -59,8 +57,8 @@ testaux.case("Test 206: Go HPACK decoder agrees on partial FIFO eviction and shr
 		assert(decoded, err)
 		local decoder = hpack.new(102)
 		for i, wire in ipairs(blocks) do
-			local lua_headers = {}
-			testaux.asserteq(hpack.unpack(decoder, wire, lua_headers), true, "Lua decodes Go-accepted block")
+			local lua_headers = hpack.unpack(decoder, wire)
+			testaux.assertneq(lua_headers, nil, "Lua decodes Go-accepted block")
 			testaux.asserteq(lua_headers, headers[i], "FIFO table gives expected Lua fields")
 			local go_headers = {}
 			for _, field in ipairs(decoded[i]) do
@@ -111,8 +109,7 @@ testaux.case("Test 208: Go and Lua agree on oversized literals using an evicted 
 	assert(decoded, err)
 	local decoder = hpack.new(68)
 	for i, block in ipairs(blocks) do
-		local fields = {}
-		assert(hpack.unpack(decoder, block, fields))
+		local fields = assert(hpack.unpack(decoder, block))
 		local expected = {}
 		for _, field in ipairs(decoded[i]) do
 			expected[#expected + 1] = field.Name
@@ -207,7 +204,7 @@ testaux.case("Test 217: Go HPACK decoder rejects the same Huffman padding and EO
 		local decoded, err = c:hpackdecode({base64.encode(wire)}, 4096)
 		testaux.asserteq(decoded, nil, "Go rejects malformed Huffman value")
 		testaux.assertneq(err, nil, "Go reports a compression error")
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, {}), false, "C agrees with Go rejection")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), wire), nil, "C agrees with Go rejection")
 	end
 end)
 
@@ -235,8 +232,8 @@ testaux.case("Test 218: Go HPACK decoder agrees on seeded table changes and cach
 				fields[#fields + 1] = values[next_value() % #values + 1]
 			end
 			local wire = hpack.pack(encoder, nil, table.unpack(fields))
-			local headers = {}
-			testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "C decodes seeded block")
+			local headers = hpack.unpack(decoder, wire)
+			testaux.assertneq(headers, nil, "C decodes seeded block")
 			testaux.asserteq(headers, fields, "C fields agree through table changes")
 			blocks[step] = base64.encode(wire)
 			expected[step] = fields

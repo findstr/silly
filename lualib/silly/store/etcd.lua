@@ -203,6 +203,7 @@ local function lease_recv_task(c)
 				---@cast res silly.store.etcd.LeaseKeepAliveResponse
 				lease_recv_keepalive(c, res)
 			end
+			stream:close()
 		end
 		time.sleep(RETRY_CONN_WAIT)
 	end

@@ -836,4 +836,71 @@ testaux.case("Test 36: Stress test - interleaved push/pop", function()
 	testaux.asserteq(buffer.size(b), 0, "buffer drained")
 end)
 
+
+testaux.case("Test 37: Read rejects lengths above INT_MAX without consuming data", function()
+	local b = buffer.new()
+	b:append("kept")
+	for _, size in ipairs({0x80000000, 0x100000000, 0x100000001, math.maxinteger}) do
+		local ok, err = pcall(buffer.read, b, size)
+		testaux.asserteq(ok, false, "oversized read is a programming error")
+		testaux.assertcontains(err, "read size exceeds INT_MAX", "oversized read explains its limit")
+		testaux.asserteq(b:size(), 4, "rejected read leaves cached data intact")
+	end
+	testaux.asserteq(b:read(0x7fffffff), nil, "INT_MAX itself is a valid read length")
+	testaux.asserteq(b:read(math.mininteger), "", "negative read still returns an empty string")
+	testaux.asserteq(b:readall(), "kept", "buffer remains usable after rejected reads")
+end)
+
+testaux.case("Test 38: Append rejects a total above INT_MAX before changing the buffer", function()
+	local b = buffer.new()
+	-- Nodes retain string references; this exercises a 2 GiB logical buffer using about 2 MiB.
+	local chunk = string.rep("x", 1024 * 1024)
+	for _ = 1, 2047 do b:append(chunk) end
+	b:append(chunk:sub(2))
+	testaux.asserteq(b:size(), 0x7fffffff, "INT_MAX itself is a valid buffer size")
+	local ok, err = pcall(buffer.append, b, "y")
+	testaux.asserteq(ok, false, "cumulative string append overflow is rejected")
+	testaux.assertcontains(err, "buffer size exceeds INT_MAX", "append explains its total-size limit")
+	testaux.asserteq(b:size(), 0x7fffffff, "rejected append preserves total bytes")
+	testaux.asserteq(b:read(1), "x", "old contents remain readable")
+	testaux.asserteq(b:append("z"), 0x7fffffff, "consuming one byte permits appending one byte")
+	b:clear()
+	b:append("reused")
+	testaux.asserteq(b:readall(), "reused", "buffer can be cleared and reused after the boundary")
+end)
+
+testaux.case("Test 39: Pointer append validates length before taking ownership", function()
+	local testaux_c = require "test.aux.c"
+	for _, size in ipairs({0x80000000, math.maxinteger, -1}) do
+		local b = buffer.new()
+		b:append("kept")
+		local ptr = testaux_c.new("x")
+		local ok, err = pcall(buffer.append, b, ptr, size)
+		if not ok then
+			-- A rejected argument never transfers ownership; a zero-length append frees it.
+			b:append(ptr, 0)
+		end
+		testaux.asserteq(ok, false, "invalid pointer length is rejected")
+		testaux.assertcontains(err, "append size out of range", "pointer size error identifies the invalid length")
+		testaux.asserteq(b:readall(), "kept", "pointer rejection leaves old data intact")
+	end
+end)
+
+
+testaux.case("Test 40: Pointer append also respects the cumulative buffer limit", function()
+	local testaux_c = require "test.aux.c"
+	local b = buffer.new()
+	local chunk = string.rep("x", 1024 * 1024)
+	for _ = 1, 2047 do b:append(chunk) end
+	b:append(chunk:sub(2))
+	local ptr, size = testaux_c.new("y")
+	local ok, err = pcall(buffer.append, b, ptr, size)
+	if not ok then b:append(ptr, 0) end
+	testaux.asserteq(ok, false, "pointer append cannot overflow the total byte count")
+	testaux.assertcontains(err, "append size out of range", "pointer append checks remaining capacity")
+	testaux.asserteq(b:size(), 0x7fffffff, "rejected pointer leaves the full buffer unchanged")
+	testaux.asserteq(b:read(1), "x", "existing data remains readable after pointer rejection")
+	b:clear()
+end)
+
 print("All buffer tests completed successfully!")

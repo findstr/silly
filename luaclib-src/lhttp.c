@@ -748,7 +748,7 @@ static int read_ik_sv(lua_State *L, struct unpack_ctx *uctx, int bits)
 	return 0;
 }
 
-//hpack.unpack(ctx, data, header_list, limit?) -> success, limited?
+//hpack.unpack(ctx, data, limit?) -> header_list?, limited?
 // limit counts decoded name/value octets plus 32 per field; omitted means no list limit.
 static int lhpack_unpack(lua_State *L)
 {
@@ -761,8 +761,8 @@ static int lhpack_unpack(lua_State *L)
 	struct unpack_ctx uctx;
 	int seen_header_field = 0; // RFC 7541 Section 4.2: Track if we've seen any header fields
 
-	limit = luaL_optinteger(L, 4, LUA_MAXINTEGER);
-	luaL_argcheck(L, limit >= 0, 4, "invalid header list size");
+	limit = luaL_optinteger(L, 3, LUA_MAXINTEGER);
+	luaL_argcheck(L, limit >= 0, 3, "invalid header list size");
 	uctx.hpack = luaL_checkudata(L, 1, "HPACK");
 	uctx.huffman = lua_touserdata(L, lua_upvalueindex(HPACK_HUFFMAN_UPVALUE));
 	if (lua_type(L, 2) != LUA_TTABLE) {
@@ -775,8 +775,8 @@ static int lhpack_unpack(lua_State *L)
 		uctx.p = (const unsigned char *)luaL_buffaddr(&b);
 		uctx.e = uctx.p + luaL_bufflen(&b);
 	}
-	//try predict the header hash size
-	htbl = 3;
+	lua_newtable(L);
+	htbl = lua_gettop(L);
 	top = lua_gettop(L);
 	lua_pushvalue(L, lua_upvalueindex(HPACK_STATIC_UPVALUE));
 	lua_pushvalue(L, lua_upvalueindex(HPACK_NAME_UPVALUE));
@@ -785,7 +785,7 @@ static int lhpack_unpack(lua_State *L)
 	uctx.names = top + 2;
 	uctx.dyna = top + 3;
 	top += 3;
-	i = lua_rawlen(L, htbl);
+	i = 0;
 	while (uctx.p < uctx.e) {
 		int ret;
 		size_t size;
@@ -793,7 +793,7 @@ static int lhpack_unpack(lua_State *L)
 		lua_settop(L, top);
 		if (HPACK_IS_INDEXED(n)) {
 			if ((ret = read_index_kv(L, &uctx)) < 0) {
-				lua_pushboolean(L, 0);
+				lua_pushnil(L);
 				return 1;
 			}
 			seen_header_field = 1;
@@ -802,7 +802,7 @@ static int lhpack_unpack(lua_State *L)
 			size_t fsz;
 			struct lstr kstr, vstr;
 			if ((ret = read_ik_sv(L, &uctx, HPACK_LITERAL_INDEXED_BITS)) < 0) {
-				lua_pushboolean(L, 0);
+				lua_pushnil(L);
 				return 1;
 			}
 			kstr.str = lua_tolstring(L, -2, &kstr.len);
@@ -820,7 +820,7 @@ static int lhpack_unpack(lua_State *L)
 			seen_header_field = 1;
 		} else if (HPACK_IS_LITERAL_UNINDEXED(n) || HPACK_IS_LITERAL_NEVERINDEXED(n)) {
 			if ((ret = read_ik_sv(L, &uctx, HPACK_LITERAL_UNINDEXED_BITS)) < 0) {
-				lua_pushboolean(L, 0);
+				lua_pushnil(L);
 				return 1;
 			}
 			seen_header_field = 1;
@@ -828,14 +828,14 @@ static int lhpack_unpack(lua_State *L)
 			int len;
 			// RFC 7541 Section 4.2: Dynamic table size update MUST occur at the beginning
 			if (seen_header_field) {
-				lua_pushboolean(L, 0);
+				lua_pushnil(L);
 				return 1;
 			}
 			len = read_varint(&uctx, HPACK_TABLE_SIZE_BITS);
 			// RFC 7541 Section 6.3: The new maximum size MUST be lower than or equal
 			// to the limit determined by the protocol (SETTINGS_HEADER_TABLE_SIZE)
 			if (len < 0 || len > uctx.hpack->hard_limit) {
-				lua_pushboolean(L, 0);
+				lua_pushnil(L);
 				return 1;
 			}
 			uctx.hpack->soft_limit = len;
@@ -860,11 +860,15 @@ static int lhpack_unpack(lua_State *L)
 	// RFC 7540 Section 4.3: All header block data must be consumed
 	// If there's remaining unparsed data, the header block is malformed
 	if (limited) {
-		lua_pushboolean(L, 0);
+		lua_pushnil(L);
 		lua_pushboolean(L, 1);
 		return 2;
 	}
-	lua_pushboolean(L, uctx.p == uctx.e);
+	if (uctx.p != uctx.e) {
+		lua_pushnil(L);
+		return 1;
+	}
+	lua_pushvalue(L, htbl);
 	return 1;
 }
 
@@ -1030,7 +1034,7 @@ static int lframe_build_header(lua_State *L)
 		flag = 0;
 		type = FRAME_CONTINUATION;
 	}
-	write_frame_header(p, sz, FRAME_HEADERS, flag | END_HEADERS, id);
+	write_frame_header(p, sz, type, flag | END_HEADERS, id);
 	p += FRAME_HDR_SIZE;
 	memcpy(p, hdr, sz);
 	p += sz;

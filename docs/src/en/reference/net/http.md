@@ -128,14 +128,14 @@ The `stream` object received by the handler function provides the following prop
 - `stream.version`: `string` - Protocol version ("HTTP/1.1" or "HTTP/2")
 - `stream.remoteaddr`: `string` - Client address
 
-### stream:respond(status, headers [, close])
+### stream:respond(status, headers [, endstream])
 
 Sends response status line and headers.
 
 - **Parameters**:
   - `status`: `integer` - HTTP status code (200, 404, 500, etc.)
   - `headers`: `table` - Response headers table
-  - `close`: `boolean|nil` (optional) - Whether to immediately close the connection (without sending response body)
+  - `endstream`: `boolean|nil` (optional) - Finish this response without a body or trailers; keep the connection reusable
 - **Returns**:
   - Success: `true`
   - Failure: `false, string` - false and error message
@@ -156,12 +156,13 @@ end
 
 ### stream:closewrite([body])
 
-Sends response body and closes the connection.
+Sends the optional final response body and finishes writing the response.
 
 - **Parameters**:
   - `body`: `string|nil` (optional) - Response body content
 - **Returns**: None
-- **Note**: After calling this method, the stream will no longer be usable
+- **Note**: No more response data can be written; reading the request body remains available.
+
 - **Example**:
 
 ```lua validate
@@ -334,7 +335,9 @@ task.fork(function()
 end)
 ```
 
-### http.request(method, url [, headers])
+### http.request(method, url [, headers [, endstream [, timeout]]])
+
+HTTP/2 client streams provide `headeronly`, indicating whether the response ends with its headers. Read it after `waitresponse()` succeeds.
 
 Sends a custom HTTP request and returns a raw stream (no redirect handling).
 
@@ -342,6 +345,8 @@ Sends a custom HTTP request and returns a raw stream (no redirect handling).
   - `method`: `string` - HTTP method (GET, POST, PUT, DELETE, etc.)
   - `url`: `string` - Request URL
   - `headers`: `table|nil` (optional) - Request headers table
+  - `endstream`: `boolean|nil` (optional) - Finish sending this request without a body or trailers
+  - `timeout`: `integer|nil` (optional) - Maximum wait in milliseconds for HTTP/2 stream capacity or HTTP/1.1 100-continue; excludes connection setup and subsequent I/O
 - **Returns**:
   - Success: `stream` - HTTP stream object
   - Failure: `nil, string` - nil and error message
@@ -431,7 +436,7 @@ Sends a POST request with automatic redirect following (301/302/303/307/308).
 - **Redirect behavior**: Same as `client:get`
 - **Note**: If `body` is provided, the `content-length` header is automatically set
 
-### client:request(method, url [, headers])
+### client:request(method, url [, headers [, endstream [, timeout]]])
 
 Sends a request without redirect handling. Returns a raw stream for full control.
 
@@ -439,6 +444,8 @@ Sends a request without redirect handling. Returns a raw stream for full control
   - `method`: `string` - HTTP method
   - `url`: `string` - Request URL
   - `headers`: `table|nil` (optional) - Request headers table
+  - `endstream`: `boolean|nil` (optional) - Finish sending this request without a body or trailers
+  - `timeout`: `integer|nil` (optional) - Maximum wait in milliseconds for HTTP/2 stream capacity or HTTP/1.1 100-continue; excludes connection setup and subsequent I/O
 - **Returns**:
   - Success: `stream` - HTTP stream object
   - Failure: `nil, string` - nil and error message

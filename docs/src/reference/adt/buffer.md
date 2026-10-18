@@ -18,7 +18,7 @@ local buffer = require "silly.adt.buffer"
 
 ### buffer:append(data [, ...])
 
-向缓冲区追加数据。
+向缓冲区追加数据。缓冲区最多容纳 `2^31-1` 字节，超出会抛出参数错误。
 
 - **参数**:
   - `data`: `string` | `lightuserdata` - 要追加的数据
@@ -27,10 +27,11 @@ local buffer = require "silly.adt.buffer"
 - **说明**:
   - 如果参数是 `lightuserdata`，则必须紧跟一个 `integer` 类型的长度参数。
   - 例如: `buf:append(ptr, len)`
+  - 指针长度必须非负。长度检查失败时，不接管该指针的所有权。
 
 ### buffer:read(n)
 
-从缓冲区读取指定长度的数据。
+从缓冲区读取指定长度的数据。`n` 必须为整数且不超过 `2^31-1`；超出会抛出参数错误。`n <= 0` 时返回空字符串。
 
 - **参数**:
   - `n`: `integer` - 要读取的字节数

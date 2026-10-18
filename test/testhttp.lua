@@ -2333,6 +2333,83 @@ end)
 ]]
 
 
+case("Test 86: H2 pool retains admitted requests and reclaims released channels", function()
+	local tls = require "silly.net.tls"
+	local channel = require "silly.sync.channel"
+	local _, wait_readers = testaux.trackconnections(tls)
+	local after = time.after
+	local clients = {}
+	local listener
+	local ok, err = pcall(function()
+		listener = assert(http.listen {
+			tls = true,
+			addr = "127.0.0.1:18446",
+			alpnprotos = {"h2"},
+			certs = {{cert = testaux.CERT_DEFAULT, key = testaux.KEY_DEFAULT}},
+			handler = function(stream)
+				if stream:readall(2000) then
+					assert(stream:respond(200, {}))
+					assert(stream:closewrite("OK"))
+				end
+			end,
+		})
+		for _, spec in ipairs({
+			{limit = "timeout", send = true},
+			{limit = "count", send = true},
+			{limit = "timeout", send = false},
+			{limit = "count", send = false},
+		}) do
+			local limit = spec.limit
+			local c = http.newclient {
+				idle_timeout = 100,
+				max_idle_per_host = limit == "count" and 0 or 10,
+				alpnprotos = {"h2"},
+			}
+			clients[#clients + 1] = c
+			local ticks = channel.new()
+			-- Observe completion of real pool timer callbacks; leave other timers unchanged.
+			time.after = function(ms, callback, ud)
+				if ud == c then
+					return after(ms, function(client)
+						callback(client)
+						ticks:push(true)
+					end, ud)
+				end
+				return after(ms, callback, ud)
+			end
+			local pending<close> = assert(c:request("GET", "https://127.0.0.1:18446/", {}))
+			local ch = pending.channel
+			local _, entries = next(c.h2pool)
+			local entry = entries[1]
+			entry.lastfree = time.now() + (limit == "count" and 10000 or -1000)
+			testaux.await(ticks, "Test 86: pool checked the admitted request under the " .. limit .. " limit")
+			testaux.asserteq(ch.goaway, 0, "Test 86.1: idle cleanup preserves the admitted request")
+			if spec.send then
+				testaux.asserteq(pending:closewrite(), true, "Test 86.2: the admitted request can still send")
+				testaux.asserteq(pending:readall(2000), "OK", "Test 86.3: the admitted request completes")
+			end
+			pending:close()
+			ticks:clear()
+			entry.lastfree = time.now() - 1000
+			testaux.await(ticks, "Test 86: pool checked the released channel")
+			testaux.asserteq(ch.conn, nil, "Test 86.4: the released channel is closed by idle cleanup")
+			testaux.asserteq(#entries, 0, "Test 86.5: idle cleanup removes the released channel from the pool")
+			c:close()
+		end
+	end)
+	time.after = after
+	for _, c in ipairs(clients) do
+		c:close()
+	end
+	if listener then
+		listener:close()
+	end
+	wait_readers()
+	if not ok then
+		error(err, 0)
+	end
+end)
+
 httpc:close()
 
 if server then

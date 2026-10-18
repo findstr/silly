@@ -188,7 +188,7 @@ local function find_conn(client, key, scheme, authority)
 		local channel = entry.channel
 		if channel:isalive() and not channel:isfull() then
 			entry.lastfree = time.now()
-			return channel:openstream()
+			return channel
 		end
 	end
 	local h1entries = client.h1pool[key]
@@ -268,7 +268,7 @@ local function connect(client, u)
 		local entries = client.h2pool[key]
 		entries[#entries + 1] = entry
 		ensure_timer(client)
-		return channel:openstream(), nil
+		return channel, nil
 	end
 	h1using[conn] = {
 		key = key,
@@ -284,7 +284,7 @@ end
 ---@param u silly.net.http.url.parts
 ---@param header table<string, string|number>?
 ---@return silly.net.http.h2.stream|silly.net.http.h1.stream.client|nil, string?
-local function request_url(client, method, u, header)
+local function request_url(client, method, u, header, endstream, timeout)
 	if client.closed then
 		return nil, "client is closed"
 	end
@@ -293,7 +293,10 @@ local function request_url(client, method, u, header)
 		return nil, err
 	end
 	header = header or {}
-	local ok, err = stream:request(method, u.path, header)
+	if stream.version ~= "HTTP/1.1" then
+		return stream:request(method, u.path, header, endstream, timeout)
+	end
+	local ok, err = stream:request(method, u.path, header, endstream, timeout)
 	if not ok then
 		stream:close()
 		return nil, err
@@ -305,8 +308,10 @@ end
 ---@param method string
 ---@param url string
 ---@param header table<string, string|number>?
+---@param endstream boolean?
+---@param timeout integer? -- HTTP/2 admission or HTTP/1.1 Expect: 100-continue timeout
 ---@return silly.net.http.h2.stream|silly.net.http.h1.stream.client|nil, string?
-function M.request(client, method, url, header)
+function M.request(client, method, url, header, endstream, timeout)
 	if client.closed then
 		return nil, "client is closed"
 	end
@@ -314,7 +319,7 @@ function M.request(client, method, url, header)
 	if not u then
 		return nil, err
 	end
-	return request_url(client, method, u, header)
+	return request_url(client, method, u, header, endstream, timeout)
 end
 
 ---@param client silly.net.http.client
@@ -351,11 +356,13 @@ local function do_with_redirects(client, method, url, header, body)
 		if send_body then
 			h["content-length"] = #send_body
 		end
-		local stream<close>, err = request_url(client, cur_method, u, h)
+		local stream<close>, err = request_url(client, cur_method, u, h, not send_body)
 		if not stream then
 			return nil, err
 		end
-		stream:closewrite(send_body)
+		if send_body then
+			stream:closewrite(send_body)
+		end
 		local resp_body, req_err = stream:readall()
 		if not resp_body then
 			return nil, req_err

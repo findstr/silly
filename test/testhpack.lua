@@ -35,8 +35,8 @@ testaux.case("Test 0: test prune", function()
 	for i = 1, n + 96 do
 		data[i] = prefix .. string.format("%045d", i)
 		local wire = hpack.pack(send_hpack, nil, ":path", data[i])
-		local headers = {}
-		testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "Test 0: decode across prune")
+		local headers = hpack.unpack(decoder, wire)
+		testaux.assertneq(headers, nil, "Test 0: decode across prune")
 		testaux.asserteq(headers, {":path", data[i]}, "Test 0: prune preserves field values")
 		local count = hpack.dbg_evictcount(send_hpack)
 		if count < previous then
@@ -48,8 +48,8 @@ testaux.case("Test 0: test prune", function()
 	for i = #data - n + 1, #data do
 		local wire = hpack.pack(send_hpack, nil, ":path", data[i])
 		testaux.asserteq(#wire, 1, "Test 0: surviving entries remain indexed after prune")
-		local headers = {}
-		testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "Test 0: decode surviving entry")
+		local headers = hpack.unpack(decoder, wire)
+		testaux.assertneq(headers, nil, "Test 0: decode surviving entry")
 		testaux.asserteq(headers, {":path", data[i]}, "Test 0: compacted index references correct entry")
 	end
 end)
@@ -73,10 +73,8 @@ testaux.case("Test 1: Static table indexing", function()
 		":path", "/",
 		"user-agent", "test-client"
 	)
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 1: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 1: unpack should succeed")
 	decoded = array_to_headers(decoded)
 
 	for k, v in pairs(headers) do
@@ -92,10 +90,8 @@ testaux.case("Test 2: Integer representation", function()
 	local long_path = "/" .. string.rep("a", 300)
 
 	local buffer = hpack.pack(encoder, {}, ":path", long_path)
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 2: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 2: unpack should succeed")
 	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded[":path"], long_path, "Test 2: integer representation")
@@ -109,10 +105,8 @@ testaux.case("Test 3: Huffman encoding", function()
 	local complex_value = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()"
 
 	local buffer = hpack.pack(encoder, {}, "x-custom-header", complex_value)
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 3: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 3: unpack should succeed")
 	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded["x-custom-header"], complex_value, "Test 3: Huffman encoding")
@@ -127,14 +121,11 @@ testaux.case("Test 4: Dynamic table update", function()
 
 	-- Second encoding should reference dynamic table
 	testaux.assertlt(#buffer2, #buffer1, "Test 4: dynamic table update")
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer1, decoded)
-	testaux.asserteq(ok, true, "Test 4: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer1)
+	testaux.assertneq(decoded, nil, "Test 4: unpack should succeed")
 	decoded = array_to_headers(decoded)
-	local decoded2 = {}
-	local ok2 = hpack.unpack(decoder, buffer2, decoded2)
-	testaux.asserteq(ok2, true, "Test 4: unpack should succeed")
+	local decoded2 = hpack.unpack(decoder, buffer2)
+	testaux.assertneq(decoded2, nil, "Test 4: unpack should succeed")
 	decoded2 = array_to_headers(decoded2)
 
 	testaux.asserteq(decoded["custom-header"], "value1", "Test 4: dynamic table decoding")
@@ -149,10 +140,8 @@ testaux.case("Test 5: Special characters", function()
 	local special_chars = "Unicode test: Hello world! ñáéíóú 😀🚀"
 
 	local buffer = hpack.pack(encoder, {["x-special"] = special_chars})
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 5: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 5: unpack should succeed")
 	decoded = array_to_headers(decoded)
 
 	testaux.asserteq(decoded["x-special"], special_chars, "Test 5: special characters encoding")
@@ -172,9 +161,8 @@ testaux.case("Test 6: Multiple header fields", function()
 	}
 
 	local buffer = hpack.pack(encoder, headers, ":method", "POST", ":scheme", "https", ":path", "/api/data")
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 6: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 6: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	for k, v in pairs(headers) do
 		testaux.asserteq(decoded[k], v, "Test 6: multiple header fields: " .. k)
@@ -195,10 +183,8 @@ testaux.case("Test 7: Duplicate header names with different values", function()
 			"value2",
 		}
 	})
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, {buffer1, buffer2}, decoded)
-	testaux.asserteq(ok, true, "Test 7: unpack should succeed")
+	local decoded = hpack.unpack(decoder, {buffer1, buffer2})
+	testaux.assertneq(decoded, nil, "Test 7: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	print(require "silly.encoding.json".encode(decoded))
 	-- Check if multiple headers with same name are handled correctly
@@ -261,9 +247,8 @@ testaux.case("Test 8: Dynamic table eviction", function()
 		"Test 8: oldest entries should be evicted from dynamic table")
 
 	-- Decode and verify
-	local decoded = {}
-	local ok = hpack.unpack(decoder, table.concat(buffer), decoded)
-	testaux.asserteq(ok, true, "Test 8: unpack should succeed")
+	local decoded = hpack.unpack(decoder, table.concat(buffer))
+	testaux.assertneq(decoded, nil, "Test 8: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	for _, header in ipairs(headers) do
 		testaux.asserteq(decoded[header.name], header.value,
@@ -275,9 +260,8 @@ testaux.case("Test 9: Error handling for malformed input", function()
 	local decoder = hpack.new(4096)
 	-- Test with invalid Huffman sequence
 	local invalid_data = string.char(0x80, 0xff, 0xff) -- Invalid Huffman sequence
-	local decoded = {}
-	local ok = hpack.unpack(decoder, invalid_data, decoded)
-	testaux.asserteq(ok, false, "Test 9: should handle malformed input gracefully")
+	local decoded = hpack.unpack(decoder, invalid_data)
+	testaux.asserteq(decoded, nil, "Test 9: should handle malformed input gracefully")
 end)
 
 testaux.case("Test 10: Header field size limits", function()
@@ -289,10 +273,8 @@ testaux.case("Test 10: Header field size limits", function()
 	local buffer = hpack.pack(encoder, {
 		["x-large-header"] = large_value,
 	})
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 10: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 10: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["x-large-header"], large_value,
 		"Test 10: should handle large header values")
@@ -339,9 +321,8 @@ testaux.case("Test 11: Encoder-decoder synchronization", function()
 		request[':path'] = nil
 		local buf = hpack.pack(encoder, request, ":method", method, ":path", path)
 		-- Decode request
-		local decoded_req = {}
-		local ok = hpack.unpack(decoder, buf, decoded_req)
-		testaux.asserteq(ok, true, "Test 11: unpack request should succeed")
+		local decoded_req = hpack.unpack(decoder, buf)
+		testaux.assertneq(decoded_req, nil, "Test 11: unpack request should succeed")
 		decoded_req = array_to_headers(decoded_req)
 
 		-- Verify request
@@ -357,9 +338,8 @@ testaux.case("Test 11: Encoder-decoder synchronization", function()
 		response[':status'] = nil
 		local buf = hpack.pack(encoder, response, ":status", status)
 		-- Decode response
-		local decoded_resp = {}
-		local ok = hpack.unpack(decoder, buf, decoded_resp)
-		testaux.asserteq(ok, true, "Test 11: unpack response should succeed")
+		local decoded_resp = hpack.unpack(decoder, buf)
+		testaux.assertneq(decoded_resp, nil, "Test 11: unpack response should succeed")
 		decoded_resp = array_to_headers(decoded_resp)
 		-- Verify response
 		for k, v in pairs(exchange.response) do
@@ -393,13 +373,11 @@ testaux.case("Test 12: Dynamic table size changes during communication", functio
 	})
 
 	-- Decode both buffers
-	local decoded1 = {}
-	local ok1 = hpack.unpack(decoder, buffer1, decoded1)
-	testaux.asserteq(ok1, true, "Test 12: unpack buffer1 should succeed")
+	local decoded1 = hpack.unpack(decoder, buffer1)
+	testaux.assertneq(decoded1, nil, "Test 12: unpack buffer1 should succeed")
 	decoded1 = array_to_headers(decoded1)
-	local decoded2 = {}
-	local ok2 = hpack.unpack(decoder, buffer2, decoded2)
-	testaux.asserteq(ok2, true, "Test 12: unpack buffer2 should succeed")
+	local decoded2 = hpack.unpack(decoder, buffer2)
+	testaux.assertneq(decoded2, nil, "Test 12: unpack buffer2 should succeed")
 	decoded2 = array_to_headers(decoded2)
 
 	-- Verify all headers
@@ -430,13 +408,11 @@ testaux.case("Test 13: Concurrent encoding sessions", function()
 	})
 
 	-- Decode both buffers
-	local decoded1 = {}
-	local ok1 = hpack.unpack(decoder1, buffer1, decoded1)
-	testaux.asserteq(ok1, true, "Test 13: unpack buffer1 should succeed")
+	local decoded1 = hpack.unpack(decoder1, buffer1)
+	testaux.assertneq(decoded1, nil, "Test 13: unpack buffer1 should succeed")
 	decoded1 = array_to_headers(decoded1)
-	local decoded2 = {}
-	local ok2 = hpack.unpack(decoder2, buffer2, decoded2)
-	testaux.asserteq(ok2, true, "Test 13: unpack buffer2 should succeed")
+	local decoded2 = hpack.unpack(decoder2, buffer2)
+	testaux.assertneq(decoded2, nil, "Test 13: unpack buffer2 should succeed")
 	decoded2 = array_to_headers(decoded2)
 
 	-- Verify headers from different encoders
@@ -447,8 +423,8 @@ testaux.case("Test 13: Concurrent encoding sessions", function()
 	for _, context in ipairs({{encoder1, decoder1, "encoder1"}, {encoder2, decoder2, "encoder2"}}) do
 		local wire = hpack.pack(context[1], nil, "session", context[3])
 		testaux.asserteq(#wire, 1, "Test 13: each context reuses its own dynamic index")
-		local headers = {}
-		testaux.asserteq(hpack.unpack(context[2], wire, headers), true, "Test 13: independent context decodes its index")
+		local headers = hpack.unpack(context[2], wire)
+		testaux.assertneq(headers, nil, "Test 13: independent context decodes its index")
 		testaux.asserteq(headers, {"session", context[3]}, "Test 13: contexts never share cached values")
 	end
 	testaux.asserteq(decoded2["header1"], "value1-from-encoder2", "Test 13: encoder2 header1")
@@ -460,10 +436,8 @@ testaux.case("Test 14: Zero-length header values", function()
 	local buffer = hpack.pack(encoder, {
 		empty_value = ""
 	})
-
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 14: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 14: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["empty_value"], "", "Test 14: zero-length header value")
 end)
@@ -479,9 +453,8 @@ testaux.case("Test 15: Table size update", function()
 	local buffer = hpack.pack(encoder, {
 		["x-custom-header"] =  "test-value"
 	})
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 15: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 15: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 15: table size update")
 end)
@@ -490,9 +463,8 @@ testaux.case("Test 16: encode empty table", function()
 	local encoder = hpack.new(4096)
 	local decoder = hpack.new(4096)
 	local buffer = hpack.pack(encoder, {})
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 16: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 16: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	testaux.asserteq(next(decoded), nil, "Test 16: encode empty table")
 
@@ -501,9 +473,8 @@ testaux.case("Test 16: encode empty table", function()
 		["cookie"] =  {},
 		["x-custom-header2"] =  "test-value2",
 	})
-	local decoded = {}
-	local ok = hpack.unpack(decoder, buffer, decoded)
-	testaux.asserteq(ok, true, "Test 16: unpack should succeed")
+	local decoded = hpack.unpack(decoder, buffer)
+	testaux.assertneq(decoded, nil, "Test 16: unpack should succeed")
 	decoded = array_to_headers(decoded)
 	testaux.asserteq(decoded["cookie"], nil, "Test 16: encode empty table")
 	testaux.asserteq(decoded["x-custom-header"], "test-value", "Test 16: encode empty table")
@@ -511,56 +482,49 @@ testaux.case("Test 16: encode empty table", function()
 end)
 
 
-testaux.case("Test 17: Reusing decoded table should append new pairs", function()
+testaux.case("Test 17: Unpack returns independent lists and retains compression state", function()
 	local encoder = hpack.new(4096)
 	local decoder = hpack.new(4096)
-	local decoded = {}
 	local header = {
 		[":status"] = "200",
 		["content-type"] = "text/plain",
 	}
 	local buffer1 = hpack.pack(encoder, header)
-	local ok1 = hpack.unpack(decoder, buffer1, decoded)
-	testaux.asserteq(ok1, true, "Test 17: first unpack should succeed")
-	testaux.asserteq(#decoded, 4, "Test 17: first unpack should succeed")
-	for i = 1, #decoded, 2 do
-		local k = decoded[i]
-		local v = decoded[i+1]
-		testaux.asserteq(v, header[k], "Test 17: first decode key value")
-	end
+	local decoded1 = hpack.unpack(decoder, buffer1)
+	testaux.asserteq(type(decoded1), "table", "Test 17: unpack returns a field list")
+	testaux.asserteq(array_to_headers(decoded1), header, "Test 17: first block fields")
 
-	local buffer2 = hpack.pack(encoder, {
-		[":status"] = "204",
-	})
-	local ok2 = hpack.unpack(decoder, buffer2, decoded)
-	testaux.asserteq(ok2, true, "Test 17: second unpack should succeed")
-	testaux.asserteq(decoded[5], ":status", "Test 17: appended new key")
-	testaux.asserteq(decoded[6], "204", "Test 17: appended new value")
-	testaux.asserteq(#decoded, 6, "Test 17: table length should reflect appended entries")
+	local buffer2 = hpack.pack(encoder, {["content-type"] = "text/plain"})
+	local decoded2 = hpack.unpack(decoder, buffer2)
+	testaux.asserteq(decoded2, {"content-type", "text/plain"}, "Test 17: next block uses shared compression state")
+	testaux.asserteq(decoded1 == decoded2, false, "Test 17: each block gets its own list")
+	decoded2[2] = "changed"
+	testaux.asserteq(array_to_headers(decoded1), header, "Test 17: later results do not change the first list")
+	testaux.asserteq(hpack.unpack(decoder, ""), {}, "Test 17: empty block returns an empty list")
 end)
 
 testaux.case("Test 18: HPACK decoder evicts entries inserted in the same block", function()
 	local decoder = hpack.new(64)
 	-- Each entry costs 34 bytes. Inserting c:d evicts a:b; index 62 is c:d.
 	local wire = "\x40\x01a\x01b\x40\x01c\x01d\xbe"
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode literals and index")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode literals and index")
 	testaux.asserteq(headers, {"a", "b", "c", "d", "c", "d"}, "latest index after eviction")
 end)
 
 testaux.case("Test 19: HPACK oversized indexed entry clears the dynamic table", function()
 	local decoder = hpack.new(64)
 	local wire = "\x40\x01a\x01b\x40\x01c" .. string.char(40) .. string.rep("d", 40)
-	testaux.asserteq(hpack.unpack(decoder, wire, {}), true, "oversized literal is valid")
-	testaux.asserteq(hpack.unpack(decoder, "\xbe", {}), false, "old index was evicted")
+	testaux.assertneq(hpack.unpack(decoder, wire), nil, "oversized literal is valid")
+	testaux.asserteq(hpack.unpack(decoder, "\xbe"), nil, "old index was evicted")
 end)
 
 testaux.case("Test 20: HPACK shrink emits table size update and decodes subsequent blocks", function()
 	local encoder, decoder = hpack.new(4096), hpack.new(4096)
 	local function exchange()
-		local headers = {}
 		local wire = hpack.pack(encoder, {}, "x-shrink", "cached")
-		testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "peer decodes after shrink")
+		local headers = hpack.unpack(decoder, wire)
+		testaux.assertneq(headers, nil, "peer decodes after shrink")
 		testaux.asserteq(headers, {"x-shrink", "cached"}, "peer receives correct value")
 		return wire
 	end
@@ -575,76 +539,72 @@ end)
 
 testaux.case("Test 21: HPACK shrink then grow announces smallest and final table sizes", function()
 	local encoder, decoder = hpack.new(4096), hpack.new(4096)
-	assert(hpack.unpack(decoder, hpack.pack(encoder, {}, "x-cache", "value"), {}))
+	assert(hpack.unpack(decoder, hpack.pack(encoder, {}, "x-cache", "value")))
 	hpack.hardlimit(encoder, 0)
 	hpack.hardlimit(encoder, 128)
 	hpack.hardlimit(decoder, 128)
 	local wire = hpack.pack(encoder, {}, "x-cache", "value")
 	testaux.asserteq(wire:sub(1, 3), "\x20\x3f\x61", "smallest then final update")
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode updated block")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode updated block")
 	testaux.asserteq(headers, {"x-cache", "value"}, "value after shrink and grow")
 end)
 
 testaux.case("Test 22: HPACK validates integer termination and overflow", function()
 	for _, wire in ipairs({"\x3f\x00", "\x3f\x61"}) do
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, {}), true,
-			"complete continuation integer may end at EOF")
+		testaux.assertneq(hpack.unpack(hpack.new(4096), wire), nil, "complete continuation integer may end at EOF")
 	end
 	for _, wire in ipairs({"\x3f", "\x3f\x80", "\xff\x80", "\x00\x7f\x80", "\x3f\xff\xff\xff\xff\x7f"}) do
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, {}), false, "invalid HPACK integer")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), wire), nil, "invalid HPACK integer")
 	end
 end)
 
 testaux.case("Test 23: HPACK rejects Huffman EOS in a literal", function()
-	testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00\x01a\x84\xff\xff\xff\xff", {}), false, "EOS is forbidden")
+	testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00\x01a\x84\xff\xff\xff\xff"), nil, "EOS is forbidden")
 end)
 
 testaux.case("Test 24: HPACK FIFO eviction preserves entries when space is sufficient", function()
 	local decoder = hpack.new(102)
 	local first = "\x40\x01a\x01b\x40\x01c\x01d\x40\x01e\x01f"
-	assert(hpack.unpack(decoder, first, {}))
-	local headers = {}
+	assert(hpack.unpack(decoder, first))
 	local second = "\xbf\x40\x01g\x01h\xc0"
-	testaux.asserteq(hpack.unpack(decoder, second, headers), true,
-		"only the oldest entry is evicted before the last index")
+	local headers = hpack.unpack(decoder, second)
+	testaux.assertneq(headers, nil, "only the oldest entry is evicted before the last index")
 	testaux.asserteq(headers, {"c", "d", "g", "h", "c", "d"},
 		"previously referenced entry remains after minimal eviction")
 end)
 
 testaux.case("Test 25: HPACK FIFO encoder may evict an entry already referenced in the block", function()
 	local encoder, decoder = hpack.new(102), hpack.new(102)
-	assert(hpack.unpack(decoder,
-		hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f"), {}))
+	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f")))
 	local wire = hpack.pack(encoder, nil, "a", "b", "g", "h", "c", "d", "e", "f", "g", "h")
 	testaux.asserteq(wire, "\xc0\x40\x01g\x01h\xc0\xbf\xbe",
 		"new field is indexed even after referring to the oldest entry")
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode across FIFO eviction")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode across FIFO eviction")
 	testaux.asserteq(headers, {"a", "b", "g", "h", "c", "d", "e", "f", "g", "h"},
 		"indices follow the current dynamic table")
 end)
 
 testaux.case("Test 26: HPACK FIFO shrink retains entries that fit the new capacity", function()
 	local encoder, decoder = hpack.new(102), hpack.new(102)
-	assert(hpack.unpack(decoder,
-		hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f"), {}))
+	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f")))
 	hpack.hardlimit(encoder, 68)
 	local wire = hpack.pack(encoder, nil, "c", "d", "e", "f")
 	testaux.asserteq(wire, "\x3f\x25\xbf\xbe", "shrink evicts only one oldest entry")
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode partial shrink")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode partial shrink")
 	testaux.asserteq(headers, {"c", "d", "e", "f"}, "retained entries keep their indices")
 end)
 
 testaux.case("Test 27: HPACK oversized unindexed field leaves the encoder table intact", function()
 	local encoder, decoder = hpack.new(34), hpack.new(34)
-	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b"), {}))
+	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b")))
 	local wire = hpack.pack(encoder, nil, "large", "value", "a", "b")
 	testaux.asserteq(wire:byte(1), 0, "oversized field uses a literal without indexing")
 	testaux.asserteq(wire:byte(-1), 0xbe, "unindexed field preserves cached entry")
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode oversized literal and old index")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode oversized literal and old index")
 	testaux.asserteq(headers, {"large", "value", "a", "b"}, "unindexed field does not change the table")
 end)
 
@@ -687,9 +647,8 @@ testaux.case("Test 28: HPACK follows RFC and nghttp2 golden sequences", function
 			if case.limit then
 				hpack.hardlimit(decoder, case.limit)
 			end
-			local headers = {}
-			testaux.asserteq(hpack.unpack(decoder, hpack_fromhex(case.wire), headers), true,
-				story.name .. " decodes external wire")
+			local headers = hpack.unpack(decoder, hpack_fromhex(case.wire))
+			testaux.assertneq(headers, nil, story.name .. " decodes external wire")
 			testaux.asserteq(headers, case.headers, story.name .. " preserves field order and values")
 		end
 	end
@@ -703,12 +662,10 @@ testaux.case("Test 29: HPACK concatenates fragments at every RFC wire boundary",
 				for split = 0, #wire do
 					local decoder = hpack.new(story.table_size)
 					for i = 1, index - 1 do
-						assert(hpack.unpack(decoder, hpack_fromhex(story.cases[i].wire), {}))
+						assert(hpack.unpack(decoder, hpack_fromhex(story.cases[i].wire)))
 					end
-					local headers = {}
-					testaux.asserteq(hpack.unpack(decoder,
-						{"", wire:sub(1, split), "", wire:sub(split + 1), ""}, headers), true,
-						"fragment boundary may split an integer or Huffman string")
+					local headers = hpack.unpack(decoder, {"", wire:sub(1, split), "", wire:sub(split + 1), ""})
+					testaux.assertneq(headers, nil, "fragment boundary may split an integer or Huffman string")
 					testaux.asserteq(headers, case.headers, "fragmentation preserves decoded fields")
 				end
 			end
@@ -721,13 +678,11 @@ testaux.case("Test 30: HPACK Huffman accepts all octets and every valid padding 
 		local payload = hpack_fromhex(vector.huffman_hex)
 		local value = hpack_fromhex(vector.value_hex)
 		local wire = "\x00\x01x" .. hpack_test_length(#payload, 0x80) .. payload
-		local headers = {}
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, headers), true,
-			"decode independent Go Huffman vector")
+		local headers = hpack.unpack(hpack.new(4096), wire)
+		testaux.assertneq(headers, nil, "decode independent Go Huffman vector")
 		testaux.asserteq(headers, {"x", value}, "Huffman preserves opaque octets")
 		for cut = 1, #wire - 1 do
-			testaux.asserteq(hpack.unpack(hpack.new(4096), wire:sub(1, cut), {}), false,
-				"truncated literal cannot end inside a name, length or payload")
+			testaux.asserteq(hpack.unpack(hpack.new(4096), wire:sub(1, cut)), nil, "truncated literal cannot end inside a name, length or payload")
 		end
 	end
 end)
@@ -742,46 +697,42 @@ testaux.case("Test 31: HPACK Huffman rejects nghttp2 and Go padding and EOS regr
 	}
 	for _, payload in ipairs(invalid) do
 		local encoded = hpack_test_length(#payload, 0x80) .. payload
-		testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00\x01x" .. encoded, {}), false,
-			"invalid Huffman value is rejected")
-		testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00" .. encoded .. "\x00", {}), false,
-			"invalid Huffman name is rejected")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00\x01x" .. encoded), nil, "invalid Huffman value is rejected")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00" .. encoded .. "\x00"), nil, "invalid Huffman name is rejected")
 	end
 end)
 
 testaux.case("Test 32: HPACK dynamic name remains valid when insertion evicts its source", function()
 	local decoder = hpack.new(68)
-	assert(hpack.unpack(decoder, "\x40\x01a\x01b\x40\x01c\x01d", {}))
-	local headers = {}
+	assert(hpack.unpack(decoder, "\x40\x01a\x01b\x40\x01c\x01d"))
 	-- Index 63 supplies a's name, then inserting a:e evicts the old a:b.
-	testaux.asserteq(hpack.unpack(decoder, "\x7f\x00\x01e\xbf\xbe", headers), true,
-		"referenced name survives eviction while decoding the new field")
+	local headers = hpack.unpack(decoder, "\x7f\x00\x01e\xbf\xbe")
+	testaux.assertneq(headers, nil, "referenced name survives eviction while decoding the new field")
 	testaux.asserteq(headers, {"a", "e", "c", "d", "a", "e"}, "dynamic names and values stay paired")
-	testaux.asserteq(hpack.unpack(decoder, "\xc0", {}), false, "evicted index is no longer addressable")
+	testaux.asserteq(hpack.unpack(decoder, "\xc0"), nil, "evicted index is no longer addressable")
 end)
 
 testaux.case("Test 33: HPACK encoder can reuse a field after same-block eviction", function()
 	local encoder, decoder = hpack.new(102), hpack.new(102)
-	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f"), {}))
+	assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "a", "b", "c", "d", "e", "f")))
 	local fields = {"a", "b", "g", "h", "c", "d", "e", "f", "g", "h", "a", "b", "g", "h"}
 	local wire = hpack.pack(encoder, nil, table.unpack(fields))
 	testaux.asserteq(wire, "\xc0\x40\x01g\x01h\xc0\xbf\xbe\x40\x01a\x01b\xbf",
 		"evicted field becomes a literal and subsequent indices use the current table")
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, wire, headers), true, "decode reference, eviction and reinsertion")
+	local headers = hpack.unpack(decoder, wire)
+	testaux.assertneq(headers, nil, "decode reference, eviction and reinsertion")
 	testaux.asserteq(headers, fields, "earlier references remain valid after later eviction")
 end)
 
 testaux.case("Test 34: HPACK duplicate entries survive eviction and queue compaction", function()
 	local decoder = hpack.new(68)
-	local headers, expected = {}, {}
+	local expected = {}
 	for _ = 1, 98 do
 		expected[#expected + 1] = "a"
 		expected[#expected + 1] = "b"
 	end
-	testaux.asserteq(hpack.unpack(decoder,
-		string.rep("\x40\x01a\x01b", 96) .. "\xbe\xbf", headers), true,
-		"duplicate dynamic entries remain separately addressable after prune")
+	local headers = hpack.unpack(decoder, string.rep("\x40\x01a\x01b", 96) .. "\xbe\xbf")
+	testaux.assertneq(headers, nil, "duplicate dynamic entries remain separately addressable after prune")
 	testaux.asserteq(headers, expected, "both newest duplicates decode correctly")
 end)
 
@@ -792,22 +743,19 @@ testaux.case("Test 35: HPACK integer prefixes distinguish indices, names and str
 		local name = "x" .. i
 		first[#first + 1] = "\x40" .. string.char(#name) .. name .. "\x01v"
 	end
-	assert(hpack.unpack(decoder, table.concat(first), {}))
-	local headers = {}
-	testaux.asserteq(hpack.unpack(decoder, "\xff\x00\x7f\x00\x01z\x0f\x00\x01v\x1f\x00\x01w\xbe", headers), true,
-		"saturated 7-, 6- and 4-bit prefixes decode in their own contexts")
+	assert(hpack.unpack(decoder, table.concat(first)))
+	local headers = hpack.unpack(decoder, "\xff\x00\x7f\x00\x01z\x0f\x00\x01v\x1f\x00\x01w\xbe")
+	testaux.assertneq(headers, nil, "saturated 7-, 6- and 4-bit prefixes decode in their own contexts")
 	testaux.asserteq(headers, {"x1", "v", "x65", "z", "accept-charset", "v", "accept-charset", "w", "x65", "z"},
 		"nonindexed and neverindexed fields leave the latest index intact")
 	for _, size in ipairs({126, 127, 128, 255, 256}) do
 		local value = string.rep("z", size)
-		local fields = {}
-		testaux.asserteq(hpack.unpack(hpack.new(4096), "\x00\x01x" .. hpack_test_length(size, 0) .. value, fields), true,
-			"string length crosses the seven-bit prefix boundary")
+		local fields = hpack.unpack(hpack.new(4096), "\x00\x01x" .. hpack_test_length(size, 0) .. value)
+		testaux.assertneq(fields, nil, "string length crosses the seven-bit prefix boundary")
 		testaux.asserteq(fields, {"x", value}, "length uses decoded raw octets")
 	end
 	for _, wire in ipairs({"\x80", "\xbe", "\x7f", "\x7f\x00\x00", "\x0f", "\x82\x20", "\x3f\xe2\x1f"}) do
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, {}), false,
-			"zero/missing index, truncated name or invalid table update is rejected")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), wire), nil, "zero/missing index, truncated name or invalid table update is rejected")
 	end
 end)
 
@@ -816,9 +764,8 @@ testaux.case("Test 36: HPACK cache keys preserve opaque names and values", funct
 	local fields = {{"a: b", "c"}, {"a", "b: c"}, {":method: GET", "other"}, {"x\0y", "z\0w"}}
 	for _ = 1, 2 do
 		for _, field in ipairs(fields) do
-			local headers = {}
-			testaux.asserteq(hpack.unpack(decoder, hpack.pack(encoder, nil, table.unpack(field)), headers), true,
-				"decode opaque field")
+			local headers = hpack.unpack(decoder, hpack.pack(encoder, nil, table.unpack(field)))
+			testaux.assertneq(headers, nil, "decode opaque field")
 			testaux.asserteq(headers, field, "cache key cannot confuse a name with part of its value")
 		end
 	end
@@ -826,11 +773,9 @@ end)
 
 testaux.case("Test 37: HPACK rejects missing literal string lengths", function()
 	for _, wire in ipairs({"\x00", "\x00\x00", "\x40", "\x40\x00", "\x10", "\x10\x00", "\x01"}) do
-		testaux.asserteq(hpack.unpack(hpack.new(4096), wire, {}), false,
-			"a literal must include both name and value length prefixes")
+		testaux.asserteq(hpack.unpack(hpack.new(4096), wire), nil, "a literal must include both name and value length prefixes")
 	end
-	testaux.asserteq(hpack.unpack(hpack.new(4096), "", {}), true,
-		"an empty field block itself remains valid")
+	testaux.assertneq(hpack.unpack(hpack.new(4096), ""), nil, "an empty field block itself remains valid")
 end)
 
 
@@ -846,19 +791,17 @@ testaux.case("Test 38: HPACK entry size counts raw octets plus 32 at capacity bo
 			local second = hpack.pack(encoder, nil, name, value)
 			testaux.asserteq(second, cap >= size and "\xbe" or first,
 				"encoder caches exactly when decoded octets plus overhead fit")
-			assert(hpack.unpack(decoder, literal, {}))
-			local headers = {}
-			testaux.asserteq(hpack.unpack(decoder, "\xbe", headers), cap >= size,
-				"decoder uses original lengths even for Huffman literals and UTF-8")
+			assert(hpack.unpack(decoder, literal))
+			local headers = hpack.unpack(decoder, "\xbe")
+			testaux.asserteq(headers ~= nil, cap >= size, "decoder uses original lengths even for Huffman literals and UTF-8")
 			if cap >= size then
 				testaux.asserteq(headers, field, "indexed boundary entry")
 			end
 		end
 		local decoder = hpack.new(size * 2)
-		assert(hpack.unpack(decoder, literal .. literal, {}))
-		local headers = {}
-		testaux.asserteq(hpack.unpack(decoder, "\xbf\xbe", headers), true,
-			"duplicate entries each consume their full raw size")
+		assert(hpack.unpack(decoder, literal .. literal))
+		local headers = hpack.unpack(decoder, "\xbf\xbe")
+		testaux.assertneq(headers, nil, "duplicate entries each consume their full raw size")
 		testaux.asserteq(headers, {name, value, name, value}, "both duplicates survive exact capacity")
 	end
 end)
@@ -868,8 +811,7 @@ testaux.case("Test 39: HPACK static name lookup cannot alias a full-field cache 
 	local name = string.pack("T", #":method") .. ":methodGET"
 	local encoder, decoder = hpack.new(4096), hpack.new(4096)
 	for _ = 1, 2 do
-		local headers = {}
-		assert(hpack.unpack(decoder, hpack.pack(encoder, nil, name, "opaque"), headers))
+		local headers = assert(hpack.unpack(decoder, hpack.pack(encoder, nil, name, "opaque")))
 		testaux.asserteq(headers, {name, "opaque"}, "a full cache key must not become a static name index")
 	end
 end)
@@ -898,8 +840,7 @@ testaux.case("Test 41: HPACK static names are bidirectional and isolated in thei
 		testaux.asserteq(type(name), "string", "every static index has a reverse name")
 		first[name] = first[name] or id
 		testaux.asserteq(names[name], first[name], "forward names use their first RFC index")
-		local fields = {}
-		assert(hpack.unpack(hpack.new(4096), string.char(0x40 + id) .. "\x01v", fields))
+		local fields = assert(hpack.unpack(hpack.new(4096), string.char(0x40 + id) .. "\x01v"))
 		testaux.asserteq(fields, {name, "v"}, "indexed names include duplicate static names")
 		local value = static[id]
 		testaux.asserteq(type(value), "string", "static values are stored at the same index")
@@ -912,32 +853,29 @@ end)
 testaux.case("Test 42: HPACK decoded list limit counts indexed fields and keeps compression state", function()
 	local decoder = hpack.new(4096)
 	local wire = "\x82\x40\x01x\x01v\x82\x40\x01y\x01z"
-	local fields = {}
-	local ok, limited = hpack.unpack(decoder, wire, fields, 75)
-	testaux.asserteq(ok, false, "42-byte static field plus 34-byte literal exceeds 75")
+	local fields, limited = hpack.unpack(decoder, wire, 75)
+	testaux.asserteq(fields, nil, "42-byte static field plus 34-byte literal exceeds 75")
 	testaux.asserteq(limited, true, "resource limit is distinct from malformed compression")
-	testaux.asserteq(fields, {":method", "GET"}, "output stops growing at the decoded limit")
-	local nextfields = {}
-	assert(hpack.unpack(decoder, "\xbe\xbf", nextfields, 68))
+	local nextfields = assert(hpack.unpack(decoder, "\xbe\xbf", 68))
 	testaux.asserteq(nextfields, {"y", "z", "x", "v"},
 		"entries after the limit still update the shared dynamic table")
-	local bad, overflow = hpack.unpack(hpack.new(4096), wire .. "\x80", {}, 0)
-	testaux.asserteq(bad, false, "malformed bytes after the limit still fail decoding")
+	local bad, overflow = hpack.unpack(hpack.new(4096), wire .. "\x80", 0)
+	testaux.asserteq(bad, nil, "malformed bytes after the limit still fail decoding")
 	testaux.asserteq(overflow, nil, "compression error takes precedence over resource rejection")
 end)
 
 testaux.case("Test 43: HPACK list limits count empty fields and exact capacity", function()
 	for _, cap in ipairs({31, 32, 63, 64}) do
-		local fields = {}
-		local ok, limited = hpack.unpack(hpack.new(4096), "\x40\x00\x00\xbe", fields, cap)
-		testaux.asserteq(ok, cap >= 64, "two empty fields consume 64 octets")
+		local fields, limited = hpack.unpack(hpack.new(4096), "\x40\x00\x00\xbe", cap)
+		testaux.asserteq(fields ~= nil, cap >= 64, "two empty fields consume 64 octets")
 		testaux.asserteq(limited, cap < 64 and true or nil, "empty lengths still count overhead")
-		testaux.asserteq(#fields, cap < 32 and 0 or cap < 64 and 2 or 4,
-			"materialized fields fit the budget")
+		if fields then
+			testaux.asserteq(fields, {"", "", "", ""}, "exact capacity returns the complete list")
+		end
 	end
-	testaux.asserteq(hpack.unpack(hpack.new(4096), "", {}, 0), true, "empty block fits zero")
+	testaux.assertneq(hpack.unpack(hpack.new(4096), "", 0), nil, "empty block fits zero")
 	for _, limit in ipairs({-1, 1.5, false}) do
-		local ok = pcall(hpack.unpack, hpack.new(4096), "", {}, limit)
+		local ok = pcall(hpack.unpack, hpack.new(4096), "", limit)
 		testaux.asserteq(ok, false, "decoded size limit must be a nonnegative integer")
 	end
 end)
@@ -946,19 +884,18 @@ end)
 testaux.case("Test 44: HPACK indexed amplification accepts exactly its RFC field-list size", function()
 	local wire = "\x88" .. string.rep("\x90", 1200)
 	for _, limit in ipairs({65535, 72041, 72042}) do
-		local fields = {}
-		local ok, limited = hpack.unpack(hpack.new(4096), wire, fields, limit)
-		testaux.asserteq(ok, limit >= 72042, "every indexed occurrence includes its 32-byte overhead")
+		local fields, limited = hpack.unpack(hpack.new(4096), wire, limit)
+		testaux.asserteq(fields ~= nil, limit >= 72042, "every indexed occurrence includes its 32-byte overhead")
 		testaux.asserteq(limited, limit < 72042 and true or nil, "valid encoding can exceed local policy")
-		testaux.asserteq(#fields, 2 * (1 + math.min(1200, (limit - 42) // 60)),
-			"only complete fields that fit the budget are materialized")
+		if fields then
+			testaux.asserteq(#fields, 2402, "exact capacity returns every indexed field")
+		end
 	end
-	local fields = {}
-	assert(hpack.unpack(hpack.new(4096), wire, fields))
+	local fields = assert(hpack.unpack(hpack.new(4096), wire))
 	testaux.asserteq(#fields, 2402, "standalone HPACK decoding has no implicit 64 KiB limit")
 end)
 
-testaux.case("Test 45: HPACK pack keeps the buffer on top across growth and argument conversion", function()
+testaux.case("Test 45: HPACK pack keeps the buffer on top across growth and string arguments", function()
 	for _, size in ipairs({1023, 1024, 1025, 4096, 16384}) do
 		local value = string.rep("x", size)
 		for _, mode in ipairs({"arguments", "table", "values", "tostring"}) do
@@ -970,23 +907,19 @@ testaux.case("Test 45: HPACK pack keeps the buffer on top across growth and argu
 			elseif mode == "table" then
 				wire = hpack.pack(encoder, {[":path"] = value})
 				expected = {":path", value}
-			elseif mode == "values" then
-				wire = hpack.pack(encoder, {[":path"] = {value, "end"}})
-				expected = {":path", value, ":path", "end"}
-			else
-				local object = setmetatable({}, {__tostring = function()
-					return value
-				end})
+			elseif mode == "tostring" then
+				local object = setmetatable({}, {__tostring = function() return value end})
 				wire = hpack.pack(encoder, nil, ":path", object)
 				expected = {":path", value}
+			else
+				wire = hpack.pack(encoder, {[":path"] = {value, "end"}})
+				expected = {":path", value, ":path", "end"}
 			end
 			collectgarbage("collect")
-			local fields = {}
-			testaux.asserteq(hpack.unpack(decoder, wire, fields), true,
-				"decode after buffer growth: " .. mode .. " " .. size)
+			local fields = hpack.unpack(decoder, wire)
+			testaux.assertneq(fields, nil, "decode after buffer growth: " .. mode .. " " .. size)
 			testaux.asserteq(fields, expected, "growth preserves converted field values")
-			local nextfields = {}
-			assert(hpack.unpack(decoder, hpack.pack(encoder, nil, ":path", value), nextfields))
+			local nextfields = assert(hpack.unpack(decoder, hpack.pack(encoder, nil, ":path", value)))
 			testaux.asserteq(nextfields, {":path", value}, "next block keeps the tables synchronized")
 		end
 	end
@@ -998,17 +931,17 @@ testaux.case("Test 46: HPACK oversized dynamic-name literals clear the table and
 	local wire = "\x7e" .. hpack_test_length(#value, 0) .. value .. "\x40\x01c\x01d\xbe"
 	for _, limit in ipairs({0, 65535}) do
 		local decoder = hpack.new(68)
-		assert(hpack.unpack(decoder, "\x40\x01a\x01b", {}))
-		local fields = {}
-		local ok, limited = hpack.unpack(decoder, wire, fields, limit)
-		testaux.asserteq(ok, limit > 0, "oversized table entry is valid independently of output limit")
+		assert(hpack.unpack(decoder, "\x40\x01a\x01b"))
+		local fields, limited = hpack.unpack(decoder, wire, limit)
+		testaux.asserteq(fields ~= nil, limit > 0, "oversized table entry is valid independently of output limit")
 		testaux.asserteq(limited, limit == 0 and true or nil, "output budget does not change compression state")
-		testaux.asserteq(fields, limit == 0 and {} or {"a", value, "c", "d", "c", "d"},
-			"source name survives table clearing and the following fields stay on the stack")
-		local nextfields = {}
-		assert(hpack.unpack(decoder, "\xbe", nextfields))
+		if fields then
+			testaux.asserteq(fields, {"a", value, "c", "d", "c", "d"},
+				"source name survives table clearing and the following fields stay on the stack")
+		end
+		local nextfields = assert(hpack.unpack(decoder, "\xbe"))
 		testaux.asserteq(nextfields, {"c", "d"}, "new dynamic entry survives oversized eviction")
-		testaux.asserteq(hpack.unpack(decoder, "\xbf", {}), false, "the old source entry is evicted")
+		testaux.asserteq(hpack.unpack(decoder, "\xbf"), nil, "the old source entry is evicted")
 	end
 end)
 
@@ -1016,25 +949,59 @@ testaux.case("Test 47: HPACK resumes with synchronized tables after a conversion
 	for _, mode in ipairs({"fresh", "populated", "shrink", "repeat"}) do
 		local encoder, decoder = hpack.new(4096), hpack.new(4096)
 		if mode == "populated" then
-			assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "x-before", "old"), {}))
+			assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "x-before", "old")))
 		elseif mode == "shrink" then
 			hpack.hardlimit(encoder, 0)
 			hpack.hardlimit(encoder, 64)
 		end
 		local bad = setmetatable({}, {__tostring = function()
-			error("intentional late HPACK conversion failure")
+			error("conversion failed")
 		end})
 		for _ = 1, mode == "repeat" and 2 or 1 do
 			local ok = pcall(hpack.pack, encoder, {["x-poison"] = {"good", bad}})
 			testaux.asserteq(ok, false, "conversion fails after a dynamic insertion")
 		end
 		local wire = hpack.pack(encoder, nil, "x-poison", "good")
-		local fields = {}
-		testaux.asserteq(hpack.unpack(decoder, wire, fields), true,
-			"next block decodes after an unsent partial block: " .. mode)
+		local fields = hpack.unpack(decoder, wire)
+		testaux.assertneq(fields, nil, "next block decodes after an unsent partial block: " .. mode)
 		testaux.asserteq(fields, {"x-poison", "good"}, "no stale dynamic index aliases an old entry")
-		local nextfields = {}
-		assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "x-before", "old"), nextfields))
+		local nextfields = assert(hpack.unpack(decoder, hpack.pack(encoder, nil, "x-before", "old")))
 		testaux.asserteq(nextfields, {"x-before", "old"}, "later reuse stays synchronized")
 	end
+end)
+
+
+testaux.case("Test 48: HPACK converts objects through tostring", function()
+	for _, mode in ipairs({"name", "argument", "list"}) do
+		local object = setmetatable({}, {__tostring = function()
+			return "converted"
+		end})
+		local encoder, decoder = hpack.new(4096), hpack.new(4096)
+		local wire, expected
+		if mode == "name" then
+			wire = hpack.pack(encoder, {[object] = "value"})
+			expected = {"converted", "value"}
+		elseif mode == "argument" then
+			wire = hpack.pack(encoder, nil, "x-object", object)
+			expected = {"x-object", "converted"}
+		else
+			wire = hpack.pack(encoder, {["x-object"] = {object}})
+			expected = {"x-object", "converted"}
+		end
+		testaux.asserteq(hpack.unpack(decoder, wire), expected,
+			"Test 48: custom tostring conversion survives encoding: " .. mode)
+	end
+end)
+
+testaux.case("Test 49: HPACK numeric conversion preserves caller tables and iteration keys", function()
+	local encoder, decoder = hpack.new(4096), hpack.new(4096)
+	local header = {[123] = 456, ["content-length"] = 12, ["x-repeat"] = {1, "two", 3}}
+	local wire = hpack.pack(encoder, header, ":status", 200)
+	collectgarbage("collect")
+	local fields = assert(hpack.unpack(decoder, wire))
+	testaux.asserteq(array_to_headers(fields), {
+		[":status"] = "200", ["123"] = "456", ["content-length"] = "12", ["x-repeat"] = {"1", "two", "3"},
+	}, "Test 49.1: numeric fields and repeated values encode as text")
+	testaux.asserteq(header, {[123] = 456, ["content-length"] = 12, ["x-repeat"] = {1, "two", 3}},
+		"Test 49.2: conversion does not mutate caller keys or values")
 end)

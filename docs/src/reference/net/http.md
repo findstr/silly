@@ -125,14 +125,14 @@ print("Server closed")
 - `stream.version`: `string` - 协议版本（"HTTP/1.1" 或 "HTTP/2"）
 - `stream.remoteaddr`: `string` - 客户端地址
 
-### stream:respond(status, headers [, close])
+### stream:respond(status, headers [, endstream])
 
 发送响应状态行和头部。
 
 - **参数**:
   - `status`: `integer` - HTTP 状态码（200, 404, 500 等）
   - `headers`: `table` - 响应头表
-  - `close`: `boolean|nil` (可选) - 是否立即关闭连接（不发送响应体）
+  - `endstream`: `boolean|nil` (可选) - 是否结束本次响应的写端，不再发送 body 或 trailers；不关闭连接
 - **返回值**:
   - 成功: `true`
   - 失败: `false, string` - false 和错误信息
@@ -153,12 +153,13 @@ end
 
 ### stream:closewrite([body])
 
-发送响应体并关闭连接。
+发送可选的最后一段响应体，并结束响应写入。
 
 - **参数**:
   - `body`: `string|nil` (可选) - 响应体内容
 - **返回值**: 无
-- **注意**: 调用此方法后，stream 将不可再使用
+- **注意**: 调用后不能继续写入响应，但仍可读取请求体。
+
 - **示例**:
 
 ```lua validate
@@ -343,7 +344,7 @@ else
 end
 ```
 
-### http.request(method, url [, headers [, close [, alpn_protos]]])
+### http.request(method, url [, headers [, endstream [, timeout]]])
 
 发送自定义 HTTP 请求（异步）。
 
@@ -351,8 +352,8 @@ end
   - `method`: `string` - HTTP 方法（GET, POST, PUT, DELETE 等）
   - `url`: `string` - 请求 URL
   - `headers`: `table|nil` (可选) - 请求头表
-  - `close`: `boolean|nil` (可选) - 是否立即关闭连接
-  - `alpn_protos`: `string[]|nil` (可选) - ALPN 协议列表
+  - `endstream`: `boolean|nil` (可选) - 是否结束本次消息的写端，不关闭连接
+  - `timeout`: `integer|nil` (可选) - HTTP/2 并发准入或 HTTP/1.1 Expect: 100-continue 等待超时（毫秒）；不包含连接建立和后续读写
 - **返回值**:
   - 成功: `stream` - HTTP stream 对象
   - 失败: `nil, string` - nil 和错误信息
@@ -404,9 +405,10 @@ Stream 对象用于处理 HTTP 请求和响应。
 - `stream.query`: `table` - 查询参数表
 - `stream.header`: `table` - 头表
 - `stream.trailer`: `table` - 尾部头表 (Trailer)
+- `stream.headeronly`: `boolean?` - HTTP/2 响应是否在响应头处结束，在 `waitresponse()` 成功后读取。
 - `stream.version`: `string` - 协议版本
 - `stream.remoteaddr`: `string` - 远程地址
-- `stream.eof`: `boolean` - 是否已读到 EOF
+- `stream.eof`: `boolean` - HTTP/1 的 EOF 标志。HTTP/2 使用 `stream:eof()`；接收结束后仍可能有未读取的数据。
 
 ### stream:read(n [, timeout])
 
@@ -435,18 +437,18 @@ Stream 对象用于处理 HTTP 请求和响应。
 
 ### stream:flush()
 
-刷新发送缓冲区。
+刷新发送缓冲区；HTTP/2 无需调用。
 
-- **返回值**: 无
+- **返回值**: HTTP/2 返回 `true`；HTTP/1.1 无返回值
 
-### stream:respond(status, headers [, close])
+### stream:respond(status, headers [, endstream])
 
 发送响应状态行和头部（仅服务器）。
 
 - **参数**:
   - `status`: `integer` - HTTP 状态码
   - `headers`: `table` - 响应头表
-  - `close`: `boolean|nil` (可选) - 是否立即关闭连接
+  - `endstream`: `boolean|nil` (可选) - 是否结束本次消息的写端，不关闭连接
 - **返回值**: `true` 或 `false, error`
 
 ### stream:closewrite([body])

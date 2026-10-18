@@ -1,17 +1,19 @@
 ## Unreleased
 
 ### Added
+- `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
 - `adt.queue:remove(value)`.
 - Optional decoded field-list limit in `http2.hpack.unpack()`.
 - `net.http.url` module with URL parsing (`parse`), resolution (`resolve`), reconstruction (`build`), query escaping/unescaping (`queryescape`, `queryunescape`), and path escaping/unescaping (`pathescape`, `pathunescape`).
 - HTTP client redirect support (301/302/303/307/308) with loop detection and max redirect limit.
 - `client.close()` to gracefully shut down pooled connections.
-- Tests for host header deduplication and user header preservation in both h1 and h2.
 
 ### Changed
+- `http.request()` and `client:request()` accept optional `endstream` and `timeout` arguments.
+- `stream:respond()` accepts `endstream` to finish a response without a body.
+- `http2.hpack.unpack()` returns the decoded header list.
 - URL parsing and encoding extracted from `net.http.helper` into `net.http.url`; `helper.parseurl`/`urlencode`/`urldecode` replaced by `url.parse`/`queryescape`/`pathunescape`.
-- h1 and h2 now inject the Host/`:authority` header from the URL authority instead of the user-supplied header table; the user's header table is never modified.
-- h1 `request()` accepts an optional `timeout` parameter for `Expect: 100-continue` wait.
+- h1 derives Host from the URL authority; h2 generates `:authority` and forwards caller-supplied `host` fields. Caller header tables remain unchanged.
 - h1 client `read`/`readall` use a single deadline timer instead of passing timeout to each internal `conn:read`, eliminating timeout amplification across chunked/content-length reads.
 - `cluster.connect` is now eager: DNS resolution and TCP connect happen immediately (yields, must be called in a coroutine). Return signature changed to `peer?, err?`. Connecting to the same address creates independent connections.
 - Auto-reconnect removed. When a connection drops, `call`/`send` returns `nil, "Peer closed"`. Call `cluster.connect()` again to obtain a new peer.
@@ -20,6 +22,9 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- HTTP/2: fix flow control, graceful shutdown and protocol handling.
+- Buffer: reject read lengths and buffered sizes above `2^31-1` bytes.
+- gRPC: preserve status and message from trailers-only responses.
 - HPACK: fix table synchronization, incorrect header decoding and packing memory errors.
 - Cluster now drops responses that arrive after their request timed out instead of attempting to wake a missing coroutine.
 - Host header no longer duplicated when both the URL and user header table contain a host value.
