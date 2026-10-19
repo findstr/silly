@@ -396,6 +396,8 @@ Creates a new HTTP client with connection pooling.
     - `max_idle_per_host`: `integer?` - Maximum idle connections per host (default: 10)
     - `idle_timeout`: `integer?` - Idle connection timeout in ms (default: 30000)
     - `alpnprotos`: `string[]?` - ALPN protocols (default: `{"http/1.1", "h2"}`)
+    - `send_ping_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
+    - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 15000 when probes are enabled
 - **Returns**: `client` - HTTP client object
 - **Example**:
 
@@ -984,6 +986,14 @@ end)
 ```
 
 ---
+
+### HTTP/2 PING keepalive
+
+`send_ping_timeout = 60000, ping_timeout = 15000` starts a PING after 60 seconds without received frames. If no matching ACK arrives within 15 seconds, the connection closes and blocked callers wake. Received frames postpone the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run without active streams.
+
+Active probes are disabled by default and enabled only on clients. Both endpoints acknowledge valid PING requests. PING bypasses DATA flow control and does not extend the HTTP connection pool's `idle_timeout`. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).
+
+Configure an established low-level client channel with `ch:keepalive(send_ping_timeout, ping_timeout)`. Both arguments are optional integer milliseconds. A nil or nonpositive first argument disables probes. When probes are enabled, a nil or nonpositive second argument uses 15000 ms. Reconfiguration cancels the outstanding probe and replaces its timer while preserving elapsed receive inactivity. Keepalive uses one channel timer; stream read deadlines remain independent.
 
 ## See Also
 

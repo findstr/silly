@@ -599,6 +599,31 @@ testaux.case("Test 20: Existing gRPC deadlines cover request admission", functio
 	testaux.assertneq(service:Echo({message = "reuse"}), nil, "Test 20.4: expired admission leaves the connection usable")
 end)
 
+testaux.case("Test 12: gRPC applies keepalive defaults only for positive receive intervals", function()
+	for _, opts in ipairs({
+		{ping_timeout = 2345},
+		{send_ping_timeout = 0, ping_timeout = 2345},
+		{send_ping_timeout = -1, ping_timeout = 2345},
+		{send_ping_timeout = 60000},
+		{send_ping_timeout = 60000, ping_timeout = 0},
+		{send_ping_timeout = 60000, ping_timeout = -1},
+	}) do
+		opts.targets = {"127.0.0.1:8991"}
+		local pool<close> = assert(grpc.newclient(opts))
+		local service = grpc.newservice(pool, proto, "TestService")
+		local response = assert(service:Echo({message = "options", value = 1}))
+		testaux.asserteq(response.message, "echo: options", "RPC succeeds with keepalive options")
+		local ch = pool[1].channel
+		local enabled = opts.send_ping_timeout and opts.send_ping_timeout > 0
+		testaux.asserteq(ch.sendpingtimeout, enabled and 60000 or nil,
+			"only positive intervals enable probing")
+		if enabled then
+			testaux.asserteq(ch.pingtimeout, 15000, "enabled probes populate the ACK default")
+		end
+		testaux.asserteq(ch.timer ~= nil, not not enabled, "only enabled probes have a timer")
+	end
+end)
+
 if slow_started then
 	testaux.await(slow_done, "slow RPC handler completed")
 end

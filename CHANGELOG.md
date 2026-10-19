@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- Optional HTTP/2 client PING keepalive for HTTP and gRPC.
 - `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
 - `adt.queue:remove(value)`.
 - Optional decoded field-list limit in `http2.hpack.unpack()`.

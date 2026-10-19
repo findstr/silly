@@ -262,6 +262,8 @@ http.listen {
     - `idle_timeout`: `integer` (可选) - 空闲连接超时时间(ms) (默认: 30000)
     - `read_timeout`: `integer` (可选) - 读超时时间(ms) (默认: 5000)
     - `alpnprotos`: `string[]` (可选) - ALPN 协议列表 (默认: `{"http/1.1", "h2"}`)
+    - `send_ping_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
+    - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
 - **返回值**: `silly.net.http.client` - 客户端对象
 - **示例**:
 ```lua validate
@@ -992,6 +994,14 @@ end)
 ```
 
 ---
+
+### HTTP/2 PING 保活
+
+`send_ping_timeout = 60000, ping_timeout = 15000` 表示 60 秒未收到帧时发起 PING，15 秒内仍未收到匹配 ACK 则关闭连接并唤醒等待者。接收帧会推迟下一次探测，发送数据不会重置接收空闲计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+默认关闭主动探测，仅客户端可以通过选项启用。两端都回复合法 PING；PING 不受 DATA 流控限制，也不会延长 HTTP 连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。
+
+已建立的底层客户端 channel 可以调用 `ch:keepalive(send_ping_timeout, ping_timeout)`。两个参数均为可选整数，单位为毫秒。第一个参数为 nil 或非正数时关闭探测；启用后第二个参数为 nil 或非正数时使用 15000 ms。重新配置会取消当前探测并替换定时器，保留已经过去的接收空闲时间。保活共用一个 channel 定时器，stream 读取超时保持独立。
 
 ## 参见
 

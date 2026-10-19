@@ -3959,6 +3959,473 @@ testaux.case("Test 236: Local close after peer GOAWAY finishes an accepted serve
 end)
 
 
+-- Active client PING keepalive regressions.
+
+testaux.case("Test 61: Client keepalive probes without streams and matches ACK", function()
+	local probes_done = channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		for _ = 1, 2 do
+			local ping = peer.untilframe(conn, 6)
+			testaux.asserteq(ping.id, 0, "connection PING")
+			testaux.asserteq(#ping.data, 8, "eight-byte token")
+			assert(conn:write(frame(6, 1, 0, ping.data)))
+		end
+		probes_done:push(true)
+		answer(conn, "ok")
+	end, function(ch)
+		testaux.await(probes_done, "two idle probes acknowledged")
+		local s<close> = get(assert(ch))
+		testaux.asserteq(s:readall(2000), "ok", "channel survives ACKs while idle")
+	end, {send_ping_timeout = 30, ping_timeout = 300})
+end)
+
+testaux.case("Test 62: Client PING timeout wakes readers and initial HEADERS waiters", function()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn, string.pack(">I2I4", 3, 1))
+		peer.untilframe(conn, 6)
+		testaux.asserteq(peer.read(conn), nil, "client closes on PING timeout")
+	end, function(ch)
+		local s<close> = get(assert(ch))
+		local started, done = channel.new(), channel.new()
+		task.fork(function()
+			started:push(true)
+			local stream, err = ch:request("GET", "/", {}, true)
+			if stream then
+				stream:close()
+			end
+			done:push({cause = err})
+		end)
+		testaux.await(started, "initial HEADERS waiter started before PING timeout")
+		local ok, err = s:waitresponse(2000)
+		testaux.asserteq(ok, false, "reader fails on PING timeout")
+		testaux.asserteq(err, "PING timeout", "specific timeout cause")
+		local cause = testaux.await(done, "initial HEADERS writer wakes on PING timeout").cause
+		testaux.asserteq(cause, "PING timeout", "initial HEADERS timeout cause")
+	end, {send_ping_timeout = 30, ping_timeout = 50})
+end)
+
+testaux.case("Test 63: Wrong ACK and other frames do not complete a pending PING", function()
+	local probe_seen, send_frames, processed = channel.new(), channel.new(), channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		local ping = peer.untilframe(conn, 6)
+		probe_seen:push(ping.data)
+		testaux.await(send_frames, "pending probe captured")
+		assert(conn:write(frame(6, 1, 0, "wrongACK") .. frame(0xfe, 0, 0) .. frame(6, 0, 0, "activity")))
+		local ack = peer.untilframe(conn, 6)
+		testaux.asserteq(ack.data, "activity", "PING barrier follows wrong ACK and other frame")
+		processed:push(true)
+		testaux.asserteq(peer.read(conn), nil, "peer observes PING timeout EOF")
+	end, function(ch, err, observer)
+		local token = testaux.await(probe_seen, "peer received pending probe")
+		send_frames:push(true)
+		testaux.await(processed, "wrong ACK and other frame processed")
+		testaux.asserteq(assert(ch).pingtoken, token, "unrelated frames leave probe pending")
+		observer:waitclosed()
+		testaux.asserteq(ch:isalive(), false, "wrong ACK cannot complete probe")
+		testaux.asserteq(ch.errstr, "PING timeout", "pending probe fails before peer closes")
+	end, {send_ping_timeout = 30, ping_timeout = 300})
+end)
+
+testaux.case("Test 65: Received frames postpone keepalive", function()
+	local ready = channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		local ch = testaux.await(ready, "client channel ready")
+		local function activity()
+			assert(conn:write(frame(0xfe, 0, 0) .. frame(6, 0, 0, "activity")))
+			while true do
+				local incoming = peer.untilframe(conn, 6)
+				if incoming.flags & 1 ~= 0 then
+					testaux.asserteq(incoming.data, "activity", "activity barrier processed")
+					return
+				end
+				-- A slow runner may legitimately become idle between inputs.
+				assert(conn:write(frame(6, 1, 0, incoming.data)))
+			end
+		end
+		for _ = 1, 6 do
+			activity()
+			testaux.elapse(20)
+		end
+		activity()
+		-- Drain any probe queued before the last activity barrier.
+		while ch.pingtoken do
+			local pending = peer.untilframe(conn, 6)
+			assert(conn:write(frame(6, 1, 0, pending.data)))
+			activity()
+		end
+		local lastrecvtime = ch.lastrecvtime
+		local ping = peer.untilframe(conn, 6)
+		testaux.asserteq(time.monotonic() - lastrecvtime >= 60, true, "probe follows a full idle interval after processed activity")
+		assert(conn:write(frame(6, 1, 0, ping.data)))
+	end, function(ch)
+		ready:push(assert(ch))
+	end, {send_ping_timeout = 60, ping_timeout = 1000})
+end)
+
+testaux.case("Test 67: PING works with exhausted connection and stream windows", function()
+	local received = false
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		local request = peer.untilframe(conn, 1)
+		local bytes = 0
+		while bytes < 65535 do
+			bytes = bytes + #peer.untilframe(conn, 0).data
+		end
+		local ping = peer.untilframe(conn, 6)
+		assert(conn:write(frame(6, 1, 0, ping.data) .. frame(6, 0, 0, "zero-win")))
+		local ack = peer.untilframe(conn, 6)
+		testaux.asserteq({ack.flags, ack.data}, {1, "zero-win"}, "ACK also bypasses exhausted windows")
+		received = true
+		assert(conn:write(frame(8, 0, 0, string.pack(">I4", 1)) .. frame(8, 0, request.id, string.pack(">I4", 1))))
+		testaux.asserteq(peer.untilframe(conn, 0).data, "b", "DATA resumes with both windows restored")
+	end, function(ch)
+		local s<close> = assert(assert(ch):request("POST", "/", {}))
+		assert(s:write(string.rep("a", 65535)))
+		assert(s:closewrite("b"))
+		testaux.asserteq(received, true, "PING bypassed flow control")
+	end, {send_ping_timeout = 30, ping_timeout = 500})
+end)
+
+testaux.case("Test 68: PING does not split outgoing HEADERS and CONTINUATION", function()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		local request = peer.untilframe(conn, 1)
+		while request.flags & 4 == 0 do
+			request = assert(peer.read(conn))
+			testaux.asserteq(request.type, 9, "header block stays contiguous")
+		end
+		local ping = peer.untilframe(conn, 6)
+		assert(conn:write(frame(6, 1, 0, ping.data)))
+		assert(conn:write(peer.headers(hpack.new(4096), request.id, "200")))
+	end, function(ch)
+		local s<close> = assert(assert(ch):request("GET", "/", {["x-large"] = string.rep("abcdef0123456789", 2500)}))
+		assert(s:closewrite())
+		testaux.asserteq(s:waitresponse(2000), true, "fragmented request survives probe")
+	end, {send_ping_timeout = 30, ping_timeout = 500})
+end)
+
+testaux.case("Test 69: Closing channel cancels all keepalive timers", function()
+	local snapshot = time._dump().timer_user_data
+	local captured
+	local ping_seen = channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		peer.untilframe(conn, 6)
+		ping_seen:push(true)
+		peer.untilframe(conn, 7)
+	end, function(ch)
+		captured = assert(ch)
+		testaux.await(ping_seen, "keepalive probe pending")
+		ch:close()
+	end, {send_ping_timeout = 30, ping_timeout = 500})
+	for _, user_data in pairs(snapshot) do
+		testaux.assertneq(user_data, captured, "no timer retains closed channel")
+	end
+end)
+
+testaux.case("Test 91: Keepalive can be enabled and disabled on an established channel", function()
+	local pending = channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		local ping = peer.untilframe(conn, 6)
+		pending:push(ping.data)
+		local request = peer.untilframe(conn, 1)
+		-- An ACK for the cancelled probe must not re-enable probing.
+		assert(conn:write(frame(6, 1, 0, ping.data)
+			.. peer.headers(hpack.new(4096), request.id, "200", {}, 4)
+			.. frame(0, 1, request.id, "ok")))
+	end, function(ch)
+		ch = assert(ch)
+		ch.lastrecvtime = time.monotonic() - 1000
+		ch:keepalive(30, 1000)
+		testaux.asserteq(ch.sendpingtimeout, 30, "method enables active probes")
+		local token = testaux.await(pending, "peer received the enabled probe")
+		testaux.asserteq(ch.pingtoken, token, "probe is outstanding before disabling")
+		ch:keepalive(0, 1000)
+		testaux.asserteq(ch.pingtoken, nil, "disabling cancels the outstanding probe")
+		testaux.asserteq(ch.timer, nil, "disabled idle channel has no scheduled timer")
+		local s<close> = get(ch)
+		testaux.asserteq(s:readall(2000), "ok", "channel remains usable after disabling")
+		testaux.asserteq(ch.sendpingtimeout, nil, "late ACK leaves probing disabled")
+	end)
+end)
+
+testaux.case("Test 92: Keepalive normalizes nonpositive timeouts and defaults only enabled probes", function()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		answer(conn, "ok")
+	end, function(ch)
+		ch = assert(ch)
+		testaux.asserteq(ch.sendpingtimeout, nil, "new channels have no receive interval")
+		testaux.asserteq(ch.pingtimeout, nil, "new channels have no ACK timeout")
+		for _, timeout in ipairs({0, -1, 1000}) do
+			ch:keepalive(60000, timeout)
+			testaux.asserteq(ch.sendpingtimeout, 60000, "positive receive interval is preserved")
+			testaux.asserteq(ch.pingtimeout, timeout > 0 and timeout or 15000,
+				"enabled probes default nonpositive ACK timeouts")
+		end
+		ch:keepalive(60000)
+		testaux.asserteq(ch.pingtimeout, 15000, "enabled probes default an omitted ACK timeout")
+		ch:keepalive(nil, 1234)
+		testaux.asserteq(ch.sendpingtimeout, nil, "nil receive interval disables probes")
+		testaux.asserteq(ch.pingtimeout, 1234, "specified positive ACK timeout is preserved")
+		testaux.asserteq(ch.timer, nil, "disabling probes cancels the timer")
+		for _, interval in ipairs({0, -1}) do
+			ch:keepalive(interval, interval)
+			testaux.asserteq(ch.sendpingtimeout, nil, "nonpositive receive interval becomes nil")
+			testaux.asserteq(ch.pingtimeout, nil, "disabled probes do not populate the ACK default")
+			testaux.asserteq(ch.timer, nil, "nonpositive interval leaves no timer")
+		end
+		ch:keepalive()
+		testaux.asserteq(ch.sendpingtimeout, nil, "omitted arguments disable probing")
+		testaux.asserteq(ch.pingtimeout, nil, "omitted arguments leave no ACK timeout")
+		testaux.asserteq(ch:isalive(), true, "reconfiguration preserves the connection")
+		local s<close> = get(ch)
+		testaux.asserteq(s:readall(2000), "ok", "channel remains usable after reconfiguration")
+	end)
+end)
+
+testaux.case("Test 93: Disabling keepalive preserves an active stream read deadline", function()
+	local pending, done = channel.new(), channel.new()
+	peer.withclient(function(conn)
+		peer.serverhandshake(conn)
+		peer.untilframe(conn, 1)
+		peer.untilframe(conn, 6)
+		pending:push(true)
+		while peer.read(conn) do
+		end
+	end, function(ch)
+		ch = assert(ch)
+		ch:keepalive(30, 1000)
+		local s<close> = get(ch)
+		task.fork(function()
+			local ok, err = s:waitresponse(150)
+			done:push({ok = ok, err = err})
+		end)
+		testaux.await(pending, "probe was sent while the response reader was waiting")
+		testaux.assertneq(s.readco, nil, "reader is registered before disabling probes")
+		ch:keepalive(0, 1000)
+		testaux.asserteq(ch.timer, nil, "disabling probes cancels only the channel timer")
+		local result = testaux.await(done, "response deadline survives disabling probes")
+		testaux.asserteq(result.ok, false, "response reader still times out")
+		testaux.assertneq(result.err, nil, "read deadline reports an error")
+		testaux.asserteq(ch:isalive(), true, "read timeout leaves the channel alive")
+		ch:close()
+	end)
+end)
+
+testaux.case("Test 102: Keepalive maintains at most one live channel timer through ACK and close", function()
+	local after, cancel = time.after, time.cancel
+	local pending, peak = {}, 0
+	time.after = function(delay, fn, arg, ...)
+		if type(arg) ~= "table" then
+			return after(delay, fn, arg, ...)
+		end
+		local owner = arg.sendhpack and arg
+		if not owner then
+			return after(delay, fn, arg, ...)
+		end
+		local id
+		id = after(delay, function(...)
+			pending[id] = nil
+			return fn(...)
+		end, arg, ...)
+		pending[id] = owner
+		local count = 0
+		for _, ch in pairs(pending) do
+			if ch == owner then
+				count = count + 1
+			end
+		end
+		peak = math.max(peak, count)
+		return id
+	end
+	time.cancel = function(id)
+		pending[id] = nil
+		return cancel(id)
+	end
+	local finished = channel.new()
+	local ok, err = pcall(function()
+		peer.withclient(function(conn)
+			peer.serverhandshake(conn)
+			for _ = 1, 3 do
+				local ping = peer.untilframe(conn, 6)
+				assert(conn:write(frame(6, 1, 0, ping.data)))
+			end
+			finished:push(true)
+			while peer.read(conn) do
+			end
+		end, function(ch)
+			local s<close> = get(assert(ch))
+			local response, cause = s:waitresponse(40)
+			testaux.asserteq(response, false, "read deadline expires independently of PING ACKs")
+			testaux.assertneq(cause, nil, "read timeout provides an error")
+			testaux.asserteq(ch:isalive(), true, "read timeout leaves the healthy channel alive")
+			testaux.await(finished, "three independent probe exchanges completed")
+			assert(ch):close()
+		end, {send_ping_timeout = 30, ping_timeout = 1000})
+	end)
+	time.after, time.cancel = after, cancel
+	if not ok then
+		error(err, 0)
+	end
+	testaux.asserteq(peak, 1, "only one scheduled health timer per channel")
+	testaux.asserteq(next(pending), nil, "closing clears the scheduled timer")
+end)
+
+testaux.case("Test 110: Matching ACK restarts idle timing without polling the pending probe", function()
+	local after, cancel, monotonic = time.after, time.cancel, time.monotonic
+	local captured, serial, cancelled = nil, 0, 0
+	local now, pending = monotonic(), {}
+	local probes, ackgate, activitygate = channel.new(), channel.new(), channel.new()
+	local wronggate, wrongdone = channel.new(), channel.new()
+	local requested = channel.new()
+	local acked, active, goawaygate, finish = channel.new(), channel.new(), channel.new(), channel.new()
+	time.monotonic = function()
+		return now
+	end
+	time.after = function(delay, fn, arg, ...)
+		if not captured or arg ~= captured then
+			return after(delay, fn, arg, ...)
+		end
+		serial = serial - 1
+		pending[serial] = {delay = delay, deadline = now + delay, fn = fn, arg = arg}
+		return serial
+	end
+	time.cancel = function(id)
+		if pending[id] then
+			pending[id] = nil
+			cancelled = cancelled + 1
+			return
+		end
+		return cancel(id)
+	end
+	local function fire(id)
+		local timer = assert(pending[id], "expected a scheduled channel timer")
+		pending[id] = nil
+		timer.fn(timer.arg)
+	end
+	local ok, err = pcall(function()
+		peer.withclient(function(conn)
+			peer.serverhandshake(conn)
+			local request = peer.untilframe(conn, 1)
+			requested:push(true)
+			local first = peer.untilframe(conn, 6)
+			probes:push(first.data)
+			testaux.await(wronggate, "release unmatched ACK", 2000)
+			assert(conn:write(frame(6, 1, 0, "wrongACK") .. frame(6, 0, 0, "bad-done")))
+			testaux.asserteq(peer.untilframe(conn, 6).data, "bad-done", "unmatched ACK processed")
+			wrongdone:push(true)
+			testaux.await(ackgate, "release matching ACK", 2000)
+			assert(conn:write(frame(6, 1, 0, first.data) .. frame(6, 1, 0, first.data)
+				.. frame(6, 0, 0, "ack-done")))
+			testaux.asserteq(peer.untilframe(conn, 6).data, "ack-done", "matching ACK processed")
+			acked:push(true)
+			testaux.await(activitygate, "release receive activity", 2000)
+			assert(conn:write(frame(6, 0, 0, "activity")))
+			testaux.asserteq(peer.untilframe(conn, 6).data, "activity", "receive time updated")
+			active:push(true)
+			probes:push(peer.untilframe(conn, 6).data)
+			testaux.await(goawaygate, "release graceful GOAWAY", 2000)
+			assert(conn:write(frame(7, 0, 0, string.pack(">I4I4", request.id, 0))))
+			testaux.await(finish, "finish accepted response", 2000)
+			assert(conn:write(peer.headers(hpack.new(4096), request.id, "200")))
+			while peer.read(conn) do
+			end
+		end, function(ch, _, observer)
+			captured = assert(ch)
+			local s = get(ch)
+			testaux.await(requested, "request received before probing")
+			ch:keepalive(100, 500)
+			testaux.asserteq(pending[ch.timer].delay, 100, "initial idle timer")
+			local previous = ch.timer
+			now = now + 20
+			ch:keepalive(60, 500)
+			testaux.asserteq(pending[previous], nil, "shorter interval cancels the old timer")
+			testaux.asserteq(pending[ch.timer].delay, 40, "shorter interval uses elapsed receive idle time")
+			previous = ch.timer
+			now = now + 10
+			ch:keepalive(200, 500)
+			testaux.asserteq(pending[previous], nil, "longer interval replaces the old timer")
+			testaux.asserteq(pending[ch.timer].delay, 170, "longer interval preserves elapsed idle time")
+			ch:keepalive(10, 500)
+			testaux.asserteq(pending[ch.timer].delay, -20, "elapsed receive interval passes through to time.after")
+			ch:keepalive(100, 500)
+			testaux.asserteq(pending[ch.timer].delay, 70, "reconfiguration never resets the receive clock")
+			local count = 0
+			for _ in pairs(pending) do
+				count = count + 1
+			end
+			testaux.asserteq(count, 1, "reconfiguration leaves exactly one timer")
+			cancelled = 0
+			now = now + 70
+			fire(ch.timer)
+			local token = testaux.await(probes, "first probe sent")
+			local timer = ch.timer
+			testaux.asserteq(pending[timer].delay, 500, "pending probe waits only for the ACK deadline")
+			now = now + 200
+			wronggate:push(true)
+			testaux.await(wrongdone, "unmatched ACK handled")
+			testaux.asserteq(ch.timer, timer, "unmatched ACK and receive activity leave the ACK timer alone")
+			testaux.asserteq(ch.pingtoken, token, "unmatched ACK leaves the probe outstanding")
+			testaux.asserteq(pending[timer].deadline, now + 300,
+				"receive activity never extends the ACK deadline")
+			now = now + 100
+			ackgate:push(true)
+			testaux.await(acked, "matching ACK handled")
+			testaux.asserteq(pending[timer], nil, "matching ACK cancels the old ACK timer")
+			testaux.assertneq(ch.timer, timer, "matching ACK schedules the next idle check")
+			testaux.asserteq(pending[ch.timer].delay, 100, "idle interval starts from ACK receive time")
+			testaux.asserteq(cancelled, 1, "duplicate ACK does not reset the timer twice")
+			testaux.asserteq(ch.pingtoken, nil, "ACK completes the outstanding probe")
+			timer = ch.timer
+			now = now + 50
+			activitygate:push(true)
+			testaux.await(active, "receive activity handled")
+			testaux.asserteq(ch.timer, timer, "ordinary receive activity leaves the idle timer alone")
+			now = now + 50
+			fire(timer)
+			testaux.asserteq(ch.pingtoken, nil, "early callback does not probe an active connection")
+			testaux.asserteq(pending[ch.timer].delay, 50, "callback adapts to the later receive time")
+			now = now + 50
+			fire(ch.timer)
+			testaux.assertneq(testaux.await(probes, "second probe sent"), token, "next probe uses a new token")
+			timer = ch.timer
+			goawaygate:push(true)
+			observer:waituntil(function()
+				return ch.goaway ~= 0
+			end, "graceful GOAWAY processed")
+			testaux.asserteq(ch.timer, timer, "GOAWAY leaves the pending timer alone")
+			testaux.asserteq(cancelled, 1, "only the matching ACK cancels a timer")
+			now = now + 500
+			fire(timer)
+			testaux.asserteq(ch.timer, nil, "callback stops scheduling after GOAWAY")
+			testaux.asserteq(ch.errstr, "Graceful shutdown", "GOAWAY suppresses the obsolete PING timeout")
+			finish:push(true)
+			testaux.asserteq(s:readall(2000), "", "accepted response survives graceful shutdown")
+			s:close()
+		end)
+	end)
+	time.after, time.cancel, time.monotonic = after, cancel, monotonic
+	if not ok then
+		error(err, 0)
+	end
+	testaux.asserteq(next(pending), nil, "no synthetic channel timer remains")
+end)
+
+testaux.case("Test 213: Go HTTP2 server ACKs Lua client keepalive during delayed response", function()
+	local client = http.newclient({alpnprotos = {"h2"}, send_ping_timeout = 30, ping_timeout = 100})
+	goserver("slow_response", {chunks = {"al", "ive"}, delay_ms = 200}, function(url)
+		local response, err = client:get(url)
+		assert(response, err)
+		testaux.asserteq(response.status, 200, "delayed Go response survives probes")
+	end)
+	client:close()
+end)
+
 end
 
 httpc:close()

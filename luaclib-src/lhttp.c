@@ -1149,6 +1149,36 @@ static int lframe_build_rst(lua_State *L)
 	return 1;
 }
 
+static uint64_t pingseq;
+
+//ping(flag, payload?): returns the complete frame and its eight-byte token.
+static int lframe_build_ping(lua_State *L)
+{
+	char frame[FRAME_HDR_SIZE + 8];
+	const char *payload = NULL;
+	size_t size;
+	uint64_t token;
+	int flag;
+	flag = luaL_checkinteger(L, 1);
+	if (!lua_isnoneornil(L, 2)) {
+		payload = luaL_checklstring(L, 2, &size);
+		luaL_argcheck(L, size == 8, 2, "PING payload must be eight bytes");
+	}
+	write_frame_header(frame, 8, FRAME_PING, flag, 0);
+	if (payload) {
+		memcpy(frame + FRAME_HDR_SIZE, payload, 8);
+	} else {
+		token = ++pingseq;
+		memcpy(frame + FRAME_HDR_SIZE, &token, sizeof(token));
+	}
+	lua_pushlstring(L, frame, sizeof(frame));
+	if (payload)
+		lua_pushvalue(L, 2);
+	else
+		lua_pushlstring(L, frame + FRAME_HDR_SIZE, 8);
+	return 2;
+}
+
 //goaway(last_stream_id, errorcode)
 static int lframe_build_goaway(lua_State *L)
 {
@@ -1176,6 +1206,7 @@ SILLY_MOD_API int luaopen_silly_http2_framebuilder(lua_State *L)
 		{ "winupdate", lframe_build_winupdate },
 		{ "rst",       lframe_build_rst       },
 		{ "goaway",    lframe_build_goaway    },
+		{ "ping",      lframe_build_ping      },
 		{ NULL,        NULL                   }
 	};
 	luaL_newlib(L, tbl);

@@ -40,4 +40,10 @@ function M.winupdate(id, flag, increment) end
 ---@return string
 function M.goaway(id, errorcode) end
 
+---@param flag integer
+---@param payload string? -- Eight bytes; omitted payload generates a unique token
+---@return string frame
+---@return string token
+function M.ping(flag, payload) end
+
 return M
