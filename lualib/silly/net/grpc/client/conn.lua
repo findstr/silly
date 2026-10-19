@@ -39,6 +39,8 @@ end
 ---@field scheme string
 ---@field robin integer
 ---@field closed boolean
+---@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms
+---@field ping_timeout integer? -- HTTP/2 probe timeout in ms
 ---@field [integer]silly.net.grpc.client.endpoint
 local conn = {}
 
@@ -75,6 +77,10 @@ local function newchannel(self, endpoint)
 	if not ch then
 		conn:close()
 		return nil, err
+	end
+	local send_ping_timeout = self.send_ping_timeout
+	if send_ping_timeout then
+		ch:keepalive(send_ping_timeout, self.ping_timeout)
 	end
 	endpoint.channel = ch
 	return ch, nil
@@ -122,6 +128,8 @@ local client_mt = {__index = conn, __close = conn.close}
 ---@class silly.net.grpc.client.conn.opts
 ---@field targets string[]
 ---@field tls boolean?
+---@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
+---@field ping_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 15000
 
 ---@param opts silly.net.grpc.client.conn.opts
 ---@return silly.net.grpc.client.conn?, string?
@@ -135,6 +143,8 @@ function conn.new(opts)
 		scheme = opts.tls and "https" or "http",
 		robin = 1,
 		closed = false,
+		send_ping_timeout = opts.send_ping_timeout,
+		ping_timeout = opts.ping_timeout,
 	}
 	for i = 1, #targets do
 		local target = targets[i]

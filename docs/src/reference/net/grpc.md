@@ -271,6 +271,8 @@ end)
   - `conf`: `table` - 客户端配置表
     - `targets`: `string[]` (必需) - gRPC 目标地址列表，格式 `"host:port"`（或 `dns://host:port`）
     - `tls`: `boolean|nil` (可选) - 是否使用 TLS，默认 false
+    - `send_ping_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
+    - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
 - **返回值**:
   - 成功: `conn` - gRPC 连接对象
   - 失败: `nil, string` - nil 和错误信息
@@ -1748,6 +1750,12 @@ service DataService {
 ```
 
 ---
+
+### HTTP/2 PING 保活
+
+`send_ping_timeout = 60000, ping_timeout = 15000` 表示 60 秒未收到帧时发起 PING，15 秒内仍未收到匹配 ACK 则关闭连接并唤醒等待者。接收帧会推迟下一次探测，发送数据不会重置接收空闲计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+
+默认关闭主动探测，仅客户端可以通过选项启用。两端都回复合法 PING；PING 不受 DATA 流控限制，也不会延长 HTTP 连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。
 
 ## 参见
 

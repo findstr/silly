@@ -71,7 +71,7 @@ function M.new(control, port)
 	function peer.headers(encoder, id, status, fields, flags)
 		return peer.frame(1, flags or 5, id, hpack.pack(encoder, fields or {}, ":status", status))
 	end
-	function peer.withclient(run, body)
+	function peer.withclient(run, body, opts)
 		local remote = open("listen")
 		local conn = assert(tcp.connect(remote.addr))
 		local done = channel.new()
@@ -89,6 +89,9 @@ function M.new(control, port)
 		local ok, err = pcall(function()
 			local cause
 			ch, cause = h2.newchannel("http", conn, "example.test")
+			if ch and opts then
+				ch:keepalive(opts.send_ping_timeout, opts.ping_timeout)
+			end
 			body(ch, cause, observer)
 		end)
 		if not ok then

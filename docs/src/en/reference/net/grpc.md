@@ -271,6 +271,8 @@ Create a gRPC connection pool.
   - `conf`: `table` - Client configuration table
     - `targets`: `string[]` (required) - List of gRPC targets, format `"host:port"` (or `dns://host:port`)
     - `tls`: `boolean|nil` (optional) - Whether to use TLS, default false
+    - `send_ping_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
+    - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 15000 when probes are enabled
 - **Returns**:
   - Success: `conn` - gRPC connection object
   - Failure: `nil, string` - nil and error message
@@ -1748,6 +1750,12 @@ service DataService {
 ```
 
 ---
+
+### HTTP/2 PING keepalive
+
+`send_ping_timeout = 60000, ping_timeout = 15000` starts a PING after 60 seconds without received frames. If no matching ACK arrives within 15 seconds, the connection closes and blocked callers wake. Received frames postpone the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run without active streams.
+
+Active probes are disabled by default and enabled only on clients. Both endpoints acknowledge valid PING requests. PING bypasses DATA flow control and does not extend the HTTP connection pool's `idle_timeout`. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).
 
 ## See Also
 

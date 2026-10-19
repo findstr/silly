@@ -20,7 +20,6 @@ local format = string.format
 local concat = table.concat
 local wakeup = task.wakeup
 local unpack = string.unpack
-local pack = string.pack
 local EEOF<const> = errno.EOF
 local ETIMEDOUT<const> = errno.TIMEDOUT
 local setmetatable = setmetatable
@@ -38,6 +37,7 @@ local build_rst = builder.rst
 local build_setting = builder.setting
 local build_winupdate = builder.winupdate
 local build_goaway = builder.goaway
+local build_ping = builder.ping
 
 local FRAME_DATA<const>		= 0
 local FRAME_HEADERS<const>	= 1
@@ -192,6 +192,11 @@ global _
 --- @field package goaway integer -- GOAWAY_LOCAL (sent) | GOAWAY_REMOTE (received)
 --- @field package goawaylast integer? -- Last stream ID received in peer GOAWAY
 --- @field package goawaysentlast integer? -- Preserve the cutoff when sending a later error GOAWAY
+--- @field package lastrecvtime integer
+--- @field package sendpingtimeout integer?
+--- @field package pingtimeout integer?
+--- @field package timer integer?
+--- @field package pingtoken string?
 --- @field package openwaitq silly.adt.queue<silly.net.http.h2.waiter>? -- Client only: created on first pending admission; cleared on transport closure
 
 local C = {}
@@ -282,6 +287,7 @@ local function newchannel(scheme, conn, authority, isclient)
 		--- misc
 		enablepush = false,
 		goaway = 0,
+		lastrecvtime = time.monotonic(),
 	}
 	return setmetatable(ch, channel_mt)
 end
@@ -314,6 +320,7 @@ local function read_frame(conn, ch)
 	else
 		dat = ""
 	end
+	ch.lastrecvtime = time.monotonic()
 	return t, f, dat, id
 end
 
@@ -617,6 +624,13 @@ local function channel_windebt(ch, increment)
 	end
 end
 
+local function channel_canceltimer(ch)
+	if ch.timer then
+		time.cancel(ch.timer)
+		ch.timer = nil
+	end
+end
+
 ---@param ch silly.net.http.h2.channel
 local function channel_checkclose(ch)
 	local conn = ch.conn
@@ -638,6 +652,7 @@ local function channel_checkclose(ch)
 	if openwaitq and openwaitq:size() > 0 then
 		return false
 	end
+	channel_canceltimer(ch)
 	channel_flushwrite(ch)
 	conn:close()
 	ch.conn = nil
@@ -709,6 +724,7 @@ local function channel_abort(ch, err)
 	if not conn then
 		return
 	end
+	channel_canceltimer(ch)
 	local errorcode
 	if type(err) == "number" then
 		errorcode = err
@@ -734,6 +750,52 @@ local function channel_abort(ch, err)
 	conn:close()
 	ch.conn = nil
 	ch.openwaitq = nil
+end
+
+local function channel_pingtimeout(ch)
+	ch.timer = nil
+	if ch.goaway ~= 0 then
+		return
+	end
+	channel_abort(ch, "PING timeout")
+end
+
+local function channel_idletimer(ch)
+	ch.timer = nil
+	if ch.goaway ~= 0 or not ch.sendpingtimeout then
+		return
+	end
+	local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
+	if delay > 0 then
+		ch.timer = time.after(delay, channel_idletimer, ch)
+		return
+	end
+	local dat
+	dat, ch.pingtoken = build_ping(0)
+	channel_write(ch, dat)
+	ch.timer = time.after(ch.pingtimeout, channel_pingtimeout, ch)
+end
+
+---@param ch silly.net.http.h2.channel.client
+---@param send_ping_timeout integer? -- Receive idle time in ms; nil or <= 0 disables probes
+---@param ping_timeout integer? -- ACK timeout in ms; nil or <= 0 uses 15000 when enabled
+function C.keepalive(ch, send_ping_timeout, ping_timeout)
+	channel_canceltimer(ch)
+	if ping_timeout and ping_timeout <= 0 then
+		ping_timeout = nil
+	end
+	if send_ping_timeout and send_ping_timeout > 0 then
+		ping_timeout = ping_timeout or 15000
+	else
+		send_ping_timeout = nil
+	end
+	ch.sendpingtimeout = send_ping_timeout
+	ch.pingtimeout = ping_timeout
+	ch.pingtoken = nil
+	if ch.conn and ch.goaway == 0 and ch.sendpingtimeout then
+		local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
+		ch.timer = time.after(delay, channel_idletimer, ch)
+	end
 end
 
 ---@param ch silly.net.http.h2.channel.client
@@ -1578,11 +1640,15 @@ local function frame_ping(ch, streamid, flag, dat)
 	end
 	-- RFC 7540 Section 6.7: If ACK flag is set, do not respond
 	if flag & ACK == ACK then
-		-- This is a PING response, do nothing
+		if ch.pingtoken == dat then
+			ch.pingtoken = nil
+			channel_canceltimer(ch)
+			channel_idletimer(ch)
+		end
 		return
 	end
-	-- Send PING response with ACK flag
-	channel_write(ch, pack(">I3I1I1I4", #dat, FRAME_PING, ACK, 0) .. dat)
+	-- Batch ACK with ready frames; sendbuf never waits for flow-control credit.
+	channel_write(ch, build_ping(ACK, dat))
 end
 
 ---@param ch silly.net.http.h2.channel

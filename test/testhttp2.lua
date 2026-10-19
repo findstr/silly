@@ -1532,6 +1532,68 @@ case("Test 114: Queued endstream validation returns an error without consuming a
 	ch:close()
 end)
 
+case("Test 37: HTTP2 client enables probes only for a positive receive interval", function()
+	for _, opts in ipairs({
+		{send_ping_timeout = 54321, ping_timeout = 2345},
+		{send_ping_timeout = 54321, ping_timeout = 0},
+		{send_ping_timeout = 54321, ping_timeout = -1},
+		{send_ping_timeout = 54321},
+		{send_ping_timeout = 0, ping_timeout = 2345},
+		{send_ping_timeout = -1, ping_timeout = 2345},
+		{ping_timeout = 2345},
+	}) do
+		opts.alpnprotos = {"h2"}
+		local client = http.newclient(opts)
+		server_handler = function(stream)
+			testaux.asserteq(stream.scheme, "https", "TLS listener passes https to H2")
+			testaux.asserteq(stream.channel.sendpingtimeout, nil, "server probes stay disabled")
+			testaux.asserteq(stream.channel.timer, nil, "server has no active probe timer")
+			stream:respond(200, {})
+			stream:closewrite("ok")
+		end
+		local stream = assert(client:request("GET", "https://127.0.0.1:8082/"))
+		local enabled = opts.send_ping_timeout and opts.send_ping_timeout > 0
+		testaux.asserteq(stream.channel.sendpingtimeout, enabled and opts.send_ping_timeout or nil,
+			"client enables only the configured positive receive interval")
+		if enabled then
+			local acktimeout = opts.ping_timeout
+			acktimeout = acktimeout and acktimeout > 0 and acktimeout or 15000
+			testaux.asserteq(stream.channel.pingtimeout, acktimeout,
+				"enabled probes normalize and default the ACK timeout")
+		end
+		testaux.asserteq(stream.channel.timer ~= nil, not not enabled,
+			"only an enabled client schedules a probe timer")
+		stream:closewrite()
+		assert(stream:waitresponse())
+		testaux.asserteq(stream:readall(), "ok", "configured connection remains usable")
+		stream:close()
+		client:close()
+		wait_done()
+	end
+end)
+
+testaux.case("Test 109: PING builder returns a complete frame and unique eight-byte token", function()
+	local builder = require "silly.http2.framebuilder"
+	local seen = {}
+	for _ = 1, 64 do
+		local wire, token = builder.ping(0)
+		local len, typ, flags, id = string.unpack(">I3I1I1I4", wire)
+		testaux.asserteq(#wire, 17, "PING contains one frame header and eight payload bytes")
+		testaux.asserteq({len, typ, flags, id}, {8, 6, 0, 0}, "probe frame header")
+		testaux.asserteq(#token, 8, "opaque token length")
+		testaux.asserteq(wire:sub(10), token, "returned token matches the wire payload")
+		testaux.asserteq(seen[token], nil, "each generated probe has a distinct token")
+		seen[token] = true
+		local ack, echoed = builder.ping(1, token)
+		testaux.asserteq(ack, "\x00\x00\x08\x06\x01\x00\x00\x00\x00" .. token, "ACK preserves every payload byte")
+		testaux.asserteq(echoed, token, "ACK reuses the supplied token")
+	end
+	local token = "\x00\xff\x80\x00\x01\x02\xfe\x00"
+	testaux.asserteq(builder.ping(1, token), "\x00\x00\x08\x06\x01\x00\x00\x00\x00" .. token, "opaque binary ACK payload")
+	testaux.assertneq(pcall(builder.ping, 1, "short"), true, "short payload rejected before copying")
+	testaux.assertneq(pcall(builder.ping, 1, "too-long!"), true, "long payload rejected before copying")
+end)
+
 -- Check h1 pool (should be empty since we only use h2)
 for key, entries in pairs(httpc.h1pool) do
 	testaux.asserteq(#entries, 0, "h1pool[" .. key .. "] should be empty")
