@@ -9,17 +9,18 @@ local M = {}
 M.DONE = 0
 
 ---Set thread limit
----@param limit integer
-function M.limit(limit) end
+---@param min integer
+---@param max integer
+function M.limit(min, max) end
 
 ---Prune idle threads
 function M.prune() end
 
 ---Spawn a new thread
----@param func function
+---@param code string
 ---@param ... any
 ---@return silly.hive.worker
-function M.spawn(func, ...) end
+function M.spawn(code, ...) end
 
 ---Push task to thread
 ---@param worker silly.hive.worker

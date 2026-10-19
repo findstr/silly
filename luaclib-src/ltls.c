@@ -11,7 +11,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
-#include <errno.h>
+#include <limits.h>
 
 #define UPVAL_ERROR_TABLE (1)
 #define META_CTX	"silly.tls.ctx"
@@ -50,11 +50,15 @@ struct ctx {
 
 struct tls {
 	void *meta;
-	silly_socket_id_t fd;
+	silly_socket_id_t fd; /* borrowed socket ID */
 	SSL *ssl;
 	BIO *in_bio;
 	BIO *out_bio;
-	struct buf buf;
+	struct buf readbuf;
+	struct buf writebuf;
+	int writelen;
+	int readenabled;
+	int err; /* Saved SSL_ERROR_*; transport errors stay in Lua. */
 };
 
 static inline void push_error(lua_State *L, int code)
@@ -62,43 +66,16 @@ static inline void push_error(lua_State *L, int code)
 	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
 }
 
-static void push_ssl_error(lua_State *L, silly_socket_id_t fd, int err)
+static inline int ssl_error(int err)
 {
-	if (err == SSL_ERROR_SSL) {
-		unsigned long e = ERR_get_error();
-		if (e != 0) {
-			char buf[256];
-			ERR_error_string_n(e, buf, sizeof(buf));
-			silly_log_error("[tls] openssl fd:%lu error: %s\n", (uint64_t)fd, buf);
-			push_error(L, EXTLS);
-			return;
-		}
-	}
 	switch (err) {
+	case SSL_ERROR_NONE:
+		return 0;
 	case SSL_ERROR_ZERO_RETURN:
-		push_error(L, EXEOF);
-		break;
-	case SSL_ERROR_SYSCALL:
-		if (errno != 0) {
-			push_error(L, errno);
-		} else {
-			silly_log_error("[tls] openssl fd:%lu syscall error (errno=0)\n", (uint64_t)fd);
-			push_error(L, EXTLS);
-		}
-		break;
+		return EXEOF;
 	default:
-		silly_log_error("[tls] openssl fd:%lu ssl error code:%d\n", (uint64_t)fd, err);
-		push_error(L, EXTLS);
-		break;
+		return EXTLS;
 	}
-}
-
-static inline void buf_init(struct buf *buf)
-{
-	buf->buf = NULL;
-	buf->offset = 0;
-	buf->size = 0;
-	buf->cap = 0;
 }
 
 static inline void buf_destroy(struct buf *buf)
@@ -115,23 +92,70 @@ static inline void buf_destroy(struct buf *buf)
 
 static void *buf_prepsize(struct buf *b, int size)
 {
-
+	size_t cap;
 	if (b->cap == 0) {
 		b->cap = BUF_SIZE;
 		b->buf = (uint8_t *)ssl_malloc(b->cap);
 	}
-	if (b->size + b->offset + size > b->cap) {
+	if (size > b->cap - b->offset - b->size) {
 		if (b->offset != 0) {
 			memmove(b->buf, b->buf + b->offset, b->size);
 			b->offset = 0;
 		}
-		b->cap = b->cap * 3 / 2; /* 1.5 */
-		if (b->cap < b->size + size) {
-			b->cap = b->size + size;
+		if (size > b->cap - b->size) {
+			cap = (size_t)b->cap + b->cap / 2;
+			b->cap = cap > INT_MAX ? INT_MAX : (int)cap;
+			if (b->cap < b->size + size) {
+				b->cap = b->size + size;
+			}
+			b->buf = ssl_realloc(b->buf, b->cap);
 		}
-		b->buf = ssl_realloc(b->buf, b->cap);
 	}
 	return b->buf + b->offset + b->size;
+}
+
+static inline void clear_write(struct tls *tls)
+{
+	buf_destroy(&tls->writebuf);
+	tls->writelen = 0;
+}
+
+static inline int read_error(struct tls *tls)
+{
+	if (tls->err != SSL_ERROR_NONE && tls->err != SSL_ERROR_ZERO_RETURN)
+		return ssl_error(tls->err);
+	if (tls->ssl == NULL)
+		return EXCLOSED;
+	return ssl_error(tls->err);
+}
+
+static inline int read_enable(struct tls *tls, int enable)
+{
+	if (tls->ssl == NULL)
+		return 0;
+	/* TLS progress and error draining must not be blocked by application limits. */
+	if (!enable && (tls->err != SSL_ERROR_NONE || tls->writebuf.size > 0 || SSL_in_init(tls->ssl)))
+		enable = 1;
+	if (tls->readenabled != enable) {
+		tls->readenabled = enable;
+		silly_socket_readenable(tls->fd, enable);
+	}
+	return enable;
+}
+
+static void log_error(struct tls *tls)
+{
+	unsigned long e;
+	char buf[256];
+	if (tls->err == SSL_ERROR_ZERO_RETURN)
+		return;
+	e = ERR_get_error();
+	if (e != 0) {
+		ERR_error_string_n(e, buf, sizeof(buf));
+		silly_log_error("[tls] openssl fd:%lu error: %s\n", (uint64_t)tls->fd, buf);
+	} else {
+		silly_log_error("[tls] openssl fd:%lu ssl error code:%d\n", (uint64_t)tls->fd, tls->err);
+	}
 }
 
 static struct ctx *new_ctx(lua_State *L, int mode, int ctx_count,
@@ -188,8 +212,8 @@ static struct tls *new_tls(lua_State *L, int64_t fd)
 	luaL_getmetatable(L, META_TLS);
 	memset(tls, 0, sizeof(*tls));
 	tls->fd = fd;
+	tls->readenabled = 1;
 	tls->meta = (void *)&new_tls;
-	buf_init(&tls->buf);
 	lua_setmetatable(L, -2);
 	return tls;
 }
@@ -210,7 +234,8 @@ static int ltls_free(lua_State *L)
 		SSL_free(tls->ssl);
 		tls->ssl = NULL;
 	}
-	buf_destroy(&tls->buf);
+	buf_destroy(&tls->readbuf);
+	clear_write(tls);
 	tls->meta = NULL;
 	return 0;
 }
@@ -473,6 +498,8 @@ static int ltls_open(lua_State *L)
 	tls->ssl = SSL_new(ctx->entries[0].ptr);
 	if (tls->ssl == NULL)
 		luaL_error(L, "SSL_new fail");
+	/* A blocked write is copied out of Lua before returning to its caller. */
+	SSL_set_mode(tls->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 	if (alpn_protos != NULL)
 		SSL_set_alpn_protos(tls->ssl, alpn_protos, alpn_size);
 	tls->in_bio = BIO_new(BIO_s_mem());
@@ -495,52 +522,67 @@ static int ltls_open(lua_State *L)
 	return 1;
 }
 
-static void read_line(lua_State *L, struct tls *tls, int delim)
+static inline int read_line(lua_State *L, struct tls *tls, int delim)
 {
 	uint8_t *s, *e, *x;
-	s = tls->buf.buf + tls->buf.offset;
-	e = s + tls->buf.size;
+	if (tls->readbuf.size == 0) {
+		lua_pushnil(L);
+		return 0;
+	}
+	s = tls->readbuf.buf + tls->readbuf.offset;
+	e = s + tls->readbuf.size;
 	x = memchr(s, delim, e - s);
 	if (x == NULL) {
 		lua_pushnil(L);
+		return 0;
 	} else {
 		size_t line_size = x - s + 1;
 		lua_pushlstring(L, (char *)s, line_size);
-		tls->buf.offset += line_size;
-		tls->buf.size -= line_size;
+		tls->readbuf.offset += line_size;
+		tls->readbuf.size -= line_size;
+		return 1;
 	}
 }
 
-static void read_bytes(lua_State *L, struct tls *tls, int size)
+static inline int read_bytes(lua_State *L, struct tls *tls, int size)
 {
-	if (size <= 0 || size > tls->buf.size) {
+	if (size <= 0 || size > tls->readbuf.size) {
 		lua_pushnil(L);
+		return 0;
 	} else {
-		lua_pushlstring(L, (char *)(tls->buf.buf + tls->buf.offset), size);
-		tls->buf.offset += size;
-		tls->buf.size -= size;
+		lua_pushlstring(L, (char *)(tls->readbuf.buf + tls->readbuf.offset), size);
+		tls->readbuf.offset += size;
+		tls->readbuf.size -= size;
+		return 1;
 	}
 }
 
 static int ltls_read(lua_State *L)
 {
+	int ok;
+	lua_Integer size;
 	struct luastr delim;
 	struct tls *tls = check_tls(L, 1);
 	switch (lua_type(L, 2)) {
 	case LUA_TNUMBER:
-		read_bytes(L, tls, lua_tointeger(L, 2));
+		size = luaL_checkinteger(L, 2);
+		luaL_argcheck(L, size >= 0 && size <= INT_MAX, 2, "read size exceeds native buffer range");
+		ok = read_bytes(L, tls, size);
 		break;
 	case LUA_TSTRING:
 		luastr_check(L, 2, &delim);
 		luaL_argcheck(L, delim.len == 1, 2, "delimiter length must be 1");
-		read_line(L, tls, delim.str[0]);
+		ok = read_line(L, tls, delim.str[0]);
 		break;
 	default:
 		return luaL_error(L, "invalid read argument type");
 	}
-	lua_pushinteger(L, tls->buf.size);
+	if (!ok) {
+		push_error(L, read_error(tls));
+	} else {
+		lua_pushnil(L);
+	}
 	return 2;
-
 }
 
 static int flushwrite(struct tls *tls)
@@ -555,20 +597,120 @@ static int flushwrite(struct tls *tls)
 	return silly_tcp_send(tls->fd, dat, sz, NULL);
 }
 
+static inline void queuewrite(struct tls *tls, const char *data, int size)
+{
+	struct buf *buf = &tls->writebuf;
+	memcpy(buf_prepsize(buf, size), data, size);
+	buf->size += size;
+}
+
+static int writedata(struct tls *tls, const char *data, int size)
+{
+	int ret, sslerr;
+	if (tls->writebuf.size > 0) {
+		queuewrite(tls, data, size);
+		return 0;
+	}
+	ERR_clear_error();
+	ret = SSL_write(tls->ssl, data, size);
+	if (ret > 0)
+		return 0;
+	sslerr = SSL_get_error(tls->ssl, ret);
+	if (sslerr != SSL_ERROR_WANT_READ && sslerr != SSL_ERROR_WANT_WRITE)
+		return sslerr;
+	/* Appends must not change the length of this unfinished SSL_write. */
+	tls->writelen = size;
+	queuewrite(tls, data, size);
+	return 0;
+}
+
+static int retrywrite(struct tls *tls)
+{
+	int ret, sslerr;
+	struct buf *buf = &tls->writebuf;
+	while (buf->size > 0) {
+		ERR_clear_error();
+		ret = SSL_write(tls->ssl, buf->buf + buf->offset, tls->writelen);
+		if (ret <= 0) {
+			sslerr = SSL_get_error(tls->ssl, ret);
+			if (sslerr == SSL_ERROR_WANT_READ || sslerr == SSL_ERROR_WANT_WRITE)
+				return 0;
+			return sslerr;
+		}
+		buf->offset += ret;
+		buf->size -= ret;
+		tls->writelen = buf->size;
+	}
+	clear_write(tls);
+	return 0;
+}
+
+static int ltls_close(lua_State *L)
+{
+	int ret, sslerr;
+	int err = 0;
+	struct tls *tls = check_tls(L, 1);
+	if (tls->ssl != NULL && lua_toboolean(L, 2)) {
+		/* Make a final attempt without waiting for more peer input. */
+		if (tls->err == SSL_ERROR_NONE && tls->writebuf.size > 0) {
+			sslerr = retrywrite(tls);
+			if (sslerr != 0) {
+				tls->err = sslerr;
+				log_error(tls);
+			}
+		}
+		if ((tls->err == SSL_ERROR_NONE || tls->err == SSL_ERROR_ZERO_RETURN) &&
+		    tls->writebuf.size == 0 && !SSL_in_init(tls->ssl)) {
+			ERR_clear_error();
+			ret = SSL_shutdown(tls->ssl);
+			/* Zero means our close_notify was sent; do not wait for the reply. */
+			if (ret < 0) {
+				sslerr = SSL_get_error(tls->ssl, ret);
+				if (sslerr != SSL_ERROR_WANT_READ && sslerr != SSL_ERROR_WANT_WRITE) {
+					tls->err = sslerr;
+					log_error(tls);
+				}
+			}
+		}
+		ret = flushwrite(tls);
+		if (ret < 0)
+			err = -ret;
+	}
+	if (tls->ssl != NULL) {
+		SSL_free(tls->ssl);
+		tls->ssl = NULL;
+	}
+	buf_destroy(&tls->readbuf);
+	clear_write(tls);
+	if (tls->err != SSL_ERROR_NONE && tls->err != SSL_ERROR_ZERO_RETURN)
+		err = ssl_error(tls->err);
+	push_error(L, err);
+	return 1;
+}
+
 static int ltls_write(lua_State *L)
 {
 	size_t sz;
 	struct tls *tls;
 	const char *str;
-	int ret = 1;
+	int ret, type;
+	int err = 0;
 	int sslerr = 0;
 	tls = check_tls(L, 1);
-	ERR_clear_error();
-	switch (lua_type(L, 2)) {
+	type = lua_type(L, 2);
+	if (type != LUA_TSTRING && type != LUA_TTABLE)
+		return luaL_error(L, "invalid data type");
+	if ((tls->err != SSL_ERROR_NONE && tls->err != SSL_ERROR_ZERO_RETURN) || tls->ssl == NULL) {
+		lua_pushboolean(L, 0);
+		push_error(L, read_error(tls));
+		return 2;
+	}
+	switch (type) {
 	case LUA_TSTRING: {
 		str = luaL_checklstring(L, 2, &sz);
+		luaL_argcheck(L, sz <= (size_t)(INT_MAX - tls->writebuf.size), 2, "TLS write is too large");
 		if (sz > 0) {
-			ret = SSL_write(tls->ssl, str, sz);
+			sslerr = writedata(tls, str, sz);
 		}
 		break;
 	}
@@ -579,97 +721,230 @@ static int ltls_write(lua_State *L)
 		for (i = 1; i <= n; i++) {
 			lua_geti(L, 2, i);
 			str = luaL_checklstring(L, -1, &sz);
+			luaL_argcheck(L, sz <= (size_t)(INT_MAX - tls->writebuf.size), 2, "TLS write is too large");
 			if (sz == 0) {
 				lua_pop(L, 1);
 				continue;
 			}
-			ret = SSL_write(tls->ssl, str, sz);
+			sslerr = writedata(tls, str, sz);
 			lua_pop(L, 1);
-			if (ret <= 0)
+			if (sslerr != 0)
 				break;
 		}
 		break;
 	}
-	default:
-		return luaL_error(L, "invalid data type");
 	}
-	if (ret <= 0) {
-		sslerr = SSL_get_error(tls->ssl, ret);
-		lua_pushboolean(L, 0);
-		push_ssl_error(L, tls->fd, sslerr);
-		return 2;
+	if (sslerr != 0) {
+		tls->err = sslerr;
+		log_error(tls);
+		err = ssl_error(sslerr);
 	}
 	ret = flushwrite(tls);
-	lua_pushboolean(L, ret >= 0);
-	if (ret < 0)
-		push_error(L, -ret);
-	else
-		lua_pushnil(L);
+	if (err == 0 && ret < 0)
+		err = -ret;
+	read_enable(tls, tls->readenabled || err != 0);
+	lua_pushboolean(L, err == 0);
+	push_error(L, err);
 	return 2;
 }
 
 static int ltls_handshake(lua_State *L)
 {
-	int ret;
-	int sslerr;
-	struct tls *tls;
-	tls = check_tls(L, 1);
+	int ret, sslerr, sent;
+	int err = 0;
+	struct tls *tls = check_tls(L, 1);
+	if ((tls->err != SSL_ERROR_NONE && tls->err != SSL_ERROR_ZERO_RETURN) || tls->ssl == NULL) {
+		lua_pushinteger(L, 0);
+		push_error(L, read_error(tls));
+		return 2;
+	}
 	ERR_clear_error();
 	ret = SSL_do_handshake(tls->ssl);
-	// 1:success 0:error <0:continue
-	if (ret == 1) { // success
+	if (ret <= 0) {
+		sslerr = SSL_get_error(tls->ssl, ret);
+		if (sslerr != SSL_ERROR_WANT_READ && sslerr != SSL_ERROR_WANT_WRITE) {
+			tls->err = sslerr;
+			log_error(tls);
+			err = ssl_error(sslerr);
+			if (sslerr != SSL_ERROR_ZERO_RETURN)
+				clear_write(tls);
+		}
+	}
+	sent = flushwrite(tls);
+	if (err == 0 && sent < 0)
+		err = -sent;
+	read_enable(tls, tls->readenabled || err != 0);
+	if (err != 0) {
+		lua_pushinteger(L, 0);
+		push_error(L, err);
+	} else if (ret == 1) {
 		unsigned int len;
 		const unsigned char *data;
 		lua_pushinteger(L, 1);
 		SSL_get0_alpn_selected(tls->ssl, &data, &len);
 		lua_pushlstring(L, (const char *)data, len);
 	} else {
-		sslerr = SSL_get_error(tls->ssl, ret);
-		if (sslerr == SSL_ERROR_WANT_READ ||
-		    sslerr == SSL_ERROR_WANT_WRITE) {
-			lua_pushinteger(L, -1);
-			lua_pushnil(L);
-		} else {
-			lua_pushinteger(L, 0);
-			push_ssl_error(L, tls->fd, sslerr);
-		}
-	}
-	ret = flushwrite(tls);
-	if (ret < 0) {
-		lua_pop(L, 2);
-		lua_pushinteger(L, 0);
-		push_error(L, -ret);
+		lua_pushinteger(L, -1);
+		lua_pushnil(L);
 	}
 	return 2;
 }
 
 static int ltls_push(lua_State *L)
 {
-	struct tls *tls = check_tls(L, 1);
-	struct buf *buf = &tls->buf;
-	char *str = lua_touserdata(L, 2);
-	int size = luaL_checkinteger(L, 3);
-	BIO_write(tls->in_bio, str, size);
+	struct tls *tls;
+	struct buf *buf;
+	char *str;
+	lua_Integer input_size;
+	int size, n, sslerr, ret;
+	int err = 0;
+	tls = check_tls(L, 1);
+	luaL_checktype(L, 2, LUA_TLIGHTUSERDATA);
+	input_size = luaL_checkinteger(L, 3);
+	luaL_argcheck(L, input_size >= 0 && input_size <= INT_MAX, 3, "invalid input size");
+	buf = &tls->readbuf;
+	str = lua_touserdata(L, 2);
+	size = (int)input_size;
+	luaL_argcheck(L, str != NULL || size == 0, 2, "null data pointer");
+	err = read_error(tls);
+	if (err != 0) {
+		silly_free(str);
+		lua_pushinteger(L, buf->size);
+		push_error(L, err == EXEOF ? 0 : err);
+		return 2;
+	}
+	n = BIO_write(tls->in_bio, str, size);
 	silly_free(str);
+	if (n != size) {
+		tls->err = SSL_ERROR_SSL;
+		log_error(tls);
+		clear_write(tls);
+		err = EXTLS;
+		goto end;
+	}
+	if (tls->writebuf.size > 0) {
+		sslerr = retrywrite(tls);
+		if (sslerr != 0) {
+			tls->err = sslerr;
+			log_error(tls);
+			clear_write(tls);
+			err = ssl_error(sslerr);
+			goto end;
+		}
+	}
 	for (;;) {
-		buf_prepsize(buf, BUF_SIZE);
-		uint8_t *s = buf->buf + buf->offset + buf->size;
-		uint8_t *e = buf->buf + buf->cap;
-		int n = SSL_read(tls->ssl, s, e - s);
-		if (n <= 0)
+		uint8_t *s, *e;
+		if (BUF_SIZE > INT_MAX - buf->size) {
+			tls->err = SSL_ERROR_SSL;
+			clear_write(tls);
+			silly_log_error("[tls] receive buffer exceeds INT_MAX fd:%lu\n", (uint64_t)tls->fd);
+			err = EXTLS;
+			goto end;
+		}
+		s = buf_prepsize(buf, BUF_SIZE);
+		e = buf->buf + buf->cap;
+		ERR_clear_error();
+		n = SSL_read(tls->ssl, s, e - s);
+		if (n <= 0) {
+			sslerr = SSL_get_error(tls->ssl, n);
 			break;
+		}
 		buf->size += n;
 	}
+	if (sslerr == SSL_ERROR_ZERO_RETURN) {
+		tls->err = sslerr;
+		if (tls->writebuf.size > 0) {
+			/* Reading may have completed the handshake that blocked this write. */
+			sslerr = retrywrite(tls);
+			if (sslerr != 0) {
+				tls->err = sslerr;
+				log_error(tls);
+				clear_write(tls);
+				err = ssl_error(sslerr);
+			}
+			if (tls->writebuf.size > 0) {
+				clear_write(tls);
+				err = EXEOF;
+			}
+		}
+	} else if (sslerr != SSL_ERROR_WANT_READ && sslerr != SSL_ERROR_WANT_WRITE) {
+		tls->err = sslerr;
+		log_error(tls);
+		clear_write(tls);
+		err = ssl_error(sslerr);
+	}
+end:
+	// Reads may generate handshake messages, alerts or KeyUpdate responses.
+	ret = flushwrite(tls);
+	if (err == 0 && ret < 0)
+		err = -ret;
+	read_enable(tls, tls->readenabled || err != 0);
 	lua_pushinteger(L, buf->size);
+	push_error(L, err);
+	return 2;
+}
+
+static int ltls_readenable(lua_State *L)
+{
+	int enable;
+	struct tls *tls;
+	tls = check_tls(L, 1);
+	enable = lua_toboolean(L, 2);
+	lua_pushboolean(L, read_enable(tls, enable));
+	return 1;
+}
+
+static int ltls_error(lua_State *L)
+{
+	struct tls *tls = check_tls(L, 1);
+	push_error(L, read_error(tls));
 	return 1;
 }
 
 static int ltls_size(lua_State *L)
 {
 	struct tls *tls = check_tls(L, 1);
-	lua_pushinteger(L, tls->buf.size);
+	lua_pushinteger(L, tls->readbuf.size);
 	return 1;
 }
+
+static int ltls_sendsize(lua_State *L)
+{
+	lua_Integer size = 0;
+	struct tls *tls = check_tls(L, 1);
+	if (tls->ssl != NULL)
+		size = (lua_Integer)tls->writebuf.size + silly_socket_sendsize(tls->fd);
+	lua_pushinteger(L, size);
+	return 1;
+}
+
+#ifdef SILLY_TEST
+static int dbg_ininit(lua_State *L)
+{
+	struct tls *tls = check_tls(L, 1);
+	lua_pushboolean(L, tls->ssl != NULL && SSL_in_init(tls->ssl));
+	return 1;
+}
+
+static int dbg_readsize(lua_State *L)
+{
+	struct tls *tls;
+	lua_Integer size;
+	tls = check_tls(L, 1);
+	size = luaL_checkinteger(L, 2);
+	luaL_argcheck(L, size >= 0 && size <= INT_MAX, 2, "invalid buffer size");
+	lua_pushinteger(L, tls->readbuf.size);
+	tls->readbuf.size = size;
+	return 1;
+}
+
+static int dbg_readcap(lua_State *L)
+{
+	struct tls *tls = check_tls(L, 1);
+	lua_pushinteger(L, tls->readbuf.cap);
+	return 1;
+}
+#endif
 
 #endif
 
@@ -719,15 +994,23 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 {
 	luaL_Reg tbl[] = {
 #ifdef USE_OPENSSL
-		{ "open",      ltls_open      },
-		{ "close",     ltls_free      },
-		{ "read",      ltls_read      },
-		{ "write",     ltls_write     },
-		{ "handshake", ltls_handshake },
-		{ "push",      ltls_push      },
-		{ "size",      ltls_size      },
+		{ "open",        ltls_open        },
+		{ "close",       ltls_close       },
+		{ "read",        ltls_read        },
+		{ "write",       ltls_write       },
+		{ "handshake",   ltls_handshake   },
+		{ "push",        ltls_push        },
+		{ "size",        ltls_size        },
+		{ "sendsize",    ltls_sendsize    },
+		{ "readenable",  ltls_readenable  },
+		{ "error",       ltls_error       },
+#ifdef SILLY_TEST
+		{ "dbg_ininit",   dbg_ininit       },
+		{ "dbg_readsize", dbg_readsize     },
+		{ "dbg_readcap",  dbg_readcap      },
 #endif
-		{ NULL,        NULL           },
+#endif
+		{ NULL,          NULL             },
 	};
 
 	luaL_checkversion(L);

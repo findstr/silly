@@ -441,7 +441,7 @@ end)
 Reads exactly `n` bytes, or reads until a delimiter is found (asynchronous). Transparently handles TLS decryption.
 
 - **Parameters**:
-  - `n`: `integer|string` - byte count to read, or a delimiter string to read until (including the delimiter)
+  - `n`: `integer|string` - byte count up to `2^31-1`, or a delimiter string (including the delimiter)
   - `timeout`: `integer|nil` (optional) - per-call timeout in milliseconds
 - **Returns**:
   - Success: `string` - the data read
@@ -453,10 +453,13 @@ Reads exactly `n` bytes, or reads until a delimiter is found (asynchronous). Tra
 Writes data through the TLS encryption layer to the peer. Buffered by the framework and flushed asynchronously; the call itself does not yield.
 
 - **Parameters**:
-  - `data`: `string|string[]` - a string or an array of string fragments (zero-copy)
+  - `data`: `string|string[]` - a string or an array of string fragments
 - **Returns**:
   - Success: `true`
   - Failure: `false, silly.errno` - typically `errno.CLOSED` or `errno.TLS`
+
+`conn:close()` makes a final send attempt and sends a TLS closure notification when possible,
+without waiting for a reply; pending data may be discarded.
 
 ### conn:isalive()
 
@@ -527,10 +530,11 @@ end)
 
 ### conn:limit(size)
 
-Set read buffer limit. Suspend reading when buffer size exceeds the limit.
+Set the read buffer limit. Reception pauses when buffered data reaches the limit,
+except while a read or TLS write needs more input. Pass `nil` to remove the limit.
 
 - **Parameters**:
-  - `size`: `integer` - Limit size (bytes)
+  - `size`: `integer?` - Limit size (bytes)
 
 ### conn:unreadbytes()
 
@@ -590,6 +594,10 @@ print("Remote address:", conn.remoteaddr)
 ### Common Errors
 
 Errors returned from `conn:read`/`conn:write` and `tls.connect`/`tls.listen` are [`silly.errno`](../errno.md) values. In addition to the standard transport errors (`errno.EOF`, `errno.CLOSED`, `errno.TIMEDOUT`, …), TLS-specific failures (certificate mismatch, handshake protocol error, cipher negotiation failure, etc.) are reported as `errno.TLS`. For the specific OpenSSL reason, inspect the server log lines prefixed with `[tls] openssl fd:...`.
+
+After a fatal TLS error, `conn:isalive()` returns false. Call `conn:close()` to
+release the connection.
+A clean TLS EOF ends reads with `errno.EOF` while allowing a response to be sent.
 
 - **Cause**: certificate configuration error, untrusted certificate, cipher-suite mismatch
 - **Solution**: verify PEM format, use a trusted CA, configure compatible cipher suites

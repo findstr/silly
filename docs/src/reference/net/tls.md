@@ -441,7 +441,7 @@ end)
 精确读取 `n` 字节，或读取直到分隔符（异步）。底层自动处理 TLS 解密。
 
 - **参数**:
-  - `n`: `integer|string` - 要读取的字节数，或分隔符字符串（返回值包含分隔符本身）
+  - `n`: `integer|string` - 要读取的字节数，最大为 `2^31-1`，或分隔符字符串（返回值包含分隔符本身）
   - `timeout`: `integer|nil` (可选) - 本次读取的超时（毫秒）
 - **返回值**:
   - 成功: `string` - 读到的数据
@@ -453,10 +453,12 @@ end)
 经由 TLS 加密层向对端写数据。由框架缓冲、异步发送；本调用本身不会 yield。
 
 - **参数**:
-  - `data`: `string|string[]` - 单个字符串，或字符串数组（零拷贝）
+  - `data`: `string|string[]` - 单个字符串，或字符串数组
 - **返回值**:
   - 成功: `true`
   - 失败: `false, silly.errno` - 通常为 `errno.CLOSED` 或 `errno.TLS`
+
+`conn:close()` 尽力发送后关闭，条件允许时发送 TLS 关闭通知，不等待对端回复，剩余数据可能丢弃。
 
 ### conn:isalive()
 
@@ -527,10 +529,11 @@ end)
 
 ### conn:limit(size)
 
-设置读取缓冲区限制。当缓冲区大小超过限制时，暂停读取。
+设置读取缓冲区限制。缓冲数据达到限制时暂停接收，但读取或 TLS 写入仍需更多输入时不受此限制。
+传入 `nil` 取消限制。
 
 - **参数**:
-  - `size`: `integer` - 限制大小（字节）
+  - `size`: `integer?` - 限制大小（字节）
 
 ### conn:unreadbytes()
 
@@ -590,6 +593,9 @@ print("Remote address:", conn.remoteaddr)
 ### 常见错误
 
 `conn:read`/`conn:write`、`tls.connect`/`tls.listen` 返回的错误都是 [`silly.errno`](../errno.md) 值。除了标准传输错误（`errno.EOF`、`errno.CLOSED`、`errno.TIMEDOUT` 等）之外，TLS 特有失败（证书不匹配、握手协议错误、加密套件协商失败等）统一记为 `errno.TLS`。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
+
+发生致命 TLS 错误后，`conn:isalive()` 返回假值，调用方须调用 `conn:close()` 释放连接。
+收到对端的 TLS 关闭通知后，读取返回 `errno.EOF`，仍可发送响应。
 
 - **原因**: 证书配置错误、对端不信任证书、加密套件不匹配
 - **解决**: 检查 PEM 格式、使用受信任 CA、配置兼容的加密套件

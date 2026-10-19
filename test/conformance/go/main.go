@@ -5,6 +5,7 @@ import (
 	"conformance/http2peer"
 	"conformance/httpclient"
 	"conformance/httpserver"
+	"conformance/tlspeer"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -30,6 +31,32 @@ func main() {
 	defer peers.CloseAll()
 
 	handlers := map[string]control.Handler{
+		"tls_readclose": func(cmd *control.Command) *control.Response {
+			addr, _ := cmd.Params["addr"].(string)
+			version, _ := cmd.Params["version"].(float64)
+			result, err := tlspeer.ReadClose(addr, uint16(version))
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
+		"tls_closeaftererror": func(cmd *control.Command) *control.Response {
+			addr, _ := cmd.Params["addr"].(string)
+			result, err := tlspeer.CloseAfterError(addr)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
+		"tls_closewrite": func(cmd *control.Command) *control.Response {
+			addr, _ := cmd.Params["addr"].(string)
+			version, _ := cmd.Params["version"].(float64)
+			result, err := tlspeer.CloseWrite(addr, uint16(version))
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"http2_peer": func(cmd *control.Command) *control.Response {
 			result, err := peers.Handle(cmd.Params)
 			if err != nil {

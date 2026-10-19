@@ -23,13 +23,9 @@ prune_timer = function()
 end
 prune_timer()
 
----@type fun(min:integer, max:integer)
 M.limit = c.limit
----@type fun():integer
 M.threads = c.threads
----@type fun(code:string, ...):silly.hive.worker
 M.spawn = c.spawn
----@type fun()
 M.prune = c.prune
 
 ---@param worker silly.hive.worker

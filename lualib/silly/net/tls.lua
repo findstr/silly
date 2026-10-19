@@ -12,7 +12,6 @@ local error = error
 local ipairs = ipairs
 local type = type
 local pairs = pairs
-local assert = assert
 local setmetatable = setmetatable
 local concat = table.concat
 local char = string.char
@@ -21,9 +20,11 @@ global _
 
 local wait = task.wait
 local running = task.running
-local readenable = net.readenable
+local readenable = tls.readenable
+local free = net.free
 local wakeup = task.wakeup
 local monotonic = time.monotonic
+local pcall = silly.pcall
 
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1
@@ -48,12 +49,11 @@ local M = {}
 ---@field fd integer?
 ---@field remoteaddr string
 ---@field package co thread?
----@field package err silly.errno?
+---@field package err silly.errno? -- saved I/O error or owner close
 ---@field package alpn string?
 ---@field package ssl any
 ---@field package buflimit integer?
 ---@field package delim string|integer|table|nil
----@field package readpause boolean
 local conn = {}
 
 ---@class silly.net.tls.listener
@@ -96,6 +96,7 @@ local listener_mt = {
 
 ---@param fd integer
 ---@param remoteaddr string
+---@param ctx any
 ---@param hostname string?
 ---@param alpnprotos silly.net.tls.alpn_proto[]?
 ---@return silly.net.tls.conn
@@ -114,25 +115,26 @@ local function new_socket(fd, remoteaddr, ctx, hostname, alpnprotos)
 		alpn = nil,
 		buflimit = nil,
 		delim = nil,
-		readpause = false,
 	}, conn_mt)
-	assert(not conn_pool[fd])
+	if conn_pool[fd] then
+		error("TLS socket already registered", 2)
+	end
 	conn_pool[fd] = s
 	return s
 end
 
-local function check_limit(s, buflimit, size)
-	local readpause = s.readpause
-	if readpause then
-		if size < buflimit then
-			s.readpause = false
-			readenable(s.fd, true)
-		end
-	else
-		if size >= buflimit then
-			s.readpause = true
-			readenable(s.fd, false)
-		end
+---@param s silly.net.tls.conn
+---@param size integer?
+local function can_pause(s, size)
+	local limit = s.buflimit
+	return limit and not s.co and not s.err and (size or tls.size(s.ssl)) >= limit
+end
+
+---@param s silly.net.tls.conn
+---@param size integer?
+local function pause_read(s, size)
+	if can_pause(s, size) then
+		readenable(s.ssl, false)
 	end
 end
 
@@ -160,6 +162,7 @@ local function read_timer(s)
 	if co then
 		s.co = nil
 		s.delim = nil
+		pause_read(s)
 		wakeup(co, TIMEOUT)
 	end
 end
@@ -167,11 +170,14 @@ end
 ---@param s silly.net.tls.conn
 ---@return string?, silly.errno? error
 local function block_read(s, delim, timeout)
+	if s.co then
+		error("TLS connection already has a reader", 2)
+	end
 	local err = s.err
 	if not err then
-		assert(not s.co)
 		s.delim = delim
 		s.co = running()
+		readenable(s.ssl, true)
 		local dat
 		if not timeout then
 			dat = wait()
@@ -186,7 +192,7 @@ local function block_read(s, delim, timeout)
 		if dat then
 			return dat, nil
 		end
-		err = s.err
+		err = s.err or tls.error(s.ssl)
 	end
 	return nil, err
 end
@@ -216,7 +222,7 @@ accept = function(fd, listenid, addr)
 		s:close()
 		return
 	end
-	local ok, err = silly.pcall(lc.accept, s)
+	local ok, err = pcall(lc.accept, s)
 	if not ok then
 		logger.error(err)
 		s:close()
@@ -230,7 +236,9 @@ close = function(fd, err)
 	if s == nil then
 		return
 	end
-	s.err = err
+	if err and not s.err then
+		s.err = err
+	end
 	local co = s.co
 	if co then
 		s.co = nil
@@ -242,39 +250,42 @@ end,
 data = function(fd, ptr, size)
 	local s = conn_pool[fd]
 	if not s then
+		free(ptr)
 		return
 	end
-	local total_size = tls.push(s.ssl, ptr, size)
+	local total, err = tls.push(s.ssl, ptr, size)
+	if err then
+		s.err = err
+	end
 	local delim = s.delim
-	if delim == HANDSHAKE then
-		local ret, alpnproto = tls.handshake(s.ssl)
-		-- 1:success 0:error <0:continue
-		if ret >= 0 then
-			local res
-			if ret == 1 then -- success
-				res = ""
+	if delim then
+		local dat, readerr
+		if delim ~= HANDSHAKE then
+			dat, readerr = tls.read(s.ssl, delim)
+		elseif not err then
+			-- Finished and close_notify may arrive in the same input.
+			local ret, alpnproto = tls.handshake(s.ssl)
+			if ret == HANDSHAKE_ERROR then
+				err = alpnproto
+				s.err = err
+			elseif ret == HANDSHAKE_OK then
+				dat = ""
 				s.alpn = alpnproto
-			else
-				s.err = alpnproto
 			end
-			s.delim = nil
-			local co = s.co
-			s.co = nil
-			wakeup(co, res)
 		end
-	elseif delim then
-		local dat
-		dat, total_size = tls.read(s.ssl, delim)
-		if dat then
+		if dat or readerr or err then
 			local co = s.co
 			s.delim = nil
 			s.co = nil
+			if dat then
+				total = total - #dat
+			end
+			readenable(s.ssl, true)
 			wakeup(co, dat)
 		end
 	end
-	local limit = s.buflimit
-	if limit then
-		check_limit(s, limit, total_size)
+	if s.buflimit then
+		pause_read(s, total)
 	end
 end
 }
@@ -332,7 +343,9 @@ local function new_server_ctx(conf)
 		alpnstr = wire_alpn_protos(alpns)
 	end
 	local c, err = ctx.server(conf.certs, conf.ciphers, alpnstr)
-	assert(c, err)
+	if not c then
+		error(err, 2)
+	end
 	return c
 end
 
@@ -347,9 +360,15 @@ function M.listen(opts)
 	local addr = opts.addr
 	local accept = opts.accept
 	local certs = opts.certs
-	assert(addr, "tls.listen missing addr")
-	assert(type(accept) == "function", "tls.listen missing accept")
-	assert(#certs > 0, "tls.listen missing certs")
+	if not addr then
+		error("tls.listen missing addr", 2)
+	end
+	if type(accept) ~= "function" then
+		error("tls.listen missing accept", 2)
+	end
+	if #certs == 0 then
+		error("tls.listen missing certs", 2)
+	end
 	local fd, err = net.tcplisten(addr, EVENT, opts.backlog)
 	if not fd then
 		return nil, err
@@ -399,33 +418,42 @@ end
 ---@param limit integer|nil
 function conn.limit(s, limit)
 	s.buflimit = limit
-	if limit then
-		check_limit(s, limit, tls.size(s.ssl))
-	elseif s.readpause then
-		s.readpause = false
-		readenable(s.fd, true)
+	if not s.fd then
+		return
 	end
+	readenable(s.ssl, not can_pause(s))
 end
 
 ---@param s silly.net.tls.conn
+---@param notify boolean?
 ---@return boolean, silly.errno? error
-function conn.close(s)
+local function close(s, notify)
 	local fd = s.fd
 	if not fd then
 		return false, ECLOSED
 	end
 	s.fd = nil
 	conn_pool[fd] = nil
+	local err = tls.close(s.ssl, notify)
+	if not s.err then
+		s.err = err or ECLOSED
+	end
 	local co = s.co
 	if co then
-		s.err = ECLOSED
 		s.co = nil
 		s.delim = nil
 		wakeup(co, nil)
 	end
 	return net.close(fd)
 end
-conn_mt.__gc = conn.close
+
+---@param s silly.net.tls.conn
+---@return boolean, silly.errno? error
+function conn.close(s)
+	return close(s, true)
+end
+-- VM finalizers may run after the socket thread has stopped.
+conn_mt.__gc = close
 conn_mt.__close = conn.close
 
 ---@param s silly.net.tls.conn
@@ -434,15 +462,17 @@ conn_mt.__close = conn.close
 ---@return string?, silly.errno? error
 function conn.read(s, n, timeout)
 	if not s.fd then
-		return nil, ECLOSED
+		return nil, s.err
 	end
-	local r, size = tls.read(s.ssl, n)
+	local r, err = tls.read(s.ssl, n)
 	if r then
-		local limit = s.buflimit
-		if limit then
-			check_limit(s, limit, size)
+		if s.buflimit then
+			readenable(s.ssl, not can_pause(s))
 		end
 		return r, nil
+	elseif err then
+		readenable(s.ssl, true)
+		return nil, err
 	end
 	return block_read(s, n, timeout)
 end
@@ -453,10 +483,22 @@ conn.readline = conn.read
 ---@param data string|string[]
 ---@return boolean, silly.errno? error
 function conn.write(s, data)
-	if not s.fd then
-		return false, ECLOSED
+	local err = s.err
+	if err then
+		return false, err
 	end
-	return tls.write(s.ssl, data)
+	local ok
+	ok, err = tls.write(s.ssl, data)
+	if not ok then
+		s.err = err
+		local co = s.co
+		if co then
+			s.co = nil
+			s.delim = nil
+			wakeup(co, nil)
+		end
+	end
+	return ok, err
 end
 
 ---@param s silly.net.tls.conn
@@ -468,7 +510,7 @@ end
 ---@param s silly.net.tls.conn
 ---@return boolean
 function conn.isalive(s)
-	return s.fd and (not s.err)
+	return not s.err and not tls.error(s.ssl)
 end
 
 ---@param s silly.net.tls.conn
@@ -480,11 +522,7 @@ end
 ---@param s silly.net.tls.conn
 ---@return integer
 function conn.unsentbytes(s)
-	local fd = s.fd
-	if not fd then
-		return 0
-	end
-	return net.sendsize(fd)
+	return tls.sendsize(s.ssl)
 end
 
 -- for compatibility
