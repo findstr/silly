@@ -6,6 +6,7 @@
 #include "silly.h"
 
 int socket_init();
+void socket_cleanup();
 void socket_exit();
 void socket_stop();
 

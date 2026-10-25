@@ -271,6 +271,16 @@ if not ok then
 end
 ```
 
+### net.free(ptr)
+
+Release a raw receive buffer without converting it to a string.
+
+**Parameters**:
+
+- `ptr` (`lightuserdata`): An owned receive buffer that has not been consumed or transferred.
+
+Returns no values. `net.tostring(ptr, size)` already frees the buffer after copying it.
+
 ### net.sendsize(fd)
 
 Get send buffer size.
@@ -305,10 +315,6 @@ Called when new TCP connection established.
 - `listenid` (integer): Listen socket's file descriptor
 - `addr` (string): Client address
 
-::: warning Callback Limitations
-Event callback functions execute in coroutines, but `ptr` pointer is only valid during synchronous callback execution. Once callback yields or returns, memory pointed to by `ptr` may be freed. Therefore, **must copy data to string before yielding**.
-:::
-
 ### data Callback
 
 Called when data received.
@@ -325,7 +331,7 @@ Called when data received.
 - `addr` (string): Sender address
 
 ::: tip Data Lifetime
-The `ptr` pointer is only valid during callback function execution. If need to save data, must use `silly.tostring()` to copy it.
+The callback owns `ptr`. Consume it exactly once: `net.tostring(ptr, size)` copies the data into a Lua string and frees the buffer, `net.free(ptr)` discards it, and buffer/TLS input APIs take ownership when the pointer is passed to them. Returning or yielding does not automatically release the buffer. Do not reuse a pointer after it has been consumed or transferred.
 :::
 
 ### close Callback
@@ -335,6 +341,8 @@ Called when connection closes.
 **Parameters**:
 - `fd` (integer): Socket file descriptor
 - `errno` (`silly.errno`): Close reason. A normal peer close is typically reported as `errno.EOF`; other cases use the corresponding low-level error
+
+TCP receive EOF alone still permits sending. If a fatal error makes the socket unusable, rejected TCP, UDP and multicast sends return that fatal cause, which may differ from an earlier receive EOF. After the socket ID is released, sends return `errno.CLOSED`.
 
 ## Notes
 
@@ -373,18 +381,20 @@ local fd2 = net.tcplisten("[::]:8081", {
 
 ### 2. Memory Management
 
-Received data pointer (`lightuserdata`) must be converted to string promptly:
+Each received buffer needs exactly one consumer. Convert it with `net.tostring`, discard it with `net.free`, or transfer it to an API that takes ownership. Use the resulting Lua string for asynchronous processing:
 
 ```lua
-data = function(fd, ptr, size)
-    -- ✓ Correct: copy immediately
-    local str = silly.tostring(ptr, size)
+local net = require "silly.net"
+local task = require "silly.task"
 
-    -- ❌ Wrong: ptr invalid after leaving callback
-    task.fork(function()
-        local str = silly.tostring(ptr, size) -- ptr already invalid!
-    end)
-end
+local event = {
+    data = function(fd, ptr, size)
+        local str = net.tostring(ptr, size) -- Copies and frees ptr
+        task.fork(function()
+            print(str)
+        end)
+    end,
+}
 ```
 
 ### 3. File Descriptor Reuse

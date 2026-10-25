@@ -271,6 +271,16 @@ if not ok then
 end
 ```
 
+### net.free(ptr)
+
+直接释放原始接收缓冲区，不转换为字符串。
+
+**参数**:
+
+- `ptr`（`lightuserdata`）：尚未消费或转交所有权的接收缓冲区。
+
+不返回值。`net.tostring(ptr, size)` 在复制数据后已经释放缓冲区，无需再次释放。
+
 ### net.sendsize(fd)
 
 获取发送缓冲区大小。
@@ -305,10 +315,6 @@ end
 - `listenid` (integer): 监听套接字的文件描述符
 - `addr` (string): 客户端地址
 
-::: warning 回调限制
-事件回调函数虽然在协程中执行，但 `ptr` 指针仅在回调同步执行期间有效。一旦回调 yield 或返回，`ptr` 指向的内存可能被释放。因此，**必须在 yield 之前将数据复制为字符串**。
-:::
-
 ### data 回调
 
 接收到数据时调用。
@@ -325,7 +331,7 @@ end
 - `addr` (string): 发送方地址
 
 ::: tip 数据生命周期
-`ptr` 指针仅在回调函数执行期间有效。如果需要保存数据，必须使用 `silly.tostring()` 复制它。
+回调拥有 `ptr`，每块缓冲区必须且只能消费一次：`net.tostring(ptr, size)` 复制为 Lua 字符串并释放缓冲区，`net.free(ptr)` 直接丢弃缓冲区，buffer/TLS 输入接口则在接收指针时接管所有权。回调返回或 yield 不会自动释放缓冲区。指针被消费或转交后不能再使用。
 :::
 
 ### close 回调
@@ -335,6 +341,8 @@ end
 **参数**:
 - `fd` (integer): 套接字文件描述符
 - `errno` (`silly.errno`): 连接关闭原因。对端正常关闭时通常为 `errno.EOF`，其他情况为对应的底层错误
+
+TCP 读方向 EOF 本身不妨碍继续发送。致命错误使 socket 不可用后，TCP、UDP 和 multicast 发送被拒绝时返回该致命原因，它可能与先前的读 EOF 不同。socket ID 被释放后，发送返回 `errno.CLOSED`。
 
 ## 注意事项
 
@@ -373,18 +381,20 @@ local fd2 = net.tcplisten("[::]:8081", {
 
 ### 2. 内存管理
 
-接收到的数据指针 (`lightuserdata`) 必须及时转换为字符串：
+每块接收缓冲区必须且只能消费一次：使用 `net.tostring` 转换，使用 `net.free` 丢弃，或交给接管所有权的接口。异步处理时使用转换得到的 Lua 字符串：
 
 ```lua
-data = function(fd, ptr, size)
-    -- ✓ 正确：立即复制
-    local str = silly.tostring(ptr, size)
+local net = require "silly.net"
+local task = require "silly.task"
 
-    -- ❌ 错误：ptr 离开回调后失效
-    task.fork(function()
-        local str = silly.tostring(ptr, size) -- ptr 已失效！
-    end)
-end
+local event = {
+    data = function(fd, ptr, size)
+        local str = net.tostring(ptr, size) -- 复制并释放 ptr
+        task.fork(function()
+            print(str)
+        end)
+    end,
+}
 ```
 
 ### 3. 文件描述符复用
