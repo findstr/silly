@@ -10,6 +10,7 @@
 - `client.close()` to gracefully shut down pooled connections.
 
 ### Changed
+- C extensions use `silly_push_error(L, code)`; `silly_error_table()` is removed.
 - `http.request()` and `client:request()` accept optional `endstream` and `timeout` arguments.
 - `stream:respond()` accepts `endstream` to finish a response without a body.
 - `http2.hpack.unpack()` returns the decoded header list.
@@ -23,6 +24,7 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- Worker: fix error lookup and callback reset from nested Lua calls.
 - HTTP/2: fix flow control, graceful shutdown and protocol handling.
 - Buffer: reject read lengths and buffered sizes above `2^31-1` bytes.
 - gRPC: preserve status and message from trailers-only responses.

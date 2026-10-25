@@ -13,7 +13,6 @@
 
 #include "silly.h"
 
-#define UPVAL_ERROR_TABLE (1)
 #define MULTICAST_SIZE offsetof(struct multicasthdr, data)
 
 struct multicasthdr {
@@ -21,11 +20,6 @@ struct multicasthdr {
 	char mask;
 	uint8_t data[1];
 };
-
-static inline void push_error(lua_State *L, int code)
-{
-	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
-}
 
 //NOTE:this function may cocurrent
 static void multifinalizer(void *buff)
@@ -134,7 +128,7 @@ static int socketconnect(lua_State *L, connect_t *connect)
 	fd = connect(ip, port, bip, bport);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		push_error(L, -fd);
+		silly_push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -155,7 +149,7 @@ static int ltcplisten(lua_State *L)
 	silly_socket_id_t fd = silly_tcp_listen(ip, port, backlog);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		push_error(L, -fd);
+		silly_push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -188,7 +182,7 @@ static int ltcpsend(lua_State *L)
 	err = silly_tcp_send(sid, buff, size, NULL);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
-		push_error(L, -err);
+		silly_push_error(L, -err);
 	} else {
 		lua_pushboolean(L, 1);
 		lua_pushnil(L);
@@ -208,7 +202,7 @@ static int ltcpmulticast(lua_State *L)
 	err = silly_tcp_send(sid, buff, size, multifinalizer);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
-		push_error(L, -err);
+		silly_push_error(L, -err);
 	} else {
 		lua_pushboolean(L, 1);
 		lua_pushnil(L);
@@ -228,7 +222,7 @@ static int ludpbind(lua_State *L)
 	silly_socket_id_t fd = silly_udp_bind(ip, port);
 	if (unlikely(fd < 0)) {
 		lua_pushnil(L);
-		push_error(L, -fd);
+		silly_push_error(L, -fd);
 	} else {
 		lua_pushinteger(L, fd);
 		lua_pushnil(L);
@@ -269,7 +263,7 @@ static int ludpsend(lua_State *L)
 	err = silly_udp_send(sid, buff, size, addr, addrlen, NULL);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
-		push_error(L, -err);
+		silly_push_error(L, -err);
 	} else {
 		lua_pushboolean(L, 1);
 		lua_pushnil(L);
@@ -296,7 +290,7 @@ static int lclose(lua_State *L)
 	err = silly_socket_close(sid);
 	if (err < 0) {
 		lua_pushboolean(L, 0);
-		push_error(L, -err);
+		silly_push_error(L, -err);
 	} else {
 		lua_pushboolean(L, 1);
 		lua_pushnil(L);
@@ -371,10 +365,7 @@ SILLY_MOD_API int luaopen_silly_net_c(lua_State *L)
 		{ "tostring",      ltostring     },
 		{ NULL,            NULL          },
 	};
-	luaL_checkversion(L);
-	luaL_newlibtable(L, tbl);
-	silly_error_table(L);
-	luaL_setfuncs(L, tbl, 1);
+	luaL_newlib(L, tbl);
 	set_message_type(L, lua_absindex(L, -1));
 	return 1;
 }

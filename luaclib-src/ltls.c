@@ -13,7 +13,6 @@
 #include <openssl/x509v3.h>
 #include <errno.h>
 
-#define UPVAL_ERROR_TABLE (1)
 #define META_CTX	"silly.tls.ctx"
 #define META_TLS	"silly.tls.tls"
 
@@ -57,11 +56,6 @@ struct tls {
 	struct buf buf;
 };
 
-static inline void push_error(lua_State *L, int code)
-{
-	silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), code);
-}
-
 static void push_ssl_error(lua_State *L, silly_socket_id_t fd, int err)
 {
 	if (err == SSL_ERROR_SSL) {
@@ -70,25 +64,25 @@ static void push_ssl_error(lua_State *L, silly_socket_id_t fd, int err)
 			char buf[256];
 			ERR_error_string_n(e, buf, sizeof(buf));
 			silly_log_error("[tls] openssl fd:%lu error: %s\n", (uint64_t)fd, buf);
-			push_error(L, EXTLS);
+			silly_push_error(L, EXTLS);
 			return;
 		}
 	}
 	switch (err) {
 	case SSL_ERROR_ZERO_RETURN:
-		push_error(L, EXEOF);
+		silly_push_error(L, EXEOF);
 		break;
 	case SSL_ERROR_SYSCALL:
 		if (errno != 0) {
-			push_error(L, errno);
+			silly_push_error(L, errno);
 		} else {
 			silly_log_error("[tls] openssl fd:%lu syscall error (errno=0)\n", (uint64_t)fd);
-			push_error(L, EXTLS);
+			silly_push_error(L, EXTLS);
 		}
 		break;
 	default:
 		silly_log_error("[tls] openssl fd:%lu ssl error code:%d\n", (uint64_t)fd, err);
-		push_error(L, EXTLS);
+		silly_push_error(L, EXTLS);
 		break;
 	}
 }
@@ -602,7 +596,7 @@ static int ltls_write(lua_State *L)
 	ret = flushwrite(tls);
 	lua_pushboolean(L, ret >= 0);
 	if (ret < 0)
-		push_error(L, -ret);
+		silly_push_error(L, -ret);
 	else
 		lua_pushnil(L);
 	return 2;
@@ -638,7 +632,7 @@ static int ltls_handshake(lua_State *L)
 	if (ret < 0) {
 		lua_pop(L, 2);
 		lua_pushinteger(L, 0);
-		push_error(L, -ret);
+		silly_push_error(L, -ret);
 	}
 	return 2;
 }
@@ -730,10 +724,7 @@ SILLY_MOD_API int luaopen_silly_tls_tls(lua_State *L)
 		{ NULL,        NULL           },
 	};
 
-	luaL_checkversion(L);
-	luaL_newlibtable(L, tbl);
-	silly_error_table(L);
-	luaL_setfuncs(L, tbl, 1);
+	luaL_newlib(L, tbl);
 #ifdef USE_OPENSSL
 	luaL_newmetatable(L, META_TLS);
 	lua_pushvalue(L, -2);

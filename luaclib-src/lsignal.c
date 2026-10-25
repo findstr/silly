@@ -2,8 +2,6 @@
 #include <assert.h>
 #include <errno.h>
 
-#define UPVAL_ERROR_TABLE (1)
-
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -55,7 +53,7 @@ static int lsignal(lua_State *L)
 	int signum = luaL_checkinteger(L, 1);
 	int err = silly_signal_watch(signum);
 	if (err != 0) {
-		silly_push_error(L, lua_upvalueindex(UPVAL_ERROR_TABLE), err);
+		silly_push_error(L, err);
 	} else {
 		lua_pushnil(L);
 	}
@@ -70,10 +68,7 @@ SILLY_MOD_API int luaopen_silly_signal_c(lua_State *L)
 		{ NULL,        NULL       },
 	};
 
-	luaL_checkversion(L);
-	luaL_newlibtable(L, tbl);
-	silly_error_table(L);
-	luaL_setfuncs(L, tbl, 1);
+	luaL_newlib(L, tbl);
 	lua_pushinteger(L, silly_messages()->signal_fire);
 	lua_setfield(L, -2, "FIRE");
 	return 1;

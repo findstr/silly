@@ -26,7 +26,6 @@ void worker_callback(void (*callback)(struct lua_State *L,
 				      struct silly_message *msg));
 
 void worker_callback_table(lua_State *L);
-void worker_error_table(lua_State *L);
-void worker_push_error(lua_State *L, int stk, int code);
+void worker_push_error(lua_State *L, int code);
 void worker_reset();
 #endif

@@ -17,11 +17,9 @@ SILLY_MOD_API int luaopen_silly_errno(lua_State *L)
 {
 	luaL_checkversion(L);
 	lua_newtable(L);
-	silly_error_table(L);
-	int errtbl = lua_absindex(L, -1);
 #define ERR(name, code) \
-	silly_push_error(L, errtbl, code); \
-	lua_setfield(L, -3, name)
+	silly_push_error(L, code); \
+	lua_setfield(L, -2, name)
 	/* Standard errno */
 	ERR("INTR",         EINTR);
 	ERR("ACCES",        EACCES);
@@ -66,7 +64,6 @@ SILLY_MOD_API int luaopen_silly_errno(lua_State *L)
 	ERR("EOF",          EXEOF);
 	ERR("TLS",        EXTLS);
 #undef ERR
-	lua_pop(L, 1); /* pop the numeric error table */
 	/* Set __index metamethod */
 	lua_newtable(L);
 	lua_pushcfunction(L, errno_index);
