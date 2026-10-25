@@ -221,7 +221,7 @@ task.fork(function()
     end
 
     -- Read response headers
-    local line, read_err = conn:read("\r\n")
+    local line, read_err = conn:read("\n")
     if not line then
         print("Read failed:", read_err)
         conn:close()
@@ -311,7 +311,7 @@ end)
 
 ### tls.listen(conf)
 
-Start a TLS server listening on the given address.
+Start a TLS server listening on the given address. Configuration errors, such as invalid certificates, keys or cipher lists, raise an error before opening the listener.
 
 - **Parameters**:
   - `conf`: `table` - Server configuration table
@@ -325,7 +325,7 @@ Start a TLS server listening on the given address.
     - `alpnprotos`: `string[]|nil` (optional) - List of supported ALPN protocols, e.g. `{"http/1.1", "h2"}`
 - **Return value**:
   - Success: `silly.net.tls.listener` - Listener object
-  - Failure: `nil, string` - nil and error message
+  - Failure: `nil, silly.errno` - I/O error
 - **Example**:
 
 ```lua validate
@@ -352,7 +352,7 @@ end)
 
 ### tls.connect(addr [, opts])
 
-Establishes a connection to a TLS secure server (asynchronous). This function performs both TCP connection and TLS handshake.
+Establishes a connection to a TLS secure server (asynchronous). This function performs both TCP connection and TLS handshake. Invalid configuration raises an error; failed TLS setup releases the transport.
 
 - **Parameters**:
   - `addr`: `string` - Server address, e.g. `"127.0.0.1:443"`
@@ -363,7 +363,7 @@ Establishes a connection to a TLS secure server (asynchronous). This function pe
     - `timeout`: `integer|nil` - Timeout for connection and handshake (milliseconds)
 - **Return value**:
   - Success: `silly.net.tls.conn` - TLS connection object
-  - Failure: `nil, string` - nil and error message
+  - Failure: `nil, silly.errno` - I/O error
 - **Example**:
 
 ```lua validate
@@ -387,11 +387,11 @@ Close the TLS listener.
 
 - **Return value**:
   - Success: `true`
-  - Failure: `false, string` - false and error message
+  - Failure: `false, silly.errno` - I/O error
 
 ### listener:reload([conf])
 
-Hot reload the TLS server's certificate configuration without restarting the service.
+Hot reload the TLS server's certificate configuration without restarting the service. Invalid configuration raises an error and leaves the active configuration unchanged.
 
 - **Parameters**:
   - `conf`: `table|nil` (optional) - New configuration
@@ -400,7 +400,7 @@ Hot reload the TLS server's certificate configuration without restarting the ser
     - `alpnprotos`: `string[]` - New ALPN protocol list
 - **Return value**:
   - Success: `true`
-  - Failure: `false, string` - false and error message
+  - Failure: `false, silly.errno` - I/O error
 - **Example**:
 
 ```lua validate
@@ -440,8 +440,11 @@ end)
 
 Reads exactly `n` bytes, or reads until a delimiter is found (asynchronous). Transparently handles TLS decryption.
 
+On a connection that has not been closed locally, `read(0)` immediately returns
+`"", nil` without consuming buffered data. Only one coroutine may read at a time; a second reader raises an error, including for `read(0)`, even when data is already buffered.
+
 - **Parameters**:
-  - `n`: `integer|string` - byte count to read, or a delimiter string to read until (including the delimiter)
+  - `n`: `integer|string` - byte count up to `2^31-1`, or a single-byte delimiter (the returned data includes it)
   - `timeout`: `integer|nil` (optional) - per-call timeout in milliseconds
 - **Returns**:
   - Success: `string` - the data read
@@ -450,13 +453,25 @@ Reads exactly `n` bytes, or reads until a delimiter is found (asynchronous). Tra
 
 ### conn:write(data)
 
-Writes data through the TLS encryption layer to the peer. Buffered by the framework and flushed asynchronously; the call itself does not yield.
+Writes data through the TLS encryption layer to the peer. Buffered by the framework and flushed asynchronously; the call itself does not yield. Large writes are submitted in batches, while small fragments within a write are combined. If a write fails, a prefix may already have been queued.
 
 - **Parameters**:
-  - `data`: `string|string[]` - a string or an array of string fragments (zero-copy)
+  - `data`: `string|string[]` - a string or an array of string fragments
 - **Returns**:
   - Success: `true`
   - Failure: `false, silly.errno` - typically `errno.CLOSED` or `errno.TLS`
+
+`conn:close()` makes a final send attempt and sends a TLS closure notification when possible,
+without waiting for a reply; pending data may be discarded.
+
+Read-side EOF does not prevent writing a response while the connection remains open.
+Write success means SSL accepted the data, without guaranteeing transport submission or delivery.
+Transport write failures are reported asynchronously through the socket close notification.
+A saved read error does not replace the write's SSL result; owner close returns the saved error.
+A fatal TLS write error is saved when the read side has no earlier error, even without a pending
+read. It also ends any pending read. Transport write failures leave pending
+reads to consume queued input or receive the socket close notification.
+Buffered plaintext remains readable before the saved read-side error is returned.
 
 ### conn:isalive()
 
@@ -494,7 +509,7 @@ end)
 
 Get the protocol negotiated through ALPN.
 
-- **Return value**: `string|nil` - Negotiated protocol (e.g. `"http/1.1"`, `"h2"`), returns `nil` if not negotiated
+- **Return value**: `string` - Negotiated protocol (e.g. `"http/1.1"`, `"h2"`), or `""` if none was negotiated
 - **Example**:
 
 ```lua validate
@@ -527,10 +542,13 @@ end)
 
 ### conn:limit(size)
 
-Set read buffer limit. Suspend reading when buffer size exceeds the limit.
+Set the read buffer limit. Reception pauses when buffered data reaches the limit,
+except while a read, handshake or TLS write needs more input. A waiting read keeps its
+exemption until it succeeds, times out or is cancelled, including across limit changes.
+Pass `nil` to remove the limit; zero pauses application reception whenever no exemption applies.
 
 - **Parameters**:
-  - `size`: `integer` - Limit size (bytes)
+  - `size`: `integer?` - Limit size from 0 to `2^31-1` bytes
 
 ### conn:unreadbytes()
 
@@ -569,7 +587,7 @@ print("Remote address:", conn.remoteaddr)
 ### Certificate Management
 
 1. **Certificate Format**: Must use PEM format for certificates and private keys
-2. **Certificate Verification**: Clients verify server certificates by default, self-signed certificates will cause verification failures
+2. **Certificate Verification**: The client does not verify the server certificate or hostname. `hostname` sets SNI only.
 3. **SNI Support**: It's recommended to provide the hostname parameter when clients connect to support SNI
 4. **Certificate Chain**: If using intermediate CAs, the complete certificate chain must be placed in the cert field
 
@@ -589,10 +607,16 @@ print("Remote address:", conn.remoteaddr)
 
 ### Common Errors
 
-Errors returned from `conn:read`/`conn:write` and `tls.connect`/`tls.listen` are [`silly.errno`](../errno.md) values. In addition to the standard transport errors (`errno.EOF`, `errno.CLOSED`, `errno.TIMEDOUT`, …), TLS-specific failures (certificate mismatch, handshake protocol error, cipher negotiation failure, etc.) are reported as `errno.TLS`. For the specific OpenSSL reason, inspect the server log lines prefixed with `[tls] openssl fd:...`.
+Errors returned from `conn:read`/`conn:write` and `tls.connect`/`tls.listen` are [`silly.errno`](../errno.md) values. In addition to the standard transport errors (`errno.EOF`, `errno.CLOSED`, `errno.TIMEDOUT`, …), TLS-specific failures (handshake protocol error, cipher negotiation failure, etc.) are reported as `errno.TLS`. For the specific OpenSSL reason, inspect the server log lines prefixed with `[tls] openssl fd:...`.
 
-- **Cause**: certificate configuration error, untrusted certificate, cipher-suite mismatch
-- **Solution**: verify PEM format, use a trusted CA, configure compatible cipher suites
+The first saved read-side error is preserved across later TLS and socket events. Once the read side ends, further network input is discarded, while existing buffered plaintext can still satisfy reads before that error is returned. While the connection remains owned, writes report their own native SSL result; transport failures arrive through the socket close notification.
+
+After a fatal TLS error, `conn:isalive()` returns false. Call `conn:close()` to
+release the connection.
+A clean TLS EOF ends reads with `errno.EOF` while allowing a response to be sent.
+
+- **Cause**: invalid server certificate configuration, handshake protocol error, cipher-suite mismatch
+- **Solution**: verify PEM format and configure compatible TLS versions and cipher suites
 
 ### Build Requirements
 

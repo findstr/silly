@@ -107,4 +107,16 @@ function conformance:h2peer(params)
 	return send_command(self.conn, "http2_peer", params)
 end
 
+function conformance:tlsclosewrite(addr, version)
+	return send_command(self.conn, "tls_closewrite", {addr = addr, version = version})
+end
+
+function conformance:tlscloseaftererror(addr)
+	return send_command(self.conn, "tls_closeaftererror", {addr = addr})
+end
+
+function conformance:tlsreadclose(addr, version)
+	return send_command(self.conn, "tls_readclose", {addr = addr, version = version})
+end
+
 return conformance

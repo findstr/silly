@@ -9,32 +9,36 @@ local logger = require "silly.logger"
 local errno = require "silly.errno"
 
 local error = error
+local assert = assert
 local ipairs = ipairs
 local type = type
 local pairs = pairs
-local assert = assert
 local setmetatable = setmetatable
 local concat = table.concat
 local char = string.char
 
 global _
 
+local free = net.free
+
 local wait = task.wait
 local running = task.running
-local readenable = net.readenable
 local wakeup = task.wakeup
+
 local monotonic = time.monotonic
+local pcall = silly.pcall
 
 local HANDSHAKE<const> = {}
 local HANDSHAKE_OK<const> = 1
 local HANDSHAKE_ERROR<const> = 0
 local TIMEOUT<const> = {}
 
-local EINVAL<const> = errno.INVAL
 local ECLOSED<const> = errno.CLOSED
+local EEOF<const> = errno.EOF
+local ETLS<const> = errno.TLS
 local ETIMEDOUT<const> = errno.TIMEDOUT
 
-local client_ctx = ctx.client()
+local client_ctx = assert(ctx.client())
 
 ---@class silly.net.tls.conf
 ---@field ciphers string?
@@ -48,18 +52,16 @@ local M = {}
 ---@field fd integer?
 ---@field remoteaddr string
 ---@field package co thread?
----@field package err silly.errno?
+---@field package err silly.errno? -- first read-side error or owner close
 ---@field package alpn string?
----@field package ssl any
----@field package buflimit integer?
+---@field package ssl silly.tls.tls
 ---@field package delim string|integer|table|nil
----@field package readpause boolean
 local conn = {}
 
 ---@class silly.net.tls.listener
----@field fd integer
+---@field fd integer?
 ---@field package accept async fun(s:silly.net.tls.conn)
----@field package ctx any
+---@field package ctx silly.tls.CTX
 ---@field package conf silly.net.tls.conf
 local listener = {}
 
@@ -68,7 +70,7 @@ local conn_pool = setmetatable({}, {__mode = "v"})
 ---@type table<integer, silly.net.tls.listener>
 local listener_pool = {}
 
----@alias silly.net.tls.alpn_proto "http/1.1" | "h2"
+---@alias silly.net.tls.alpn_proto string
 local alpnwired = setmetatable({}, {__index = function(t, k)
 	local v = char(#k) .. k
 	t[k] = v
@@ -96,13 +98,18 @@ local listener_mt = {
 
 ---@param fd integer
 ---@param remoteaddr string
+---@param ctx silly.tls.CTX
 ---@param hostname string?
----@param alpnprotos silly.net.tls.alpn_proto[]?
----@return silly.net.tls.conn
-local function new_socket(fd, remoteaddr, ctx, hostname, alpnprotos)
-	local alpnstr
-	if alpnprotos then
-		alpnstr = wire_alpn_protos(alpnprotos)
+---@param alpnstr string?
+---@return silly.net.tls.conn?, silly.errno? error
+local function new_socket(fd, remoteaddr, ctx, hostname, alpnstr)
+	if conn_pool[fd] then
+		error("TLS socket already registered", 2)
+	end
+	local ssl, err = tls.open(ctx, fd, hostname, alpnstr)
+	if not ssl then
+		net.close(fd)
+		return nil, err
 	end
 	---@type silly.net.tls.conn
 	local s = setmetatable({
@@ -110,85 +117,60 @@ local function new_socket(fd, remoteaddr, ctx, hostname, alpnprotos)
 		remoteaddr = remoteaddr,
 		co = nil,
 		err = nil,
-		ssl = tls.open(ctx, fd, hostname, alpnstr),
+		ssl = ssl,
 		alpn = nil,
-		buflimit = nil,
 		delim = nil,
-		readpause = false,
 	}, conn_mt)
-	assert(not conn_pool[fd])
 	conn_pool[fd] = s
 	return s
 end
 
-local function check_limit(s, buflimit, size)
-	local readpause = s.readpause
-	if readpause then
-		if size < buflimit then
-			s.readpause = false
-			readenable(s.fd, true)
-		end
-	else
-		if size >= buflimit then
-			s.readpause = true
-			readenable(s.fd, false)
-		end
+---@param s silly.net.tls.conn
+---@param data string|table|nil
+local function read_wakeup(s, data)
+	local co = s.co
+	if not co then
+		return
 	end
-end
-
----@param fd integer
----@param ctx any
----@param conf silly.net.tls.conf
----@param accept async fun(s:silly.net.tls.conn)
----@return silly.net.tls.listener
-local function new_listener(fd, ctx, conf, accept)
-	---@type silly.net.tls.listener
-	local s = {
-		fd = fd,
-		ctx = ctx,
-		conf = conf,
-		accept = accept,
-	}
-	setmetatable(s, listener_mt)
-	listener_pool[fd] = s
-	return s
+	s.co = nil
+	s.delim = nil
+	wakeup(co, data)
 end
 
 ---@param s silly.net.tls.conn
 local function read_timer(s)
-	local co = s.co
-	if co then
-		s.co = nil
-		s.delim = nil
-		wakeup(co, TIMEOUT)
-	end
+	tls.readcancel(s.ssl)
+	read_wakeup(s, TIMEOUT)
 end
 
 ---@param s silly.net.tls.conn
+local function handshake_timer(s)
+	read_wakeup(s, TIMEOUT)
+end
+
+---@param s silly.net.tls.conn
+---@param delim integer|string|table
+---@param timeout integer?
+---@param timerf fun(s:silly.net.tls.conn)
 ---@return string?, silly.errno? error
-local function block_read(s, delim, timeout)
-	local err = s.err
-	if not err then
-		assert(not s.co)
-		s.delim = delim
-		s.co = running()
-		local dat
-		if not timeout then
-			dat = wait()
-		else
-			local timer = time.after(timeout, read_timer, s)
-			dat = wait()
-			if dat == TIMEOUT then
-				return nil, ETIMEDOUT
-			end
-			time.cancel(timer)
+local function block_read(s, delim, timeout, timerf)
+	s.delim = delim
+	s.co = running()
+	local dat
+	if not timeout then
+		dat = wait()
+	else
+		local timer = time.after(timeout, timerf, s)
+		dat = wait()
+		if dat == TIMEOUT then
+			return nil, ETIMEDOUT
 		end
-		if dat then
-			return dat, nil
-		end
-		err = s.err
+		time.cancel(timer)
 	end
-	return nil, err
+	if dat then
+		return dat, nil
+	end
+	return nil, s.err
 end
 
 ---@param s silly.net.tls.conn
@@ -203,20 +185,27 @@ local function handshake(s, timeout)
 		s.err = alpnproto
 		return nil, alpnproto
 	end
-	return block_read(s, HANDSHAKE, timeout)
+	return block_read(s, HANDSHAKE, timeout, handshake_timer)
 end
 
 ---@type silly.net.event
 local EVENT = {
 accept = function(fd, listenid, addr)
 	local lc = listener_pool[listenid]
+	if not lc then
+		net.close(fd)
+		return
+	end
 	local s = new_socket(fd, addr, lc.ctx, nil, nil)
-	local dat, _ = handshake(s)
+	if not s then
+		return
+	end
+	local dat = handshake(s)
 	if not dat then
 		s:close()
 		return
 	end
-	local ok, err = silly.pcall(lc.accept, s)
+	local ok, err = pcall(lc.accept, s)
 	if not ok then
 		logger.error(err)
 		s:close()
@@ -227,54 +216,45 @@ end,
 ---@param err silly.errno
 close = function(fd, err)
 	local s = conn_pool[fd]
-	if s == nil then
+	if not s then
 		return
 	end
-	s.err = err
-	local co = s.co
-	if co then
-		s.co = nil
-		s.delim = nil
-		wakeup(co, nil)
+	if not s.err then
+		s.err = err
 	end
+	read_wakeup(s, nil)
 end,
 
 data = function(fd, ptr, size)
 	local s = conn_pool[fd]
-	if not s then
+	if not s or s.err then
+		free(ptr)
 		return
 	end
-	local total_size = tls.push(s.ssl, ptr, size)
+	local err = tls.push(s.ssl, ptr, size)
+	if err then
+		s.err = err
+	end
+	local dat
 	local delim = s.delim
-	if delim == HANDSHAKE then
+	if not delim then
+		return
+	end
+	if delim ~= HANDSHAKE then
+		dat = tls.read(s.ssl, delim)
+	elseif not err or err == EEOF then
+		-- Finished and close_notify may arrive in the same input.
 		local ret, alpnproto = tls.handshake(s.ssl)
-		-- 1:success 0:error <0:continue
-		if ret >= 0 then
-			local res
-			if ret == 1 then -- success
-				res = ""
-				s.alpn = alpnproto
-			else
-				s.err = alpnproto
-			end
-			s.delim = nil
-			local co = s.co
-			s.co = nil
-			wakeup(co, res)
-		end
-	elseif delim then
-		local dat
-		dat, total_size = tls.read(s.ssl, delim)
-		if dat then
-			local co = s.co
-			s.delim = nil
-			s.co = nil
-			wakeup(co, dat)
+		if ret == HANDSHAKE_ERROR then
+			err = alpnproto
+			s.err = err
+		elseif ret == HANDSHAKE_OK then
+			dat = ""
+			s.alpn = alpnproto
 		end
 	end
-	local limit = s.buflimit
-	if limit then
-		check_limit(s, limit, total_size)
+	if dat or err then
+		read_wakeup(s, dat)
 	end
 end
 }
@@ -303,11 +283,18 @@ function M.connect(addr, opts)
 			deadline = monotonic() + timeout
 		end
 	end
+	local alpnstr
+	if alpnprotos then
+		alpnstr = wire_alpn_protos(alpnprotos)
+	end
 	local fd, err = net.tcpconnect(addr, EVENT, bind, timeout)
 	if not fd then
 		return nil, err
 	end
-	local s = new_socket(fd, addr, client_ctx, hostname, alpnprotos)
+	local s, err = new_socket(fd, addr, client_ctx, hostname, alpnstr)
+	if not s then
+		return nil, err
+	end
 	if deadline then
 		timeout = deadline - monotonic()
 		if timeout <= 0 then
@@ -324,15 +311,17 @@ function M.connect(addr, opts)
 end
 
 ---@param conf silly.net.tls.conf
+---@return silly.tls.CTX
 local function new_server_ctx(conf)
-	ctx = ctx or require "silly.tls.ctx"
 	local alpns = conf.alpnprotos
 	local alpnstr
 	if alpns then
 		alpnstr = wire_alpn_protos(alpns)
 	end
 	local c, err = ctx.server(conf.certs, conf.ciphers, alpnstr)
-	assert(c, err)
+	if not c then
+		error(err, 2)
+	end
 	return c
 end
 
@@ -346,25 +335,34 @@ end
 function M.listen(opts)
 	local addr = opts.addr
 	local accept = opts.accept
-	local certs = opts.certs
-	assert(addr, "tls.listen missing addr")
-	assert(type(accept) == "function", "tls.listen missing accept")
-	assert(#certs > 0, "tls.listen missing certs")
+	if not addr then
+		error("tls.listen missing addr", 2)
+	end
+	if type(accept) ~= "function" then
+		error("tls.listen missing accept", 2)
+	end
+	local tls_ctx = new_server_ctx(opts)
 	local fd, err = net.tcplisten(addr, EVENT, opts.backlog)
 	if not fd then
 		return nil, err
 	end
-	tls = require "silly.tls.tls"
-	local tls_ctx = new_server_ctx(opts)
-	local tls_conf = {
-		certs = opts.certs,
-		ciphers = opts.ciphers,
-		alpnprotos = opts.alpnprotos,
-	}
-	local s = new_listener(fd, tls_ctx, tls_conf, opts.accept)
+	---@type silly.net.tls.listener
+	local s = setmetatable({
+		fd = fd,
+		ctx = tls_ctx,
+		conf = {
+			certs = opts.certs,
+			ciphers = opts.ciphers,
+			alpnprotos = opts.alpnprotos,
+		},
+		accept = accept,
+	}, listener_mt)
+	listener_pool[fd] = s
 	return s, nil
 end
 
+---@param s silly.net.tls.listener
+---@return boolean, silly.errno? error
 function listener.close(s)
 	local fd = s.fd
 	if not fd then
@@ -383,27 +381,26 @@ function listener.reload(l, conf)
 		return false, ECLOSED
 	end
 	local old_conf = l.conf
-	if not old_conf then
-		return false, EINVAL
+	local new_conf = {}
+	for k, v in pairs(old_conf) do
+		new_conf[k] = v
 	end
 	if conf then
 		for k, v in pairs(conf) do
-			old_conf[k] = v
+			new_conf[k] = v
 		end
 	end
-	l.ctx = new_server_ctx(old_conf)
+	local context = new_server_ctx(new_conf)
+	l.conf = new_conf
+	l.ctx = context
 	return true, nil
 end
 
 ---@param s silly.net.tls.conn
----@param limit integer|nil
+---@param limit integer? byte count from 0 to 2^31-1; nil removes the receive limit
 function conn.limit(s, limit)
-	s.buflimit = limit
-	if limit then
-		check_limit(s, limit, tls.size(s.ssl))
-	elseif s.readpause then
-		s.readpause = false
-		readenable(s.fd, true)
+	if s.fd then
+		tls.limit(s.ssl, limit)
 	end
 end
 
@@ -416,51 +413,69 @@ function conn.close(s)
 	end
 	s.fd = nil
 	conn_pool[fd] = nil
-	local co = s.co
-	if co then
-		s.err = ECLOSED
-		s.co = nil
-		s.delim = nil
-		wakeup(co, nil)
+	local err = tls.close(s.ssl)
+	if not s.err then
+		s.err = err or ECLOSED
 	end
+	read_wakeup(s, nil)
 	return net.close(fd)
 end
+
 conn_mt.__gc = conn.close
 conn_mt.__close = conn.close
 
 ---@param s silly.net.tls.conn
----@param n integer|string
+---@param n integer|string byte count from 0 to 2^31-1, or a single-byte delimiter; 0 returns an empty string
 ---@param timeout integer? --milliseconds
 ---@return string?, silly.errno? error
 function conn.read(s, n, timeout)
 	if not s.fd then
-		return nil, ECLOSED
+		return nil, s.err
 	end
-	local r, size = tls.read(s.ssl, n)
+	if s.co then
+		error("TLS connection already has a reader", 2)
+	end
+	local r = tls.read(s.ssl, n)
 	if r then
-		local limit = s.buflimit
-		if limit then
-			check_limit(s, limit, size)
-		end
 		return r, nil
 	end
-	return block_read(s, n, timeout)
+	local err = s.err
+	if err then
+		return nil, err
+	end
+	err = tls.readwait(s.ssl)
+	if err then
+		s.err = err
+		return nil, err
+	end
+	return block_read(s, n, timeout, read_timer)
 end
 
 conn.readline = conn.read
 
+---Success means the data was accepted for sending and may still be buffered; it does not confirm peer delivery.
+---A failed write may have already queued a prefix of the data.
+---Fatal TLS errors are saved for readers even when no read is pending.
 ---@param s silly.net.tls.conn
 ---@param data string|string[]
 ---@return boolean, silly.errno? error
 function conn.write(s, data)
 	if not s.fd then
-		return false, ECLOSED
+		return false, s.err
 	end
-	return tls.write(s.ssl, data)
+	local ok, err = tls.write(s.ssl, data)
+	if err == ETLS then
+		if not s.err then
+			s.err = err
+		end
+		read_wakeup(s, nil)
+	end
+	return ok, err
 end
 
+---Return the negotiated ALPN protocol; an empty string means none was negotiated.
 ---@param s silly.net.tls.conn
----@return string?
+---@return string protocol
 function conn.alpnproto(s)
 	return s.alpn
 end
@@ -468,7 +483,7 @@ end
 ---@param s silly.net.tls.conn
 ---@return boolean
 function conn.isalive(s)
-	return s.fd and (not s.err)
+	return not s.err
 end
 
 ---@param s silly.net.tls.conn
@@ -480,11 +495,7 @@ end
 ---@param s silly.net.tls.conn
 ---@return integer
 function conn.unsentbytes(s)
-	local fd = s.fd
-	if not fd then
-		return 0
-	end
-	return net.sendsize(fd)
+	return tls.sendsize(s.ssl)
 end
 
 -- for compatibility

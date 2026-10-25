@@ -3,24 +3,23 @@
 ---@class silly.tls.CTX
 local CTX = {}
 
----Free TLS context
+---Free TLS context; only call after all TLS connections using it have closed
 function CTX:free() end
 
 ---@class silly.tls.CTX.module
 local M = {}
 
----Create client TLS context
----@param cert_file string? client certificate file
----@param key_file string? client key file
----@param ca_file string? CA certificate file
----@return silly.tls.CTX
-function M.client(cert_file, key_file, ca_file) end
+---Create client TLS context without certificate verification
+---@return silly.tls.CTX? context
+---@return string? error
+function M.client() end
 
 ---Create server TLS context
----@param cert_file string server certificate file
----@param key_file string server key file
----@param ca_file string? CA certificate file
----@return silly.tls.CTX
-function M.server(cert_file, key_file, ca_file) end
+---@param certs {cert:string, key:string}[] nonempty list of PEM certificates and private keys
+---@param ciphers string? OpenSSL cipher list
+---@param alpnprotos string? wire-format ALPN protocol list
+---@return silly.tls.CTX? context
+---@return string? error
+function M.server(certs, ciphers, alpnprotos) end
 
 return M

@@ -27,6 +27,8 @@
 ### Fixed
 - Socket: preserve zombie send errors, report peer resets on Windows, and release queued send buffers at runtime exit.
 - Worker: fix error lookup and callback reset from nested Lua calls.
+- TLS: fix stalled reads, write failures during renegotiation, buffered data loss after errors, and connection setup leaks.
+- TLS: prevent crashes after certificate reload and preserve the active configuration when reload fails.
 - HTTP/2: fix flow control, graceful shutdown and protocol handling.
 - Buffer: reject read lengths and buffered sizes above `2^31-1` bytes.
 - gRPC: preserve status and message from trailers-only responses.

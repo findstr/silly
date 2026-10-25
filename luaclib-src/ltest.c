@@ -7,6 +7,11 @@
 #include <lauxlib.h>
 #include "silly.h"
 #include "platform.h" // Include platform.h only for typedef definitions
+#ifdef USE_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#endif
 
 static int lnew(lua_State *L)
 {
@@ -251,6 +256,152 @@ static int lpointer(lua_State *L)
 	return 1;
 }
 
+#ifdef USE_OPENSSL
+/* Blocking TLS 1.2 peer, run in a Hive worker while the client uses the event loop. */
+static int ltlsreneg(lua_State *L)
+{
+	int fd, control, n, left, sslerr, prefix;
+	char command;
+	size_t cert_size, key_size;
+	const char *cert_data, *key_data;
+	const char *error = NULL;
+	SSL_CTX *ctx = NULL;
+	SSL *ssl = NULL;
+	BIO *bio = NULL;
+	X509 *cert = NULL;
+	EVP_PKEY *key = NULL;
+	luaL_Buffer buffer;
+	char *data;
+#ifdef _WIN32
+	int timeout = 5000;
+#else
+	struct timeval timeout = {5, 0};
+#endif
+	fd = luaL_checkinteger(L, 1);
+	control = luaL_checkinteger(L, 2);
+	cert_data = luaL_checklstring(L, 3, &cert_size);
+	key_data = luaL_checklstring(L, 4, &key_size);
+	left = luaL_checkinteger(L, 5);
+	prefix = lua_toboolean(L, 6);
+	luaL_argcheck(L, left > 0, 5, "expected data must not be empty");
+	data = luaL_buffinitsize(L, &buffer, left);
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) != 0 ||
+	    setsockopt(control, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) != 0) {
+		error = "TLS peer receive deadline setup failed";
+		goto done;
+	}
+	ctx = SSL_CTX_new(TLS_method());
+	if (ctx == NULL) {
+		error = "SSL_CTX_new failed";
+		goto done;
+	}
+	SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+	SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION);
+	bio = BIO_new_mem_buf(cert_data, cert_size);
+	cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+	BIO_free(bio);
+	bio = BIO_new_mem_buf(key_data, key_size);
+	key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+	BIO_free(bio);
+	if (cert == NULL || key == NULL || SSL_CTX_use_certificate(ctx, cert) != 1 ||
+	    SSL_CTX_use_PrivateKey(ctx, key) != 1) {
+		error = "TLS peer certificate setup failed";
+		goto done;
+	}
+	ssl = SSL_new(ctx);
+	if (ssl == NULL || SSL_set_fd(ssl, fd) != 1 || SSL_accept(ssl) != 1) {
+		error = "TLS peer handshake failed";
+		goto done;
+	}
+	if (prefix) {
+		if (SSL_read(ssl, &command, 1) != 1 || command != 'p' || SSL_write(ssl, "p", 1) != 1) {
+			error = "TLS peer initial application data exchange failed";
+			goto done;
+		}
+	}
+	/* The client installs its observer after the initial handshake. */
+	if (recv(control, &command, 1, 0) != 1 || command != 'r') {
+		error = "TLS peer start barrier failed";
+		goto done;
+	}
+	if (SSL_renegotiate(ssl) != 1 || SSL_do_handshake(ssl) != 1) {
+		error = "TLS peer renegotiation failed";
+		goto done;
+	}
+	/* Hold the server flight until all client writes have been attempted. */
+	if (recv(control, &command, 1, 0) != 1) {
+		error = "TLS peer write barrier failed";
+		goto done;
+	}
+	if (command == 'a') {
+		goto done;
+	}
+	if (command == 'f') {
+		const char bad[] = {0x17, 0x03, 0x03, 0x00, 0x01, (char)0xff};
+		if (send(fd, bad, sizeof(bad), 0) != sizeof(bad))
+			error = "TLS peer corrupt record send failed";
+		goto done;
+	}
+	if (command == 'e') {
+		if (SSL_shutdown(ssl) < 0)
+			error = "TLS peer close_notify failed";
+		goto done;
+	}
+	if (command == 't') {
+		char raw[4096];
+		while ((n = recv(fd, raw, sizeof(raw), 0)) > 0) {
+		}
+		if (n < 0 || send(control, "d", 1, 0) != 1)
+			error = "TLS peer did not observe connection close";
+		goto done;
+	}
+	while (left > 0) {
+		n = SSL_read(ssl, data, left);
+		if (n <= 0) {
+			error = "TLS peer read failed";
+			goto done;
+		}
+		data += n;
+		left -= n;
+	}
+	if (command == 'w' && SSL_write(ssl, "ok", 2) != 2) {
+		error = "TLS peer response failed";
+		goto done;
+	}
+	if (send(control, "d", 1, 0) != 1) {
+		error = "TLS peer completion barrier failed";
+		goto done;
+	}
+	ERR_clear_error();
+	errno = 0;
+	n = SSL_read(ssl, &command, 1);
+	sslerr = SSL_get_error(ssl, n);
+	if (n > 0) {
+		error = "TLS peer received unexpected trailing data";
+	} else if (sslerr == SSL_ERROR_WANT_READ || sslerr == SSL_ERROR_WANT_WRITE ||
+		   (sslerr == SSL_ERROR_SYSCALL && errno == ETIMEDOUT)) {
+		error = "TLS peer did not observe connection close";
+	}
+#ifdef _WIN32
+	if (sslerr == SSL_ERROR_SYSCALL && WSAGetLastError() == WSAETIMEDOUT)
+		error = "TLS peer did not observe connection close";
+#endif
+done:
+	SSL_free(ssl);
+	SSL_CTX_free(ctx);
+	X509_free(cert);
+	EVP_PKEY_free(key);
+	luaL_pushresultsize(&buffer, luaL_checkinteger(L, 5) - left);
+	if (error != NULL) {
+		lua_pop(L, 1);
+		lua_pushnil(L);
+		lua_pushstring(L, error);
+		return 2;
+	}
+	return 1;
+}
+#endif
+
 #ifdef SILLY_TEST
 static int writev_lua_ref = LUA_NOREF;
 static lua_State *hook_lua_state = NULL;
@@ -437,6 +588,9 @@ SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 		{ "recv",        lrecv        },
 		{ "close",       lclose       },
 		{ "pointer",     lpointer     },
+	#ifdef USE_OPENSSL
+		{ "tlsreneg",    ltlsreneg    },
+	#endif
 	#ifdef SILLY_TEST
 		{ "debugctrl",   ldebugctrl   },
 	#endif
