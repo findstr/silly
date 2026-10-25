@@ -60,6 +60,7 @@ local mysql = require "silly.store.mysql"
 - **参数**:
   - `opts`: `table` - 连接池配置表
     - `addr`: `string` - 数据库地址，格式 `"host:port"`（默认 `"127.0.0.1:3306"`）
+    - `connect_timeout`: `integer|nil` (可选) - TCP 建连超时（毫秒）；不设置时不指定建连期限
     - `user`: `string` - 用户名
     - `password`: `string` - 密码
     - `database`: `string|nil` (可选) - 数据库名（默认空）
@@ -69,6 +70,7 @@ local mysql = require "silly.store.mysql"
     - `max_idle_time`: `integer|nil` (可选) - 连接最大空闲时间（秒），0 表示不限制（默认 0）
     - `max_lifetime`: `integer|nil` (可选) - 连接最大生命周期（秒），0 表示不限制（默认 0）
     - `max_packet_size`: `integer|nil` (可选) - 最大数据包大小（字节），默认 1MB
+    - `max_stmts`: `integer|nil` (可选) - 每个连接缓存的预处理语句上限（默认 128）；0 表示禁用缓存。达到上限后释放最早缓存的语句。
 - **返回值**:
   - 成功: `pool` - MySQL 连接池对象
   - 失败: 从不失败（连接在首次查询时建立）
@@ -184,6 +186,7 @@ end)
   - 自动使用预处理语句
   - 参数类型自动转换
   - nil 参数表示 SQL NULL
+  - 存储过程的多个结果集会被完整读取，各结果集的行按顺序合并到返回数组
 - **示例**:
 
 ```lua validate
@@ -491,6 +494,7 @@ end)
 - **返回值**: 无
 - **注意**:
   - 如果事务未提交或回滚，将自动回滚
+  - 可以重复调用。关闭后，该句柄不能再执行查询，也不会影响复用同一物理连接的后续事务
   - 连接归还到池中或释放
   - 关闭后连接对象不可再使用
 - **示例**:

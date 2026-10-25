@@ -1,5 +1,6 @@
 -- protocol detail: https://mariadb.com/kb/en/clientserver-protocol/
 
+local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
 local hash = require "silly.crypto.hash"
@@ -16,7 +17,9 @@ local strunpack = string.unpack
 local strpack = string.pack
 local setmetatable = setmetatable
 local tremove = table.remove
+local tconcat = table.concat
 local timenow = time.monotonic
+local pcall = silly.pcall
 
 local tcp_connect = tcp.connect
 local tcp_close = tcp.close
@@ -33,18 +36,19 @@ local P
 
 local cmt
 local pmt
+local smt
 
 --- @class stmt
 --- @field prepare_id number
 --- @field warning_count number
 --- @field param_count number
 --- @field field_count number
---- @field params row[]
---- @field fields row[]
+--- @field params column_def[]
+--- @field fields column_def[]
 
---- @class conn
+--- @class mysqlsession
 --- @field pool pool
---- @field fd number				#socket fd
+--- @field fd silly.net.tcp.conn?                 #owned transport
 --- @field auth_plugin_name string		#auth plugin name
 --- @field connection_id number			#connection id
 --- @field packet_no number			#packet number
@@ -55,12 +59,16 @@ local pmt
 --- @field server_capabilities number		#server capabilities
 --- @field server_collation number		#server collation
 --- @field server_status number			#server status
---- @field stmt_cache stmt[]			#statement cache
+--- @field stmt_cache table<string, stmt>        #statement cache
+--- @field stmt_order string[]
+--- @field stmt_next integer
+--- @field stmt_count integer
 --- @field is_broken boolean			#connection is broken
 --- @field is_autocommit boolean		#connection is autocommit
 
 --- @class pool
 --- @field addr string
+--- @field connect_timeout integer?
 --- @field database string
 --- @field user string
 --- @field password string
@@ -70,19 +78,31 @@ local pmt
 --- @field max_idle_conns number
 --- @field max_idle_time number
 --- @field max_lifetime number
---- @field conns_idle conn[]
+--- @field max_stmts integer
+--- @field conns_idle mysqlsession[]
 --- @field open_count number
 --- @field waiting_for_conn thread[]
 --- @field is_closed boolean
+--- @field timer integer?
+
+--- @class conn: mysqlsession
+--- @field package session mysqlsession?        #cleared before returning to the pool
+--- @field close fun(self: conn)
+--- @field ping fun(self: conn): ok_packet?, err_packet?
+--- @field query fun(self: conn, sql: string, ...): ok_packet|row[]|nil, err_packet?
+--- @field commit fun(self: conn): ok_packet?, err_packet?
+--- @field rollback fun(self: conn): ok_packet?, err_packet?
 
 --- @class open_opts
 --- @field addr string  #host:port
+--- @field connect_timeout integer? #TCP connection timeout in milliseconds
 --- @field user string
 --- @field password string
 --- @field max_open_conns number? #default 0
 --- @field max_idle_conns number? #default 0
 --- @field max_idle_time number? #default 0
 --- @field max_lifetime number? #default 0
+--- @field max_stmts integer? #default 128 per connection; 0 disables caching
 --- @field database string? #default ""
 --- @field charset string? #default _default
 --- @field max_packet_size number? #default 1024 * 1024
@@ -121,13 +141,11 @@ local pmt
 --- }
 
 --- @class column_def {
----	@field name string
----	@field type number
----	@field is_signed boolean
+---     @field [integer] string|integer #name, field type, field flags
 --- }
 
 --- @class row {
----	@field [string] string
+---	@field [string] string|number
 --- }
 
 -- constants
@@ -220,24 +238,7 @@ local CHARSET_MAP = {
 	gb18030   = 248
 }
 
-local pkt_fmt_cache = setmetatable({}, {
-	__index = function(t, k)
-		local v = "<I3Bc" .. k
-		t[k] = v
-		return v
-	end
-})
-
-local prepare_pkt_cache = setmetatable({}, {
-	__index = function(t, sql)
-		local cmd = COM_STMT_PREPARE .. sql
-		local pkt = strpack(pkt_fmt_cache[#cmd], #cmd, 0, cmd)
-		t[sql] = pkt
-		return pkt
-	end
-})
-
-
+local MAX_PAYLOAD<const> = 0xffffff
 local ping_packet = strpack("<I3Bc1", 1, 0, COM_PING)
 local quit_packet = strpack("<I3Bc1", 1, 0, COM_QUIT)
 local begin_packet = strpack("<I3Bc6", 6, 0, COM_BEGIN)
@@ -300,43 +301,75 @@ local function compute_token_sha256(password, scramble)
 	return token
 end
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @param req string
---- @return string
+--- @return string|string[]
 local function compose_packet(conn, req)
-	local packet_no = conn.packet_no + 1
-	conn.packet_no = packet_no
+	local packet_no = (conn.packet_no + 1) % 256
 	local size = #req
-	return strpack(pkt_fmt_cache[size], size, packet_no, req)
+	if size < MAX_PAYLOAD then
+		conn.packet_no = packet_no
+		return strpack("<I3B", size, packet_no) .. req
+	end
+	local chunks = {}
+	local pos = 1
+	while size - pos + 1 >= MAX_PAYLOAD do
+		chunks[#chunks + 1] = strpack("<I3B", MAX_PAYLOAD, packet_no)
+		chunks[#chunks + 1] = sub(req, pos, pos + MAX_PAYLOAD - 1)
+		pos = pos + MAX_PAYLOAD
+		packet_no = (packet_no + 1) % 256
+	end
+	chunks[#chunks + 1] = strpack("<I3B", size - pos + 1, packet_no)
+	chunks[#chunks + 1] = sub(req, pos)
+	conn.packet_no = packet_no
+	return chunks
 end
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @return string?, string? error
 local function read_packet(conn)
 	local fd = conn.fd
-	local data, err = tcp_read(fd, 4)
-	if not data then
-		conn.is_broken = true
-		return nil, "Failed to receive packet header: " .. err
+	local chunks
+	while true do
+		local data, err = tcp_read(fd, 4)
+		if not data then
+			conn.is_broken = true
+			return nil, "Failed to receive packet header: " .. err
+		end
+		local len, packet_no = strunpack("<I3B", data)
+		if chunks and packet_no ~= (conn.packet_no + 1) % 256 then
+			conn.is_broken = true
+			return nil, "Invalid packet fragment sequence"
+		end
+		conn.packet_no = packet_no
+		if len == 0 then
+			if chunks then
+				return tconcat(chunks), nil
+			end
+			conn.is_broken = true
+			return nil, "Empty packet"
+		end
+		data, err = tcp_read(fd, len)
+		if not data then
+			conn.is_broken = true
+			return nil, "Failed to read packet content: " .. err
+		end
+		if not chunks and len < MAX_PAYLOAD then
+			return data, nil
+		end
+		chunks = chunks or {}
+		chunks[#chunks + 1] = data
+		if len < MAX_PAYLOAD then
+			return tconcat(chunks), nil
+		end
 	end
-	conn.packet_no = strbyte(data, 4)
-	local len, _ = strunpack("<I3", data, 1)
-	if len == 0 then
-		return nil, "Empty packet"
-	end
-	data, err = tcp_read(fd, len)
-	if not data then
-		conn.is_broken = true
-		return nil, "Failed to read packet content: " .. err
-	end
-	return data, nil
 end
 
 
 
 local zero_23 = strrep("\0", 23)
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @return boolean, err_packet|nil
 local function _mysql_login(conn)
 	local packet, err = read_packet(conn)
@@ -370,14 +403,10 @@ local function _mysql_login(conn)
 		pos = strunpack("<zI4c8I1I2I1I2I2I1", packet, 2)
 	pos = pos + 10 --skip filler
 	server_cap = server_cap | server_cap2 << 16
-	if server_cap & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA ~= 0 then
-		-- The auth_plugin_data_len from the handshake is the length of auth data to be sent
-		-- For caching_sha2_password, it's 20 bytes total (8 bytes part1 + 12 bytes part2)
-		-- But the packet structure has: 8 bytes part1 + auth_plugin_data_len bytes of part2 + 1 byte NUL
-		-- So part2 is auth_plugin_data_len - 8 bytes, but we should read only 12 bytes for the scramble
-		local len = 12  -- For caching_sha2_password, we always want exactly 12 bytes for part2
-		auth_plugin_data_part2 = sub(packet, pos, pos + len - 1)
-		pos = pos + len + 1  -- +1 to skip the trailing NUL that separates part2 from auth_plugin_name
+	if server_cap & CLIENT_SECURE_CONNECTION ~= 0 then
+		local len = math.max(13, auth_plugin_data_len - 8)
+		auth_plugin_data_part2 = sub(packet, pos, pos + len - 2)
+		pos = pos + len
 	end
 	if server_cap & CLIENT_PLUGIN_AUTH ~= 0 then
 		auth_plugin_name = strunpack("<z", packet, pos)
@@ -489,6 +518,7 @@ local function _mysql_login(conn)
 		local switch_plugin_name, pos = strunpack("<z", data, 2)
 		-- Auth data includes trailing NUL which needs to be removed for correct scramble length
 		local switch_auth_data = sub(data, pos, #data - 1)
+		scramble = switch_auth_data
 
 		-- Server wants us to switch auth method
 		-- Compute new token with the new method and scramble
@@ -663,7 +693,6 @@ local function _mysql_login(conn)
 			end
 			-- Encrypt password: XOR(password + NULL, scramble) then RSA encrypt
 			local pass_null = pool.password .. "\0"
-			local scramble = auth_plugin_data_part1 .. auth_plugin_data_part2
 			local scrambled_pass = ""
 			for i = 1, #pass_null do
 				scrambled_pass = scrambled_pass .. strchar(strbyte(pass_null, i) ~ strbyte(scramble, (i - 1) % #scramble + 1))
@@ -773,12 +802,12 @@ local function _mysql_login(conn)
 	}
 end
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @param array column_def[]
+--- @param count integer
 --- @return boolean, err_packet? error
-local function recv_col_def_packet(conn, array)
-	local i = #array + 1
-	while true do
+local function recv_col_def_packet(conn, array, count)
+	for i = 1, count + 1 do
 		local data , err = read_packet(conn)
 		if not data then
 			return false, {
@@ -787,21 +816,27 @@ local function recv_col_def_packet(conn, array)
 			}
 		end
 		local first = strbyte(data)
-		if first == EOF then
-			break
+		if first == ERR then
+			return false, parse_err_packet(data)
+		end
+		if i == count + 1 then
+			if first == EOF and #data < 9 then
+				return true, nil
+			end
+			conn.is_broken = true
+			return false, {type = "ERR", message = "Missing column definition EOF"}
 		end
 		array[i] = parse_column_def(data)
-		i = i + 1
 	end
-	return true, nil
 end
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @param sql string
 --- @return stmt|? stmt, err_packet? error
 local function prepare(conn, sql)
 	local ok, data ,err
-	ok, err = tcp_write(conn.fd, prepare_pkt_cache[sql])
+	conn.packet_no = -1
+	ok, err = tcp_write(conn.fd, compose_packet(conn, COM_STMT_PREPARE .. sql))
 	if not ok then
 		conn.is_broken = true
 		return nil, {
@@ -824,13 +859,13 @@ local function prepare(conn, sql)
 	local fields = {}
 	local params = {}
 	if param_count > 0 then
-		ok, err = recv_col_def_packet(conn, params)
+		ok, err = recv_col_def_packet(conn, params, param_count)
 		if not ok then
 			return nil, err
 		end
 	end
 	if field_count > 0 then
-		ok, err = recv_col_def_packet(conn, fields)
+		ok, err = recv_col_def_packet(conn, fields, field_count)
 		if not ok then
 			return nil, err
 		end
@@ -848,7 +883,7 @@ end
 
 -----------------------------connection--------------------------
 
---- @param self conn
+--- @param self mysqlsession
 --- @return ok_packet? result, err_packet? error
 local function conn_ping(self)
 	local ok, err = tcp_write(self.fd, ping_packet)
@@ -866,24 +901,17 @@ local function conn_ping(self)
 			message = "failed to read ping packet: " .. err
 		}
 	end
+	if strbyte(data) == ERR then
+		return nil, parse_err_packet(data)
+	end
 	return parse_ok_packet(data), nil
 end
 
---- @param conn conn
+--- @param conn mysqlsession
 --- @param sql string
 --- @vararg any
 --- @return ok_packet|row[]|nil result, err_packet? error
-local function conn_query(conn, sql, ...)
-	local err
-	local cache = conn.stmt_cache
-	local stmt = cache[sql]
-	if not stmt then
-		stmt, err = prepare(conn, sql)
-		if not stmt then
-			return nil, err
-		end
-		cache[sql] = stmt
-	end
+local function execute(conn, stmt, ...)
 	conn.packet_no = -1
 	local stmt_packet = compose_stmt_execute(stmt.prepare_id, stmt.param_count, CURSOR_TYPE_NO_CURSOR, ...)
 	local querypacket = compose_packet(conn, stmt_packet)
@@ -895,34 +923,7 @@ local function conn_query(conn, sql, ...)
 			message = "failed to write execute packet: " .. err,
 		}
 	end
-	-- read execute result
-	local data, errstr = read_packet(conn)
-	if not data then
-		return nil, {
-			type = "ERR",
-			message = errstr,
-		}
-	end
-	local first = strbyte(data)
-	if first == ERR then
-		return nil, parse_err_packet(data)
-	end
-	if first == OK then
-		return parse_ok_packet(data), nil
-	end
-	-- result set
-	-- metadata
-	local field_count, _ = parse_lenenc(data, 1)
-	local cols = {}
-	if field_count > 0 then
-		local ok, err = recv_col_def_packet(conn, cols)
-		if not ok then
-			return nil, err
-		end
-	end
-
-	local i = 0
-	local rows = {}
+	local rows
 	while true do
 		local data, errstr = read_packet(conn)
 		if not data then
@@ -932,21 +933,106 @@ local function conn_query(conn, sql, ...)
 			}
 		end
 		local first = strbyte(data)
-		if first == EOF then
-			local eof = parse_eof_packet(data)
-			if eof.status_flags & SERVER_MORE_RESULTS_EXISTS == 0 then -- no more result set
-				break
-			end
+		if first == ERR then
+			return nil, parse_err_packet(data)
+		end
+		local status
+		local result
+		if first == OK then
+			result = parse_ok_packet(data)
+			status = result.server_status
 		else
-			i = i + 1
-			rows[i] = parse_row_data_binary(data, cols)
+			local field_count = parse_lenenc(data, 1)
+			local cols = {}
+			local ok, err = recv_col_def_packet(conn, cols, field_count)
+			if not ok then
+				return nil, err
+			end
+			rows = rows or {}
+			while true do
+				data, errstr = read_packet(conn)
+				if not data then
+					return nil, {type = "ERR", message = errstr}
+				end
+				first = strbyte(data)
+				if first == ERR then
+					return nil, parse_err_packet(data)
+				end
+				if first == EOF and #data < 9 then
+					status = parse_eof_packet(data).status_flags
+					break
+				end
+				rows[#rows + 1] = parse_row_data_binary(data, cols)
+			end
+		end
+		if status & SERVER_MORE_RESULTS_EXISTS == 0 then
+			return rows or result, nil
 		end
 	end
-	return rows, nil
+end
+
+local function close_stmt(conn, stmt)
+	local packet = strpack("<I3BBI4", 5, 0, 0x19, stmt.prepare_id)
+	local ok, err = tcp_write(conn.fd, packet)
+	if not ok then
+		conn.is_broken = true
+		return nil, {type = "ERR", message = "failed to close statement: " .. err}
+	end
+	return true, nil
+end
+
+--- @param conn mysqlsession
+--- @param sql string
+--- @vararg any
+--- @return ok_packet|row[]|nil result, err_packet? error
+local function conn_query(conn, sql, ...)
+	local cache = conn.stmt_cache
+	local stmt = cache[sql]
+	local max_stmts = conn.pool.max_stmts
+	if not stmt then
+		if conn.stmt_count == max_stmts and max_stmts > 0 then
+			local old_sql = conn.stmt_order[conn.stmt_next]
+			local old = cache[old_sql]
+			cache[old_sql] = nil
+			conn.stmt_order[conn.stmt_next] = nil
+			conn.stmt_count = conn.stmt_count - 1
+			local ok, err = close_stmt(conn, old)
+			if not ok then
+				return nil, err
+			end
+		end
+		local ok, result, err = pcall(prepare, conn, sql)
+		if not ok then
+			conn.is_broken = true
+			error(result, 0)
+		end
+		stmt = result
+		if not stmt then
+			return nil, err
+		end
+		if max_stmts > 0 then
+			cache[sql] = stmt
+			conn.stmt_order[conn.stmt_next] = sql
+			conn.stmt_next = conn.stmt_next % max_stmts + 1
+			conn.stmt_count = conn.stmt_count + 1
+		end
+	end
+	local ok, result, err = pcall(execute, conn, stmt, ...)
+	if not ok then
+		conn.is_broken = true
+		error(result, 0)
+	end
+	if max_stmts == 0 and not conn.is_broken then
+		local closed, close_err = close_stmt(conn, stmt)
+		if not closed and result then
+			return nil, close_err
+		end
+	end
+	return result, err
 end
 
 local function conn_close_transaction(packet)
-	--- @param conn conn
+	--- @param conn mysqlsession
 	--- @return ok_packet? result, err_packet? error
 	return function(conn)
 		if conn.is_autocommit then
@@ -955,7 +1041,6 @@ local function conn_close_transaction(packet)
 				message = "not in transaction",
 			}
 		end
-		conn.is_autocommit = true
 		local ok, err = tcp_write(conn.fd, packet)
 		if not ok then
 			conn.is_broken = true
@@ -975,6 +1060,7 @@ local function conn_close_transaction(packet)
 		if first == ERR then
 			return nil, parse_err_packet(data)
 		end
+		conn.is_autocommit = true
 		return parse_ok_packet(data), nil
 	end
 end
@@ -982,76 +1068,90 @@ end
 local conn_commit = conn_close_transaction(commit_packet)
 local conn_rollback = conn_close_transaction(rollback_packet)
 
---- @param conn conn
-local function conn_close(conn)
+local function wake_waiter(pool)
+	if not pool.is_closed then
+		local co = tremove(pool.waiting_for_conn, 1)
+		if co then
+			task.wakeup(co)
+		end
+	end
+end
+
+local function conn_destroy(conn)
+	local fd = conn.fd
+	if not fd then
+		return
+	end
 	local pool = conn.pool
-	if not conn.is_autocommit then
-		conn_rollback(conn)
+	conn.fd = nil
+	pool.open_count = pool.open_count - 1
+	if not conn.is_broken then
+		tcp_write(fd, quit_packet)
+	end
+	tcp_close(fd)
+	wake_waiter(pool)
+end
+
+--- @param conn mysqlsession
+local function conn_close(conn)
+	if not conn.fd then
+		return
+	end
+	local pool = conn.pool
+	if not conn.is_autocommit and not conn.is_broken then
+		local ok, result = pcall(conn_rollback, conn)
+		if not ok or not result then
+			conn.is_broken = true
+		end
 	end
 	if not pool.is_closed and not conn.is_broken then
-		-- try waktup waiting conn
-		local waiting_for_conn = pool.waiting_for_conn
-		if #waiting_for_conn > 0 then
-			local co = tremove(waiting_for_conn)
-			if co then
-				task.wakeup(co, conn)
-			end
-			return
-		end
-		-- trye return to pool
 		local conns_idle = pool.conns_idle
-		if #conns_idle < pool.max_idle_conns then
+		if #pool.waiting_for_conn > 0 or #conns_idle < pool.max_idle_conns then
 			conn.returned_at = timenow() // 1000
 			conns_idle[#conns_idle + 1] = conn
+			wake_waiter(pool)
 			return
 		end
 	end
-	pool.open_count = pool.open_count - 1
-	local fd = conn.fd
-	conn.fd = nil
-	tcp_write(fd, quit_packet)
-	tcp_close(fd)
+	conn_destroy(conn)
 end
 
 --- @param pool pool
---- @return conn? conn, err_packet? error
+--- @return mysqlsession? conn, err_packet? error
 local function conn_new(pool)
-	local lifetime_since
-	local now = timenow() // 1000
-	local conns_idle = pool.conns_idle
-	local max_lifetime = pool.max_lifetime
-	if max_lifetime > 0 then
-		lifetime_since = now - max_lifetime
-	end
-	while #conns_idle > 0 do
-		local conn = tremove(conns_idle)
-		if not conn then
+	local now
+	while true do
+		if pool.is_closed then
+			return nil, {type = "ERR", message = "pool is closed"}
+		end
+		now = timenow() // 1000
+		local conns_idle = pool.conns_idle
+		while #conns_idle > 0 do
+			local conn = tremove(conns_idle)
+			local expired = pool.max_lifetime > 0 and now - conn.created_at >= pool.max_lifetime or
+				pool.max_idle_time > 0 and now - conn.returned_at >= pool.max_idle_time
+			if not expired and conn.fd and not conn.is_broken then
+				return conn
+			end
+			conn_destroy(conn)
+		end
+		if pool.max_open_conns == 0 or pool.open_count < pool.max_open_conns then
 			break
 		end
-		if not lifetime_since or conn.returned_at > lifetime_since then
-			return conn
-		end
-		--- old conn will be closed
-		tcp_close(conn.fd)
-		conn.fd = nil
-	end
-	local max_open_conns = pool.max_open_conns
-	if max_open_conns > 0 and pool.open_count >= max_open_conns then
 		local co = task.running()
 		local waiting_for_conn = pool.waiting_for_conn
 		waiting_for_conn[#waiting_for_conn + 1] = co
-		local conn = task.wait()
-		if conn then
-			return conn
-		end
+		task.wait()
 	end
 	pool.open_count = pool.open_count + 1
-	local fd , err = tcp_connect(pool.addr)
+	local fd, err = tcp_connect(pool.addr, pool.connect_timeout and {timeout = pool.connect_timeout})
 	if not fd then
 		pool.open_count = pool.open_count - 1
+		wake_waiter(pool)
 		return nil, {
 			type = "ERR",
-			message = "connect to " .. pool.addr .. " failed: " .. err
+			message = pool.is_closed and "pool is closed" or
+				"connect to " .. pool.addr .. " failed: " .. err
 		}
 	end
 	local conn = setmetatable({
@@ -1066,14 +1166,27 @@ local function conn_new(pool)
 		created_at = now,
 		returned_at = now,
 		stmt_cache = {},
+		stmt_order = {},
+		stmt_next = 1,
+		stmt_count = 0,
 		is_broken = true,
 		connection_id = 0,
 		auth_plugin_name = "",
 		is_autocommit = true,
-	}, cmt)
-	local ok, err = _mysql_login(conn)
-	if not ok then
-		conn_close(conn)
+	}, smt)
+	if pool.is_closed then
+		conn_destroy(conn)
+		return nil, {type = "ERR", message = "pool is closed"}
+	end
+	local called, ok, err = pcall(_mysql_login, conn)
+	if not called or not ok or pool.is_closed then
+		conn_destroy(conn)
+		if pool.is_closed then
+			return nil, {type = "ERR", message = "pool is closed"}
+		end
+		if not called then
+			return nil, {type = "ERR", message = ok}
+		end
 		return nil, err
 	end
 	return conn, nil
@@ -1082,6 +1195,7 @@ end
 --------------------------connection pool--------------------------
 --- @param pool pool
 local function pool_clear(pool)
+	pool.timer = nil
 	if pool.is_closed then
 		return
 	end
@@ -1099,10 +1213,9 @@ local function pool_clear(pool)
 	local wi = 1
 	for i = 1, #conns_idle do
 		local conn = conns_idle[i]
-		if idle_since and conn.returned_at < idle_since or
-			created_since and conn.created_at < created_since then
-			tcp_close(conn.fd)
-			conn.fd = nil
+		if idle_since and conn.returned_at <= idle_since or
+			created_since and conn.created_at <= created_since then
+			conn_destroy(conn)
 		else
 			conns_idle[wi] = conn
 			wi = wi + 1
@@ -1111,21 +1224,24 @@ local function pool_clear(pool)
 	for i = wi, #conns_idle do -- clear old conn
 		conns_idle[i] = nil
 	end
-	time.after(1000, pool_clear, pool)
+	pool.timer = time.after(1000, pool_clear, pool)
 end
 
 --- @param self pool
 local function pool_close(self)
+	if self.is_closed then
+		return
+	end
 	self.is_closed = true
+	if self.timer then
+		time.cancel(self.timer)
+		self.timer = nil
+	end
 	local conns_idle = self.conns_idle
 	for i = 1, #conns_idle do
 		local conn = conns_idle[i]
-		local fd = conn.fd
-		if fd then
-			conn.fd = nil
-			tcp_close(fd)
-		end
 		conns_idle[i] = nil
+		conn_destroy(conn)
 	end
 	local waiting_for_conn = self.waiting_for_conn
 	for i = 1, #waiting_for_conn do
@@ -1138,8 +1254,11 @@ end
 --- @param opts open_opts
 --- @return pool
 local function pool_open(opts)
+	local max_stmts = opts.max_stmts or 128
+	assert(math.type(max_stmts) == "integer" and max_stmts >= 0, "max_stmts must be a non-negative integer")
 	local pool = setmetatable({
 		addr = opts.addr or "127.0.0.1:3306",
+		connect_timeout = opts.connect_timeout,
 		database = opts.database or "",
 		user = opts.user or "",
 		password = opts.password or "",
@@ -1149,13 +1268,15 @@ local function pool_open(opts)
 		max_idle_conns = opts.max_idle_conns or 0,
 		max_idle_time = opts.max_idle_time or 0,
 		max_lifetime = opts.max_lifetime or 0,
+		max_stmts = max_stmts,
 		open_count = 0,
 		conns_idle = {},
 		waiting_for_conn = {},
 		is_closed = false,
+		timer = nil,
 	}, pmt)
 	if pool.max_idle_time > 0 or pool.max_lifetime > 0 then
-		time.after(1000, pool_clear, pool)
+		pool.timer = time.after(1000, pool_clear, pool)
 	end
 	return pool
 end
@@ -1218,31 +1339,65 @@ local function pool_begin(self)
 		return nil, parse_err_packet(data)
 	end
 	conn.is_autocommit = false
-	return conn, nil
+	return setmetatable({session = conn}, cmt), nil
 end
 
 ----------export
 
---- @class conn
-C = {
-	close = conn_close,
-	ping = conn_ping,
-	query = conn_query,
-	commit = conn_commit,
-	rollback = conn_rollback,
-}
+--- @param self conn
+local function lease_close(self)
+	local conn = self.session
+	if conn then
+		self.session = nil
+		conn_close(conn)
+	end
+end
+
+C = {close = lease_close}
+for name, method in pairs({ping = conn_ping, query = conn_query, commit = conn_commit,
+	rollback = conn_rollback}) do
+	C[name] = function(self, ...)
+		local conn = self.session
+		if not conn or not conn.fd then
+			return nil, {type = "ERR", message = "connection is closed"}
+		end
+		if conn.is_broken then
+			return nil, {type = "ERR", message = "connection is broken"}
+		end
+		return method(conn, ...)
+	end
+end
 
 cmt = {
-	__index = C,
-	__close = conn_close,
-	__gc = function(conn)
-		local fd = conn.fd
-		if fd then
-			logger.error("[silly.store.mysql] connection leaked", fd)
-			conn.fd = nil
-			local ok = tcp_close(fd)
+	__index = function(self, key)
+		local method = C[key]
+		if method then
+			return method
+		end
+		local conn = rawget(self, "session")
+		if conn then
+			return conn[key]
+		end
+	end,
+	__close = lease_close,
+	__gc = function(self)
+		local conn = self.session
+		if conn then
+			self.session = nil
+			logger.error("[silly.store.mysql] connection leaked", conn.fd)
+			conn_destroy(conn)
 		end
 	end
+}
+
+smt = {
+	__close = conn_close,
+	__gc = function(conn)
+		if conn.fd then
+			logger.error("[silly.store.mysql] connection leaked", conn.fd)
+			conn_destroy(conn)
+		end
+	end,
 }
 
 

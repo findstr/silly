@@ -60,6 +60,7 @@ Creates a new MySQL connection pool.
 - **Parameters**:
   - `opts`: `table` - Connection pool configuration table
     - `addr`: `string` - Database address in format `"host:port"` (default `"127.0.0.1:3306"`)
+    - `connect_timeout`: `integer|nil` (optional) - TCP connection timeout in milliseconds; unset means no driver-specified deadline
     - `user`: `string` - Username
     - `password`: `string` - Password
     - `database`: `string|nil` (optional) - Database name (default empty)
@@ -69,6 +70,7 @@ Creates a new MySQL connection pool.
     - `max_idle_time`: `integer|nil` (optional) - Maximum idle time for connections (seconds), 0 means unlimited (default 0)
     - `max_lifetime`: `integer|nil` (optional) - Maximum connection lifetime (seconds), 0 means unlimited (default 0)
     - `max_packet_size`: `integer|nil` (optional) - Maximum packet size (bytes), default 1MB
+    - `max_stmts`: `integer|nil` (optional) - Maximum cached prepared statements per connection (default 128); 0 disables caching. The oldest cached statement is released when the limit is reached.
 - **Returns**:
   - Success: `pool` - MySQL connection pool object
   - Failure: Never fails (connection established on first query)
@@ -184,6 +186,7 @@ Executes SQL query (asynchronous).
   - Automatically uses prepared statements
   - Parameter types are automatically converted
   - nil parameter represents SQL NULL
+  - Multiple resultsets from a stored procedure are fully consumed; their rows are concatenated in order into the returned array
 - **Example**:
 
 ```lua validate
@@ -491,6 +494,7 @@ Closes transaction connection and returns it to the connection pool.
 - **Returns**: None
 - **Note**:
   - If transaction is not committed or rolled back, it will automatically rollback
+  - Repeated calls are safe. After closing, the handle cannot issue queries or affect a later transaction that reuses the connection
   - Connection is returned to pool or released
   - Connection object cannot be used after closing
 - **Example**:

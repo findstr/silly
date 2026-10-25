@@ -195,7 +195,8 @@ static int lparse_err_packet(lua_State *L)
 		lua_settable(L, -3);
 		return 0;
 	}
-	if (binary_read_uint8(&chk) == '#') {
+	if (chk.pos < chk.len && chk.data[chk.pos] == '#') {
+		chk.pos++;
 		if (chk.pos + 5 > chk.len) {
 			return binary_error(&chk, "sqlstate pos out of range");
 		}
@@ -273,30 +274,31 @@ static inline void parse_timestamp(lua_State *L, struct binary *chk, int is_date
 		}
 		return;
 	}
+	if (len != 4 && len != 7 && len != 11) {
+		binary_error(chk, "invalid timestamp length");
+		return;
+	}
 	year = binary_read_uint16le(chk);
 	month = binary_read_uint8(chk);
 	day = binary_read_uint8(chk);
-	switch (len) {
-	case 4:
-		n = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
-		break;
-	case 7:
+	if (len == 4) {
+		n = snprintf(buf, sizeof(buf),
+			is_date ? "%04d-%02d-%02d" : "%04d-%02d-%02d 00:00:00", year, month, day);
+	} else {
 		hour = binary_read_uint8(chk);
 		minute = binary_read_uint8(chk);
 		second = binary_read_uint8(chk);
-		n = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
-			year, month, day, hour, minute, second);
-		break;
-	case 11:
-		hour = binary_read_uint8(chk);
-		minute = binary_read_uint8(chk);
-		second = binary_read_uint8(chk);
-		microsecond = binary_read_uint32le(chk);
-		n = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06u",
-			year, month, day, hour, minute, second, microsecond);
-		break;
-	default:
-		lua_pushliteral(L, "2017-09-09 20:08:09");
+		if (len == 7) {
+			n = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+				year, month, day, hour, minute, second);
+		} else {
+			microsecond = binary_read_uint32le(chk);
+			n = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06u",
+				year, month, day, hour, minute, second, microsecond);
+		}
+	}
+	if (n < 0 || (size_t)n >= sizeof(buf)) {
+		binary_error(chk, "timestamp is too long");
 		return;
 	}
 	lua_pushlstring(L, buf, n);
@@ -316,6 +318,10 @@ static inline void parse_time(lua_State *L, struct binary *chk)
 	len = binary_read_uint8(chk);
 	if (len == 0) {
 		lua_pushliteral(L, "00:00:00");
+		return;
+	}
+	if (len != 8 && len != 12) {
+		binary_error(chk, "invalid time length");
 		return;
 	}
 	is_neg = binary_read_uint8(chk);
@@ -362,6 +368,7 @@ static inline void parse_field(struct binary *chk, lua_Integer field_type, lua_I
 		}
 		break;
 	case MYSQL_TYPE_LONG:
+	case MYSQL_TYPE_INT24:
 		if (is_signed) {
 			lua_pushinteger(L, binary_read_int32le(chk));
 		} else {
@@ -379,13 +386,6 @@ static inline void parse_field(struct binary *chk, lua_Integer field_type, lua_I
 			lua_pushinteger(L, binary_read_int64le(chk));
 		} else {
 			lua_pushinteger(L, binary_read_uint64le(chk));
-		}
-		break;
-	case MYSQL_TYPE_INT24:
-		if (is_signed) {
-			lua_pushinteger(L, binary_read_int24le(chk));
-		} else {
-			lua_pushinteger(L, binary_read_uint24le(chk));
 		}
 		break;
 		case MYSQL_TYPE_NULL:
@@ -441,10 +441,13 @@ static int lparse_row_data_binary(lua_State *L)
 	if (chk.pos >= chk.len) {
 		return binary_error(&chk, "parse_row_data_binary only one byte");
 	}
-	null_map = (const uint8_t *)(chk.data + chk.pos);
 	ncols = lua_rawlen(L, stk_def);
 	// system reserved first 2 bits
 	null_bytes = (ncols + 7 + 2) / 8;
+	if ((size_t)null_bytes > chk.len - chk.pos) {
+		return binary_error(&chk, "truncated NULL bitmap");
+	}
+	null_map = (const uint8_t *)(chk.data + chk.pos);
 	chk.pos += null_bytes;
 	lua_createtable(L, 0, ncols);
 	for (i = 0; i < ncols; i++) {
@@ -473,43 +476,47 @@ static int lparse_row_data_binary(lua_State *L)
 static inline void add_params(luaL_Buffer *b, int arg_start, int arg_num)
 {
 	lua_Integer null_count;
-	uint8_t *null_map;
-	uint8_t *types_buf;
+	lua_Integer i;
+	size_t null_offset;
+	size_t types_offset;
 	// null map
 	null_count = (arg_num + 7) / 8;
-	null_map = (uint8_t *)luaL_prepbuffsize(b, null_count);
+	null_offset = luaL_bufflen(b);
+	memset(luaL_prepbuffsize(b, null_count), 0, null_count);
 	luaL_addsize(b, null_count);
-	memset(null_map, 0, null_count);
 	// send server type
 	luaL_addchar(b, 0x01);
-	types_buf = (uint8_t *)luaL_prepbuffsize(b, arg_num * 2);
+	types_offset = luaL_bufflen(b);
+	memset(luaL_prepbuffsize(b, arg_num * 2), 0, arg_num * 2);
 	luaL_addsize(b, arg_num * 2);
-	memset(types_buf, 0, arg_num * 2);
 	// byte<1> field type, byte<1> param flags
-	for (lua_Integer i = 0; i < arg_num; i++) {
+	for (i = 0; i < arg_num; i++) {
+		uint8_t *buffer;
 		int stk = i + arg_start;
 		int type = lua_type(b->L, stk);
+		// Appending a parameter may move both metadata regions.
+		buffer = (uint8_t *)luaL_buffaddr(b);
 		switch (type) {
 		case LUA_TNUMBER:
 			if (lua_isinteger(b->L, stk)) {
-				types_buf[i * 2] = MYSQL_TYPE_LONGLONG;
+				buffer[types_offset + i * 2] = MYSQL_TYPE_LONGLONG;
 				luaL_addint8(b, lua_tointeger(b->L, stk));
 			} else {
-				types_buf[i * 2] = MYSQL_TYPE_DOUBLE;
+				buffer[types_offset + i * 2] = MYSQL_TYPE_DOUBLE;
 				luaL_adddouble(b, lua_tonumber(b->L, stk));
 			}
 			break;
 		case LUA_TSTRING:
-			types_buf[i * 2] = MYSQL_TYPE_VARCHAR;
+			buffer[types_offset + i * 2] = MYSQL_TYPE_VARCHAR;
 			luaL_addlenenc_string(b, stk);
 			break;
 		case LUA_TBOOLEAN:
-			types_buf[i * 2] = MYSQL_TYPE_TINY;
+			buffer[types_offset + i * 2] = MYSQL_TYPE_TINY;
 			luaL_addchar(b, lua_toboolean(b->L, stk) ? 0x01 : 0x00);
 			break;
 		case LUA_TNIL:
-			types_buf[i * 2] = MYSQL_TYPE_NULL;
-			null_map[i / 8] |= (1 << (i % 8));
+			buffer[types_offset + i * 2] = MYSQL_TYPE_NULL;
+			buffer[null_offset + i / 8] |= (1 << (i % 8));
 			break;
 		default:
 			luaL_error(b->L, "invalid parameter type: %s",
