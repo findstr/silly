@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
-- Optional HTTP/2 client PING keepalive for HTTP and gRPC.
+- Optional HTTP/2 client PING keepalive for HTTP, gRPC and etcd, including idle probing control.
 - `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
 - `adt.queue:remove(value)`.
 - Optional decoded field-list limit in `http2.hpack.unpack()`.
@@ -10,6 +10,8 @@
 - `client.close()` to gracefully shut down pooled connections.
 
 ### Changed
+- HTTP/2 streams release concurrency slots when both directions finish or a reset ends the stream; completed results remain readable after graceful connection shutdown.
+- Client PING options use `keep_alive_interval`, `keep_alive_timeout` and `keep_alive_while_idle`. Idle probing defaults to false; probe timeouts default to 15 seconds for HTTP and 20 seconds for gRPC/etcd.
 - `http.request()` and `client:request()` accept optional `endstream` and `timeout` arguments.
 - `stream:respond()` accepts `endstream` to finish a response without a body.
 - `http2.hpack.unpack()` returns the decoded header list.

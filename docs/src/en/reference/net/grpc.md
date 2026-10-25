@@ -271,8 +271,9 @@ Create a gRPC connection pool.
   - `conf`: `table` - Client configuration table
     - `targets`: `string[]` (required) - List of gRPC targets, format `"host:port"` (or `dns://host:port`)
     - `tls`: `boolean|nil` (optional) - Whether to use TLS, default false
-    - `send_ping_timeout`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
-    - `ping_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 15000 when probes are enabled
+    - `keep_alive_interval`: `integer` (optional) - Receive inactivity before sending PING, in ms; nil or a nonpositive value disables probes
+    - `keep_alive_timeout`: `integer` (optional) - Timeout for one probe, in ms; nil or a nonpositive value uses 20000
+    - `keep_alive_while_idle`: `boolean` (optional) - Send PING without active RPCs, default false
 - **Returns**:
   - Success: `conn` - gRPC connection object
   - Failure: `nil, string` - nil and error message
@@ -1753,7 +1754,9 @@ service DataService {
 
 ### HTTP/2 PING keepalive
 
-`send_ping_timeout = 60000, ping_timeout = 15000` starts a PING after 60 seconds without received frames. If no matching ACK arrives within 15 seconds, the connection closes and blocked callers wake. Received frames postpone the next probe; sending data does not reset receive inactivity. Only a matching ACK completes an outstanding probe. Probes also run without active streams.
+`keep_alive_interval = 60000, keep_alive_timeout = 20000` starts a PING after 60 seconds without received frames while an RPC is active. If no matching ACK arrives within 20 seconds, the connection closes and blocked callers wake. Received frames postpone the next probe; sending data does not reset receive inactivity.
+
+`keep_alive_while_idle` defaults to false: future probes stop without active RPCs, and a new RPC restarts probing. A streaming RPC remains active even while no messages arrive. Set it to true to keep probing an idle connection. An outstanding PING retains its ACK deadline; only a matching ACK completes that probe. Choose an interval and idle policy compatible with the server's limits.
 
 Active probes are disabled by default and enabled only on clients. Both endpoints acknowledge valid PING requests. PING bypasses DATA flow control and does not extend the HTTP connection pool's `idle_timeout`. See [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7).
 

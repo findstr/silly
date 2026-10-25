@@ -262,8 +262,9 @@ http.listen {
     - `idle_timeout`: `integer` (可选) - 空闲连接超时时间(ms) (默认: 30000)
     - `read_timeout`: `integer` (可选) - 读超时时间(ms) (默认: 5000)
     - `alpnprotos`: `string[]` (可选) - ALPN 协议列表 (默认: `{"http/1.1", "h2"}`)
-    - `send_ping_timeout`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
-    - `ping_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
+    - `keep_alive_interval`: `integer` (可选) - 接收静默多久后发送 PING，单位 ms；nil 或非正数关闭主动探测
+    - `keep_alive_timeout`: `integer` (可选) - 一次探测的超时，单位 ms；启用探测时，nil 或非正数使用 15000
+    - `keep_alive_while_idle`: `boolean` (可选) - 没有活动 stream 时也发送 PING，默认 false
 - **返回值**: `silly.net.http.client` - 客户端对象
 - **示例**:
 ```lua validate
@@ -997,11 +998,15 @@ end)
 
 ### HTTP/2 PING 保活
 
-`send_ping_timeout = 60000, ping_timeout = 15000` 表示 60 秒未收到帧时发起 PING，15 秒内仍未收到匹配 ACK 则关闭连接并唤醒等待者。接收帧会推迟下一次探测，发送数据不会重置接收空闲计时；已发出的探测只能由匹配 ACK 完成。没有进行中的 stream 时也会探测。
+`keep_alive_interval = 60000, keep_alive_timeout = 15000` 表示存在活动 stream 且 60 秒未收到帧时发起 PING，15 秒内仍未收到匹配 ACK 则关闭连接并唤醒等待者。接收帧会推迟下一次探测，发送数据不会重置接收空闲计时。
+
+`keep_alive_while_idle` 默认 false：没有活动 stream 时停止后续探测，新请求会重新启动探测。设为 true 才会在连接空闲时持续探测。已经发出的 PING 仍保留 ACK 超时，即使最后一个 stream 已结束；只有匹配 ACK 才能完成该次探测。优雅排空期间仍会探测活动 stream。探测间隔及空闲探测策略应符合对端的限制。
 
 默认关闭主动探测，仅客户端可以通过选项启用。两端都回复合法 PING；PING 不受 DATA 流控限制，也不会延长 HTTP 连接池的 `idle_timeout`。协议依据 [RFC 9113 §6.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.7)。
 
-已建立的底层客户端 channel 可以调用 `ch:keepalive(send_ping_timeout, ping_timeout)`。两个参数均为可选整数，单位为毫秒。第一个参数为 nil 或非正数时关闭探测；启用后第二个参数为 nil 或非正数时使用 15000 ms。重新配置会取消当前探测并替换定时器，保留已经过去的接收空闲时间。保活共用一个 channel 定时器，stream 读取超时保持独立。
+已建立的底层客户端 channel 可以调用 `ch:keepalive(interval, timeout, while_idle)`。前两个参数为可选整数，单位为毫秒；第三个参数为可选布尔值，默认 false。interval 为 nil 或非正数时关闭探测；启用后 timeout 为 nil 或非正数时使用 15000 ms。重新配置会取消当前探测并替换定时器，保留已经过去的接收空闲时间。保活共用一个 channel 定时器，stream 读取超时保持独立。
+
+HTTP/2 stream 双方向都已结束或被重置时会自动归还并发名额，不再占用连接的活动计数；只结束一个方向仍算活动。已完成的 stream 对象仍可读取缓冲的 body、headers 和 trailers，即使连接已优雅关闭。仍应使用 `<close>` 或显式 `close()` 取消未完成的 stream；重复关闭不会重复释放名额。
 
 ## 参见
 

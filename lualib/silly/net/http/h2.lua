@@ -170,7 +170,7 @@ global _
 --- streams
 --- @field package streamidx integer -- Highest locally initiated stream ID queued for sending
 --- @field package laststreamid integer -- Highest peer-initiated stream ID seen; used in outgoing GOAWAY. Client stays at 0 because push is disabled.
---- @field package streamcount integer -- Client: sent streams not yet closed; server: accepted requests
+--- @field package streamcount integer -- Protocol-active streams, independent of application ownership
 --- @field package streammax integer -- Peer limit on locally initiated concurrent streams
 --- @field package streams table<integer, silly.net.http.h2.stream>
 --- send control
@@ -193,8 +193,9 @@ global _
 --- @field package goawaylast integer? -- Last stream ID received in peer GOAWAY
 --- @field package goawaysentlast integer? -- Preserve the cutoff when sending a later error GOAWAY
 --- @field package lastrecvtime integer
---- @field package sendpingtimeout integer?
---- @field package pingtimeout integer?
+--- @field package keepaliveinterval integer?
+--- @field package keepalivetimeout integer?
+--- @field package keepalivewhileidle boolean?
 --- @field package timer integer?
 --- @field package pingtoken string?
 --- @field package openwaitq silly.adt.queue<silly.net.http.h2.waiter>? -- Client only: created on first pending admission; cleared on transport closure
@@ -220,7 +221,7 @@ local channel_mt = {
 --- stream
 --- @field package id integer -- Assigned before a client request is returned
 --- @field package active boolean -- Stream initiated locally
---- @field package closed boolean -- Removed from the channel stream map
+--- @field package closed boolean -- Protocol ended and removed from the channel; completed data stays readable
 --- @field package errstr string? -- Set before either state enters STATE_RST
 --- @field package localstate silly.net.http.h2.state
 --- @field package remotestate silly.net.http.h2.state
@@ -632,6 +633,17 @@ local function channel_canceltimer(ch)
 end
 
 ---@param ch silly.net.http.h2.channel
+---@param s silly.net.http.h2.stream
+local function channel_delstream(ch, s)
+	if s.closed then
+		return
+	end
+	s.closed = true
+	ch.streams[s.id] = nil
+	ch.streamcount = ch.streamcount - 1
+end
+
+---@param ch silly.net.http.h2.channel
 local function channel_checkclose(ch)
 	local conn = ch.conn
 	if not conn then
@@ -653,6 +665,7 @@ local function channel_checkclose(ch)
 		return false
 	end
 	channel_canceltimer(ch)
+	ch.pingtoken = nil
 	channel_flushwrite(ch)
 	conn:close()
 	ch.conn = nil
@@ -684,9 +697,8 @@ end
 ---@param err string
 local function channel_clearstream(ch, err)
 	local streams = ch.streams
-	for id, s in pairs(streams) do
-		streams[id] = nil
-		s.closed = true
+	for _, s in pairs(streams) do
+		channel_delstream(ch, s)
 		-- Connection failure cannot invalidate a direction that already completed.
 		if s.localstate ~= STATE_END then
 			s.errstr = err
@@ -713,7 +725,6 @@ local function channel_clearstream(ch, err)
 			wakeup(co, err)
 		end
 	end
-	ch.streamcount = 0
 	ch.sendwaitq:clear()
 end
 
@@ -725,6 +736,7 @@ local function channel_abort(ch, err)
 		return
 	end
 	channel_canceltimer(ch)
+	ch.pingtoken = nil
 	local errorcode
 	if type(err) == "number" then
 		errorcode = err
@@ -752,9 +764,9 @@ local function channel_abort(ch, err)
 	ch.openwaitq = nil
 end
 
-local function channel_pingtimeout(ch)
+local function channel_keepalivetimeout(ch)
 	ch.timer = nil
-	if ch.goaway ~= 0 then
+	if not ch.conn then
 		return
 	end
 	channel_abort(ch, "PING timeout")
@@ -762,10 +774,11 @@ end
 
 local function channel_idletimer(ch)
 	ch.timer = nil
-	if ch.goaway ~= 0 or not ch.sendpingtimeout then
+	if not ch.conn or not ch.keepaliveinterval or
+		(not ch.keepalivewhileidle and ch.streamcount == 0) then
 		return
 	end
-	local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
+	local delay = ch.lastrecvtime + ch.keepaliveinterval - time.monotonic()
 	if delay > 0 then
 		ch.timer = time.after(delay, channel_idletimer, ch)
 		return
@@ -773,29 +786,37 @@ local function channel_idletimer(ch)
 	local dat
 	dat, ch.pingtoken = build_ping(0)
 	channel_write(ch, dat)
-	ch.timer = time.after(ch.pingtimeout, channel_pingtimeout, ch)
+	ch.timer = time.after(ch.keepalivetimeout, channel_keepalivetimeout, ch)
+end
+
+---@param ch silly.net.http.h2.channel
+local function channel_starttimer(ch)
+	if ch.conn and ch.keepaliveinterval and not ch.timer and
+		(ch.keepalivewhileidle or ch.streamcount > 0) then
+		local delay = ch.lastrecvtime + ch.keepaliveinterval - time.monotonic()
+		ch.timer = time.after(delay, channel_idletimer, ch)
+	end
 end
 
 ---@param ch silly.net.http.h2.channel.client
----@param send_ping_timeout integer? -- Receive idle time in ms; nil or <= 0 disables probes
----@param ping_timeout integer? -- ACK timeout in ms; nil or <= 0 uses 15000 when enabled
-function C.keepalive(ch, send_ping_timeout, ping_timeout)
+---@param keep_alive_interval integer? -- Receive idle time in ms; nil or <= 0 disables probes
+---@param keep_alive_timeout integer? -- ACK timeout in ms; nil or <= 0 uses 15000 when enabled
+---@param keep_alive_while_idle boolean? -- Probe without protocol-active streams; defaults false
+function C.keepalive(ch, keep_alive_interval, keep_alive_timeout, keep_alive_while_idle)
 	channel_canceltimer(ch)
-	if ping_timeout and ping_timeout <= 0 then
-		ping_timeout = nil
+	if keep_alive_timeout and keep_alive_timeout <= 0 then
+		keep_alive_timeout = nil
 	end
-	if send_ping_timeout and send_ping_timeout > 0 then
-		ping_timeout = ping_timeout or 15000
+	if keep_alive_interval and keep_alive_interval > 0 then
+		keep_alive_timeout = keep_alive_timeout or 15000
 	else
-		send_ping_timeout = nil
+		keep_alive_interval = nil
 	end
-	ch.sendpingtimeout = send_ping_timeout
-	ch.pingtimeout = ping_timeout
+	ch.keepaliveinterval = keep_alive_interval
+	ch.keepalivetimeout = keep_alive_timeout
+	ch.keepalivewhileidle = keep_alive_while_idle == true
 	ch.pingtoken = nil
-	if ch.conn and ch.goaway == 0 and ch.sendpingtimeout then
-		local delay = ch.lastrecvtime + ch.sendpingtimeout - time.monotonic()
-		ch.timer = time.after(delay, channel_idletimer, ch)
-	end
+	channel_starttimer(ch)
 end
 
 ---@param ch silly.net.http.h2.channel.client
@@ -827,6 +848,7 @@ local function channel_newrequest(ch, method, path, header, endstream)
 	ch.streams[id] = s
 	channel_write(ch, build_header(id, ch.sendframemaxsize, hdat, endstream))
 	s.localstate = endstream and STATE_END or STATE_HEADER
+	channel_starttimer(ch)
 	return s, nil
 end
 
@@ -856,6 +878,18 @@ local function channel_wakeupopen(ch)
 			waiter.exception = stream
 			wakeup(co, nil)
 		end
+	end
+end
+
+---@param s silly.net.http.h2.stream
+local function stream_checkclose(s)
+	if s.closed or s.localstate < STATE_END or s.remotestate < STATE_END then
+		return
+	end
+	local ch = s.channel
+	channel_delstream(ch, s)
+	if not channel_checkclose(ch) then
+		channel_wakeupopen(ch)
 	end
 end
 
@@ -1100,6 +1134,7 @@ end
 local function stream_writewait(s, data, endstream)
 	local offset = stream_send(s, data, 0, endstream)
 	if offset == #data then
+		stream_checkclose(s)
 		return true, nil
 	end
 	s.writedat = data
@@ -1156,6 +1191,7 @@ local function stream_reset(id, ch, errorcode)
 	s.remotestate = STATE_RST
 	stream_readwakeup(s, nil)
 	stream_writewakeup(s, err)
+	stream_checkclose(s)
 end
 
 ---@param s silly.net.http.h2.stream
@@ -1186,6 +1222,7 @@ local function stream_remoteend(s, state, err)
 		stream_readwakeup(s, nil)
 		stream_writewakeup(s, err)
 	end
+	stream_checkclose(s)
 end
 
 
@@ -1199,6 +1236,7 @@ local function stream_trysend(s)
 	s.writeoffset = sendingoff
 	if sendingoff == #sendingdat then
 		stream_writewakeup(s, nil)
+		stream_checkclose(s)
 	elseif s.channel.sendwindow <= 0 then
 		channel_waitwrite(s.channel, s)
 	end
@@ -1218,6 +1256,7 @@ function S.respond(s, status, header, endstream)
 	channel_write(ch, build_header(s.id, ch.sendframemaxsize, hdat, endstream))
 	s.status = status
 	s.localstate = endstream and STATE_END or STATE_HEADER
+	stream_checkclose(s)
 	return true, nil
 end
 
@@ -1282,6 +1321,7 @@ function S.closewrite(s, data, trailer)
 		local dat = build_header(s.id, ch.sendframemaxsize, hdr, true)
 		channel_write(ch, dat)
 		s.localstate = STATE_END
+		stream_checkclose(s)
 	end
 	return true, nil
 end
@@ -1307,7 +1347,6 @@ function S.close(s)
 	if s.closed then
 		return
 	end
-	s.closed = true
 	local ch = s.channel
 	local id = s.id
 	local localstate = s.localstate
@@ -1319,12 +1358,7 @@ function S.close(s)
 			stream_reset(id, ch, code)
 		end
 	end
-	ch.streams[id] = nil
-	ch.streamcount = ch.streamcount - 1
-	if channel_checkclose(ch) then
-		return
-	end
-	channel_wakeupopen(ch)
+	stream_checkclose(s)
 end
 
 stream_mt.__close = S.close
@@ -1431,9 +1465,6 @@ local function stream_winupdate(s, increment)
 		return false
 	end
 	s.sendwindow = nwindow
-	if increment > 0 then
-		stream_trysend(s)
-	end
 	return true
 end
 
@@ -1541,6 +1572,7 @@ local function frame_settings(ch, stream_id, flag, dat)
 	end
 
 	local openchanged = false
+	local windowchanged = false
 	for i = 1, #dat, 6 do
 		local id, val = unpack(">I2I4", dat, i)
 		-- RFC 7540 Section 6.5.2: Validate SETTINGS parameter values
@@ -1561,6 +1593,7 @@ local function frame_settings(ch, stream_id, flag, dat)
 			local delta = val - ch.initialwindowsize
 			ch.initialwindowsize = val
 			if delta ~= 0 then
+				windowchanged = windowchanged or delta > 0
 				for _, s in pairs(ch.streams) do
 					if s.localstate <= STATE_CLOSE and not stream_winupdate(s, delta) then
 						channel_abort(ch, FLOW_CONTROL_ERROR)
@@ -1589,6 +1622,19 @@ local function frame_settings(ch, stream_id, flag, dat)
 	end
 	-- RFC 7540 Section 6.5.3: Must immediately emit a SETTINGS frame with ACK flag
 	channel_write(ch, build_setting(ACK))
+	if windowchanged then
+		-- Final writes can release slots and insert newly admitted streams.
+		-- Resume from a snapshot after all settings and existing windows are updated.
+		local ready = {}
+		for _, s in pairs(ch.streams) do
+			if s.writedat then
+				ready[#ready + 1] = s
+			end
+		end
+		for i = 1, #ready do
+			stream_trysend(ready[i])
+		end
+	end
 	if openchanged then
 		channel_wakeupopen(ch)
 	end
@@ -1643,7 +1689,7 @@ local function frame_ping(ch, streamid, flag, dat)
 		if ch.pingtoken == dat then
 			ch.pingtoken = nil
 			channel_canceltimer(ch)
-			channel_idletimer(ch)
+			channel_starttimer(ch)
 		end
 		return
 	end
@@ -1684,6 +1730,7 @@ local function frame_rst(ch, streamid, _, dat)
 			s.errstr = err
 			stream_writewakeup(s, err)
 		end
+		stream_checkclose(s)
 		return
 	end
 	stream_remoteend(s, STATE_RST, err_str[code])
@@ -1764,6 +1811,8 @@ local function frame_winupdate(ch, id, _, dat)
 		end
 		if not stream_winupdate(s, increment) then
 			stream_reset(id, ch, FLOW_CONTROL_ERROR)
+		else
+			stream_trysend(s)
 		end
 	end
 end

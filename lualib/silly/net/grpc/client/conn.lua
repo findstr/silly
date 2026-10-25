@@ -39,8 +39,9 @@ end
 ---@field scheme string
 ---@field robin integer
 ---@field closed boolean
----@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms
----@field ping_timeout integer? -- HTTP/2 probe timeout in ms
+---@field keep_alive_interval integer? -- HTTP/2 receive inactivity before PING in ms
+---@field keep_alive_timeout integer? -- HTTP/2 probe timeout in ms
+---@field keep_alive_while_idle boolean?
 ---@field [integer]silly.net.grpc.client.endpoint
 local conn = {}
 
@@ -78,9 +79,9 @@ local function newchannel(self, endpoint)
 		conn:close()
 		return nil, err
 	end
-	local send_ping_timeout = self.send_ping_timeout
-	if send_ping_timeout then
-		ch:keepalive(send_ping_timeout, self.ping_timeout)
+	local keep_alive_interval = self.keep_alive_interval
+	if keep_alive_interval then
+		ch:keepalive(keep_alive_interval, self.keep_alive_timeout, self.keep_alive_while_idle)
 	end
 	endpoint.channel = ch
 	return ch, nil
@@ -128,8 +129,9 @@ local client_mt = {__index = conn, __close = conn.close}
 ---@class silly.net.grpc.client.conn.opts
 ---@field targets string[]
 ---@field tls boolean?
----@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
----@field ping_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 15000
+---@field keep_alive_interval integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
+---@field keep_alive_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 20000
+---@field keep_alive_while_idle boolean? -- Probe without active RPCs; defaults false
 
 ---@param opts silly.net.grpc.client.conn.opts
 ---@return silly.net.grpc.client.conn?, string?
@@ -138,13 +140,18 @@ function conn.new(opts)
 	if #targets == 0 then
 		return nil, "Empty targets"
 	end
+	local keep_alive_timeout = opts.keep_alive_timeout
+	if not keep_alive_timeout or keep_alive_timeout <= 0 then
+		keep_alive_timeout = 20000
+	end
 	---@type silly.net.grpc.client.conn
 	local c = {
 		scheme = opts.tls and "https" or "http",
 		robin = 1,
 		closed = false,
-		send_ping_timeout = opts.send_ping_timeout,
-		ping_timeout = opts.ping_timeout,
+		keep_alive_interval = opts.keep_alive_interval,
+		keep_alive_timeout = keep_alive_timeout,
+		keep_alive_while_idle = opts.keep_alive_while_idle,
 	}
 	for i = 1, #targets do
 		local target = targets[i]

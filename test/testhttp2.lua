@@ -753,13 +753,17 @@ end)
 
 case("Test 25: HTTP/2 concurrent request admission", function()
 	set_nil = false
+	local finish = channel.new()
 	server_handler = function(s)
+		if s.path == "/first" then
+			testaux.await(finish, "Test 25: first response may complete")
+		end
 		assert(s:respond(200, {}, true))
 	end
 	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
 	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
 	ch.streammax = 1
-	local first = assert(ch:request("GET", "/", {}, true))
+	local first = assert(ch:request("GET", "/first", {}, true))
 	local started, done = channel.new(), channel.new()
 	task.fork(function()
 		started:push(true)
@@ -768,11 +772,12 @@ case("Test 25: HTTP/2 concurrent request admission", function()
 	end)
 	testaux.await(started, "Test 25: second request entered admission")
 	testaux.asserteq(ch.openwaitq:size(), 1, "Test 25.1: only request waits for concurrency")
+	finish:push(true)
 	assert(first:waitresponse(2000))
-	first:close()
 	local second<close> = testaux.await(done, "Test 25: request admitted after release")
 	assert(second:waitresponse(2000))
-	testaux.asserteq(ch.streamcount, 1, "Test 25.2: admission occupies one slot")
+	testaux.asserteq(ch.streamcount, 0, "Test 25.2: completed responses release both slots")
+	first:close()
 	second:close()
 	ch:close()
 end)
@@ -806,7 +811,11 @@ case("Test 26: HTTP/2 existing stream survives local channel close", function()
 end)
 
 case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function()
+	set_nil = false
 	local x = function(stream)
+		if not stream:readall() then
+			return
+		end
 		stream:respond(200, {
 			["content-type"] = "text/plain",
 		})
@@ -829,8 +838,7 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 		testaux.assertneq(s, nil, "Test 27.3." .. i .. ": Should open stream " .. i)
 		streams[i] = s
 
-		s:closewrite()
-		s:readall()
+		-- Keep the upload open so this is genuinely an active protocol stream.
 	end
 
 	testaux.asserteq(ch.streamcount, max, "Test 27.4: streamcount should equal streammax")
@@ -864,7 +872,7 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	testaux.assertneq(new_stream, nil, "Test 27.9: new stream should be created")
 
 	-- Critical check: streamcount should NOT exceed streammax
-	testaux.asserteq(ch.streamcount, max, "Test 27.10: streamcount should not exceed streammax")
+	testaux.asserteq(ch.streamcount, max - 1, "Test 27.10: the completed replacement releases its slot")
 
 	-- Step 4: Close multiple streams and open multiple new ones
 	local wg = waitgroup.new()
@@ -875,7 +883,7 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 		streams[i]:close()
 	end
 
-	testaux.asserteq(ch.streamcount, max - 5, "Test 27.11: streamcount should decrease by 5")
+	testaux.asserteq(ch.streamcount, max - 6, "Test 27.11: streamcount should decrease by 5")
 	-- Try to open 5 new streams concurrently
 	set_nil = false
 	for i = 1, 5 do
@@ -895,7 +903,7 @@ case("Test 27: HTTP/2 streamcount accuracy with concurrent open/close", function
 	wg:wait()
 	set_nil = true
 	testaux.asserteq(created_count, 5, "Test 27.12: Should create exactly 5 new streams")
-	testaux.asserteq(ch.streamcount, max - 5, "Test 27.13: streamcount should be consistent after concurrent operations")
+	testaux.asserteq(ch.streamcount, max - 6, "Test 27.13: completed requests do not retain slots")
 
 	-- Step 5: Verify streamcount never exceeded streammax during the test
 	-- by trying to open streammax streams again
@@ -1427,14 +1435,15 @@ case("Test 112: Queued header conversion errors return to the requester", functi
 		local peer
 		server_handler = function(s)
 			peer = s.channel
-			assert(s:respond(200, {}, true))
+			assert(s:respond(200, {}))
+			s:readall()
 		end
-		local first = assert(ch:request("GET", "/first", {}, true))
+		local first = assert(ch:request("GET", "/first", {}))
 		assert(first:waitresponse(2000))
-		wait_done()
 		ch.streammax = 1
 		if trigger == "settings" then
 			first:close()
+			wait_done()
 			ch.streammax = 0
 		end
 		local bad = setmetatable({}, {__tostring = function()
@@ -1457,6 +1466,7 @@ case("Test 112: Queued header conversion errors return to the requester", functi
 			local ok, err = pcall(first.close, first)
 			testaux.asserteq(ok, true, "Test 112.2: conversion does not escape through another stream close: " .. tostring(err))
 		end
+		wait_done()
 		local result = testaux.await(done, "Test 112: requester receives its conversion error")
 		testaux.asserteq(result.ok, false, "Test 112.3: request rethrows the conversion error")
 		testaux.assertneq(result.err:find("queued header conversion failed", 1, true), nil,
@@ -1510,11 +1520,11 @@ case("Test 114: Queued endstream validation returns an error without consuming a
 	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
 	local ch = assert(h2.newchannel("https", conn, "127.0.0.1:8082"))
 	server_handler = function(s)
-		assert(s:respond(200, {}, true))
+		assert(s:respond(200, {}))
+		s:readall()
 	end
-	local first = assert(ch:request("GET", "/first", {}, true))
+	local first = assert(ch:request("GET", "/first", {}))
 	assert(first:waitresponse(2000))
-	wait_done()
 	ch.streammax = 1
 	local ready, done = channel.new(), channel.new()
 	task.fork(function()
@@ -1529,36 +1539,189 @@ case("Test 114: Queued endstream validation returns an error without consuming a
 	testaux.assertneq(result.err, nil, "Test 114.2: queued invalid request preserves its error")
 	testaux.asserteq(ch.streamidx, 1, "Test 114.3: queued rejection consumes no ID")
 	testaux.asserteq(ch.streamcount, 0, "Test 114.4: queued rejection consumes no slot")
+	wait_done()
+	ch:close()
+end)
+
+case("Test 115: Completed streams release admission while their buffered results remain readable", function()
+	set_nil = false
+	server_handler = function(s)
+		assert(s:respond(200, {}))
+		assert(s:closewrite(s.path, {finished = "yes"}))
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "localhost"))
+	ch.streammax = 1
+	local first<close> = assert(ch:request("GET", "/first", {}, true))
+	assert(first:waitresponse(2000))
+	readers[conn]:waituntil(function()
+		return first:eof()
+	end, "Test 115: first response and trailers arrived")
+	local second<close>, err = ch:request("GET", "/second", {}, true, 100)
+	testaux.assertneq(second, nil, "Test 115.1: completed stream releases admission before close: " .. tostring(err))
+	testaux.asserteq(second:readall(2000), "/second", "Test 115.2: second request completes")
+	ch:close()
+	testaux.asserteq(ch.conn, nil, "Test 115.3: completed objects do not retain the closing transport")
+	testaux.asserteq(first:readall(2000), "/first", "Test 115.4: buffered result survives transport close")
+	testaux.asserteq(first.trailer.finished, "yes", "Test 115.5: completed trailers remain available")
+	first:close()
+	second:close()
+	testaux.asserteq(ch.streamcount, 0, "Test 115.6: repeated close cannot release admission twice")
+end)
+
+case("Test 116: A peer reset releases admission without waiting for the stream owner", function()
+	set_nil = false
+	local accepted = channel.new()
+	server_handler = function(s)
+		if s.path == "/reset" then
+			s:close()
+			accepted:push(true)
+		else
+			assert(s:respond(200, {}, true))
+		end
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "localhost"))
+	ch.streammax = 1
+	local first<close> = assert(ch:request("GET", "/reset", {}, true))
+	testaux.await(accepted, "Test 116: peer closed the first stream")
+	local ok = first:waitresponse(2000)
+	testaux.asserteq(ok, false, "Test 116.1: reset remains visible to the original reader")
+	local second<close>, err = ch:request("GET", "/ok", {}, true, 100)
+	testaux.assertneq(second, nil, "Test 116.2: reset stream releases admission: " .. tostring(err))
+	testaux.asserteq(second:readall(2000), "", "Test 116.3: connection remains reusable")
+	first:close()
+	second:close()
+	testaux.asserteq(ch.streamcount, 0, "Test 116.4: reset and close share one release")
+	ch:close()
+end)
+
+case("Test 117: Half-closed streams remain active until both directions finish", function()
+	local accepted, received, release, done = channel.new(), channel.new(), channel.new(), channel.new()
+	server_handler = function(s)
+		assert(s:respond(200, {}, true))
+		accepted:push(s)
+		local body = assert(s:readall(2000))
+		received:push(body)
+		testaux.await(release, "Test 117: handler may return")
+		done:push(true)
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "localhost"))
+	local s<close> = assert(ch:request("POST", "/", {}))
+	local remote = testaux.await(accepted, "Test 117: server sent its complete response")
+	testaux.asserteq(s:readall(2000), "", "Test 117.1: early response completes only its direction")
+	testaux.asserteq(ch.streamcount, 1, "Test 117.2: client upload still occupies admission")
+	testaux.asserteq(remote.channel.streamcount, 1, "Test 117.3: passive stream remains active")
+	assert(s:closewrite("upload"))
+	testaux.asserteq(testaux.await(received, "Test 117: server received the remaining upload"), "upload",
+		"Test 117.4: early response does not cancel the upload")
+	testaux.asserteq(ch.streamcount, 0, "Test 117.5: local final DATA releases client admission")
+	testaux.asserteq(remote.channel.streamcount, 0, "Test 117.6: passive completion does not wait for handler return")
+	release:push(true)
+	testaux.await(done, "Test 117: handler finished")
+	s:close()
+	ch:close()
+end)
+
+case("Test 118: A flow-control writer completes before its final frames close the draining channel", function()
+	local accepted, release, received = channel.new(), channel.new(), channel.new()
+	local payload = string.rep("x", 100000)
+	server_handler = function(s)
+		assert(s:respond(200, {}, true))
+		accepted:push(true)
+		testaux.await(release, "Test 118: server may consume the upload")
+		local body = assert(s:readall(2000))
+		received:push({body = body, trailer = s.trailer.finished})
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "localhost"))
+	local s<close> = assert(ch:request("POST", "/", {}))
+	testaux.await(accepted, "Test 118: response is complete while upload remains open")
+	testaux.asserteq(s:readall(2000), "", "Test 118.1: early response remains valid")
+	local started, written = channel.new(), channel.new()
+	task.fork(function()
+		started:push(true)
+		local ok, err = s:closewrite(payload, {finished = "yes"})
+		written:push({ok = ok, err = err})
+	end)
+	testaux.await(started, "Test 118: writer exhausted stream credit")
+	testaux.assertneq(s.writeco, nil, "Test 118.2: upload is waiting for flow control")
+	ch:close()
+	testaux.assertneq(ch.conn, nil, "Test 118.3: blocked final write retains the transport")
+	release:push(true)
+	local result = testaux.await(written, "Test 118: final writer resumed")
+	testaux.asserteq(result.ok, true, "Test 118.4: writer completes successfully")
+	local request = testaux.await(received, "Test 118: peer received all final frames")
+	testaux.asserteq(request.body, payload, "Test 118.5: queued DATA reaches the peer")
+	testaux.asserteq(request.trailer, "yes", "Test 118.6: final trailers reach the peer")
+	testaux.asserteq(ch.conn, nil, "Test 118.7: protocol completion finishes graceful close")
+	testaux.asserteq(s.writeco, nil, "Test 118.8: no writer remains on the detached object")
+	s:close()
+end)
+
+case("Test 119: Keepalive pauses without protocol activity and restarts on the next request", function()
+	server_handler = function(s)
+		s:readall(2000)
+	end
+	local conn = assert(tls.connect("127.0.0.1:8082", {alpnprotos = {"h2"}}))
+	local ch = assert(h2.newchannel("https", conn, "localhost"))
+	local after = time.after
+	local callback
+	time.after = function(delay, fn, arg, ...)
+		if arg == ch then
+			callback = fn
+		end
+		return after(delay, fn, arg, ...)
+	end
+	ch:keepalive(60000, 1000)
+	testaux.asserteq(ch.timer, nil, "Test 119.1: empty connections do not probe by default")
+	local first<close> = assert(ch:request("POST", "/first", {}))
+	testaux.assertneq(ch.timer, nil, "Test 119.2: first active request starts the health timer")
+	first:close()
+	-- Deliver the scheduled check without waiting for a wall-clock interval.
+	time.cancel(ch.timer)
+	callback(ch)
+	testaux.asserteq(ch.timer, nil, "Test 119.3: the idle callback does not reschedule or probe")
+	testaux.asserteq(ch.pingtoken, nil, "Test 119.4: no probe is outstanding while idle")
+	local second<close> = assert(ch:request("POST", "/second", {}))
+	testaux.assertneq(ch.timer, nil, "Test 119.5: a new request restarts the health timer")
+	second:close()
+	ch:keepalive(60000, 1000, true)
+	testaux.assertneq(ch.timer, nil, "Test 119.6: explicit idle probing retains a timer")
+	ch:keepalive()
+	testaux.asserteq(ch.timer, nil, "Test 119.7: disabling cancels the health timer")
+	time.after = after
 	ch:close()
 end)
 
 case("Test 37: HTTP2 client enables probes only for a positive receive interval", function()
 	for _, opts in ipairs({
-		{send_ping_timeout = 54321, ping_timeout = 2345},
-		{send_ping_timeout = 54321, ping_timeout = 0},
-		{send_ping_timeout = 54321, ping_timeout = -1},
-		{send_ping_timeout = 54321},
-		{send_ping_timeout = 0, ping_timeout = 2345},
-		{send_ping_timeout = -1, ping_timeout = 2345},
-		{ping_timeout = 2345},
+		{keep_alive_interval = 54321, keep_alive_timeout = 2345},
+		{keep_alive_interval = 54321, keep_alive_timeout = 0},
+		{keep_alive_interval = 54321, keep_alive_timeout = -1},
+		{keep_alive_interval = 54321},
+		{keep_alive_interval = 0, keep_alive_timeout = 2345},
+		{keep_alive_interval = -1, keep_alive_timeout = 2345},
+		{keep_alive_timeout = 2345},
 	}) do
 		opts.alpnprotos = {"h2"}
 		local client = http.newclient(opts)
 		server_handler = function(stream)
 			testaux.asserteq(stream.scheme, "https", "TLS listener passes https to H2")
-			testaux.asserteq(stream.channel.sendpingtimeout, nil, "server probes stay disabled")
+			testaux.asserteq(stream.channel.keepaliveinterval, nil, "server probes stay disabled")
 			testaux.asserteq(stream.channel.timer, nil, "server has no active probe timer")
 			stream:respond(200, {})
 			stream:closewrite("ok")
 		end
 		local stream = assert(client:request("GET", "https://127.0.0.1:8082/"))
-		local enabled = opts.send_ping_timeout and opts.send_ping_timeout > 0
-		testaux.asserteq(stream.channel.sendpingtimeout, enabled and opts.send_ping_timeout or nil,
+		local enabled = opts.keep_alive_interval and opts.keep_alive_interval > 0
+		testaux.asserteq(stream.channel.keepaliveinterval, enabled and opts.keep_alive_interval or nil,
 			"client enables only the configured positive receive interval")
 		if enabled then
-			local acktimeout = opts.ping_timeout
+			local acktimeout = opts.keep_alive_timeout
 			acktimeout = acktimeout and acktimeout > 0 and acktimeout or 15000
-			testaux.asserteq(stream.channel.pingtimeout, acktimeout,
+			testaux.asserteq(stream.channel.keepalivetimeout, acktimeout,
 				"enabled probes normalize and default the ACK timeout")
 		end
 		testaux.asserteq(stream.channel.timer ~= nil, not not enabled,

@@ -329,11 +329,17 @@ local mt = { __index = M }
 ---	retry:integer|nil,	--retry times
 ---	retry_sleep:integer|nil,--retry sleep time(ms)
 ---	dialtimeout:number|nil, --timeout
+---	keep_alive_interval:integer|nil, --receive idle time before PING(ms); nil or <= 0 disables
+---	keep_alive_timeout:integer|nil, --probe timeout(ms); nil or <= 0 uses gRPC default 20000
+---	keep_alive_while_idle:boolean|nil, --probe without active RPCs; defaults false
 ---}
 ---@return silly.store.etcd.client?, string? error
 function M.newclient(opts)
 	local conn, err = grpc.newclient {
-		targets = opts.endpoints
+		targets = opts.endpoints,
+		keep_alive_interval = opts.keep_alive_interval,
+		keep_alive_timeout = opts.keep_alive_timeout,
+		keep_alive_while_idle = opts.keep_alive_while_idle,
 	}
 	if not conn then
 		return nil, err

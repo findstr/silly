@@ -2,6 +2,7 @@ local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
 local waitgroup = require "silly.sync.waitgroup"
+local channel = require "silly.sync.channel"
 local etcd = require "silly.store.etcd"
 local fake_etcd_server = require "test.fake_etcd_server"
 local testaux = require "test.testaux"
@@ -913,6 +914,93 @@ testaux.case("Test 17: Lease keepalive stream reconnection", function()
 	c:close()
 
 	testaux.success("Test 17: Lease keepalive stream reconnection passed")
+end)
+
+testaux.case("Test 18: Client keepalive options reach the HTTP2 connection with gRPC defaults", function()
+	for _, fixture in ipairs({
+		{options = {}, enabled = false},
+		{options = {keep_alive_interval = 0, keep_alive_timeout = 1234}, enabled = false},
+		{options = {keep_alive_interval = 60000}, enabled = true, timeout = 20000},
+		{options = {keep_alive_interval = 60000, keep_alive_timeout = 0}, enabled = true, timeout = 20000},
+		{options = {keep_alive_interval = 60000, keep_alive_timeout = -1}, enabled = true, timeout = 20000},
+		{options = {keep_alive_interval = 60000, keep_alive_timeout = 1234,
+			keep_alive_while_idle = true}, enabled = true, timeout = 1234, idle = true},
+	}) do
+		reset_server()
+		local options = fixture.options
+		options.endpoints = {"127.0.0.1:" .. FAKE_PORT}
+		local c = assert(etcd.newclient(options))
+		testaux.assertneq(c:get {key = "/keepalive/config"}, nil, "Test 18.1: configured client performs an RPC")
+		local ch = c.conn[1].channel
+		testaux.asserteq(ch.keepaliveinterval, fixture.enabled and 60000 or nil,
+			"Test 18.2: etcd enables only the requested receive interval")
+		if fixture.enabled then
+			testaux.asserteq(ch.keepalivetimeout, fixture.timeout, "Test 18.3: gRPC resolves the probe timeout")
+			testaux.asserteq(ch.keepalivewhileidle, fixture.idle == true, "Test 18.4: idle option is preserved")
+		end
+		c:close()
+		testaux.asserteq(ch.timer, nil, "Test 18.5: closing etcd cancels its channel timer")
+	end
+end)
+
+testaux.case("Test 19: A missing PING ACK reconnects a silent watch with the same keepalive options", function()
+	reset_server()
+	local c = assert(etcd.newclient {
+		endpoints = {"127.0.0.1:" .. FAKE_PORT},
+		keep_alive_interval = 30,
+		keep_alive_timeout = 60,
+		keep_alive_while_idle = false,
+	})
+	local function await_watch(label)
+		local ready = channel.new()
+		task.fork(function()
+			server:wait_watch_created(1)
+			ready:push(true)
+		end)
+		testaux.await(ready, label)
+	end
+	local watcher = assert(c:watch {key = "/keepalive/reconnect"})
+	await_watch("Test 19: initial watch was created")
+	local oldstream = c.watchstream
+	local oldchannel = oldstream.h2stream.channel
+	local peer = server.storage.active_streams[1].h2stream.channel.conn
+	local write = peer.write
+	local dropped = channel.new()
+	peer.write = function(self, data)
+		local chunks = type(data) == "table" and data or {data}
+		local output = {}
+		for _, chunk in ipairs(chunks) do
+			if #chunk == 17 and chunk:sub(1, 9) == "\0\0\8\6\1\0\0\0\0" then
+				dropped:push(true)
+			else
+				output[#output + 1] = chunk
+			end
+		end
+		if #output == 0 then
+			return true
+		end
+		return write(self, output)
+	end
+	testaux.await(dropped, "Test 19: server received a probe but its ACK was lost")
+	await_watch("Test 19: silent watch reconnected after PING timeout")
+	peer.write = write
+	local replacement = c.watchstream.h2stream.channel
+	testaux.asserteq(oldchannel.errstr, "PING timeout", "Test 19.1: probe failure closes the old connection")
+	testaux.asserteq(oldstream.h2stream.closed, true, "Test 19.2: the failed watch releases its protocol slot")
+	testaux.assertneq(replacement, oldchannel, "Test 19.3: watch uses a new connection")
+	testaux.asserteq(replacement.keepaliveinterval, 30, "Test 19.4: reconnect preserves the receive interval")
+	testaux.asserteq(replacement.keepalivetimeout, 60, "Test 19.5: reconnect preserves the ACK deadline")
+	testaux.asserteq(replacement.keepalivewhileidle, false, "Test 19.6: reconnect preserves the idle policy")
+	assert(c:put {key = "/keepalive/reconnect", value = "restored"})
+	local event = channel.new()
+	task.fork(function()
+		event:push({response = watcher:read()})
+	end)
+	local result = testaux.await(event, "Test 19: replacement watch receives an event")
+	testaux.assertneq(result.response, nil, "Test 19.7: watch remains readable after reconnect")
+	testaux.asserteq(result.response.events[1].kv.value, "restored", "Test 19.8: replacement event is complete")
+	c:close()
+	testaux.asserteq(replacement.timer, nil, "Test 19.9: client close cancels the replacement timer")
 end)
 
 server:stop()

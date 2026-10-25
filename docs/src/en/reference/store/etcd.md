@@ -61,6 +61,9 @@ Creates a new etcd client instance.
     - `retry`: `integer|nil` (optional) - Number of retries on request failure, defaults to 5
     - `retry_sleep`: `integer|nil` (optional) - Wait time between retries (milliseconds), defaults to 1000
     - `timeout`: `number|nil` (optional) - gRPC request timeout (seconds)
+    - `keep_alive_interval`: `integer|nil` (optional) - Receive inactivity before HTTP/2 PING, in milliseconds; nil or a nonpositive value disables probes
+    - `keep_alive_timeout`: `integer|nil` (optional) - PING ACK timeout, in milliseconds; nil or a nonpositive value uses the gRPC default of 20000
+    - `keep_alive_while_idle`: `boolean|nil` (optional) - Send PING without active RPCs, default false
 - **Returns**:
   - Success: `silly.store.etcd.client` - etcd client object
   - Failure: Throws an error
@@ -85,6 +88,12 @@ end)
 ```
 
 ---
+
+### Connection PING Keepalive
+
+The three `keep_alive_*` options are forwarded to the underlying gRPC connection and preserved on reconnect. A silent Watch or lease keepalive stream remains an active RPC, so the default `keep_alive_while_idle = false` still permits probing these connections. A PING timeout closes the unresponsive connection; existing Watch and lease recovery rebuild their streams. Choose a probing policy compatible with the etcd server's limits.
+
+Connection PING checks connection health and is separate from lease renewal through `client:keepalive(id)`. It does not replace request timeouts or guarantee that a lease cannot expire.
 
 ## Key-Value Storage API
 

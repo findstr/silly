@@ -90,7 +90,7 @@ function M.new(control, port)
 			local cause
 			ch, cause = h2.newchannel("http", conn, "example.test")
 			if ch and opts then
-				ch:keepalive(opts.send_ping_timeout, opts.ping_timeout)
+				ch:keepalive(opts.keep_alive_interval, opts.keep_alive_timeout, opts.keep_alive_while_idle)
 			end
 			body(ch, cause, observer)
 		end)

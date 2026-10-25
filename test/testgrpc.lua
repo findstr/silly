@@ -506,10 +506,9 @@ testaux.case("Test 17: Local close drains a streaming constructor waiting for a 
 		assert(client:Echo({message = "connect", value = 1}))
 		local ch = conn[1].channel
 		ch.streammax = 1
-		local blocker<close> = assert(ch:request("POST", "/test.TestService/DoesNotExist", {["content-type"] = "application/grpc"}))
-
-		assert(blocker:closewrite())
-		assert(blocker:readall(2000))
+		local blocker<close> = assert(ch:request("POST", "/test.TestService/BidiStream",
+			{["content-type"] = "application/grpc"}))
+		assert(blocker:waitresponse(2000))
 		local started, done = channel.new(), channel.new()
 		local wg = waitgroup.new()
 		wg:fork(function()
@@ -601,12 +600,14 @@ end)
 
 testaux.case("Test 12: gRPC applies keepalive defaults only for positive receive intervals", function()
 	for _, opts in ipairs({
-		{ping_timeout = 2345},
-		{send_ping_timeout = 0, ping_timeout = 2345},
-		{send_ping_timeout = -1, ping_timeout = 2345},
-		{send_ping_timeout = 60000},
-		{send_ping_timeout = 60000, ping_timeout = 0},
-		{send_ping_timeout = 60000, ping_timeout = -1},
+		{keep_alive_timeout = 2345},
+		{keep_alive_interval = 0, keep_alive_timeout = 2345},
+		{keep_alive_interval = -1, keep_alive_timeout = 2345},
+		{keep_alive_interval = 60000},
+		{keep_alive_interval = 60000, keep_alive_timeout = 0},
+		{keep_alive_interval = 60000, keep_alive_timeout = -1},
+		{keep_alive_interval = 60000, keep_alive_timeout = 2345, keep_alive_while_idle = false},
+		{keep_alive_interval = 60000, keep_alive_while_idle = true},
 	}) do
 		opts.targets = {"127.0.0.1:8991"}
 		local pool<close> = assert(grpc.newclient(opts))
@@ -614,11 +615,15 @@ testaux.case("Test 12: gRPC applies keepalive defaults only for positive receive
 		local response = assert(service:Echo({message = "options", value = 1}))
 		testaux.asserteq(response.message, "echo: options", "RPC succeeds with keepalive options")
 		local ch = pool[1].channel
-		local enabled = opts.send_ping_timeout and opts.send_ping_timeout > 0
-		testaux.asserteq(ch.sendpingtimeout, enabled and 60000 or nil,
+		local enabled = opts.keep_alive_interval and opts.keep_alive_interval > 0
+		testaux.asserteq(ch.keepaliveinterval, enabled and 60000 or nil,
 			"only positive intervals enable probing")
 		if enabled then
-			testaux.asserteq(ch.pingtimeout, 15000, "enabled probes populate the ACK default")
+			local timeout = opts.keep_alive_timeout
+			timeout = timeout and timeout > 0 and timeout or 20000
+			testaux.asserteq(ch.keepalivetimeout, timeout, "gRPC uses its own probe timeout default")
+			testaux.asserteq(ch.keepalivewhileidle, opts.keep_alive_while_idle == true,
+				"idle probing defaults false and preserves explicit values")
 		end
 		testaux.asserteq(ch.timer ~= nil, not not enabled, "only enabled probes have a timer")
 	end

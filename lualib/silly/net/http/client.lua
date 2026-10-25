@@ -66,8 +66,9 @@ local DEFAULT_ALPNPROTOS<const> = {"http/1.1", "h2"}
 ---@field package timer integer?
 ---@field package max_idle_per_host integer
 ---@field package idle_timeout integer
----@field package send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms
----@field package ping_timeout integer? -- HTTP/2 probe timeout in ms
+---@field package keep_alive_interval integer? -- HTTP/2 receive inactivity before PING in ms
+---@field package keep_alive_timeout integer? -- HTTP/2 probe timeout in ms
+---@field package keep_alive_while_idle boolean?
 ---@field package alpnprotos silly.net.tls.alpn_proto[]
 ---@field package h1pool table<string, silly.net.http.client.pool.h1[]>
 ---@field package h2pool table<string, silly.net.http.client.pool.h2[]>
@@ -206,8 +207,9 @@ end
 ---@field max_idle_per_host integer?  -- Maximum idle connections per host (default: 10)
 ---@field idle_timeout integer?       -- Idle connection timeout in ms (default: 30000)
 ---@field alpnprotos silly.net.tls.alpn_proto[]? -- ALPN protocols (default: {"http/1.1", "h2"})
----@field send_ping_timeout integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
----@field ping_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 15000
+---@field keep_alive_interval integer? -- HTTP/2 receive inactivity before PING in ms; nil or <= 0 disables
+---@field keep_alive_timeout integer? -- HTTP/2 probe timeout in ms; nil or <= 0 uses 15000
+---@field keep_alive_while_idle boolean? -- Probe without active streams; defaults false
 
 ---@param opts silly.net.http.client.opts?
 ---@return silly.net.http.client
@@ -215,20 +217,23 @@ function M.new(opts)
 	local max_idle_per_host = DEFAULT_MAX_IDLE_PER_HOST
 	local idle_timeout = DEFAULT_IDLE_TIMEOUT
 	local alpnprotos = DEFAULT_ALPNPROTOS
-	local send_ping_timeout
-	local ping_timeout
+	local keep_alive_interval
+	local keep_alive_timeout
+	local keep_alive_while_idle
 	if opts then
 		max_idle_per_host = opts.max_idle_per_host or max_idle_per_host
 		idle_timeout = opts.idle_timeout or idle_timeout
 		alpnprotos = opts.alpnprotos or alpnprotos
-		send_ping_timeout = opts.send_ping_timeout
-		ping_timeout = opts.ping_timeout
+		keep_alive_interval = opts.keep_alive_interval
+		keep_alive_timeout = opts.keep_alive_timeout
+		keep_alive_while_idle = opts.keep_alive_while_idle
 	end
 	---@type silly.net.http.client
 	local c = {
 		closed = false,
-		send_ping_timeout = send_ping_timeout,
-		ping_timeout = ping_timeout,
+		keep_alive_interval = keep_alive_interval,
+		keep_alive_timeout = keep_alive_timeout,
+		keep_alive_while_idle = keep_alive_while_idle,
 		timer = nil,
 		max_idle_per_host = max_idle_per_host,
 		idle_timeout = idle_timeout,
@@ -274,9 +279,9 @@ local function connect(client, u)
 			conn:close()
 			return nil, err
 		end
-		local send_ping_timeout = client.send_ping_timeout
-		if send_ping_timeout then
-			channel:keepalive(send_ping_timeout, client.ping_timeout)
+		local keep_alive_interval = client.keep_alive_interval
+		if keep_alive_interval then
+			channel:keepalive(keep_alive_interval, client.keep_alive_timeout, client.keep_alive_while_idle)
 		end
 		local entry = {
 			key = key,

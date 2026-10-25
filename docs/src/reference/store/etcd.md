@@ -61,6 +61,9 @@ etcd v3 API 基于 gRPC，提供以下核心功能：
     - `retry`: `integer|nil` (可选) - 请求失败时的重试次数，默认为 5
     - `retry_sleep`: `integer|nil` (可选) - 每次重试之间的等待时间（毫秒），默认为 1000
     - `timeout`: `number|nil` (可选) - gRPC 请求的超时时间（秒）
+    - `keep_alive_interval`: `integer|nil` (可选) - 接收静默多久后发送 HTTP/2 PING，单位毫秒；nil 或非正数关闭探测
+    - `keep_alive_timeout`: `integer|nil` (可选) - PING ACK 超时，单位毫秒；nil 或非正数使用 gRPC 默认值 20000
+    - `keep_alive_while_idle`: `boolean|nil` (可选) - 没有活动 RPC 时也发送 PING，默认 false
 - **返回值**:
   - 成功: `silly.store.etcd.client` - etcd 客户端对象
   - 失败: 抛出错误
@@ -85,6 +88,12 @@ end)
 ```
 
 ---
+
+### 连接 PING 保活
+
+三个 `keep_alive_*` 选项传递给底层 gRPC 连接，重连后继续生效。静默的 Watch 或租约保活流仍是活动 RPC，因此默认的 `keep_alive_while_idle = false` 也能探测这些连接。PING 超时会关闭失联连接，交由现有 Watch 和租约恢复逻辑重建流。探测策略应符合 etcd 服务端限制。
+
+连接 PING 用于检测连接健康，与 `client:keepalive(id)` 的租约续期不同；它不替代请求超时，也不保证租约一定不会到期。
 
 ## 键值存储 API
 
