@@ -316,6 +316,13 @@ static ssize_t hook_writev_impl(int fd, const struct iovec *iov, int iovcnt) {
 	return writev(fd, iov, iovcnt);
 }
 
+static int test_message_unpack(lua_State *L, struct silly_message *msg)
+{
+	(void)L;
+	(void)msg;
+	return 0;
+}
+
 static int ldebugctrl(lua_State *L)
 {
 	const char *cmd = luaL_checkstring(L, 1);
@@ -337,6 +344,24 @@ static int ldebugctrl(lua_State *L)
 		silly_debug_ctrl("socket.reset");
 	} else if (strcmp(cmd, "socket.kick") == 0) {
 		silly_debug_ctrl("socket.kick");
+	} else if (strcmp(cmd, "worker.error") == 0) {
+		silly_push_error(L, EXEOF);
+		silly_push_error(L, EFBIG);
+		silly_push_error(L, EFBIG);
+		silly_push_error(L, 0);
+		return 4;
+	} else if (strcmp(cmd, "worker.messages") == 0) {
+		int i;
+		int id = silly_register_message("test.worker.messages");
+		for (i = 0; i < 2; i++) {
+			struct silly_message *msg = silly_malloc(sizeof(*msg));
+			msg->type = id;
+			msg->unpack = test_message_unpack;
+			msg->free = silly_free;
+			silly_push(msg);
+		}
+		lua_pushinteger(L, id);
+		return 1;
 	} else if (strcmp(cmd, "log.capture") == 0) {
 		luaL_checktype(L, 2, LUA_TFUNCTION);
 		if (!hook_lua_state)

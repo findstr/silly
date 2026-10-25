@@ -26,9 +26,8 @@
 #define WARNING_THRESHOLD (64)
 
 #define STK_TRACEBACK (1)
-#define STK_ERROR_TABLE (2)
-#define STK_CALLBACK_TABLE (3)
-#define STK_DISPATCH_WAKEUP (4)
+#define STK_CALLBACK_TABLE (2)
+#define STK_DISPATCH_WAKEUP (3)
 
 struct message_signal {
 	struct silly_message hdr;
@@ -42,6 +41,7 @@ struct worker {
 	pthread_t tid;
 	lua_State *L;
 	lua_State *running;
+	int error_ref;
 	uint32_t sigbits;
 	atomic_uint_least32_t process_id;
 	atomic_uint_least32_t signal_pending;
@@ -224,8 +224,7 @@ static inline void new_error_table(lua_State *L)
 	def(EXTLS, "TLS error");
 	def(ETIMEDOUT, "Operation timed out");
 #undef def
-	lua_pushvalue(L, -1);
-	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
+	W->error_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 }
 
 static inline void new_callback_table(lua_State *L)
@@ -235,26 +234,20 @@ static inline void new_callback_table(lua_State *L)
 	lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)new_callback_table);
 }
 
-void worker_error_table(lua_State *L)
-{
-	lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)new_error_table);
-}
-
-void worker_push_error(lua_State *L, int stk, int code)
+void worker_push_error(lua_State *L, int code)
 {
 	if (code == 0) {
 		lua_pushnil(L);
 		return;
 	}
-	if (L == W->L) {
-		stk = STK_ERROR_TABLE;
-	}
-	if (lua_rawgeti(L, stk, code) == LUA_TNIL) {
+	lua_rawgeti(L, LUA_REGISTRYINDEX, W->error_ref);
+	if (lua_rawgeti(L, -1, code) == LUA_TNIL) {
 		lua_pop(L, 1);
 		lua_pushfstring(L, "%s (%d)", strerror(code), code);
 		lua_pushvalue(L, -1);
-		lua_rawseti(L, stk, code);
+		lua_rawseti(L, -3, code);
 	}
+	lua_remove(L, -2);
 }
 
 void worker_callback_table(lua_State *L)
@@ -264,11 +257,18 @@ void worker_callback_table(lua_State *L)
 
 void worker_reset()
 {
+	lua_State *L = W->L;
 	queue_clear(W->queue);
-	lua_newtable(W->L);
-	lua_pushvalue(W->L, -1);
-	lua_replace(W->L, STK_CALLBACK_TABLE);
-	lua_rawsetp(W->L, LUA_REGISTRYINDEX, (void *)new_callback_table);
+	/* Keep the outer dispatch frame's cached table valid across nested calls. */
+	worker_callback_table(L);
+	lua_pushnil(L);
+	while (lua_next(L, -2) != 0) {
+		lua_pop(L, 1);
+		lua_pushvalue(L, -1);
+		lua_pushnil(L);
+		lua_rawset(L, -4);
+	}
+	lua_pop(L, 1);
 }
 
 static void setlibpath(lua_State *L, const char *pathname, const char *libpath)

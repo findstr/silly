@@ -157,8 +157,8 @@ SILLY_API size_t silly_worker_backlog();
 SILLY_API void silly_resume(lua_State *L);
 SILLY_API char **silly_args(int *argc);
 SILLY_API void silly_callback_table(lua_State *L);
-SILLY_API void silly_error_table(lua_State *L);
-SILLY_API void silly_push_error(lua_State *L, int stk, int code);
+/* Push nil for zero, otherwise the cached error string. */
+SILLY_API void silly_push_error(lua_State *L, int code);
 
 SILLY_API int silly_register_message(const char *name);
 SILLY_API const struct silly_message_id *silly_messages();

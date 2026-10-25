@@ -579,7 +579,7 @@ static int listen_unpack(lua_State *L, struct silly_message *m)
 {
 	struct message_listen *ml = container_of(m, struct message_listen, hdr);
 	lua_pushinteger(L, ml->sid);
-	worker_push_error(L, 0, ml->err);
+	worker_push_error(L, ml->err);
 	return 2;
 }
 
@@ -588,7 +588,7 @@ static int connect_unpack(lua_State *L, struct silly_message *m)
 	struct message_connect *mc =
 		container_of(m, struct message_connect, hdr);
 	lua_pushinteger(L, mc->sid);
-	worker_push_error(L, 0, mc->err);
+	worker_push_error(L, mc->err);
 	return 2;
 }
 
@@ -596,7 +596,7 @@ static int close_unpack(lua_State *L, struct silly_message *m)
 {
 	struct message_close *mc = container_of(m, struct message_close, hdr);
 	lua_pushinteger(L, mc->sid);
-	worker_push_error(L, 0, mc->err);
+	worker_push_error(L, mc->err);
 	return 2;
 }
 

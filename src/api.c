@@ -178,13 +178,9 @@ SILLY_API void silly_callback_table(lua_State *L)
 {
 	worker_callback_table(L);
 }
-SILLY_API void silly_error_table(lua_State *L)
+SILLY_API void silly_push_error(lua_State *L, int code)
 {
-	worker_error_table(L);
-}
-SILLY_API void silly_push_error(lua_State *L, int stk, int code)
-{
-	worker_push_error(L, stk, code);
+	worker_push_error(L, code);
 }
 SILLY_API int silly_register_message(const char *name)
 {
