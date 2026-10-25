@@ -24,48 +24,15 @@
 #include "socket.h"
 
 /*
- * === Socket Field Concurrency Rules ===
+ * Socket IDs are generation tags, not locks: pool_get() does not prevent a
+ * socket from being freed or reused. Access to non-atomic fields requires
+ * lifecycle ownership; commands are validated again on the socket thread.
  *
- * [!!WARNING!!]
- * This socket pool allows lock-free reading **only of the `sid` field**.
- * Direct access by Worker threads to other `struct socket` fields can
- * race with concurrent modifications from the Socket thread.
- * Read the rules below carefully to avoid subtle bugs.
- *
- * --- The Concurrency Model: Optimistic Reads with `sid` Verification ---
- *
- * A `struct socket *s` obtained from `pool_get()` is NOT locked.
- * The Socket thread may free or reuse the socket at any time.
- *
- * Reading any field other than `s->sid` is a data race.
- * For non-pointer fields, this can result in stale or torn reads.
- *
- * Reads by Worker threads are "optimistic" — correctness is ensured
- * because the Socket thread validates `sid` before performing any
- * state-changing operation. The versioned `sid` acts as an optimistic lock.
- *
- * --- The Rule of Safe Interaction ---
- *
- * Worker thread logic must never depend on values from fields other than `s->sid`.
- * Such dependencies are racy and can cause operations to be silently dropped
- * by the Socket thread during `sid` verification.
- *
- * --- Correct Workflow ---
- *
- * To ensure correctness, send commands (with `sid`) to the Socket thread,
- * which safely accesses all socket fields on behalf of Worker threads.
- *
- * --- Optional Optimization (Not Recommended) ---
- *
- * Making socket fields atomic and reading them with sid re-verification
- * might seem attractive, but it cannot guarantee a consistent snapshot
- * of the socket's state.
- *
- * Since `sid` only changes on free, it does not protect against concurrent
- * updates to other fields. Strict correctness requires a full seqlock,
- * which is not implemented here.
- *
- * Therefore, Worker threads should avoid relying on multi-field atomic reads.
+ * Atomic status and counters can be read across threads, but do not provide
+ * a consistent multi-field snapshot. The zombie reason is published before
+ * the zombie state. send_error() acquires the state and reason, then rechecks
+ * the ID. Acquiring a later generation's reason also makes its ID change
+ * visible to that final check.
  */
 
 #if EAGAIN == EWOULDBLOCK
@@ -150,6 +117,8 @@ EAGAIN:           \
 	atomic_fetch_sub_explicit(ptr, (val), memory_order_relaxed)
 #define atomic_store_relaxed(ptr, val) \
 	atomic_store_explicit(ptr, (val), memory_order_relaxed)
+#define atomic_store_release(ptr, val) \
+	atomic_store_explicit(ptr, (val), memory_order_release)
 #define atomic_load_relaxed(ptr) \
 	atomic_load_explicit(ptr, memory_order_relaxed)
 
@@ -182,6 +151,7 @@ struct socket {
 	uint8_t type;
 	uint8_t dirty;
 	atomic_uint_least8_t state;
+	atomic_int zerr;
 	atomic_uint_least32_t wlbytes;
 	uint32_t wloffset;
 	struct wlist *wlhead;
@@ -462,6 +432,7 @@ static void socket_default(struct socket *s)
 	s->dirty = 0;
 	s->wloffset = 0;
 	atomic_store_relaxed(&s->state, 0);
+	atomic_store_relaxed(&s->zerr, 0);
 	s->wlhead = NULL;
 	s->wltail = &s->wlhead;
 	s->next = NULL;
@@ -481,6 +452,7 @@ static void pool_init(struct socket_pool *p)
 		struct socket *s = &p->slots[i];
 		atomic_init(&s->sid, -1);
 		atomic_init(&s->state, 0);
+		atomic_init(&s->zerr, 0);
 		atomic_init(&s->wlbytes, 0);
 		socket_default(s);
 #ifdef SILLY_TEST
@@ -496,6 +468,7 @@ static void pool_init(struct socket_pool *p)
 
 static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 {
+	struct socket *s;
 	silly_socket_id_t id;
 	spinlock_lock(&p->lock);
 	if (p->free_head == NULL) {
@@ -503,7 +476,7 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 		log_error("[socket] pool_alloc fail, find no empty entry\n");
 		return NULL;
 	}
-	struct socket *s = p->free_head;
+	s = p->free_head;
 	p->free_head = s->next;
 	if (p->free_head == NULL) {
 		p->free_tail = &p->free_head;
@@ -513,7 +486,7 @@ static struct socket *pool_alloc(struct socket_pool *p, fd_t fd, int type)
 	s->type = type;
 	id = ((silly_socket_id_t)s->version << SOCKET_POOL_EXP) |
 	     (s - &p->slots[0]);
-	atomic_store_explicit(&s->sid, id, memory_order_release);
+	atomic_store_release(&s->sid, id);
 	return s;
 }
 
@@ -532,7 +505,7 @@ static inline struct socket *pool_get(struct socket_pool *p,
 				      silly_socket_id_t id)
 {
 	struct socket *s = &p->slots[HASH(id)];
-	if (unlikely(sid(s) != id))
+	if (unlikely(id < 0 || sid(s) != id))
 		return NULL;
 	return s;
 }
@@ -771,7 +744,7 @@ static inline void free_socket(struct socket_manager *ss, struct socket *s)
 	pool_free(&ss->pool, s);
 }
 
-static inline void zombine_socket(struct socket *s)
+static inline void zombine_socket(struct socket *s, int err)
 {
 	if (is_closewait(s)) {
 		if (s->type == SOCKET_TCP_CONNECTION) {
@@ -780,6 +753,7 @@ static inline void zombine_socket(struct socket *s)
 		free_socket(SM, s);
 		return;
 	}
+	atomic_store_release(&s->zerr, err != 0 ? err : EXCLOSED);
 	wlist_free(SM, s);
 	remove_from_sp(SM, s);
 	set_zombine(s);
@@ -1202,8 +1176,9 @@ static void flush_dirty(struct socket_manager *ss)
 		if (s->type != SOCKET_TCP_CONNECTION)
 			continue;
 		if (drain_wlist_tcp(ss, s) < 0) {
-			report_close(ss, s, socketerrno);
-			zombine_socket(s);
+			int err = socketerrno;
+			report_close(ss, s, err);
+			zombine_socket(s, err);
 		}
 	}
 }
@@ -1611,17 +1586,32 @@ static int op_close(struct socket_manager *ss, struct op_close *op,
 	}
 }
 
+static inline int send_error(struct socket *s, silly_socket_id_t id)
+{
+	int err;
+	if (s == NULL)
+		return EXCLOSED;
+	if (!is_zombine(s))
+		return 0;
+	err = atomic_load_explicit(&s->zerr, memory_order_acquire);
+	if (sid(s) != id || err == 0)
+		return EXCLOSED;
+	return err;
+}
+
 int socket_tcp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 		    void (*freex)(void *))
 {
 	struct op_tcpsend op = { 0 };
+	int err;
 	struct socket *s = pool_get(&SM->pool, sid);
 	if (freex == NULL)
 		freex = mem_free;
-	if (unlikely(s == NULL || is_zombine(s))) {
+	err = send_error(s, sid);
+	if (unlikely(err != 0)) {
 		freex(buf);
 		log_warn("[socket] socket_tcp_send sid:%llu closed\n", sid);
-		return -EXCLOSED;
+		return -err;
 	}
 	if (unlikely(sz == 0)) {
 		freex(buf);
@@ -1663,13 +1653,15 @@ static void op_tcp_send(struct socket_manager *ss, struct op_tcpsend *op,
 int socket_udp_send(silly_socket_id_t sid, uint8_t *buf, size_t sz,
 		    const uint8_t *addr, size_t addrlen, void (*freex)(void *))
 {
+	int err;
 	struct op_udpsend op = { 0 };
 	struct socket *s = pool_get(&SM->pool, sid);
 	freex = freex ? freex : mem_free;
-	if (unlikely(s == NULL || is_zombine(s))) {
+	err = send_error(s, sid);
+	if (unlikely(err != 0)) {
 		freex(buf);
 		log_error("[socket] socket_udp_send invalid sid:%llu\n", sid);
-		return -EXCLOSED;
+		return -err;
 	}
 	op.hdr.op = OP_UDP_SEND;
 	op.hdr.sid = sid;
@@ -1737,6 +1729,20 @@ void socket_stop()
 	return;
 }
 
+static void op_discard(uint8_t *ptr, uint8_t *end)
+{
+	while (ptr < end) {
+		struct op_pkt *op = (struct op_pkt *)ptr;
+		assert(op->hdr.size > 0);
+		if (op->hdr.op == OP_TCP_SEND) {
+			op->tcpsend.free(op->tcpsend.data);
+		} else if (op->hdr.op == OP_UDP_SEND) {
+			op->udpsend.free(op->udpsend.data);
+		}
+		ptr += op->hdr.size;
+	}
+}
+
 static int op_process(struct socket_manager *ss)
 {
 	struct array *arr;
@@ -1750,8 +1756,12 @@ static int op_process(struct socket_manager *ss)
 		struct socket *s;
 		struct op_pkt *op = (struct op_pkt *)ptr;
 		atomic_add_relaxed(&ss->netstat.operate_processed, 1);
-		if (op->hdr.op == OP_EXIT)
+		if (op->hdr.op == OP_EXIT) {
+			/* Attempt queued output while worker and module callbacks are still alive. */
+			flush_dirty(ss);
+			op_discard(ptr, end);
 			return -1;
+		}
 		assert(op->hdr.size > 0);
 		ptr += op->hdr.size;
 		s = pool_get(&ss->pool, op->hdr.sid);
@@ -1888,7 +1898,7 @@ int socket_poll()
 			}
 			if (err != 0) {
 				report_close(ss, s, err);
-				zombine_socket(s);
+				zombine_socket(s, err);
 			} else if (eof || SP_EOF(e)) {
 				report_close(ss, s, EXEOF);
 				read_enable(ss, s, 0);
@@ -1903,8 +1913,9 @@ int socket_poll()
 				send_msg_udp(ss, s);
 			}
 			if (SP_ERR(e)) {
-				report_close(ss, s, get_sock_error(s));
-				zombine_socket(s);
+				err = get_sock_error(s);
+				report_close(ss, s, err);
+				zombine_socket(s, err);
 			}
 			break;
 		case SOCKET_PIPE_CTRL:
@@ -1974,11 +1985,39 @@ end:
 	return -errno;
 }
 
+void socket_cleanup()
+{
+	int i;
+	struct socket *s;
+	struct socket_pool *pool = &SM->pool;
+	struct array *arr;
+	uint8_t *ptr;
+	/*
+	 * All engine threads have joined. Prevent free callbacks and Lua finalizers
+	 * from allocating sockets or queueing I/O. Keep fd/type for socket_exit(),
+	 * which releases descriptors by walking the slots directly.
+	 */
+	pool->free_head = NULL;
+	pool->free_tail = &pool->free_head;
+	for (i = 0; i < SOCKET_POOL_SIZE; i++)
+		atomic_store_release(&pool->slots[i].sid, -1);
+
+	/* EXIT discarded the consumer tail; only the producer slot has unconsumed operations. */
+	arr = &SM->opbuf.slots[SM->opbuf.writing];
+	ptr = arr->buf;
+	op_discard(ptr, ptr + arr->size);
+	array_clear(arr);
+	s = &pool->slots[0];
+	for (i = 0; i < SOCKET_POOL_SIZE; i++) {
+		wlist_free(SM, s);
+		++s;
+	}
+}
+
 void socket_exit()
 {
 	int i;
 	assert(SM);
-	flush_dirty(SM);
 	sp_free(SM->spfd);
 	closesocket(SM->reservefd);
 	trigger_destroy(&SM->ctrl);
@@ -2085,8 +2124,7 @@ void socket_debug_ctrl(const char *cmd, va_list ap)
 		unsigned ai = atomic_load_explicit(&DBG.active,
 						   memory_order_acquire);
 		unsigned inactive = 1 - ai;
-		atomic_store_explicit(&DBG.active, inactive,
-				      memory_order_release);
+		atomic_store_release(&DBG.active, inactive);
 		memset(&DBG.cfg[ai], 0, sizeof(DBG.cfg[ai]));
 	} else if (strcmp(cmd, "reset") == 0) {
 		(void)ap;
@@ -2094,11 +2132,13 @@ void socket_debug_ctrl(const char *cmd, va_list ap)
 						   memory_order_acquire);
 		unsigned inactive = 1 - ai;
 		memset(&DBG.cfg[inactive], 0, sizeof(DBG.cfg[inactive]));
-		atomic_store_explicit(&DBG.active, inactive,
-				      memory_order_release);
+		atomic_store_release(&DBG.active, inactive);
 		memset(&DBG.cfg[ai], 0, sizeof(DBG.cfg[ai]));
 		DBG.eagain_counter = 0;
 		DBG.defer_trigger = 0;
+	} else if (strcmp(cmd, "stop") == 0) {
+		(void)ap;
+		socket_stop();
 	} else if (strcmp(cmd, "kick") == 0) {
 		(void)ap;
 		trigger_fire(&SM->ctrl);

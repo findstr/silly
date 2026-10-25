@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- `net.free(ptr)` to release raw receive buffers.
 - Optional HTTP/2 client PING keepalive for HTTP and gRPC.
 - `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
 - `adt.queue:remove(value)`.
@@ -24,6 +25,7 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- Socket: preserve zombie send errors and release queued send buffers at runtime exit.
 - Worker: fix error lookup and callback reset from nested Lua calls.
 - HTTP/2: fix flow control, graceful shutdown and protocol handling.
 - Buffer: reject read lengths and buffered sizes above `2^31-1` bytes.

@@ -8,6 +8,12 @@ icon: network-wired
 
 The `silly.net` module provides network-related functionality, including implementations of various protocols and network services.
 
+## net.free(ptr)
+
+Releases a raw receive buffer passed to the caller by a low-level `data` callback.
+`ptr` is a `lightuserdata`. Only release a buffer that has not been transferred to
+another API or freed already. Release each buffer exactly once.
+
 ## Module List
 
 ### Transport Layer Protocols

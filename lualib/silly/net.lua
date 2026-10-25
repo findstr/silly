@@ -49,7 +49,7 @@ M.udpsend = assert(c.udp_send)
 M.tcpmulticast = assert(c.tcp_multicast)
 M.readenable = assert(c.readenable)
 M.tostring = assert(c.tostring)
-
+M.free = c.free
 M.multipack = assert(c.multipack)
 M.sendsize = assert(c.sendsize)
 local function listen_wrap(listen)

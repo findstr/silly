@@ -155,6 +155,12 @@ int engine_run(const struct boot_args *config)
 	log_flush();
 	pthread_mutex_destroy(&R.mutex);
 	pthread_cond_destroy(&R.cond);
+	/*
+	 * Free queued buffers before lua_close unloads module-defined free callbacks.
+	 * Finalizers may still send or close sockets, so keep the socket manager
+	 * alive until worker_exit() returns and socket_exit() can destroy it.
+	 */
+	socket_cleanup();
 	worker_exit();
 	if (R.exitstatus == 0 && worker_warn_count() > 0)
 		R.exitstatus = 1;

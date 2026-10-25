@@ -151,6 +151,22 @@ static int lsetsendbuf(lua_State *L)
 	return 0;
 }
 
+static int lsetlinger(lua_State *L)
+{
+	fd_t fd;
+	lua_Integer seconds;
+	struct linger linger;
+	fd = (fd_t)luaL_checkinteger(L, 1);
+	seconds = luaL_checkinteger(L, 2);
+	luaL_argcheck(L, seconds >= 0 && seconds <= UINT16_MAX, 2, "invalid linger timeout");
+	linger.l_onoff = 1;
+	linger.l_linger = (int)seconds;
+	if (setsockopt(fd, SOL_SOCKET, SO_LINGER, (const char *)&linger, sizeof(linger)) < 0) {
+		return luaL_error(L, "setsockopt linger error:%s", strerror(errno));
+	}
+	return 0;
+}
+
 static int lrecv(lua_State *L)
 {
 	fd_t fd = (fd_t)luaL_checkinteger(L, 1);
@@ -342,6 +358,8 @@ static int ldebugctrl(lua_State *L)
 		silly_debug_ctrl("socket.apply");
 	} else if (strcmp(cmd, "socket.reset") == 0) {
 		silly_debug_ctrl("socket.reset");
+	} else if (strcmp(cmd, "socket.stop") == 0) {
+		silly_debug_ctrl("socket.stop");
 	} else if (strcmp(cmd, "socket.kick") == 0) {
 		silly_debug_ctrl("socket.kick");
 	} else if (strcmp(cmd, "worker.error") == 0) {
@@ -414,6 +432,7 @@ SILLY_MOD_API int luaopen_test_aux_c(lua_State *L)
 		{ "getsockname", lgetsockname },
 		{ "setrecvbuf",  lsetrecvbuf  },
 		{ "setsendbuf",  lsetsendbuf  },
+		{ "setlinger",   lsetlinger   },
 		{ "send",        lsend        },
 		{ "recv",        lrecv        },
 		{ "close",       lclose       },
