@@ -1,6 +1,6 @@
 # Redis 客户端
 
-`silly.store.redis` 模块提供了一个基于连接池的异步 Redis 客户端，支持所有标准 Redis 命令，并实现了 RESP（Redis 序列化协议）协议。它使用连接复用和自动重连机制，为高性能应用提供可靠的 Redis 访问。
+`silly.store.redis` 模块提供异步 RESP2 Redis 客户端。多个请求/响应命令复用同一个 TCP 连接，连接失败后的后续请求会自动重新建连。
 
 ## 模块导入
 
@@ -29,7 +29,7 @@ end)
 
 ### RESP 协议
 
-Redis 客户端实现了完整的 RESP（Redis Serialization Protocol）协议，支持以下数据类型：
+Redis 客户端实现 RESP2 协议，支持以下数据类型：
 
 - **简单字符串** (`+`): 返回状态回复，如 `"OK"`, `"PONG"`
 - **错误** (`-`): 返回错误信息
@@ -37,16 +37,20 @@ Redis 客户端实现了完整的 RESP（Redis Serialization Protocol）协议�
 - **批量字符串** (`$`): 返回字符串或 nil
 - **数组** (`*`): 返回多个值的数组
 
+格式错误的响应会关闭连接，并使该连接上的待处理请求失败。批量字符串最多为 `2^31-3` 字节，数组最多嵌套 128 层。
+
+Pub/Sub 订阅命令（`SUBSCRIBE`、`PSUBSCRIBE`、`SSUBSCRIBE` 及对应取消订阅命令）、`MONITOR`、切换到非 RESP2 的 `HELLO` 和 `CLIENT REPLY OFF/SKIP` 会在发送前返回错误。这些命令会改变响应协议或关闭响应，当前请求/响应客户端无法处理。`PUBLISH`、`HELLO 2` 和 `CLIENT REPLY ON` 仍受支持。Pipeline 会在发送任何命令前校验整个批次。
+
 ### 连接池机制
 
-模块实现了内部请求队列机制（socketq）：
+模块实现了内部请求队列：
 
 - **单连接模式**: 所有请求共享同一个 TCP 连接
 - **请求排队**: 多个协程的请求在单个连接上按顺序执行
 - **自动重连**: 连接断开时自动重新连接
 - **认证支持**: 支持密码认证和数据库选择
 
-**注意**: socketq 不是传统意义上的连接池，它是在**单个 TCP 连接**上对请求进行排队，以实现并发请求（pipeline）。所有操作共用一个连接，而不是维护多个连接的池。
+**注意**: 请求队列在**单个 TCP 连接**上复用请求，没有维护多个连接组成的连接池。
 
 ### 命令调用方式
 
@@ -104,7 +108,7 @@ end)
 
 ### db:close()
 
-关闭 Redis 连接并释放资源。
+永久关闭客户端，包括正在等待 AUTH/SELECT 的 socket，并使待处理请求失败。如果 TCP 建连在关闭之后才完成，新 socket 会立即被丢弃。后续命令不能重新打开客户端。
 
 - **参数**: 无
 - **返回值**: 无
@@ -178,6 +182,8 @@ end)
     - `resN`: 命令的值（`okN == false` 时是错误字符串）
   - 失败: `nil, string` - I/O 或协议错误时丢弃所有未完成命令；`err` 为传输层错误
 - **异步**: 是（挂起协程直到所有响应读完）
+
+nil 结果会使结果表出现空洞。应使用输入命令数量以及 `2*i-1` / `2*i` 索引读取结果；`#results` 和 `ipairs(results)` 都不能可靠地统计含 nil 的响应。I/O 或协议错误返回 `nil, err`；此前完成的命令可能已经生效，客户端不会自动重放。
 - **示例**:
 
 ```lua validate
@@ -534,14 +540,14 @@ task.fork(function()
     })
 
     -- 批量获取并处理结果
-    local results = {}
-    db:pipeline({
+    local results, err = db:pipeline({
         {"GET", "batch:1"},
         {"GET", "batch:2"},
         {"GET", "batch:3"},
         {"GET", "batch:4"},
         {"GET", "batch:5"},
-    }, results)
+    })
+    assert(results, err)
 
     -- results 为 {true, "value1", true, "value2", ...}
     for i = 2, #results, 2 do
@@ -667,16 +673,11 @@ task.fork(function()
 end)
 ```
 
-### 发布订阅（需要多个连接）
+### 发布消息
 
 ```lua validate
 local silly = require "silly"
 local redis = require "silly.store.redis"
-
--- 订阅者
-local subscriber = redis.new {
-    addr = "127.0.0.1:6379",
-}
 
 -- 发布者
 local publisher = redis.new {
@@ -686,15 +687,14 @@ local publisher = redis.new {
 local task = require "silly.task"
 
 task.fork(function()
-    -- 注意：subscribe 会阻塞连接，实际使用需要独立连接
-    -- 这里仅作为示例展示命令调用方式
+    -- 当前请求/响应客户端不支持订阅命令。
+    -- 订阅者需要使用提供订阅消息接收 API 的客户端。
 
     -- 发布消息
     local ok, receivers = publisher:publish("news", "Hello World")
     -- receivers 为接收到消息的订阅者数量
 
     publisher:close()
-    subscriber:close()
 end)
 ```
 
@@ -765,7 +765,8 @@ end)
 
 - 所有 Redis 命令必须在 `task.fork()` 创建的协程中调用
 - 多个协程可以安全地共享同一个 Redis 客户端实例
-- 连接池会自动处理并发请求的排队
+- 请求队列会将普通命令和 pipeline 与各自的响应对应起来
+- 事务（`MULTI`/`WATCH`）及阻塞命令应使用独立客户端。共享连接不会隔离各协程的连接状态，同一连接上的后续命令也不能解除前面命令的阻塞。
 
 ### nil 值处理
 

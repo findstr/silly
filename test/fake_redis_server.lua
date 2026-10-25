@@ -1,132 +1,123 @@
 local silly = require "silly"
-local task = require "silly.task"
+local pcall = silly.pcall
 local tcp = require "silly.net.tcp"
+local channel = require "silly.sync.channel"
+local testaux = require "test.testaux"
 
 ---@class FakeRedisServer
----@field port integer
----@field listenfd silly.net.tcp.listener
+---@field addr string
+---@field listenfd silly.net.tcp.listener?
 ---@field clients table<silly.net.tcp.conn, boolean>
----@field handler function|nil -- Custom command handler
+---@field handler function
+---@field connections integer
+---@field active integer
+---@field accepted silly.sync.channel
+---@field done silly.sync.channel
+---@field errors string[]
 local M = {}
+M.__index = M
 
----@param port integer
+local function readcommand(client)
+	local line, err = client:read("\n")
+	if not line then
+		return nil, err
+	end
+	local count = tonumber(line:match("^%*(%d+)\r\n$"))
+	assert(count and count > 0, "invalid Redis request array")
+	local parts = {}
+	for i = 1, count do
+		line, err = client:read("\n")
+		if not line then
+			return nil, err
+		end
+		local size = tonumber(line:match("^%$(%d+)\r\n$"))
+		assert(size, "invalid Redis request bulk length")
+		local data
+		data, err = client:read(size + 2)
+		if not data then
+			return nil, err
+		end
+		assert(data:sub(-2) == "\r\n", "invalid Redis request bulk terminator")
+		parts[i] = data:sub(1, -3)
+	end
+	return parts
+end
+
 function M.new(port)
-	local server = {
-		port = port or 16379,
+	return setmetatable({
+		addr = "127.0.0.1:" .. port,
 		clients = {},
-		handler = nil,
-	}
-	setmetatable(server, {__index = M})
-	return server
+		connections = 0,
+		active = 0,
+		accepted = channel.new(),
+		done = channel.new(),
+		errors = {},
+		handler = function()
+			error("unexpected Redis request")
+		end,
+	}, M)
+end
+
+function M:handle_client(client, connection)
+	local count = 0
+	while true do
+		local args = readcommand(client)
+		if not args then
+			return
+		end
+		count = count + 1
+		local response = self.handler(args[1], args, count, client, connection)
+		if response == false then
+			return
+		elseif response ~= nil then
+			assert(type(response) == "string", "Redis peer must return wire bytes, nil or false")
+			local ok = client:write(response)
+			if not ok then
+				return
+			end
+		end
+	end
 end
 
 function M:start()
-	self.listenfd = tcp.listen {
-		addr = "127.0.0.1:" .. self.port,
+	local listener, err = tcp.listen {
+		addr = self.addr,
 		accept = function(client)
+			self.connections = self.connections + 1
+			self.active = self.active + 1
 			self.clients[client] = true
-			task.fork(function()
-				self:handle_client(client)
-			end)
-		end
-	}
-end
-
-function M:handle_client(client)
-	local client_command_count = 0
-
-	while true do
-		-- Read command line
-		local line, err = client:readline("\n")
-		if err then
-			self.clients[client] = nil
+			self.accepted:push(self.connections)
+			local ok, failure = pcall(self.handle_client, self, client, self.connections)
 			client:close()
-			break
-		end
-
-		-- Parse RESP protocol (simplified)
-		if line:match("^%*") then
-			local count = tonumber(line:match("%*(%d+)"))
-			local cmd_parts = {}
-			for i = 1, count do
-				local len_line, err = client:readline("\n")
-				if err then break end
-				local len = tonumber(len_line:match("%$(%d+)"))
-				local data, err = client:read(len + 2) -- +2 for \r\n
-				if err then break end
-				cmd_parts[i] = data:sub(1, -3) -- Remove \r\n
+			self.clients[client] = nil
+			self.active = self.active - 1
+			if not ok then
+				self.errors[#self.errors + 1] = failure
 			end
-
-			client_command_count = client_command_count + 1
-			local cmd = cmd_parts[1] and cmd_parts[1]:upper()
-
-			-- Call custom handler if set
-			local response
-			if self.handler then
-				response = self.handler(cmd, cmd_parts, client_command_count, client)
-			else
-				-- Default simple responses
-				if cmd == "PING" then
-					response = "+PONG\r\n"
-				elseif cmd == "SET" then
-					response = "+OK\r\n"
-				elseif cmd == "GET" then
-					response = "$3\r\nbar\r\n"
-				elseif cmd == "SELECT" then
-					response = "+OK\r\n"
-				elseif cmd == "AUTH" then
-					response = "+OK\r\n"
-				elseif cmd == "DEL" then
-					response = ":1\r\n"
-				elseif cmd == "FLUSHDB" then
-					response = "+OK\r\n"
-				else
-					response = "-ERR unknown command '" .. (cmd or "nil") .. "'\r\n"
-				end
-			end
-
-			-- Handle response
-			if response == false then
-				-- false means close connection
-				client:close()
-				self.clients[client] = nil
-				break
-			elseif response == nil then
-				-- nil means don't respond (hang)
-				-- Continue reading next command
-			elseif type(response) == "string" then
-				-- Send response
-				local ok = client:write(response)
-				if not ok then
-					self.clients[client] = nil
-					client:close()
-					break
-				end
-			end
-		end
-	end
+			self.done:push(true)
+		end,
+	}
+	assert(listener, err)
+	self.listenfd = listener
 end
 
 function M:stop()
-	-- Close all client connections
-	for client in pairs(self.clients) do
-		client:close()
-	end
-	self.clients = {}
-
-	-- Close listen socket
 	if self.listenfd then
 		self.listenfd:close()
 		self.listenfd = nil
 	end
+	for client in pairs(self.clients) do
+		client:close()
+	end
+	while self.active > 0 do
+		testaux.await(self.done, "Redis peer reader completed")
+	end
+	assert(#self.errors == 0, self.errors[1])
 end
 
----Set custom command handler
----@param handler fun(cmd: string, args: table, command_count: number, client: any): string|boolean|nil
----  - Return string: send as response
----  - Return false: close connection
----  - Return nil: don't respond (hang)
----  - Handler can also use client:write() directly for partial responses
+---The callback sees exact command bytes, including command-name case.
+---Return wire bytes to reply, nil to keep reading, or false to close.
+---@param handler fun(cmd:string, args:string[], count:integer, client:silly.net.tcp.conn, connection:integer):string|boolean|nil
 function M:set_handler(handler)
 	self.handler = handler
 end

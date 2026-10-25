@@ -1,6 +1,6 @@
 # Redis Client
 
-The `silly.store.redis` module provides an asynchronous Redis client based on connection pooling, supporting all standard Redis commands and implementing the RESP (Redis Serialization Protocol). It uses connection reuse and automatic reconnection mechanisms to provide reliable Redis access for high-performance applications.
+The `silly.store.redis` module provides an asynchronous RESP2 Redis client. It multiplexes request/reply commands over one TCP connection and reconnects for subsequent requests after a connection failure.
 
 ## Module Import
 
@@ -29,7 +29,7 @@ end)
 
 ### RESP Protocol
 
-The Redis client implements the complete RESP (Redis Serialization Protocol), supporting the following data types:
+The Redis client implements RESP2, supporting the following data types:
 
 - **Simple Strings** (`+`): Returns status replies like `"OK"`, `"PONG"`
 - **Errors** (`-`): Returns error information
@@ -37,16 +37,20 @@ The Redis client implements the complete RESP (Redis Serialization Protocol), su
 - **Bulk Strings** (`$`): Returns strings or nil
 - **Arrays** (`*`): Returns arrays of multiple values
 
+Malformed replies close the connection and fail its pending requests. Bulk payloads are limited to `2^31-3` bytes and arrays to 128 nesting levels.
+
+Pub/Sub subscription commands (`SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` and their unsubscribe variants), `MONITOR`, non-RESP2 `HELLO`, and `CLIENT REPLY OFF/SKIP` are rejected before sending. They change the reply protocol or suppress replies, which this request/reply client cannot handle. `PUBLISH`, `HELLO 2` and `CLIENT REPLY ON` remain supported. Pipelines validate the entire batch before sending any command.
+
 ### Connection Pool Mechanism
 
-The module implements an internal request queue mechanism (socketq):
+The module implements an internal request queue:
 
 - **Single Connection Mode**: All requests share a single TCP connection
 - **Request Queuing**: Requests from multiple coroutines execute sequentially on a single connection
 - **Automatic Reconnection**: Automatically reconnects when connection drops
 - **Authentication Support**: Supports password authentication and database selection
 
-**Note**: socketq is not a traditional connection pool - it queues requests on a **single TCP connection** to enable concurrent requests (pipelining). All operations share one connection rather than maintaining a pool of multiple connections.
+**Note**: This is a request queue on a **single TCP connection**. It does not maintain a pool of connections.
 
 ### Command Invocation Methods
 
@@ -104,7 +108,7 @@ end)
 
 ### db:close()
 
-Closes the Redis connection and releases resources.
+Permanently closes the client, including a socket waiting for AUTH/SELECT, and fails pending requests. If TCP connection setup completes after close, that socket is discarded. Later commands cannot reopen the client.
 
 - **Parameters**: None
 - **Returns**: None
@@ -178,6 +182,8 @@ Send a batch of Redis commands in one TCP round trip and wait for all responses.
     - `resN`: the command's value (or the error string when `okN == false`)
   - Failure: `nil, string` - on I/O or protocol failure, all pending commands are dropped; `err` is the transport error
 - **Async**: Yes (suspends the coroutine until every reply has been read)
+
+Nil results leave holes in the table. Use the input command count and indices `2*i-1` / `2*i`; neither `#results` nor `ipairs(results)` reliably counts replies containing nil. An I/O or protocol failure returns `nil, err`; completed commands may already have taken effect and are not automatically replayed.
 - **Example**:
 
 ```lua validate
@@ -534,14 +540,14 @@ task.fork(function()
     })
 
     -- Batch get and process results
-    local results = {}
-    db:pipeline({
+    local results, err = db:pipeline({
         {"GET", "batch:1"},
         {"GET", "batch:2"},
         {"GET", "batch:3"},
         {"GET", "batch:4"},
         {"GET", "batch:5"},
-    }, results)
+    })
+    assert(results, err)
 
     -- results is {true, "value1", true, "value2", ...}
     for i = 2, #results, 2 do
@@ -667,16 +673,11 @@ task.fork(function()
 end)
 ```
 
-### Publish/Subscribe (Requires Multiple Connections)
+### Publishing Messages
 
 ```lua validate
 local silly = require "silly"
 local redis = require "silly.store.redis"
-
--- Subscriber
-local subscriber = redis.new {
-    addr = "127.0.0.1:6379",
-}
 
 -- Publisher
 local publisher = redis.new {
@@ -686,15 +687,14 @@ local publisher = redis.new {
 local task = require "silly.task"
 
 task.fork(function()
-    -- Note: subscribe blocks the connection, requires dedicated connection in practice
-    -- This is just an example showing command invocation
+    -- Subscription commands are unsupported by this request/reply client.
+    -- Use a client with a subscription receive API for subscribers.
 
     -- Publish message
     local ok, receivers = publisher:publish("news", "Hello World")
     -- receivers is the number of subscribers who received the message
 
     publisher:close()
-    subscriber:close()
 end)
 ```
 
@@ -765,7 +765,8 @@ end)
 
 - All Redis commands must be called in coroutines created by `task.fork()`
 - Multiple coroutines can safely share the same Redis client instance
-- The connection pool automatically handles request queuing for concurrent requests
+- The request queue matches each ordinary command/pipeline to its replies
+- Use separate clients for transactions (`MULTI`/`WATCH`) and blocking commands. A shared connection does not isolate a coroutine's connection state or unblock a command with later commands on the same connection.
 
 ### nil Value Handling
 
