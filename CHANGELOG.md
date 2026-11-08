@@ -11,6 +11,8 @@
 - `client.close()` to gracefully shut down pooled connections.
 
 ### Changed
+- Remove `silly.tls.ctx.free()` and let Lua garbage collection release TLS contexts.
+- TLS writes read fragment arrays directly, bypassing `__len` and `__index`.
 - C extensions use `silly_push_error(L, code)`; `silly_error_table()` is removed.
 - `http.request()` and `client:request()` accept optional `endstream` and `timeout` arguments.
 - `stream:respond()` accepts `endstream` to finish a response without a body.
@@ -27,6 +29,8 @@
 ### Fixed
 - Socket: preserve zombie send errors, report peer resets on Windows, and release queued send buffers at runtime exit.
 - Worker: fix error lookup and callback reset from nested Lua calls.
+- TLS: fix stalled reads, write failures during renegotiation, buffered data loss after errors, and connection setup leaks.
+- TLS: prevent crashes after certificate reload and preserve the active configuration when reload fails.
 - HTTP/2: fix flow control, graceful shutdown and protocol handling.
 - Buffer: reject read lengths and buffered sizes above `2^31-1` bytes.
 - gRPC: preserve status and message from trailers-only responses.
