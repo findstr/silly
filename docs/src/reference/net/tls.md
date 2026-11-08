@@ -221,7 +221,7 @@ task.fork(function()
     end
 
     -- 读取响应头
-    local line, read_err = conn:read("\r\n")
+    local line, read_err = conn:read("\n")
     if not line then
         print("读取失败:", read_err)
         conn:close()
@@ -311,7 +311,7 @@ end)
 
 ### tls.listen(conf)
 
-启动一个 TLS 服务器在给定地址上进行监听。
+启动一个 TLS 服务器在给定地址上进行监听。证书、私钥或加密套件无效等配置错误会在打开监听 socket 前抛出。
 
 - **参数**:
   - `conf`: `table` - 服务器配置表
@@ -325,7 +325,7 @@ end)
     - `alpnprotos`: `string[]|nil` (可选) - 支持的 ALPN 协议列表，例如 `{"http/1.1", "h2"}`
 - **返回值**:
   - 成功: `silly.net.tls.listener` - 监听器对象
-  - 失败: `nil, string` - nil 和错误信息
+  - 失败: `nil, silly.errno` - I/O 错误
 - **示例**:
 
 ```lua validate
@@ -352,7 +352,7 @@ end)
 
 ### tls.connect(addr [, opts])
 
-建立到 TLS 安全服务器的连接（异步）。此函数会进行 TCP 连接和 TLS 握手。
+建立到 TLS 安全服务器的连接（异步）。此函数会进行 TCP 连接和 TLS 握手。配置无效时抛出错误；TLS 初始化失败会释放底层连接。
 
 - **参数**:
   - `addr`: `string` - 服务器地址，例如 `"127.0.0.1:443"`
@@ -363,7 +363,7 @@ end)
     - `timeout`: `integer|nil` - 连接和握手的超时时间（毫秒）
 - **返回值**:
   - 成功: `silly.net.tls.conn` - TLS 连接对象
-  - 失败: `nil, string` - nil 和错误信息
+  - 失败: `nil, silly.errno` - I/O 错误
 - **示例**:
 
 ```lua validate
@@ -387,11 +387,13 @@ end
 
 - **返回值**:
   - 成功: `true`
-  - 失败: `false, string` - false 和错误信息
+  - 失败: `false, silly.errno` - I/O 错误
 
 ### listener:reload([conf])
 
-热重载 TLS 服务器的证书配置，无需重启服务。
+热重载 TLS 服务器的证书配置，无需重启服务。配置无效时抛出错误，并保留当前生效的配置。
+
+已有连接在关闭前继续持有原来的 TLS 上下文。Lua 会回收已无引用的上下文。
 
 - **参数**:
   - `conf`: `table|nil` (可选) - 新的配置
@@ -400,7 +402,7 @@ end
     - `alpnprotos`: `string[]` - 新的 ALPN 协议列表
 - **返回值**:
   - 成功: `true`
-  - 失败: `false, string` - false 和错误信息
+  - 失败: `false, silly.errno` - I/O 错误
 - **示例**:
 
 ```lua validate
@@ -440,8 +442,10 @@ end)
 
 精确读取 `n` 字节，或读取直到分隔符（异步）。底层自动处理 TLS 解密。
 
+连接尚未被本地主动关闭时，`read(0)` 立即返回 `"", nil`，不消费缓冲区中的数据。同时只允许一个协程读取；即使缓冲区已有数据，第二个读取者也会触发错误，包括 `read(0)`。
+
 - **参数**:
-  - `n`: `integer|string` - 要读取的字节数，或分隔符字符串（返回值包含分隔符本身）
+  - `n`: `integer|string` - 要读取的字节数，最大为 `2^31-1`，或单字节分隔符（返回值包含分隔符本身）
   - `timeout`: `integer|nil` (可选) - 本次读取的超时（毫秒）
 - **返回值**:
   - 成功: `string` - 读到的数据
@@ -450,13 +454,22 @@ end)
 
 ### conn:write(data)
 
-经由 TLS 加密层向对端写数据。由框架缓冲、异步发送；本调用本身不会 yield。
+经由 TLS 加密层向对端写数据。由框架缓冲、异步发送；本调用本身不会 yield。大写入分批提交，同一次写入中的小片段会合并发送；写入失败时，前面的一部分数据可能已进入发送队列。
 
 - **参数**:
-  - `data`: `string|string[]` - 单个字符串，或字符串数组（零拷贝）
+  - `data`: `string|string[]` - 单个字符串，或字符串数组。直接读取数组的长度和元素，跳过 `__len` 和 `__index`。
 - **返回值**:
   - 成功: `true`
-  - 失败: `false, silly.errno` - 通常为 `errno.CLOSED` 或 `errno.TLS`
+  - 失败: `false, silly.errno` - TLS 错误或传输层提交错误
+
+`conn:close()` 尽力发送后关闭，条件允许时发送 TLS 关闭通知，不等待对端回复，剩余数据可能丢弃。
+
+读侧 EOF 不会阻止尚未关闭的连接写入响应。写入成功表示数据已被接受用于发送，仍可能处于缓冲区，对端是否收到尚未确认。
+本次 TLS 处理成功后，如果 socket 同步拒绝提交，`write()` 返回 `false` 和对应的传输错误。
+传输错误可以通过 socket 的首次关闭通知交给 `read()`。如果首次通知是 TCP EOF，读完缓冲明文后，`read()` 仍返回已保存的 EOF，即使后续传输层写入失败。
+连接尚未由调用方关闭时，写操作返回本次 TLS 处理和传输提交的结果，读侧保留先前的错误。调用方关闭后返回保存的错误。
+写操作报告致命 TLS 错误或 TLS EOF 时，如果读侧尚无错误，就保存该结果，即使没有等待读取者。这两种结果都会结束正在等待的读取。传输层写失败不会提前中断读取，仍可由在途数据满足读取，或由 socket 关闭通知结束。
+已有的缓冲明文仍可先读出，数据不足时才返回保存的读侧错误。
 
 ### conn:isalive()
 
@@ -494,7 +507,7 @@ end)
 
 获取通过 ALPN 协商的协议。
 
-- **返回值**: `string|nil` - 协商的协议（如 `"http/1.1"`, `"h2"`），未协商则返回 `nil`
+- **返回值**: `string` - 协商的协议（如 `"http/1.1"`、`"h2"`），未协商则返回 `""`
 - **示例**:
 
 ```lua validate
@@ -527,10 +540,12 @@ end)
 
 ### conn:limit(size)
 
-设置读取缓冲区限制。当缓冲区大小超过限制时，暂停读取。
+设置读取缓冲区限制。缓冲数据达到限制时暂停接收，但读取、握手或 TLS 写入仍需更多输入时不受此限制。
+等待读取的豁免持续到读取成功、超时或取消，期间修改限额不会撤销豁免。
+传入 `nil` 取消限制；传入零时，无豁免的连接会暂停接收应用数据。
 
 - **参数**:
-  - `size`: `integer` - 限制大小（字节）
+  - `size`: `integer?` - 限制大小，范围为 0 至 `2^31-1` 字节
 
 ### conn:unreadbytes()
 
@@ -569,7 +584,7 @@ print("Remote address:", conn.remoteaddr)
 ### 证书管理
 
 1. **证书格式**: 必须使用 PEM 格式的证书和私钥
-2. **证书验证**: 客户端默认会验证服务器证书，自签名证书会导致验证失败
+2. **证书验证**: 客户端不验证服务器证书或主机名；`hostname` 仅用于设置 SNI。
 3. **SNI 支持**: 客户端连接时建议提供 hostname 参数以支持 SNI
 4. **证书链**: 如果使用中间 CA，需要将完整证书链放入 cert 字段
 
@@ -585,14 +600,19 @@ print("Remote address:", conn.remoteaddr)
 1. **密钥保护**: 私钥文件应设置严格的访问权限（如 `chmod 600`）
 2. **加密套件**: 生产环境建议配置 `ciphers` 参数，禁用不安全的加密算法
 3. **证书更新**: 使用 `listener:reload()` 定期更新证书，避免证书过期
-4. **ALPN 协商**: 使用 `alpnprotos` 明确支持的协议，避免协议降级攻击
+4. **ALPN 协商**: 使用 `alpnprotos` 声明支持的协议，并在握手后检查 `conn:alpnproto()` 的结果。仅配置 ALPN 并不要求协议必须匹配。
 
 ### 常见错误
 
-`conn:read`/`conn:write`、`tls.connect`/`tls.listen` 返回的错误都是 [`silly.errno`](../errno.md) 值。除了标准传输错误（`errno.EOF`、`errno.CLOSED`、`errno.TIMEDOUT` 等）之外，TLS 特有失败（证书不匹配、握手协议错误、加密套件协商失败等）统一记为 `errno.TLS`。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
+`conn:read`/`conn:write`、`tls.connect`/`tls.listen` 返回的错误都是 [`silly.errno`](../errno.md) 值。除了标准传输错误（`errno.EOF`、`errno.CLOSED`、`errno.TIMEDOUT` 等）之外，TLS 特有失败（握手协议错误、加密套件协商失败等）统一记为 `errno.TLS`。需要具体 OpenSSL 原因时，查看服务器日志中以 `[tls] openssl fd:...` 开头的行。
 
-- **原因**: 证书配置错误、对端不信任证书、加密套件不匹配
-- **解决**: 检查 PEM 格式、使用受信任 CA、配置兼容的加密套件
+最先保存的读侧错误不会被后续 TLS 或 socket 事件覆盖。读侧结束后会丢弃后续网络输入，但缓冲区中已有的明文仍可先满足读取。连接尚未由调用方关闭时，写操作返回本次 TLS 处理和同步传输提交的错误。异步传输错误可通过 socket 的首次关闭通知报告。
+
+发生致命 TLS 错误后，`conn:isalive()` 返回假值，调用方须调用 `conn:close()` 释放连接。
+TLS EOF 表示收到了对端的 `close_notify`，读取返回 `errno.EOF`，仍可发送响应。
+
+- **原因**: 服务器证书配置无效、握手协议错误、加密套件不匹配
+- **解决**: 检查 PEM 格式，配置兼容的 TLS 版本和加密套件
 
 ### 编译要求
 

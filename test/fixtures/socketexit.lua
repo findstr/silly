@@ -94,6 +94,33 @@ elseif mode == "gc" then
 		end,
 	})
 
+elseif mode == "tlsgc" then
+	local tls = require "silly.net.tls"
+	local native = require "silly.tls.tls"
+	local ready = channel.new()
+	local tls_listener = assert(tls.listen {
+		addr = "127.0.0.1:0",
+		certs = {{cert = testaux.CERT_A, key = testaux.KEY_A}},
+		accept = function(conn)
+			ready:push(conn)
+		end,
+	})
+	local peer = assert(tls.connect(metrics.socketstat(tls_listener.fd).localaddr))
+	local conn = testaux.await(ready, "shutdown fixture accepts TLS")
+	assert(conn:write("ready"))
+	assert(peer:read(5, 1000) == "ready")
+	local targets = {[peer.ssl] = true, [conn.ssl] = true}
+	local close = native.close
+	native.close = function(state, ...)
+		local err = close(state, ...)
+		if targets[state] then
+			assert(err == nil)
+			assert(native.dbg_error(state) == errno.CLOSED)
+			print("TLS_EXIT_CLOSED")
+		end
+		return err
+	end
+	_G.socket_exit_tls = {listener = tls_listener, peer = peer, conn = conn}
 else
 	error("unknown socket exit scenario: " .. mode)
 end

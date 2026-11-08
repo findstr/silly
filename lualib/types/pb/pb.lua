@@ -373,13 +373,8 @@ function M.unpack(typename, data) end
 M.Buffer = buffer
 M.Slice = slice
 
----@type pb.io
 M.io = io
-
----@type pb.conv
 M.conv = conv
-
----@type pb.unsafe
 M.unsafe = unsafe
 
 return M

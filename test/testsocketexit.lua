@@ -23,6 +23,7 @@ for _, spec in ipairs({
 	{id = 1, mode = "writelist", name = "Socket exit releases blocked write lists"},
 	{id = 2, mode = "batch", name = "Socket exit discards operations after the exit command"},
 	{id = 3, mode = "gc", name = "Socket shutdown rejects sends from VM finalizers"},
+	{id = 4, mode = "tlsgc", name = "TLS finalizers safely attempt close_notify after socket shutdown"},
 	{id = 7, mode = "producer", name = "Socket cleanup releases output queued after the socket thread joins"},
 	{id = 8, mode = "flush", name = "Socket exit attempts TCP output queued before EXIT"},
 }) do
@@ -41,6 +42,10 @@ for _, spec in ipairs({
 		assert(not output:find("ERROR: ", 1, true), output)
 		assert(not output:find("runtime error:", 1, true), output)
 		assert(not output:find("error in __gc", 1, true), output)
+		if spec.mode == "tlsgc" then
+			local _, count = output:gsub("TLS_EXIT_CLOSED", "")
+			assert(count == 2, output)
+		end
 		testaux.success("Test " .. spec.id .. ": Child exits without leaked socket buffers")
 	end)
 end
