@@ -5,7 +5,6 @@ local np = require "silly.net.cluster.c"
 local channel = require "silly.sync.channel"
 local waitgroup = require "silly.sync.waitgroup"
 local cluster = require "silly.net.cluster"
-local crypto = require "silly.crypto.utils"
 local errno = require "silly.errno"
 local testaux = require "test.testaux"
 
@@ -307,7 +306,7 @@ cluster.serve {
 local function request(fd, index, count)
 	return function()
 		for i = 1, count do
-			local data = "hello-" .. index .. "-" .. crypto.randomkey(8)
+			local data = "hello-" .. index .. "-" .. testaux.randomdata(8)
 			local body, err = cluster.call(fd, data)
 			testaux.assertneq(body, nil, err)
 			testaux.asserteq(data, body, "rpc match request/response")
@@ -406,7 +405,7 @@ end)
 
 testaux.case("Test 17: Server callback", function()
 	case = case_one
-	local data = "server-callback-" .. crypto.randomkey(8)
+	local data = "server-callback-" .. testaux.randomdata(8)
 	local ack, _ = cluster.call(accept_peer, data)
 	testaux.assertneq(ack, nil, "rpc should succeed")
 	testaux.asserteq(data, ack, "rpc should echo")

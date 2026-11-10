@@ -1,10 +1,9 @@
 local silly = require "silly"
 local pcall = silly.pcall
-local crypto = require "silly.crypto.utils"
 local hpack = require "silly.http2.hpack"
 local testaux = require "test.testaux"
 local send_hpack = hpack.new(4096)
-local prefix = crypto.randomkey(200)
+local prefix = testaux.randomdata(200)
 local unit = 250+32
 
 -- Helper function to convert array format {k1, v1, k2, v2, ...} to hash table

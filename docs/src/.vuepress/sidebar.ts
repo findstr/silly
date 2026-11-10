@@ -61,6 +61,8 @@ export default sidebar({
             { text: "silly.crypto.hash", icon: "hashtag", link: "hash" },
             { text: "silly.crypto.hmac", icon: "shield-halved", link: "hmac" },
             { text: "silly.crypto.pkey", icon: "certificate", link: "pkey" },
+            { text: "silly.crypto.random", icon: "dice", link: "random" },
+            { text: "silly.crypto.utils", icon: "wrench", link: "utils" },
           ],
         },
         {

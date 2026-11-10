@@ -157,7 +157,6 @@ print("已关闭连接:", conn.remoteaddr)
 local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
-local crypto = require "silly.crypto.utils"
 local tcp = require "silly.net.tcp"
 
 -- 启动 Echo 服务器
@@ -203,8 +202,8 @@ for i = 1, 3 do
 
         -- 发送 5 条测试消息
         for j = 1, 5 do
-            -- 生成随机数据
-            local msg = crypto.randomkey(5) .. "\n"
+            -- 生成测试消息
+            local msg = string.format("client %d message %d\n", i, j)
             print("发送 [", conn.remoteaddr, "] ->", msg)
 
             -- 发送数据

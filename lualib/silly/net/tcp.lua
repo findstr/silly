@@ -18,6 +18,7 @@ local bappend = buffer.append
 local bread = buffer.read
 local bsize = buffer.size
 local readenable = net.readenable
+local free = net.free
 local running = task.running
 local wait = task.wait
 local wakeup = task.wakeup
@@ -83,6 +84,10 @@ local function new_socket(fd, addr)
 end
 
 local function check_limit(s, buflimit, size)
+	-- A pending byte or delimiter read must be able to receive its remainder.
+	if s.co then
+		return
+	end
 	local readpause = s.readpause
 	if readpause then
 		if size < buflimit then
@@ -127,6 +132,7 @@ end,
 data = function(fd, ptr, chunk_size)
 	local s = conn_pool[fd]
 	if not s then
+		free(ptr)
 		return
 	end
 	local buf = s.buf
@@ -251,6 +257,10 @@ local function read_timer(s)
 	if co then
 		s.co = nil
 		s.delim = nil
+		local limit = s.buflimit
+		if limit then
+			check_limit(s, limit, bsize(s.buf))
+		end
 		wakeup(co, TIMEOUT)
 	end
 end

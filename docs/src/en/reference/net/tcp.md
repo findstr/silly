@@ -260,7 +260,7 @@ Sets the size limit for the socket receive buffer. This is a key flow control me
 
 - **Parameters**:
   - `limit`: `integer|nil` - Maximum bytes to buffer, or `nil` to disable limit
-- **Description**: When receive buffer reaches the limit, TCP flow control pauses receiving more data
+- **Description**: When receive buffer reaches the limit, TCP flow control pauses receiving more data. A pending read may exceed this limit to complete.
 - **Example**:
 
 ```lua validate

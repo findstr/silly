@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <strings.h>
@@ -11,17 +10,6 @@
 #include <openssl/evp.h>
 
 #include "silly.h"
-
-static int lrandomkey(lua_State *L)
-{
-	luaL_Buffer b;
-	lua_Integer n = luaL_checkinteger(L, 1);
-	luaL_buffinitsize(L, &b, n);
-	for (lua_Integer i = 0; i < n; i++)
-		luaL_addchar(&b, random() % 26 + 'a');
-	luaL_pushresult(&b);
-	return 1;
-}
 
 static int lxor(lua_State *L)
 {
@@ -46,9 +34,8 @@ static int lxor(lua_State *L)
 SILLY_MOD_API int luaopen_silly_crypto_utils(lua_State *L)
 {
 	luaL_Reg tbl[] = {
-		{ "xor",       lxor       },
-		{ "randomkey", lrandomkey },
-		{ NULL,        NULL       },
+		{ "xor", lxor },
+		{ NULL,  NULL },
 	};
 	luaL_checkversion(L);
 	luaL_newlib(L, tbl);

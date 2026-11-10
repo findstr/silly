@@ -907,6 +907,10 @@ function M.httpd(handler, conn, scheme)
 			logger.error(err)
 			break
 		end
+		-- An upgrade transfers connection ownership out of the HTTP stream.
+		if not stream.conn then
+			return
+		end
 		server_closewrite(stream)
 		if check_close_error(stream) then
 			stream.conn = nil

@@ -82,8 +82,8 @@ The Initialization Vector is a random number used in the encryption process to e
 
 **Generate Random IV**:
 ```lua
-local utils = require "silly.crypto.utils"
-local iv = utils.randomkey(16)  -- IV length for AES is 16 bytes
+local random = require "silly.crypto.random"
+local iv = random.bytes(16)  -- IV length for AES is 16 bytes
 ```
 
 ### Padding
@@ -711,7 +711,7 @@ end
 ### Security Considerations
 
 1. **Key Management**
-   - Keys should be generated using a secure random number generator (use `silly.crypto.utils.randomkey()`)
+   - Keys should be generated using a secure random number generator (use `silly.crypto.random.bytes()`)
    - Keys should be stored securely, avoid hardcoding in code
    - Recommend using Key Derivation Function (KDF) to generate keys from passwords
    - Regularly rotate keys to reduce security risks
@@ -824,7 +824,7 @@ local enc = cipher.encryptor("aes-256-gcm", key, string.rep("i", 12))
 
 ```lua
 local cipher = require "silly.crypto.cipher"
-local utils = require "silly.crypto.utils"
+local random = require "silly.crypto.random"
 
 local crypto_util = {}
 
@@ -832,7 +832,7 @@ local crypto_util = {}
 function crypto_util.encrypt(plaintext, key, algorithm)
     algorithm = algorithm or "aes-256-gcm"
     local iv_len = algorithm:match("gcm") and 12 or 16
-    local iv = utils.randomkey(iv_len)
+    local iv = random.bytes(iv_len)
 
     local enc = cipher.encryptor(algorithm, key, iv)
     local ciphertext = enc:final(plaintext)
@@ -880,8 +880,8 @@ local db_crypto = {}
 local master_key = string.rep("k", 32)  -- Read from config file
 
 function db_crypto.encrypt_field(plaintext)
-    local utils = require "silly.crypto.utils"
-    local iv = utils.randomkey(12)
+    local random = require "silly.crypto.random"
+    local iv = random.bytes(12)
 
     local enc = cipher.encryptor("aes-256-gcm", master_key, iv)
     local ciphertext = enc:final(plaintext)
@@ -912,9 +912,9 @@ local cipher = require "silly.crypto.cipher"
 
 -- Use temporary session key to encrypt data
 local function create_session(user_id)
-    local utils = require "silly.crypto.utils"
-    local session_key = utils.randomkey(32)  -- Random session key
-    local session_id = utils.randomkey(16)
+    local random = require "silly.crypto.random"
+    local session_key = random.bytes(32)  -- Random session key
+    local session_id = random.bytes(16)
 
     return {
         id = session_id,
@@ -925,8 +925,8 @@ local function create_session(user_id)
 end
 
 local function encrypt_session_data(session, data)
-    local utils = require "silly.crypto.utils"
-    local iv = utils.randomkey(12)
+    local random = require "silly.crypto.random"
+    local iv = random.bytes(12)
 
     local enc = cipher.encryptor("aes-256-gcm", session.key, iv)
     local ciphertext = enc:final(data)

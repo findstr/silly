@@ -33,7 +33,9 @@ type ServerInfo struct {
 
 func (m *Manager) Start(addr string, handler http.Handler, params map[string]any) (*ServerInfo, error) {
 	var tlsConfig *tls.Config
-	if enabled, _ := params["http2"].(bool); enabled {
+	http2Enabled, _ := params["http2"].(bool)
+	tlsEnabled, _ := params["tls"].(bool)
+	if http2Enabled || tlsEnabled {
 		cert, _ := params["cert"].(string)
 		key, _ := params["key"].(string)
 		pair, err := tls.X509KeyPair([]byte(cert), []byte(key))

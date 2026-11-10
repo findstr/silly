@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bufio"
 	"compress/gzip"
+	"conformance/websocketpeer"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 
 func GetHandler(name string, params map[string]interface{}) (http.Handler, error) {
 	switch name {
+	case "websocket":
+		return websocketpeer.Handler(params)
 	case "echo":
 		return echoHandler(), nil
 	case "chunked":

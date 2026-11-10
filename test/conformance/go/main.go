@@ -6,6 +6,7 @@ import (
 	"conformance/httpclient"
 	"conformance/httpserver"
 	"conformance/tlspeer"
+	"conformance/websocketpeer"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -31,6 +32,13 @@ func main() {
 	defer peers.CloseAll()
 
 	handlers := map[string]control.Handler{
+		"websocket_request": func(cmd *control.Command) *control.Response {
+			result, err := websocketpeer.Request(cmd.Params)
+			if err != nil {
+				return &control.Response{Error: err.Error()}
+			}
+			return &control.Response{Result: result}
+		},
 		"tls_readclose": func(cmd *control.Command) *control.Response {
 			addr, _ := cmd.Params["addr"].(string)
 			version, _ := cmd.Params["version"].(float64)

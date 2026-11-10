@@ -57,6 +57,7 @@ Upgrades an HTTP stream to a WebSocket connection.
 - **Notes**:
   - Before calling this function, the stream must be in an open state
   - After successful upgrade, do not operate on the original stream object
+  - The socket may be handed to another coroutine; returning from the HTTP handler does not close it
 - **Example**:
 
 ```lua validate
@@ -165,10 +166,12 @@ Reads a WebSocket message (asynchronous).
 - **Returns**:
   - Success: `string, string` - Message data and frame type
   - Failure: `nil, string, string` - nil, error message, and partial data
-- **Frame Types**: `"text"`, `"binary"`, `"ping"`, `"pong"`, `"close"`, `"continuation"`
+- **Frame Types**: `"text"`, `"binary"`, `"ping"`, `"pong"`, `"close"`
 - **Async**: Suspends the coroutine until a complete message is received
 - **Notes**:
   - Automatically handles fragmented messages, returning complete content
+  - Control frames are returned separately; the next read resumes an unfinished message
+  - Invalid protocol input returns an error and closes the connection
   - When the `close` type is returned, the connection is about to close
 - **Example**:
 
@@ -197,6 +200,22 @@ task.fork(function()
 end)
 ```
 
+### sock:limit(limit)
+
+Set the maximum size in bytes of a received text or binary message, including all its fragments.
+
+- `limit`: optional integer; `nil` or a nonpositive value disables the limit. The default is unlimited.
+- Ping, Pong and Close payloads do not count toward this limit.
+- Limits apply per message and also apply to an unfinished fragmented message when changed.
+- An oversized message makes `read()` return an error and closes the connection with status 1009.
+- This setting does not limit outgoing messages or replace the TCP/TLS receive-buffer limit.
+
+Call it after `connect()` or `upgrade()`, before reading:
+
+```lua
+sock:limit(1024 * 1024) -- 1 MiB per received message
+```
+
 ### sock:write(data [, type])
 
 Sends a WebSocket message (asynchronous).
@@ -211,14 +230,16 @@ Sends a WebSocket message (asynchronous).
 - **Notes**:
   - Control frames (ping/pong/close) data length cannot exceed 125 bytes
   - Large messages (>= 64KB) are automatically fragmented for transmission
-  - Text messages should be valid UTF-8 encoded
+  - Invalid UTF-8 text or invalid Close payloads return an error
+  - Data messages cannot be sent after sending or receiving a Close frame
+  - Ping/Pong may still be sent after sending Close until the peer's Close is received
 
 ### sock:close()
 
 Closes the WebSocket connection.
 
 - **Parameters**: None
-- **Returns**: None
+- **Returns**: `boolean, string?`; an already closed socket returns `false` and an error
 - **Notes**:
   - Automatically sends a close frame
   - The socket cannot be used after calling this method

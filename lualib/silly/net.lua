@@ -169,7 +169,10 @@ end
 silly.register(c.ACCEPT, function(fd, listenid, addr)
 	assert(socket_pending[fd] == nil)
 	local cb = accept_callback[listenid]
-	assert(cb, listenid)
+	if not cb then
+		socket_close(fd)
+		return
+	end
 	-- inherit the callback from listenid
 	data_callback[fd] = data_callback[listenid]
 	close_callback[fd] = close_callback[listenid]

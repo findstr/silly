@@ -5,7 +5,7 @@ local metrics = require "silly.metrics.c"
 local json = require "silly.encoding.json"
 local tcp = require "silly.net.tcp"
 local tls = require "silly.net.tls"
-local crypto = require "silly.crypto.utils"
+local random = require "silly.crypto.random"
 local testaux = require "test.testaux"
 local IO
 local listen_cb
@@ -48,8 +48,8 @@ end
 
 local netstat = testaux.netstat
 local function test_limit(port)
-	local dat1 = crypto.randomkey(511) .. "\n" .. crypto.randomkey(512)
-	local dat2 = crypto.randomkey(1024)
+	local dat1 = testaux.randomdata(511) .. "\n" .. testaux.randomdata(512)
+	local dat2 = testaux.randomdata(1024)
 	local listen_func = function(fd)
 		print("write 1Kbyte data")
 		tcp.write(fd, dat1)
@@ -101,7 +101,7 @@ local function test_limit(port)
 	local recvfd
 	local size = 0
 	local buf1 = {"h"}
-	local dat3 = crypto.randomkey(1024 * 1024)
+	local dat3 = random.text(1024 * 1024)
 	listen_cb = function(fd)
 		recvfd = fd
 		tcp.limit(fd, 1)
@@ -394,7 +394,7 @@ local function test_close(port)
 	--CASE9:cilent connect, server write then close immediately,
 	--client should read all data
 	print("CASE9")
-	local dat = crypto.randomkey(64*1024*1024)
+	local dat = random.text(64 * 1024 * 1024)
 
 	listen_cb = function(fd)
 		local ok = IO.write(fd, dat)
@@ -435,3 +435,53 @@ test_close(":10002")
 time.sleep(100)
 local info4 = netstat()
 testaux.asserteq(info1, info4, "check tls clear")
+
+for i, spec in ipairs({
+	{limit = 1, delim = 3, suffix = "bc", expected = "abc"},
+	{limit = 0, delim = 3, suffix = "bc", expected = "abc"},
+	{limit = 1, delim = "\n", suffix = "bc\n", expected = "abc\n"},
+}) do
+	testaux.case("Test 10." .. i .. ": Pending TCP reads bypass the receive limit", function()
+		local net = require "silly.net"
+		local channel = require "silly.sync.channel"
+		local accepted = channel.new()
+		local arrived = channel.new()
+		local started = channel.new()
+		local finished = channel.new()
+		local listener = assert(tcp.listen {
+			addr = "127.0.0.1:0",
+			accept = function(conn)
+				accepted:push(conn)
+			end,
+		})
+		local connect = net.tcpconnect
+		net.tcpconnect = function(addr, event, ...)
+			return connect(addr, {
+				close = event.close,
+				data = function(fd, ptr, size)
+					event.data(fd, ptr, size)
+					arrived:push(true)
+				end,
+			}, ...)
+		end
+		local conn = assert(tcp.connect(metrics.socketstat(listener.fd).localaddr))
+		net.tcpconnect = connect
+		local peer = testaux.await(accepted, "receive-limit fixture accepts")
+		conn:limit(spec.limit)
+		task.fork(function()
+			started:push(true)
+			local data, err = conn:read(spec.delim, 1000)
+			finished:push({data = data, err = err})
+		end)
+		testaux.await(started, "read registers its waiter")
+		assert(peer:write("a"))
+		testaux.await(arrived, "first input is processed before sending the remainder")
+		assert(peer:write(spec.suffix))
+		local result = testaux.await(finished, "read completes beyond its receive limit")
+		conn:close()
+		peer:close()
+		listener:close()
+		testaux.asserteq(result.data, spec.expected, "Test 10: Partial input cannot suspend a pending read")
+		testaux.asserteq(result.err, nil, "Test 10: A pending read does not time out at the limit")
+	end)
+end

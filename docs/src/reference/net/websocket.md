@@ -57,6 +57,7 @@ WebSocket 连接使用 socket 对象表示：
 - **注意**:
   - 调用此函数前，stream 必须处于打开状态
   - 升级成功后，不要再操作原有的 stream 对象
+  - socket 可交给其他协程使用，HTTP 处理函数返回不会关闭它
 - **示例**:
 
 ```lua validate
@@ -165,10 +166,12 @@ end)
 - **返回值**:
   - 成功: `string, string` - 消息数据和帧类型
   - 失败: `nil, string, string` - nil、错误信息和部分数据
-- **帧类型**: `"text"`, `"binary"`, `"ping"`, `"pong"`, `"close"`, `"continuation"`
+- **帧类型**: `"text"`, `"binary"`, `"ping"`, `"pong"`, `"close"`
 - **异步**: 会挂起协程直到收到完整消息
 - **注意**:
   - 自动处理分片消息，返回完整内容
+  - 控制帧单独返回，下一次读取继续接收尚未完成的消息
+  - 无效协议数据会返回错误并关闭连接
   - 返回 `close` 类型时，连接即将关闭
 - **示例**:
 
@@ -197,6 +200,22 @@ task.fork(function()
 end)
 ```
 
+### sock:limit(limit)
+
+设置接收的单条文本或二进制消息大小上限，按字节计算，包含该消息的所有分片。
+
+- `limit`：可选整数；`nil` 或非正数关闭限制，默认不限制。
+- Ping、Pong 和 Close 的载荷不计入此上限。
+- 每条消息独立计数，修改上限也会作用于尚未完成的分片消息。
+- 消息超限时，`read()` 返回错误，并以状态码 1009 关闭连接。
+- 不限制发送的消息，也不替代 TCP/TLS 的接收缓冲区限制。
+
+在 `connect()` 或 `upgrade()` 成功后、读取前设置：
+
+```lua
+sock:limit(1024 * 1024) -- 每条接收消息最多 1 MiB
+```
+
 ### sock:write(data [, type])
 
 发送 WebSocket 消息（异步）。
@@ -211,14 +230,16 @@ end)
 - **注意**:
   - 控制帧（ping/pong/close）的数据长度不能超过 125 字节
   - 大消息（>= 64KB）会自动分片发送
-  - 文本消息应该是有效的 UTF-8 编码
+  - 无效 UTF-8 文本或无效 Close 载荷会返回错误
+  - 发送或接收 Close 帧后不能继续发送数据消息
+  - 发出 Close 后，在收到对端 Close 前仍可发送 Ping/Pong
 
 ### sock:close()
 
 关闭 WebSocket 连接。
 
 - **参数**: 无
-- **返回值**: 无
+- **返回值**: `boolean, string?`；已关闭的 socket 返回 `false` 和错误
 - **注意**:
   - 自动发送 close 帧
   - 调用后 socket 不可再使用

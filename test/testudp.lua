@@ -3,7 +3,6 @@ local time = require "silly.time"
 local udp = require "silly.net.udp"
 local waitgroup = require "silly.sync.waitgroup"
 local channel = require "silly.sync.channel"
-local crypto = require "silly.crypto.utils"
 local testaux = require "test.testaux"
 local errno = require "silly.errno"
 local ETIMEDOUT<const> = errno.TIMEDOUT
@@ -34,7 +33,7 @@ testaux.case("Test 1: Basic UDP echo server", function()
 
 	local buf = {}
 	for i = 1, 20 do
-		local d = crypto.randomkey(8)
+		local d = testaux.randomdata(8)
 		client_fd:sendto(d)
 		buf[i] = d
 	end

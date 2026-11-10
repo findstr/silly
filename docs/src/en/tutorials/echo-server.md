@@ -157,7 +157,6 @@ Below is a complete Echo server implementation, including server and client test
 local silly = require "silly"
 local task = require "silly.task"
 local time = require "silly.time"
-local crypto = require "silly.crypto.utils"
 local tcp = require "silly.net.tcp"
 
 -- Start Echo server
@@ -203,8 +202,8 @@ for i = 1, 3 do
 
         -- Send 5 test messages
         for j = 1, 5 do
-            -- Generate random data
-            local msg = crypto.randomkey(5) .. "\n"
+            -- Generate a test message
+            local msg = string.format("client %d message %d\n", i, j)
             print("Send [", conn.remoteaddr, "] ->", msg)
 
             -- Send data

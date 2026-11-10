@@ -1,6 +1,8 @@
 ## Unreleased
 
 ### Added
+- WebSocket message size limits via `socket:limit()`.
+- `crypto.random.bytes()` for secure random bytes and `text()` for ordinary lowercase text.
 - `net.free(ptr)` to release raw receive buffers.
 - Optional HTTP/2 client PING keepalive for HTTP and gRPC.
 - `headeronly` on HTTP/2 client streams identifies responses completed by their initial headers.
@@ -11,6 +13,7 @@
 - `client.close()` to gracefully shut down pooled connections.
 
 ### Changed
+- Replace `crypto.utils.randomkey()` with `crypto.random.text()`.
 - Remove `silly.tls.ctx.free()` and let Lua garbage collection release TLS contexts.
 - TLS writes read fragment arrays directly, bypassing `__len` and `__index`.
 - C extensions use `silly_push_error(L, code)`; `silly_error_table()` is removed.
@@ -27,6 +30,8 @@
 - `cluster.call`/`send` and the `serve` `call` callback now operate on a raw `data` string — the `marshal`/`unmarshal` config options and the integer `cmd` argument are removed; serialization and dispatch are left to the business layer. Cluster sessions are now 64-bit; request and response wire headers use `[session(8)][traceid(8)]` and `[session(8)]` respectively. This is a breaking wire-protocol change requiring all peers to upgrade together.
 
 ### Fixed
+- WebSocket: fix handshake validation, masking, framing and connection lifecycle.
+- TCP: fix receive-limit stalls, listener-close errors and receive-buffer leaks.
 - Socket: preserve zombie send errors, report peer resets on Windows, and release queued send buffers at runtime exit.
 - Worker: fix error lookup and callback reset from nested Lua calls.
 - TLS: fix stalled reads, write failures during renegotiation, buffered data loss after errors, and connection setup leaks.

@@ -673,7 +673,7 @@ print("\n推荐：使用 OAEP + SHA256，安全性和兼容性最佳")
 ```lua validate
 local pkey = require "silly.crypto.pkey"
 local cipher = require "silly.crypto.cipher"
-local utils = require "silly.crypto.utils"
+local random = require "silly.crypto.random"
 
 -- 加载 RSA 密钥对
 local rsa_public = pkey.new([[
@@ -726,8 +726,8 @@ print("混合加密示例（RSA + AES）\n")
 print("原始数据大小:", #large_data, "字节")
 
 -- 步骤 1：生成随机 AES 密钥（32 字节 = 256 位）
-local aes_key = utils.randomkey(32)
-local aes_iv = utils.randomkey(16) -- AES-256-CBC 的 IV 长度为 16 字节
+local aes_key = random.bytes(32)
+local aes_iv = random.bytes(16) -- AES-256-CBC 的 IV 长度为 16 字节
 
 -- 步骤 2：使用 AES 加密大数据
 local aes_enc = cipher.encryptor("aes-256-cbc", aes_key, aes_iv)

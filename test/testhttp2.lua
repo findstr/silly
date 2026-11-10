@@ -8,7 +8,7 @@ local h2 = require "silly.net.http.h2"
 local channel = require "silly.sync.channel"
 local json = require "silly.encoding.json"
 local http = require "silly.net.http"
-local crypto = require "silly.crypto.utils"
+local random = require "silly.crypto.random"
 local gzip = require "silly.compress.gzip"
 local testaux = require "test.testaux"
 local errno = require "silly.errno"
@@ -469,7 +469,7 @@ end)
 
 case("Test 16: Flow control - Stream window 63KB single stream", function()
 	local ch = channel.new()
-	local data = crypto.randomkey(63 * 1024)
+	local data = random.bytes(63 * 1024)
 	server_handler = function(stream)
 		ch:pop()
 		local dat = stream:readall()
@@ -507,7 +507,7 @@ case("Test 17: Flow control - Connection window with concurrent streams", functi
 	-- Stream 1 sends 1M-1KB, then Stream 2 sends 1M-1KB
 	-- This should exhaust connection window and require flow control
 
-	local data = crypto.randomkey(4 * 1024 * 1024 - 1024)
+	local data = random.bytes(4 * 1024 * 1024 - 1024)
 	local stream1_arrived = channel.new()
 	local stream2_arrived = channel.new()
 	local release_first = channel.new()
@@ -579,7 +579,7 @@ end)
 
 case("Test 18: Flow control - Window recovery after read", function()
 	-- Test that reading data sends WINDOW_UPDATE and recovers window
-	local data = crypto.randomkey(66 * 1024)
+	local data = random.bytes(66 * 1024)
 	local release = channel.new()
 	local writer = waitgroup.new()
 

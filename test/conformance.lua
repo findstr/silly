@@ -119,4 +119,8 @@ function conformance:tlsreadclose(addr, version)
 	return send_command(self.conn, "tls_readclose", {addr = addr, version = version})
 end
 
+function conformance:websocketrequest(params)
+    return send_command(self.conn, "websocket_request", params)
+end
+
 return conformance
